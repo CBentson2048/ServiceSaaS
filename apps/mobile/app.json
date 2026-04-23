@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "Sheer Platform",
+    "slug": "sheer-platform-mobile",
+    "version": "0.1.0",
+    "scheme": "sheer",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": false,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.sheer.platform"
+    },
+    "android": {
+      "package": "com.sheer.platform"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": ["expo-router"],
+    "experiments": {
+      "typedRoutes": false
+    }
+  }
+}
