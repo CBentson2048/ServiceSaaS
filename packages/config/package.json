@@ -1,0 +1,38 @@
+{
+  "name": "@sheer/config",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared ESLint and tsconfig helpers for the Sheer Platform monorepo.",
+  "type": "module",
+  "main": "index.js",
+  "files": [
+    "eslint/",
+    "tsconfig/",
+    "index.js"
+  ],
+  "exports": {
+    "./eslint-base": "./eslint/base.cjs",
+    "./eslint-node": "./eslint/node.cjs",
+    "./eslint-react": "./eslint/react.cjs",
+    "./tsconfig/base": "./tsconfig/base.json",
+    "./tsconfig/node": "./tsconfig/node.json",
+    "./tsconfig/react": "./tsconfig/react.json"
+  },
+  "scripts": {
+    "lint": "echo \"No lint step for @sheer/config\"",
+    "typecheck": "echo \"No typecheck step for @sheer/config\""
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-import": "^2.31.0",
+    "eslint-plugin-react": "^7.37.2",
+    "eslint-plugin-react-hooks": "^4.6.2"
+  },
+  "peerDependencies": {
+    "eslint": "^8.57.0",
+    "typescript": "^5.5.0"
+  }
+}

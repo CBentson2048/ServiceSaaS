@@ -1,0 +1,54 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+out/
+.next/
+.turbo/
+*.tsbuildinfo
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/settings.json.example
+Thumbs.db
+
+# Coverage / testing
+coverage/
+.nyc_output/
+
+# Expo / React Native
+apps/mobile/.expo/
+apps/mobile/web-build/
+apps/mobile/dist/
+apps/mobile/ios/
+apps/mobile/android/
+
+# Vite / Web
+apps/web/dist/
+
+# NestJS / Node
+apps/api/dist/
+
+# Misc
+*.pid
+*.seed
+*.tgz
+.eslintcache
