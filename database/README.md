@@ -1,54 +1,43 @@
 # Database
 
-Production-minded PostgreSQL/Supabase schema assets for the Sheer Platform.
+Schema assets for the Sheer Platform data layer.
 
 ## Source of truth
 
-- `database/migrations/` — ordered, runnable SQL migrations
-- `database/schema/` — schema intent and modeling notes
-- `database/policies/` — RLS rationale and access model notes
-- `database/seeds/` — seed strategy and environment guidance
+- `supabase/migrations/` — ordered, runnable SQL migrations used by Supabase CLI
+- `database/schema/` — reference/design notes
+- `database/policies/` — RLS rationale and policy notes
+- `database/seeds/` — seed strategy notes
 
-## Runtime schemas
+## Week 1 scope
 
-- `core`
-- `booking`
-- `crm`
-- `rota`
-- `lab`
-- `inventory`
-- `billing`
-- `analytics`
-- `comms`
-- `audit`
+The current migration set establishes only the database foundation:
 
-## Design rules
+- application schemas: `core`, `booking`, `crm`, `rota`, `lab`, `inventory`, `billing`, `analytics`, `comms`, `audit`
+- tenant and identity foundation in `core`
+- booking foundation in `booking`
+- rota foundation in `rota`
+- billing/tax and communications foundation in `billing` and `comms`
+- initial helper functions, foreign keys, indexes, triggers, and conservative RLS structure
+
+Later CRM, lab, inventory, analytics, and audit domain tables should land as additive migrations rather than being guessed upfront.
+
+## Design notes
 
 - Multi-business tenancy is anchored at `core.businesses`.
-- `core.locations` provides current location isolation and future white-label readiness.
-- Operational tables keep raw source-of-truth data; analytics tables are snapshots, not replacements.
-- UUID primary keys, `timestamptz`, `snake_case`, and `created_at` / `updated_at` are the default.
-- Financial data is stored in the database, but default RLS remains conservative for stylist-facing access.
-- Rota is the source of truth for availability and target calculations.
+- `core.locations` provides current location isolation while preserving future white-label readiness.
+- UUID primary keys, `timestamptz`, `snake_case`, and `created_at` / `updated_at` are the defaults.
+- Rota is the source of truth for staff availability.
+- Tax configuration is location-aware and jurisdiction-neutral.
+- Default RLS exposure is conservative: owners/admins are business-wide, managers are location-scoped, and staff/client visibility is narrowly bounded.
 
-## Migration sequence
+## Migration order
 
 1. `0001_extensions_and_helpers.sql`
 2. `0002_create_app_schemas.sql`
-3. `0003_core_businesses_locations_users.sql`
-4. `0004_core_settings_roles_clients.sql`
-5. `0005_booking_services_appointments_visits.sql`
-6. `0006_crm_notes_patchtests_photos.sql`
-7. `0007_rota_shifts_breaks_leave_absence.sql`
-8. `0008_lab_formulas_formula_items.sql`
-9. `0009_inventory_products_stock_movements.sql`
-10. `0010_billing_tax_rules_charges_payments.sql`
-11. `0011_comms_notifications_message_logs.sql`
-12. `0012_analytics_targets_commissions.sql`
-13. `0013_audit_events_webhooks.sql`
-14. `0014_rls_helpers_and_policies.sql`
-15. `0015_indexes_constraints_views.sql`
-
-## Operational note
-
-This repo keeps migration authoring under `database/migrations/`. If your deployment workflow still expects a different execution path, wire that runner explicitly rather than splitting schema intent across duplicate SQL sources.
+3. `0003_core_foundation.sql`
+4. `0004_booking_foundation.sql`
+5. `0005_rota_foundation.sql`
+6. `0006_billing_and_comms_foundation.sql`
+7. `0007_rls_helpers_and_policies.sql`
+8. `0008_indexes_and_triggers.sql`

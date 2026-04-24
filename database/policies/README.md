@@ -1,55 +1,34 @@
 # Row Level Security Policies
 
-RLS is implemented in `database/migrations/0014_rls_helpers_and_policies.sql`.
+RLS is implemented in `supabase/migrations/0007_rls_helpers_and_policies.sql`.
 
-## Security model
+## Week 1 posture
 
-- All sensitive tenant-owned tables have RLS enabled.
-- Access is anchored on `business_id`, `location_id`, authenticated membership, and relationship helpers.
+- All Week 1 tenant-owned operational tables have RLS enabled.
+- Policies are membership-driven using `business_id`, `location_id`, and authenticated user relationships.
 - Owners/admins are business-wide.
 - Managers are location-scoped.
-- Front desk users operate booking/CRM/comms within their location.
-- Stylists/assistants are constrained to their own rota, appointments, and legitimate client/formula context.
-- Clients are constrained to their own appointment history, payment history, communication history, and client-safe visit summaries.
-
-## Conservative financial visibility
-
-The database stores financial truth, but default visibility stays tight:
-
-- `lab.formula_costs` and `inventory.product_costs` separate owner/manager financial data from operational detail.
-- Stylists do not get cost, margin, billing-rule, or tax-setting access by default.
-- Clients never get raw formula ingredient-cost detail.
-- Managers do not inherit business-wide visibility from location membership.
+- Front desk access is limited to location booking/comms operations.
+- Stylists only get their own appointment/rota context where explicitly allowed.
+- Clients only get their own appointment, deposit, visit, and communication history.
 
 ## Helper functions
 
-The policy layer uses reusable `security definer` helpers to avoid recursive RLS traps:
+The initial policy layer uses small `security definer` helpers:
 
 - `public.is_business_owner_or_admin(...)`
 - `public.has_location_membership(...)`
 - `public.has_location_management_scope(...)`
 - `public.has_location_desk_access(...)`
-- `public.has_location_operational_access(...)`
-- `public.can_view_financials(...)`
+- `public.current_staff_profile_id(...)`
 - `public.is_staff_profile_owner(...)`
 - `public.is_client_profile_owner(...)`
-- `public.can_access_client_profile(...)`
 - `public.can_access_appointment(...)`
-- `public.can_access_visit(...)`
-- `public.can_access_formula(...)`
 
-## Expected role outcomes
+## Conservative boundary
 
-- `owner` / `admin` — business-wide access across operational, financial, analytics, and audit domains
-- `manager` — location-scoped operational and local financial access only
-- `front_desk` — booking, CRM, and communication access for their location
-- `stylist` / `assistant` — own rota and appointment context, plus client/formula records tied to their work
-- `client` — own appointments, deposits/payments, comms history, and client-safe visit summaries
+Week 1 keeps direct write access tight. The intended pattern is:
 
-## Review rule
-
-Every future tenant-owned table should ship with:
-
-1. `business_id` and/or `location_id` where appropriate
-2. RLS enabled
-3. explicit policies, or a short documented reason why policy work is deferred
+- client apps read through RLS-safe tables/views
+- privileged writes go through the NestJS API using service-role access
+- later domain tables inherit the same membership-first policy structure
