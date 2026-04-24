@@ -59,10 +59,7 @@ begin
     'booking.visits',
     'rota.shifts',
     'rota.leave_requests',
-    'rota.absence_events',
-    'billing.tax_settings',
-    'billing.billing_rules',
-    'comms.notification_events'
+    'rota.absence_events'
   ] loop
     execute format(
       'create trigger %I before update on %s for each row execute function public.set_updated_at()',

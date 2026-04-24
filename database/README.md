@@ -29,7 +29,7 @@ Later CRM, lab, inventory, analytics, and audit domain tables should land as add
 - UUID primary keys, `timestamptz`, `snake_case`, and `created_at` / `updated_at` are the defaults.
 - Rota is the source of truth for staff availability.
 - Tax configuration is location-aware and jurisdiction-neutral.
-- Default RLS exposure is conservative: owners/admins are business-wide, managers are location-scoped, and staff/client visibility is narrowly bounded.
+- Default RLS exposure is conservative: owners are business-wide, managers are location-scoped, and stylist/client visibility is narrowly bounded.
 
 ## Migration order
 

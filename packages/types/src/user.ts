@@ -6,8 +6,6 @@ export type UserRole =
   | 'owner'
   | 'manager'
   | 'stylist'
-  | 'assistant'
-  | 'front_desk'
   | 'client';
 
 export interface UserProfile {

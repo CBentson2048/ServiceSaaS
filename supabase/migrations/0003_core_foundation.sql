@@ -9,11 +9,8 @@ create type core.business_status_enum as enum (
 
 create type core.membership_role_enum as enum (
   'owner',
-  'admin',
   'manager',
-  'front_desk',
   'stylist',
-  'assistant',
   'client'
 );
 
@@ -112,13 +109,13 @@ create table core.user_memberships (
   updated_at timestamptz not null default now(),
   unique nulls not distinct (business_id, location_id, user_profile_id, role),
   check (
-    (role in ('owner', 'admin') and location_id is null)
-    or (role not in ('owner', 'admin'))
+    (role = 'owner' and location_id is null)
+    or (role <> 'owner')
   )
 );
 
 comment on table core.user_memberships is
-  'Role assignment by business and optional location. Owners and admins remain business-wide.';
+  'Role assignment by business and optional location. Owners remain business-wide.';
 
 create table core.staff_profiles (
   id uuid primary key default extensions.gen_random_uuid(),

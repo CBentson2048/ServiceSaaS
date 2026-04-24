@@ -1,7 +1,7 @@
 -- 0007_rls_helpers_and_policies.sql
 -- Week 1 RLS is intentionally conservative. Most writes should flow through the API service role.
 
-create or replace function public.is_business_owner_or_admin(p_business_id uuid)
+create or replace function public.is_business_owner(p_business_id uuid)
 returns boolean
 language sql
 stable
@@ -14,7 +14,7 @@ as $$
     where um.user_profile_id = public.current_user_id()
       and um.business_id = p_business_id
       and um.status = 'active'
-      and um.role in ('owner', 'admin')
+      and um.role = 'owner'
   )
 $$;
 
@@ -32,7 +32,7 @@ as $$
       and um.business_id = p_business_id
       and um.status = 'active'
       and (
-        um.role in ('owner', 'admin')
+        um.role = 'owner'
         or (p_location_id is not null and um.location_id = p_location_id)
       )
   )
@@ -52,7 +52,7 @@ as $$
       and um.business_id = p_business_id
       and um.status = 'active'
       and (
-        um.role in ('owner', 'admin')
+        um.role = 'owner'
         or (um.role = 'manager' and p_location_id is not null and um.location_id = p_location_id)
       )
   )
@@ -72,8 +72,8 @@ as $$
       and um.business_id = p_business_id
       and um.status = 'active'
       and (
-        um.role in ('owner', 'admin')
-        or (um.role in ('manager', 'front_desk') and p_location_id is not null and um.location_id = p_location_id)
+        um.role = 'owner'
+        or (um.role = 'manager' and p_location_id is not null and um.location_id = p_location_id)
       )
   )
 $$;
@@ -148,7 +148,7 @@ as $$
 $$;
 
 grant execute on function public.current_user_id() to authenticated, service_role;
-grant execute on function public.is_business_owner_or_admin(uuid) to authenticated, service_role;
+grant execute on function public.is_business_owner(uuid) to authenticated, service_role;
 grant execute on function public.has_location_membership(uuid, uuid) to authenticated, service_role;
 grant execute on function public.has_location_management_scope(uuid, uuid) to authenticated, service_role;
 grant execute on function public.has_location_desk_access(uuid, uuid) to authenticated, service_role;
@@ -213,8 +213,8 @@ begin
     'comms.message_logs'
   ] loop
     execute format(
-      'create policy %I on %s for all using (public.is_business_owner_or_admin(business_id)) with check (public.is_business_owner_or_admin(business_id))',
-      replace(t, '.', '_') || '_owner_admin_all',
+      'create policy %I on %s for all using (public.is_business_owner(business_id)) with check (public.is_business_owner(business_id))',
+      replace(t, '.', '_') || '_owner_all',
       t
     );
   end loop;
@@ -253,7 +253,7 @@ create policy core_businesses_member_select
 on core.businesses
 for select
 using (
-  public.is_business_owner_or_admin(id)
+  public.is_business_owner(id)
   or exists (
     select 1
     from core.user_memberships um
@@ -263,11 +263,11 @@ using (
   )
 );
 
-create policy core_businesses_owner_admin_all
+create policy core_businesses_owner_all
 on core.businesses
 for all
-using (public.is_business_owner_or_admin(id))
-with check (public.is_business_owner_or_admin(id));
+using (public.is_business_owner(id))
+with check (public.is_business_owner(id));
 
 create policy core_user_profiles_self_select
 on core.user_profiles
@@ -409,7 +409,7 @@ create policy billing_tax_settings_select
 on billing.tax_settings
 for select
 using (
-  public.is_business_owner_or_admin(business_id)
+  public.is_business_owner(business_id)
   or (location_id is not null and public.has_location_management_scope(business_id, location_id))
 );
 

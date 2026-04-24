@@ -6,9 +6,8 @@ RLS is implemented in `supabase/migrations/0007_rls_helpers_and_policies.sql`.
 
 - All Week 1 tenant-owned operational tables have RLS enabled.
 - Policies are membership-driven using `business_id`, `location_id`, and authenticated user relationships.
-- Owners/admins are business-wide.
+- Owners are business-wide.
 - Managers are location-scoped.
-- Front desk access is limited to location booking/comms operations.
 - Stylists only get their own appointment/rota context where explicitly allowed.
 - Clients only get their own appointment, deposit, visit, and communication history.
 
@@ -16,7 +15,7 @@ RLS is implemented in `supabase/migrations/0007_rls_helpers_and_policies.sql`.
 
 The initial policy layer uses small `security definer` helpers:
 
-- `public.is_business_owner_or_admin(...)`
+- `public.is_business_owner(...)`
 - `public.has_location_membership(...)`
 - `public.has_location_management_scope(...)`
 - `public.has_location_desk_access(...)`
