@@ -1,0 +1,1103 @@
+-- =============================================================================
+-- Sheer Platform — deterministic RLS + workflow fixture (local / staging)
+-- =============================================================================
+-- Business: Luke Ormsby Hair (slug luke-ormsby-hair-seed)
+-- Locations: Chelsea, Soho, Clapham, Richmond
+-- Auth users (emails) must exist BEFORE this seed runs:
+--   owner@sheer.local, manager.alpha@sheer.local, manager.beta@sheer.local,
+--   stylist.alpha@sheer.local, stylist.beta@sheer.local,
+--   client.alice@sheer.local, client.bob@sheer.local
+--
+-- Create auth users first:
+--   pnpm --filter @sheer/api create-test-users
+--
+-- Then apply this file (e.g. supabase db reset runs migrations + this seed).
+-- Re-seed: deletes this fixture business by slug (CASCADE) then re-inserts.
+-- =============================================================================
+
+DO $$
+BEGIN
+  IF (
+    SELECT COUNT(*)::int
+    FROM auth.users
+    WHERE lower(email) IN (
+      'owner@sheer.local',
+      'manager.alpha@sheer.local',
+      'manager.beta@sheer.local',
+      'stylist.alpha@sheer.local',
+      'stylist.beta@sheer.local',
+      'client.alice@sheer.local',
+      'client.bob@sheer.local'
+    )
+  ) <> 7 THEN
+    RAISE EXCEPTION
+      'Seed requires 7 auth users. Run: pnpm --filter @sheer/api create-test-users (see database/seeds/README.md).';
+  END IF;
+END $$;
+
+BEGIN;
+
+DELETE FROM core.businesses WHERE slug = 'luke-ormsby-hair-seed';
+
+-- ---------------------------------------------------------------------------
+-- Core: business + locations
+-- ---------------------------------------------------------------------------
+INSERT INTO core.businesses (id, name, slug, legal_name, status, timezone, currency_code, primary_contact_email)
+VALUES (
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  'Luke Ormsby Hair',
+  'luke-ormsby-hair-seed',
+  'Luke Ormsby Hair Ltd',
+  'active',
+  'Europe/London',
+  'GBP',
+  'owner@sheer.local'::citext
+);
+
+INSERT INTO core.locations (id, business_id, code, name, slug, timezone, city, country_code, is_active)
+VALUES
+  ('a0000001-0001-4001-8001-000000000011'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'CHE', 'Chelsea', 'chelsea', 'Europe/London', 'London', 'GB', true),
+  ('a0000001-0001-4001-8001-000000000012'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'SOH', 'Soho', 'soho', 'Europe/London', 'London', 'GB', true),
+  ('a0000001-0001-4001-8001-000000000013'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'CLA', 'Clapham', 'clapham', 'Europe/London', 'London', 'GB', true),
+  ('a0000001-0001-4001-8001-000000000014'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'RIC', 'Richmond', 'richmond', 'Europe/London', 'London', 'GB', true);
+
+-- ---------------------------------------------------------------------------
+-- Core: profiles + memberships (auth user ids resolved by email)
+-- ---------------------------------------------------------------------------
+INSERT INTO core.user_profiles (id, full_name, display_name, email)
+SELECT u.id, v.full_name, v.display_name, u.email::citext
+FROM (VALUES
+  ('owner@sheer.local'::text, 'Luke Ormsby', 'Luke'),
+  ('manager.alpha@sheer.local', 'Manager Alpha', 'Manager Alpha'),
+  ('manager.beta@sheer.local', 'Manager Beta', 'Manager Beta'),
+  ('stylist.alpha@sheer.local', 'Stylist Alpha', 'Stylist Alpha'),
+  ('stylist.beta@sheer.local', 'Stylist Beta', 'Stylist Beta'),
+  ('client.alice@sheer.local', 'Alice Carter', 'Alice'),
+  ('client.bob@sheer.local', 'Bob Morgan', 'Bob')
+) AS v(email, full_name, display_name)
+JOIN auth.users u ON lower(u.email) = lower(v.email)
+ON CONFLICT (id) DO UPDATE SET
+  full_name = excluded.full_name,
+  display_name = excluded.display_name,
+  email = excluded.email;
+
+-- Owner / admin: business-wide (location_id null matches all locations in RLS helper)
+INSERT INTO core.user_memberships (id, business_id, location_id, user_id, role, status, is_primary)
+SELECT
+  'b0000001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  NULL,
+  u.id,
+  'owner'::core.membership_role,
+  'active'::core.membership_status,
+  true
+FROM auth.users u WHERE lower(u.email) = 'owner@sheer.local';
+
+INSERT INTO core.user_memberships (id, business_id, location_id, user_id, role, status, is_primary)
+SELECT
+  'b0000001-0001-4001-8001-000000000011'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000011'::uuid,
+  u.id,
+  'manager'::core.membership_role,
+  'active'::core.membership_status,
+  true
+FROM auth.users u WHERE lower(u.email) = 'manager.alpha@sheer.local';
+
+INSERT INTO core.user_memberships (id, business_id, location_id, user_id, role, status, is_primary)
+SELECT
+  'b0000001-0001-4001-8001-000000000012'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000012'::uuid,
+  u.id,
+  'manager'::core.membership_role,
+  'active'::core.membership_status,
+  true
+FROM auth.users u WHERE lower(u.email) = 'manager.beta@sheer.local';
+
+INSERT INTO core.user_memberships (id, business_id, location_id, user_id, role, status, is_primary)
+SELECT
+  'b0000001-0001-4001-8001-000000000021'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000011'::uuid,
+  u.id,
+  'stylist'::core.membership_role,
+  'active'::core.membership_status,
+  true
+FROM auth.users u WHERE lower(u.email) = 'stylist.alpha@sheer.local';
+
+INSERT INTO core.user_memberships (id, business_id, location_id, user_id, role, status, is_primary)
+SELECT
+  'b0000001-0001-4001-8001-000000000022'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000012'::uuid,
+  u.id,
+  'stylist'::core.membership_role,
+  'active'::core.membership_status,
+  true
+FROM auth.users u WHERE lower(u.email) = 'stylist.beta@sheer.local';
+
+INSERT INTO core.user_memberships (id, business_id, location_id, user_id, role, status, is_primary)
+SELECT
+  'b0000001-0001-4001-8001-000000000031'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000011'::uuid,
+  u.id,
+  'client'::core.membership_role,
+  'active'::core.membership_status,
+  true
+FROM auth.users u WHERE lower(u.email) = 'client.alice@sheer.local';
+
+INSERT INTO core.user_memberships (id, business_id, location_id, user_id, role, status, is_primary)
+SELECT
+  'b0000001-0001-4001-8001-000000000032'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000012'::uuid,
+  u.id,
+  'client'::core.membership_role,
+  'active'::core.membership_status,
+  true
+FROM auth.users u WHERE lower(u.email) = 'client.bob@sheer.local';
+
+INSERT INTO core.staff_profiles (
+  id, business_id, user_id, home_location_id, display_name, employment_type,
+  hourly_rate, commission_eligible, active, metadata
+)
+SELECT
+  'a0000001-0001-4001-8001-000000000021'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  u.id,
+  'a0000001-0001-4001-8001-000000000011'::uuid,
+  'Stylist Alpha',
+  'employee'::core.staff_employment_type,
+  19.00,
+  true,
+  true,
+  jsonb_build_object(
+    'contracted_hours_per_week', 37.5,
+    'average_bill_benchmark', 128.50,
+    'fixture', 'sheer_rls_seed'
+  )
+FROM auth.users u WHERE lower(u.email) = 'stylist.alpha@sheer.local';
+
+INSERT INTO core.staff_profiles (
+  id, business_id, user_id, home_location_id, display_name, employment_type,
+  hourly_rate, commission_eligible, active, metadata
+)
+SELECT
+  'a0000001-0001-4001-8001-000000000022'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  u.id,
+  'a0000001-0001-4001-8001-000000000012'::uuid,
+  'Stylist Beta',
+  'employee'::core.staff_employment_type,
+  20.00,
+  true,
+  true,
+  jsonb_build_object(
+    'contracted_hours_per_week', 37.5,
+    'average_bill_benchmark', 142.00,
+    'fixture', 'sheer_rls_seed'
+  )
+FROM auth.users u WHERE lower(u.email) = 'stylist.beta@sheer.local';
+
+INSERT INTO core.client_profiles (
+  id, business_id, primary_location_id, auth_user_id,
+  first_name, last_name, email, phone,
+  communication_preference, marketing_opt_in, metadata
+)
+SELECT
+  'a0000001-0001-4001-8001-000000000031'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000011'::uuid,
+  u.id,
+  'Alice', 'Carter', 'client.alice@sheer.local'::citext, '+447700900001',
+  'push'::core.communication_channel,
+  true,
+  jsonb_build_object(
+    'preferred_messaging', 'whatsapp',
+    'whatsapp_number', '+447700900001',
+    'fixture', 'sheer_rls_seed'
+  )
+FROM auth.users u WHERE lower(u.email) = 'client.alice@sheer.local';
+
+INSERT INTO core.client_profiles (
+  id, business_id, primary_location_id, auth_user_id,
+  first_name, last_name, email, phone,
+  communication_preference, marketing_opt_in, metadata
+)
+SELECT
+  'a0000001-0001-4001-8001-000000000032'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000012'::uuid,
+  u.id,
+  'Bob', 'Morgan', 'client.bob@sheer.local'::citext, '+447700900002',
+  'sms'::core.communication_channel,
+  false,
+  jsonb_build_object('fixture', 'sheer_rls_seed')
+FROM auth.users u WHERE lower(u.email) = 'client.bob@sheer.local';
+
+INSERT INTO core.location_settings (id, business_id, location_id, booking_notice_minutes, cancellation_notice_minutes, allow_next_available, waitlist_enabled, auto_confirm_appointments, default_communication_channel, settings)
+VALUES
+  ('c1000001-0001-4001-8001-000000000011'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000011'::uuid, 120, 1440, true, true, false, 'sms'::core.communication_channel, '{"deposit_reminder_hours":48}'::jsonb),
+  ('c1000001-0001-4001-8001-000000000012'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000012'::uuid, 180, 1440, true, true, false, 'sms'::core.communication_channel, '{"deposit_reminder_hours":48}'::jsonb),
+  ('c1000001-0001-4001-8001-000000000013'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000013'::uuid, 120, 2880, true, true, false, 'email'::core.communication_channel, '{}'::jsonb),
+  ('c1000001-0001-4001-8001-000000000014'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000014'::uuid, 120, 2880, true, true, false, 'sms'::core.communication_channel, '{}'::jsonb);
+
+-- ---------------------------------------------------------------------------
+-- Billing: tax + rules per location (not UK-only; labels are generic)
+-- ---------------------------------------------------------------------------
+INSERT INTO billing.tax_settings (id, business_id, location_id, name, country_code, region_code, tax_label, rate_percent, inclusive, effective_from, is_default)
+VALUES
+  ('b2010001-0001-4001-8001-000000000011'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000011'::uuid, 'Standard sales tax', 'GB', NULL, 'Sales tax', 20.00, true, '2020-01-01', true),
+  ('b2010001-0001-4001-8001-000000000012'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000012'::uuid, 'Standard sales tax', 'GB', NULL, 'Sales tax', 20.00, true, '2020-01-01', true),
+  ('b2010001-0001-4001-8001-000000000013'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000013'::uuid, 'Standard sales tax', 'GB', NULL, 'Sales tax', 20.00, true, '2020-01-01', true),
+  ('b2010001-0001-4001-8001-000000000014'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000014'::uuid, 'Standard sales tax', 'GB', NULL, 'Sales tax', 20.00, true, '2020-01-01', true);
+
+INSERT INTO billing.billing_rules (
+  id, business_id, location_id, formula_billing_mode, formula_markup_percent, formula_flat_fee,
+  apply_formula_to_visit_total, deposits_required, deposit_type, deposit_value, service_charge_rounding, metadata
+)
+VALUES
+  ('b2020001-0001-4001-8001-000000000011'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000011'::uuid,
+   'manual_service_charge'::billing.formula_billing_mode, NULL, 42.00, true, true, 'fixed', 25.00, 'nearest_cent'::billing.service_charge_rounding,
+   '{"notes":"Chelsea fixture rules"}'::jsonb),
+  ('b2020001-0001-4001-8001-000000000012'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000012'::uuid,
+   'manual_service_charge'::billing.formula_billing_mode, NULL, 45.00, true, true, 'fixed', 30.00, 'nearest_cent'::billing.service_charge_rounding,
+   '{"notes":"Soho fixture rules"}'::jsonb),
+  ('b2020001-0001-4001-8001-000000000013'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000013'::uuid,
+   'manual_service_charge'::billing.formula_billing_mode, NULL, 40.00, true, false, NULL, NULL, 'nearest_cent'::billing.service_charge_rounding, '{}'::jsonb),
+  ('b2020001-0001-4001-8001-000000000014'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000014'::uuid,
+   'manual_service_charge'::billing.formula_billing_mode, NULL, 40.00, true, false, NULL, NULL, 'nearest_cent'::billing.service_charge_rounding, '{}'::jsonb);
+
+-- ---------------------------------------------------------------------------
+-- Comms: templates (used for confirmation + reminder fixtures)
+-- ---------------------------------------------------------------------------
+INSERT INTO comms.message_templates (id, business_id, location_id, template_key, channel, name, subject_template, body_template)
+VALUES
+  ('b3010001-0001-4001-8001-000000000011'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000011'::uuid,
+   'booking_confirmation', 'sms'::core.communication_channel, 'Booking confirmed (Chelsea)',
+   'Booking confirmed',
+   'Hi {{client_name}}, your appointment at Chelsea is confirmed for {{start_time}}. Reply HELP for options.'),
+  ('b3010001-0001-4001-8001-000000000012'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000012'::uuid,
+   'booking_confirmation', 'sms'::core.communication_channel, 'Booking confirmed (Soho)',
+   'Booking confirmed',
+   'Hi {{client_name}}, your appointment at Soho is confirmed for {{start_time}}.'),
+  ('b3010001-0001-4001-8001-000000000013'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000011'::uuid,
+   'appointment_reminder', 'push'::core.communication_channel, 'Reminder (Chelsea)',
+   'Reminder',
+   'Reminder: you have an appointment tomorrow at Chelsea.');
+
+-- ---------------------------------------------------------------------------
+-- Booking: services (8 per location × 4 locations)
+-- ---------------------------------------------------------------------------
+INSERT INTO booking.services (id, business_id, location_id, code, name, category, duration_minutes, buffer_minutes, base_price, deposit_type, deposit_value, sort_order)
+SELECT x.id, 'a0000001-0001-4001-8001-000000000001'::uuid, x.location_id, x.code, x.name, x.category, x.dur, x.buf, x.price, x.dep_type, x.dep_val, x.sort
+FROM (VALUES
+  ('c1010001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000011'::uuid, 'FHC'::text, 'Full Head Colour'::text, 'Colour'::text, 150, 15, 165.00::numeric, 'fixed'::text, 25.00::numeric, 10),
+  ('c1010001-0001-4001-8001-000000000002'::uuid, 'a0000001-0001-4001-8001-000000000011'::uuid, 'ROOT', 'Root Colour', 'Colour', 90, 10, 95.00, 'fixed', 15.00, 20),
+  ('c1010001-0001-4001-8001-000000000003'::uuid, 'a0000001-0001-4001-8001-000000000011'::uuid, 'TONER', 'Toner', 'Colour', 30, 5, 35.00, NULL, NULL, 30),
+  ('c1010001-0001-4001-8001-000000000004'::uuid, 'a0000001-0001-4001-8001-000000000011'::uuid, 'CUT', 'Cut & Style', 'Cut', 60, 10, 72.00, NULL, NULL, 40),
+  ('c1010001-0001-4001-8001-000000000005'::uuid, 'a0000001-0001-4001-8001-000000000011'::uuid, 'BLOW', 'Blow Dry', 'Finish', 45, 5, 40.00, NULL, NULL, 50),
+  ('c1010001-0001-4001-8001-000000000006'::uuid, 'a0000001-0001-4001-8001-000000000011'::uuid, 'TREAT', 'Treatment', 'Care', 30, 5, 28.00, NULL, NULL, 60),
+  ('c1010001-0001-4001-8001-000000000007'::uuid, 'a0000001-0001-4001-8001-000000000011'::uuid, 'BALAY', 'Balayage', 'Colour', 180, 20, 220.00, 'fixed', 40.00, 70),
+  ('c1010001-0001-4001-8001-000000000008'::uuid, 'a0000001-0001-4001-8001-000000000011'::uuid, 'CONS', 'Consultation', 'Consult', 30, 0, 0.00, NULL, NULL, 5)
+) AS x(id, location_id, code, name, category, dur, buf, price, dep_type, dep_val, sort);
+
+INSERT INTO booking.services (id, business_id, location_id, code, name, category, duration_minutes, buffer_minutes, base_price, deposit_type, deposit_value, sort_order)
+SELECT replace(x.id::text, 'c101', 'c102')::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000012'::uuid, x.code, x.name, x.category, x.dur, x.buf, x.price + 5, x.dep_type, x.dep_val + 5, x.sort
+FROM (VALUES
+  ('c1010001-0001-4001-8001-000000000001'::uuid, 'FHC'::text, 'Full Head Colour'::text, 'Colour'::text, 150, 15, 165.00::numeric, 'fixed'::text, 25.00::numeric, 10),
+  ('c1010001-0001-4001-8001-000000000002'::uuid, 'ROOT', 'Root Colour', 'Colour', 90, 10, 95.00, 'fixed', 15.00, 20),
+  ('c1010001-0001-4001-8001-000000000003'::uuid, 'TONER', 'Toner', 'Colour', 30, 5, 35.00, NULL, NULL, 30),
+  ('c1010001-0001-4001-8001-000000000004'::uuid, 'CUT', 'Cut & Style', 'Cut', 60, 10, 72.00, NULL, NULL, 40),
+  ('c1010001-0001-4001-8001-000000000005'::uuid, 'BLOW', 'Blow Dry', 'Finish', 45, 5, 40.00, NULL, NULL, 50),
+  ('c1010001-0001-4001-8001-000000000006'::uuid, 'TREAT', 'Treatment', 'Care', 30, 5, 28.00, NULL, NULL, 60),
+  ('c1010001-0001-4001-8001-000000000007'::uuid, 'BALAY', 'Balayage', 'Colour', 180, 20, 220.00, 'fixed', 40.00, 70),
+  ('c1010001-0001-4001-8001-000000000008'::uuid, 'CONS', 'Consultation', 'Consult', 30, 0, 0.00, NULL, NULL, 5)
+) AS x(id, code, name, category, dur, buf, price, dep_type, dep_val, sort);
+
+INSERT INTO booking.services (id, business_id, location_id, code, name, category, duration_minutes, buffer_minutes, base_price, deposit_type, deposit_value, sort_order)
+SELECT replace(x.id::text, 'c101', 'c103')::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000013'::uuid, x.code, x.name, x.category, x.dur, x.buf, x.price, x.dep_type, x.dep_val, x.sort
+FROM (VALUES
+  ('c1010001-0001-4001-8001-000000000001'::uuid, 'FHC'::text, 'Full Head Colour'::text, 'Colour'::text, 150, 15, 165.00::numeric, 'fixed'::text, 25.00::numeric, 10),
+  ('c1010001-0001-4001-8001-000000000002'::uuid, 'ROOT', 'Root Colour', 'Colour', 90, 10, 95.00, 'fixed', 15.00, 20),
+  ('c1010001-0001-4001-8001-000000000003'::uuid, 'TONER', 'Toner', 'Colour', 30, 5, 35.00, NULL, NULL, 30),
+  ('c1010001-0001-4001-8001-000000000004'::uuid, 'CUT', 'Cut & Style', 'Cut', 60, 10, 72.00, NULL, NULL, 40),
+  ('c1010001-0001-4001-8001-000000000005'::uuid, 'BLOW', 'Blow Dry', 'Finish', 45, 5, 40.00, NULL, NULL, 50),
+  ('c1010001-0001-4001-8001-000000000006'::uuid, 'TREAT', 'Treatment', 'Care', 30, 5, 28.00, NULL, NULL, 60),
+  ('c1010001-0001-4001-8001-000000000007'::uuid, 'BALAY', 'Balayage', 'Colour', 180, 20, 220.00, 'fixed', 40.00, 70),
+  ('c1010001-0001-4001-8001-000000000008'::uuid, 'CONS', 'Consultation', 'Consult', 30, 0, 0.00, NULL, NULL, 5)
+) AS x(id, code, name, category, dur, buf, price, dep_type, dep_val, sort);
+
+INSERT INTO booking.services (id, business_id, location_id, code, name, category, duration_minutes, buffer_minutes, base_price, deposit_type, deposit_value, sort_order)
+SELECT replace(x.id::text, 'c101', 'c104')::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000014'::uuid, x.code, x.name, x.category, x.dur, x.buf, x.price, x.dep_type, x.dep_val, x.sort
+FROM (VALUES
+  ('c1010001-0001-4001-8001-000000000001'::uuid, 'FHC'::text, 'Full Head Colour'::text, 'Colour'::text, 150, 15, 165.00::numeric, 'fixed'::text, 25.00::numeric, 10),
+  ('c1010001-0001-4001-8001-000000000002'::uuid, 'ROOT', 'Root Colour', 'Colour', 90, 10, 95.00, 'fixed', 15.00, 20),
+  ('c1010001-0001-4001-8001-000000000003'::uuid, 'TONER', 'Toner', 'Colour', 30, 5, 35.00, NULL, NULL, 30),
+  ('c1010001-0001-4001-8001-000000000004'::uuid, 'CUT', 'Cut & Style', 'Cut', 60, 10, 72.00, NULL, NULL, 40),
+  ('c1010001-0001-4001-8001-000000000005'::uuid, 'BLOW', 'Blow Dry', 'Finish', 45, 5, 40.00, NULL, NULL, 50),
+  ('c1010001-0001-4001-8001-000000000006'::uuid, 'TREAT', 'Treatment', 'Care', 30, 5, 28.00, NULL, NULL, 60),
+  ('c1010001-0001-4001-8001-000000000007'::uuid, 'BALAY', 'Balayage', 'Colour', 180, 20, 220.00, 'fixed', 40.00, 70),
+  ('c1010001-0001-4001-8001-000000000008'::uuid, 'CONS', 'Consultation', 'Consult', 30, 0, 0.00, NULL, NULL, 5)
+) AS x(id, code, name, category, dur, buf, price, dep_type, dep_val, sort);
+
+-- Stylist ↔ service coverage (subset keeps seed readable)
+INSERT INTO booking.stylist_service_assignments (id, business_id, location_id, service_id, staff_profile_id, active)
+VALUES
+  ('a2100001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000011'::uuid, 'c1010001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000021'::uuid, true),
+  ('a2100001-0001-4001-8001-000000000002'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000011'::uuid, 'c1010001-0001-4001-8001-000000000002'::uuid, 'a0000001-0001-4001-8001-000000000021'::uuid, true),
+  ('a2100001-0001-4001-8001-000000000003'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000011'::uuid, 'c1010001-0001-4001-8001-000000000004'::uuid, 'a0000001-0001-4001-8001-000000000021'::uuid, true),
+  ('a2100001-0001-4001-8001-000000000004'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000011'::uuid, 'c1010001-0001-4001-8001-000000000005'::uuid, 'a0000001-0001-4001-8001-000000000021'::uuid, true),
+  ('a2100001-0001-4001-8001-000000000005'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000012'::uuid, 'c1020001-0001-4001-8001-000000000007'::uuid, 'a0000001-0001-4001-8001-000000000022'::uuid, true),
+  ('a2100001-0001-4001-8001-000000000006'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000012'::uuid, 'c1020001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000022'::uuid, true),
+  ('a2100001-0001-4001-8001-000000000007'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000012'::uuid, 'c1020001-0001-4001-8001-000000000002'::uuid, 'a0000001-0001-4001-8001-000000000022'::uuid, true);
+
+-- ---------------------------------------------------------------------------
+-- Booking: appointments (5) + lines + status + deposit + visits (2 completed)
+-- ---------------------------------------------------------------------------
+INSERT INTO booking.appointments (
+  id, business_id, location_id, client_profile_id, booked_by_user_id,
+  requested_staff_profile_id, assigned_staff_profile_id, status, source,
+  communication_preference, scheduled_start_at, scheduled_end_at, next_available_requested, notes_for_staff
+)
+SELECT
+  'd0000001-0001-4001-8001-000000000071'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000011'::uuid,
+  'a0000001-0001-4001-8001-000000000031'::uuid,
+  ou.id,
+  'a0000001-0001-4001-8001-000000000021'::uuid,
+  'a0000001-0001-4001-8001-000000000021'::uuid,
+  'confirmed'::booking.appointment_status,
+  'client_web'::booking.appointment_source,
+  'push'::core.communication_channel,
+  '2026-04-27T10:00:00+01'::timestamptz,
+  '2026-04-27T11:30:00+01'::timestamptz,
+  false,
+  'Fixture: Alice root refresh + deposit captured.'
+FROM auth.users ou WHERE lower(ou.email) = 'owner@sheer.local';
+
+INSERT INTO booking.appointments (
+  id, business_id, location_id, client_profile_id, booked_by_user_id,
+  requested_staff_profile_id, assigned_staff_profile_id, status, source,
+  communication_preference, scheduled_start_at, scheduled_end_at, next_available_requested, notes_for_staff
+)
+SELECT
+  'd0000001-0001-4001-8001-000000000072'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000011'::uuid,
+  'a0000001-0001-4001-8001-000000000031'::uuid,
+  ou.id,
+  'a0000001-0001-4001-8001-000000000021'::uuid,
+  'a0000001-0001-4001-8001-000000000021'::uuid,
+  'completed'::booking.appointment_status,
+  'staff_mobile'::booking.appointment_source,
+  'push'::core.communication_channel,
+  '2026-04-10T14:00:00+01'::timestamptz,
+  '2026-04-10T15:00:00+01'::timestamptz,
+  false,
+  'Fixture: Alice past cut & style (visit closed).'
+FROM auth.users ou WHERE lower(ou.email) = 'owner@sheer.local';
+
+INSERT INTO booking.appointments (
+  id, business_id, location_id, client_profile_id, booked_by_user_id,
+  requested_staff_profile_id, assigned_staff_profile_id, status, source,
+  communication_preference, scheduled_start_at, scheduled_end_at, next_available_requested, notes_for_staff
+)
+SELECT
+  'd0000001-0001-4001-8001-000000000073'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000012'::uuid,
+  'a0000001-0001-4001-8001-000000000032'::uuid,
+  ou.id,
+  'a0000001-0001-4001-8001-000000000022'::uuid,
+  'a0000001-0001-4001-8001-000000000022'::uuid,
+  'confirmed'::booking.appointment_status,
+  'client_mobile'::booking.appointment_source,
+  'sms'::core.communication_channel,
+  '2026-04-29T15:00:00+01'::timestamptz,
+  '2026-04-29T18:00:00+01'::timestamptz,
+  false,
+  'Fixture: Bob upcoming balayage (Soho).'
+FROM auth.users ou WHERE lower(ou.email) = 'owner@sheer.local';
+
+INSERT INTO booking.appointments (
+  id, business_id, location_id, client_profile_id, booked_by_user_id,
+  requested_staff_profile_id, assigned_staff_profile_id, status, source,
+  communication_preference, scheduled_start_at, scheduled_end_at, next_available_requested, notes_for_staff
+)
+SELECT
+  'd0000001-0001-4001-8001-000000000074'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000012'::uuid,
+  'a0000001-0001-4001-8001-000000000032'::uuid,
+  ou.id,
+  'a0000001-0001-4001-8001-000000000022'::uuid,
+  'a0000001-0001-4001-8001-000000000022'::uuid,
+  'completed'::booking.appointment_status,
+  'staff_mobile'::booking.appointment_source,
+  'sms'::core.communication_channel,
+  '2026-04-12T11:00:00+01'::timestamptz,
+  '2026-04-12T13:30:00+01'::timestamptz,
+  false,
+  'Fixture: Bob past full head colour + lab formula (visit closed).'
+FROM auth.users ou WHERE lower(ou.email) = 'owner@sheer.local';
+
+INSERT INTO booking.appointments (
+  id, business_id, location_id, client_profile_id, booked_by_user_id,
+  requested_staff_profile_id, assigned_staff_profile_id, status, source,
+  communication_preference, scheduled_start_at, scheduled_end_at, next_available_requested, notes_for_staff
+)
+SELECT
+  'd0000001-0001-4001-8001-000000000075'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000013'::uuid,
+  'a0000001-0001-4001-8001-000000000031'::uuid,
+  ou.id,
+  NULL,
+  NULL,
+  'pending_confirmation'::booking.appointment_status,
+  'client_web'::booking.appointment_source,
+  'email'::core.communication_channel,
+  '2026-04-30T16:00:00+01'::timestamptz,
+  '2026-04-30T16:30:00+01'::timestamptz,
+  true,
+  'Fixture: Alice Clapham consultation — next-available queue.'
+FROM auth.users ou WHERE lower(ou.email) = 'owner@sheer.local';
+
+INSERT INTO booking.appointment_services (id, appointment_id, service_id, assigned_staff_profile_id, service_name_snapshot, duration_minutes, unit_price, quantity, line_total, sort_order)
+VALUES
+  ('d1100001-0001-4001-8001-000000000071'::uuid, 'd0000001-0001-4001-8001-000000000071'::uuid, 'c1010001-0001-4001-8001-000000000002'::uuid, 'a0000001-0001-4001-8001-000000000021'::uuid, 'Root Colour', 90, 95.00, 1, 95.00, 0),
+  ('d1100001-0001-4001-8001-000000000072'::uuid, 'd0000001-0001-4001-8001-000000000072'::uuid, 'c1010001-0001-4001-8001-000000000004'::uuid, 'a0000001-0001-4001-8001-000000000021'::uuid, 'Cut & Style', 60, 72.00, 1, 72.00, 0),
+  ('d1100001-0001-4001-8001-000000000073'::uuid, 'd0000001-0001-4001-8001-000000000073'::uuid, 'c1020001-0001-4001-8001-000000000007'::uuid, 'a0000001-0001-4001-8001-000000000022'::uuid, 'Balayage', 180, 225.00, 1, 225.00, 0),
+  ('d1100001-0001-4001-8001-000000000074'::uuid, 'd0000001-0001-4001-8001-000000000074'::uuid, 'c1020001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000022'::uuid, 'Full Head Colour', 150, 170.00, 1, 170.00, 0),
+  ('d1100001-0001-4001-8001-000000000075'::uuid, 'd0000001-0001-4001-8001-000000000075'::uuid, 'c1030001-0001-4001-8001-000000000008'::uuid, NULL, 'Consultation', 30, 0.00, 1, 0.00, 0);
+
+INSERT INTO booking.appointment_status_events (id, appointment_id, previous_status, new_status, changed_by_user_id, reason)
+SELECT
+  'd2100001-0001-4001-8001-000000000071'::uuid,
+  'd0000001-0001-4001-8001-000000000071'::uuid,
+  'pending_confirmation'::booking.appointment_status,
+  'confirmed'::booking.appointment_status,
+  u.id,
+  'Seed: deposit received + stylist confirmed.'
+FROM auth.users u WHERE lower(u.email) = 'owner@sheer.local';
+
+INSERT INTO booking.deposits (id, business_id, location_id, appointment_id, provider, provider_intent_id, status, amount, currency_code, collected_at)
+VALUES (
+  'd3100001-0001-4001-8001-000000000071'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000011'::uuid,
+  'd0000001-0001-4001-8001-000000000071'::uuid,
+  'stripe',
+  'pi_seed_alice_root_001',
+  'captured'::booking.deposit_status,
+  25.00,
+  'GBP',
+  '2026-04-24T09:15:00+01'::timestamptz
+);
+
+INSERT INTO booking.visits (
+  id, business_id, location_id, appointment_id, client_profile_id, staff_profile_id,
+  checked_in_at, started_at, completed_at, status,
+  subtotal_amount, formula_charge_amount, retail_charge_amount, discount_amount, total_amount, notes
+)
+VALUES
+  (
+    'e0000001-0001-4001-8001-000000000081'::uuid,
+    'a0000001-0001-4001-8001-000000000001'::uuid,
+    'a0000001-0001-4001-8001-000000000011'::uuid,
+    'd0000001-0001-4001-8001-000000000072'::uuid,
+    'a0000001-0001-4001-8001-000000000031'::uuid,
+    'a0000001-0001-4001-8001-000000000021'::uuid,
+    '2026-04-10T13:55:00+01'::timestamptz,
+    '2026-04-10T14:00:00+01'::timestamptz,
+    '2026-04-10T15:05:00+01'::timestamptz,
+    'completed'::booking.visit_status,
+    72.00,
+    0.00,
+    0.00,
+    0.00,
+    72.00,
+    'Alice visit: cut & style only.'
+  ),
+  (
+    'e0000001-0001-4001-8001-000000000082'::uuid,
+    'a0000001-0001-4001-8001-000000000001'::uuid,
+    'a0000001-0001-4001-8001-000000000012'::uuid,
+    'd0000001-0001-4001-8001-000000000074'::uuid,
+    'a0000001-0001-4001-8001-000000000032'::uuid,
+    'a0000001-0001-4001-8001-000000000022'::uuid,
+    '2026-04-12T10:55:00+01'::timestamptz,
+    '2026-04-12T11:00:00+01'::timestamptz,
+    '2026-04-12T13:35:00+01'::timestamptz,
+    'completed'::booking.visit_status,
+    170.00,
+    45.00,
+    0.00,
+    0.00,
+    215.00,
+    'Bob visit: colour service + lab formula billing line.'
+  );
+
+-- ---------------------------------------------------------------------------
+-- CRM: notes, patch tests, allergy, visit summaries, photo metadata
+-- ---------------------------------------------------------------------------
+INSERT INTO crm.client_notes (id, business_id, location_id, client_profile_id, staff_profile_id, visibility, note_body)
+VALUES
+  (
+    'a3160001-0001-4001-8001-000000000031'::uuid,
+    'a0000001-0001-4001-8001-000000000001'::uuid,
+    'a0000001-0001-4001-8001-000000000011'::uuid,
+    'a0000001-0001-4001-8001-000000000031'::uuid,
+    'a0000001-0001-4001-8001-000000000021'::uuid,
+    'internal'::crm.note_visibility,
+    'Alice prefers cooler toners; avoid warm gold reflects near face frame.'
+  ),
+  (
+    'a3160001-0001-4001-8001-000000000032'::uuid,
+    'a0000001-0001-4001-8001-000000000001'::uuid,
+    'a0000001-0001-4001-8001-000000000012'::uuid,
+    'a0000001-0001-4001-8001-000000000032'::uuid,
+    'a0000001-0001-4001-8001-000000000022'::uuid,
+    'internal'::crm.note_visibility,
+    'Bob: monitor scalp sensitivity after colour — patch test discipline required.'
+  );
+
+INSERT INTO crm.patch_tests (id, business_id, location_id, client_profile_id, recorded_by_staff_profile_id, patch_tested_at, status, expires_at, notes)
+VALUES
+  (
+    'a3170001-0001-4001-8001-000000000031'::uuid,
+    'a0000001-0001-4001-8001-000000000001'::uuid,
+    'a0000001-0001-4001-8001-000000000011'::uuid,
+    'a0000001-0001-4001-8001-000000000031'::uuid,
+    'a0000001-0001-4001-8001-000000000021'::uuid,
+    '2026-03-01T12:00:00+00'::timestamptz,
+    'pass'::crm.patch_test_status,
+    '2026-12-31T23:59:59+00'::timestamptz,
+    'Valid colour start patch test (fixture).'
+  ),
+  (
+    'a3170001-0001-4001-8001-000000000032'::uuid,
+    'a0000001-0001-4001-8001-000000000001'::uuid,
+    'a0000001-0001-4001-8001-000000000012'::uuid,
+    'a0000001-0001-4001-8001-000000000032'::uuid,
+    'a0000001-0001-4001-8001-000000000022'::uuid,
+    '2025-01-10T10:00:00+00'::timestamptz,
+    'pass'::crm.patch_test_status,
+    '2025-04-10T23:59:59+01'::timestamptz,
+    'Expired patch test window (fixture) — re-test before next major colour.'
+  );
+
+INSERT INTO crm.allergy_records (id, business_id, location_id, client_profile_id, recorded_by_staff_profile_id, allergen, severity, reaction_details, active, noted_at)
+VALUES (
+  'a3180001-0001-4001-8001-000000000032'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000012'::uuid,
+  'a0000001-0001-4001-8001-000000000032'::uuid,
+  'a0000001-0001-4001-8001-000000000022'::uuid,
+  'PPD (paraphenylenediamine)',
+  'high'::crm.allergy_severity,
+  'Historical reaction to dark dye lines; avoid PPD-based oxidative colour.',
+  true,
+  '2025-06-01T00:00:00+01'::timestamptz
+);
+
+INSERT INTO crm.visit_summaries (id, business_id, location_id, visit_id, client_profile_id, staff_profile_id, service_summary, stylist_notes, aftercare_notes, client_visible)
+VALUES
+  (
+    'a3190001-0001-4001-8001-000000000081'::uuid,
+    'a0000001-0001-4001-8001-000000000001'::uuid,
+    'a0000001-0001-4001-8001-000000000011'::uuid,
+    'e0000001-0001-4001-8001-000000000081'::uuid,
+    'a0000001-0001-4001-8001-000000000031'::uuid,
+    'a0000001-0001-4001-8001-000000000021'::uuid,
+    'Cut & style — precision bob refresh, perimeter cleaned, face-framing softened.',
+    'Internal: used point cutting on crown for weight removal.',
+    'Use sulphate-free shampoo; heat protection before blow dry.',
+    true
+  ),
+  (
+    'a3190001-0001-4001-8001-000000000082'::uuid,
+    'a0000001-0001-4001-8001-000000000001'::uuid,
+    'a0000001-0001-4001-8001-000000000012'::uuid,
+    'e0000001-0001-4001-8001-000000000082'::uuid,
+    'a0000001-0001-4001-8001-000000000032'::uuid,
+    'a0000001-0001-4001-8001-000000000022'::uuid,
+    'Full head colour refresh — natural depth restored, ends glossed.',
+    'Internal: lifted banding at crown; glossed ends with acidic toner.',
+    'Wait 48h before first wash; cool rinse extends tone longevity.',
+    true
+  );
+
+INSERT INTO crm.visit_photos (id, business_id, location_id, visit_id, client_profile_id, uploaded_by_user_id, photo_kind, storage_bucket, storage_path, file_name, mime_type, size_bytes, taken_at)
+SELECT
+  'a3150001-0001-4001-8001-000000000081'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000011'::uuid,
+  'e0000001-0001-4001-8001-000000000081'::uuid,
+  'a0000001-0001-4001-8001-000000000031'::uuid,
+  u.id,
+  'after'::crm.visit_photo_kind,
+  'visit-photos',
+  'fixtures/luke-ormsby/alice-after-2026-04-10.jpg',
+  'alice-after-2026-04-10.jpg',
+  'image/jpeg',
+  524288,
+  '2026-04-10T15:00:00+01'::timestamptz
+FROM auth.users u WHERE lower(u.email) = 'stylist.alpha@sheer.local';
+
+-- ---------------------------------------------------------------------------
+-- Rota: Mon–Fri shifts this ISO week (2026-04-20..24) + breaks + sick leave
+-- ---------------------------------------------------------------------------
+INSERT INTO rota.shifts (id, business_id, location_id, staff_profile_id, shift_date, start_at, end_at, status, role_label, notes)
+VALUES
+  ('a2a00001-0001-4001-8001-000000000201'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000011'::uuid, 'a0000001-0001-4001-8001-000000000021'::uuid, '2026-04-20', '2026-04-20T09:00:00+01'::timestamptz, '2026-04-20T17:00:00+01'::timestamptz, 'published'::rota.shift_status, 'Stylist', 'Fixture week — alpha Chelsea'),
+  ('a2a00001-0001-4001-8001-000000000202'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000011'::uuid, 'a0000001-0001-4001-8001-000000000021'::uuid, '2026-04-21', '2026-04-21T09:00:00+01'::timestamptz, '2026-04-21T17:00:00+01'::timestamptz, 'published'::rota.shift_status, 'Stylist', 'Fixture week — alpha Chelsea'),
+  ('a2a00001-0001-4001-8001-000000000203'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000011'::uuid, 'a0000001-0001-4001-8001-000000000021'::uuid, '2026-04-22', '2026-04-22T09:00:00+01'::timestamptz, '2026-04-22T17:00:00+01'::timestamptz, 'published'::rota.shift_status, 'Stylist', 'Fixture week — alpha Chelsea'),
+  ('a2a00001-0001-4001-8001-000000000204'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000011'::uuid, 'a0000001-0001-4001-8001-000000000021'::uuid, '2026-04-23', '2026-04-23T09:00:00+01'::timestamptz, '2026-04-23T17:00:00+01'::timestamptz, 'published'::rota.shift_status, 'Stylist', 'Fixture week — alpha Chelsea'),
+  ('a2a00001-0001-4001-8001-000000000205'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000011'::uuid, 'a0000001-0001-4001-8001-000000000021'::uuid, '2026-04-24', '2026-04-24T09:00:00+01'::timestamptz, '2026-04-24T17:00:00+01'::timestamptz, 'published'::rota.shift_status, 'Stylist', 'Fixture week — alpha Chelsea'),
+  ('a2b00001-0001-4001-8001-000000000201'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000012'::uuid, 'a0000001-0001-4001-8001-000000000022'::uuid, '2026-04-20', '2026-04-20T10:00:00+01'::timestamptz, '2026-04-20T18:00:00+01'::timestamptz, 'published'::rota.shift_status, 'Stylist', 'Fixture week — beta Soho'),
+  ('a2b00001-0001-4001-8001-000000000202'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000012'::uuid, 'a0000001-0001-4001-8001-000000000022'::uuid, '2026-04-21', '2026-04-21T10:00:00+01'::timestamptz, '2026-04-21T18:00:00+01'::timestamptz, 'published'::rota.shift_status, 'Stylist', 'Fixture week — beta Soho'),
+  ('a2b00001-0001-4001-8001-000000000203'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000012'::uuid, 'a0000001-0001-4001-8001-000000000022'::uuid, '2026-04-22', '2026-04-22T10:00:00+01'::timestamptz, '2026-04-22T18:00:00+01'::timestamptz, 'published'::rota.shift_status, 'Stylist', 'Fixture week — beta Soho'),
+  ('a2b00001-0001-4001-8001-000000000204'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000012'::uuid, 'a0000001-0001-4001-8001-000000000022'::uuid, '2026-04-23', '2026-04-23T10:00:00+01'::timestamptz, '2026-04-23T18:00:00+01'::timestamptz, 'published'::rota.shift_status, 'Stylist', 'Fixture week — beta Soho'),
+  ('a2b00001-0001-4001-8001-000000000205'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000012'::uuid, 'a0000001-0001-4001-8001-000000000022'::uuid, '2026-04-24', '2026-04-24T10:00:00+01'::timestamptz, '2026-04-24T18:00:00+01'::timestamptz, 'published'::rota.shift_status, 'Stylist', 'Fixture week — beta Soho');
+
+INSERT INTO rota.shift_breaks (id, shift_id, start_at, end_at, paid, notes)
+VALUES
+  ('a2c00001-0001-4001-8001-000000000201'::uuid, 'a2a00001-0001-4001-8001-000000000201'::uuid, '2026-04-20T12:30:00+01'::timestamptz, '2026-04-20T13:00:00+01'::timestamptz, false, 'Lunch'),
+  ('a2c00001-0001-4001-8001-000000000202'::uuid, 'a2a00001-0001-4001-8001-000000000202'::uuid, '2026-04-21T12:30:00+01'::timestamptz, '2026-04-21T13:00:00+01'::timestamptz, false, 'Lunch'),
+  ('a2c00001-0001-4001-8001-000000000203'::uuid, 'a2a00001-0001-4001-8001-000000000203'::uuid, '2026-04-22T12:30:00+01'::timestamptz, '2026-04-22T13:00:00+01'::timestamptz, false, 'Lunch'),
+  ('a2c00001-0001-4001-8001-000000000204'::uuid, 'a2a00001-0001-4001-8001-000000000204'::uuid, '2026-04-23T12:30:00+01'::timestamptz, '2026-04-23T13:00:00+01'::timestamptz, false, 'Lunch'),
+  ('a2c00001-0001-4001-8001-000000000205'::uuid, 'a2a00001-0001-4001-8001-000000000205'::uuid, '2026-04-24T12:30:00+01'::timestamptz, '2026-04-24T13:00:00+01'::timestamptz, false, 'Lunch'),
+  ('a2c00001-0001-4001-8001-000000000211'::uuid, 'a2b00001-0001-4001-8001-000000000201'::uuid, '2026-04-20T13:00:00+01'::timestamptz, '2026-04-20T13:30:00+01'::timestamptz, false, 'Lunch'),
+  ('a2c00001-0001-4001-8001-000000000212'::uuid, 'a2b00001-0001-4001-8001-000000000202'::uuid, '2026-04-21T13:00:00+01'::timestamptz, '2026-04-21T13:30:00+01'::timestamptz, false, 'Lunch'),
+  ('a2c00001-0001-4001-8001-000000000213'::uuid, 'a2b00001-0001-4001-8001-000000000203'::uuid, '2026-04-22T13:00:00+01'::timestamptz, '2026-04-22T13:30:00+01'::timestamptz, false, 'Lunch'),
+  ('a2c00001-0001-4001-8001-000000000214'::uuid, 'a2b00001-0001-4001-8001-000000000204'::uuid, '2026-04-23T13:00:00+01'::timestamptz, '2026-04-23T13:30:00+01'::timestamptz, false, 'Lunch'),
+  ('a2c00001-0001-4001-8001-000000000215'::uuid, 'a2b00001-0001-4001-8001-000000000205'::uuid, '2026-04-24T13:00:00+01'::timestamptz, '2026-04-24T13:30:00+01'::timestamptz, false, 'Lunch');
+
+INSERT INTO rota.leave_requests (id, business_id, location_id, staff_profile_id, start_at, end_at, leave_type, status, requested_by_user_id, reviewed_by_user_id, reason)
+SELECT
+  'a2d00001-0001-4001-8001-000000000022'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000012'::uuid,
+  'a0000001-0001-4001-8001-000000000022'::uuid,
+  '2026-04-22T00:00:00+01'::timestamptz,
+  '2026-04-22T23:59:00+01'::timestamptz,
+  'sick'::rota.leave_type,
+  'approved'::rota.leave_status,
+  u_beta.id,
+  u_mgr.id,
+  'Fixture: sick day impacts availability + downstream targets.'
+FROM auth.users u_beta
+JOIN auth.users u_mgr ON lower(u_mgr.email) = 'manager.beta@sheer.local'
+WHERE lower(u_beta.email) = 'stylist.beta@sheer.local';
+
+-- ---------------------------------------------------------------------------
+-- Inventory: products + location stock (must precede lab.formula_items FKs)
+-- ---------------------------------------------------------------------------
+INSERT INTO inventory.products (id, business_id, sku, name, brand, category, unit_of_measure, cost_per_unit, retail_price, active)
+VALUES
+  ('c0c00001-0001-4001-8001-000000000041'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'COL-PPD-FREE-01', 'PPD-free colour cream base', 'FixtureCo', 'Colour', 'grams'::inventory.product_unit, 0.1200, NULL, true),
+  ('c0c00001-0001-4001-8001-000000000042'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'DEV-6-01', 'Developer 6%', 'FixtureCo', 'Developer', 'grams'::inventory.product_unit, 0.0200, NULL, true),
+  ('c0c00001-0001-4001-8001-000000000043'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'TON-GLOSS-01', 'Gloss toner concentrate', 'FixtureCo', 'Toner', 'grams'::inventory.product_unit, 0.1800, NULL, true);
+
+INSERT INTO inventory.location_stock (id, business_id, location_id, product_id, on_hand_quantity, reserved_quantity, reorder_level_quantity, target_par_quantity)
+VALUES
+  ('a3110001-0001-4001-8001-000000000011'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000011'::uuid, 'c0c00001-0001-4001-8001-000000000043'::uuid, 85, 0, 120, 400),
+  ('a3110001-0001-4001-8001-000000000012'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000012'::uuid, 'c0c00001-0001-4001-8001-000000000042'::uuid, 900, 0, 500, 2000),
+  ('a3110001-0001-4001-8001-000000000013'::uuid, 'a0000001-0001-4001-8001-000000000001'::uuid, 'a0000001-0001-4001-8001-000000000012'::uuid, 'c0c00001-0001-4001-8001-000000000043'::uuid, 210, 0, 250, 800);
+
+-- ---------------------------------------------------------------------------
+-- Lab: device pairing + Bob formula on completed Soho visit
+-- ---------------------------------------------------------------------------
+INSERT INTO lab.device_pairings (id, business_id, location_id, staff_profile_id, device_identifier, device_name, platform, status)
+VALUES (
+  'd1010001-0001-4001-8001-000000000022'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000012'::uuid,
+  'a0000001-0001-4001-8001-000000000022'::uuid,
+  'sheer-lab-tablet-soho-001',
+  'Soho Lab Tablet',
+  'android',
+  'paired'::lab.device_pairing_status
+);
+
+INSERT INTO lab.formulas (
+  id, business_id, location_id, client_profile_id, visit_id, staff_profile_id,
+  status, name, notes, total_weight_grams, calculated_cost_amount, billing_amount,
+  billing_last_recalculated_at, inventory_ready, manual_fallback_used, client_visible_summary
+)
+VALUES (
+  'f0000001-0001-4001-8001-000000000051'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000012'::uuid,
+  'a0000001-0001-4001-8001-000000000032'::uuid,
+  'e0000001-0001-4001-8001-000000000082'::uuid,
+  'a0000001-0001-4001-8001-000000000022'::uuid,
+  'finalized'::lab.formula_status,
+  'Bob — refresh gloss mix (Soho)',
+  'PPD-free gloss pathway; weights include bowl waste allowance in metadata.',
+  118,
+  12.30,
+  45.00,
+  '2026-04-12T13:20:00+01'::timestamptz,
+  true,
+  false,
+  'Custom gloss refresh for lasting shine (client-safe summary).'
+);
+
+INSERT INTO lab.formula_items (id, formula_id, product_id, line_no, ingredient_name_snapshot, quantity_grams, unit_cost_amount, extended_cost_amount, is_manual, metadata)
+VALUES
+  ('f1010001-0001-4001-8001-000000000001'::uuid, 'f0000001-0001-4001-8001-000000000051'::uuid, 'c0c00001-0001-4001-8001-000000000042'::uuid, 1, 'Developer 6%', 40, 0.0200, 0.80, false, '{"waste_grams":6}'::jsonb),
+  ('f1010001-0001-4001-8001-000000000002'::uuid, 'f0000001-0001-4001-8001-000000000051'::uuid, 'c0c00001-0001-4001-8001-000000000043'::uuid, 2, 'Gloss toner concentrate', 28, 0.1800, 5.04, false, '{"waste_grams":4}'::jsonb),
+  ('f1010001-0001-4001-8001-000000000003'::uuid, 'f0000001-0001-4001-8001-000000000051'::uuid, NULL, 3, 'Manual acidifier balance (fallback line)', 12, 0.2500, 3.00, true, '{}'::jsonb);
+
+INSERT INTO lab.formula_events (id, formula_id, event_type, actor_user_id, details)
+SELECT
+  'f1020001-0001-4001-8001-000000000051'::uuid,
+  'f0000001-0001-4001-8001-000000000051'::uuid,
+  'finalized'::lab.formula_event_type,
+  u.id,
+  '{"source":"sheer_lab_fixture","lines":3}'::jsonb
+FROM auth.users u WHERE lower(u.email) = 'stylist.beta@sheer.local';
+
+INSERT INTO lab.formula_versions (id, formula_id, version_no, source_event_id, name_snapshot, notes_snapshot, total_weight_grams, calculated_cost_amount, billing_amount, payload)
+VALUES (
+  'f2010001-0001-4001-8001-000000000051'::uuid,
+  'f0000001-0001-4001-8001-000000000051'::uuid,
+  1,
+  'f1020001-0001-4001-8001-000000000051'::uuid,
+  'Bob — refresh gloss mix (Soho)',
+  'Snapshot after finalize.',
+  118,
+  12.30,
+  45.00,
+  '{"fixture":true}'::jsonb
+);
+
+-- ---------------------------------------------------------------------------
+-- Inventory: movements (formula usage), waste, low stock alert
+-- ---------------------------------------------------------------------------
+INSERT INTO inventory.stock_movements (id, business_id, location_id, product_id, visit_id, formula_id, movement_type, quantity_delta, unit_cost_amount, reason, recorded_by_user_id)
+SELECT
+  'a3130001-0001-4001-8001-000000000082'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000012'::uuid,
+  'c0c00001-0001-4001-8001-000000000042'::uuid,
+  'e0000001-0001-4001-8001-000000000082'::uuid,
+  'f0000001-0001-4001-8001-000000000051'::uuid,
+  'formula_usage'::inventory.stock_movement_type,
+  -40,
+  0.0200,
+  'Fixture: formula mix consumption (developer).',
+  u.id
+FROM auth.users u WHERE lower(u.email) = 'stylist.beta@sheer.local';
+
+INSERT INTO inventory.stock_movements (id, business_id, location_id, product_id, visit_id, formula_id, movement_type, quantity_delta, unit_cost_amount, reason, recorded_by_user_id)
+SELECT
+  'a3130001-0001-4001-8001-000000000083'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000012'::uuid,
+  'c0c00001-0001-4001-8001-000000000043'::uuid,
+  'e0000001-0001-4001-8001-000000000082'::uuid,
+  'f0000001-0001-4001-8001-000000000051'::uuid,
+  'formula_usage'::inventory.stock_movement_type,
+  -28,
+  0.1800,
+  'Fixture: formula mix consumption (toner).',
+  u.id
+FROM auth.users u WHERE lower(u.email) = 'stylist.beta@sheer.local';
+
+INSERT INTO inventory.waste_events (id, business_id, location_id, product_id, formula_id, quantity_wasted, cost_impact_amount, reason, recorded_by_user_id, occurred_at)
+SELECT
+  'a3140001-0001-4001-8001-000000000051'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000012'::uuid,
+  'c0c00001-0001-4001-8001-000000000043'::uuid,
+  'f0000001-0001-4001-8001-000000000051'::uuid,
+  2,
+  0.36,
+  'Bowl residue + brush-off (fixture).',
+  u.id,
+  '2026-04-12T13:25:00+01'::timestamptz
+FROM auth.users u WHERE lower(u.email) = 'stylist.beta@sheer.local';
+
+INSERT INTO inventory.low_stock_alerts (id, business_id, location_id, product_id, location_stock_id, status, notes)
+VALUES (
+  'a3120001-0001-4001-8001-000000000011'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000011'::uuid,
+  'c0c00001-0001-4001-8001-000000000043'::uuid,
+  'a3110001-0001-4001-8001-000000000011'::uuid,
+  'open'::inventory.low_stock_status,
+  'Chelsea toner below reorder par (fixture).'
+);
+
+-- ---------------------------------------------------------------------------
+-- Billing: visit charges + totals + payment (Bob completed visit)
+-- ---------------------------------------------------------------------------
+INSERT INTO billing.visit_charges (id, business_id, location_id, visit_id, appointment_service_id, formula_id, charge_type, description, quantity, unit_amount, total_amount, tax_setting_id, tax_amount, owner_visible_only)
+VALUES
+  (
+    'b1010001-0001-4001-8001-000000000001'::uuid,
+    'a0000001-0001-4001-8001-000000000001'::uuid,
+    'a0000001-0001-4001-8001-000000000012'::uuid,
+    'e0000001-0001-4001-8001-000000000082'::uuid,
+    'd1100001-0001-4001-8001-000000000074'::uuid,
+    NULL,
+    'service'::billing.visit_charge_type,
+    'Full Head Colour (appointment service)',
+    1,
+    170.00,
+    170.00,
+    'b2010001-0001-4001-8001-000000000012'::uuid,
+    0.00,
+    false
+  ),
+  (
+    'b1010001-0001-4001-8001-000000000002'::uuid,
+    'a0000001-0001-4001-8001-000000000001'::uuid,
+    'a0000001-0001-4001-8001-000000000012'::uuid,
+    'e0000001-0001-4001-8001-000000000082'::uuid,
+    NULL,
+    'f0000001-0001-4001-8001-000000000051'::uuid,
+    'formula'::billing.visit_charge_type,
+    'Sheer Lab formula service charge (flat rule)',
+    1,
+    45.00,
+    45.00,
+    'b2010001-0001-4001-8001-000000000012'::uuid,
+    0.00,
+    false
+  );
+
+INSERT INTO billing.visit_totals (id, business_id, location_id, visit_id, subtotal_amount, discount_amount, tax_amount, deposit_amount, payment_amount, refund_amount, total_amount, balance_due_amount, closed_at)
+VALUES (
+  'b1020001-0001-4001-8001-000000000082'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000012'::uuid,
+  'e0000001-0001-4001-8001-000000000082'::uuid,
+  215.00,
+  0.00,
+  0.00,
+  0.00,
+  215.00,
+  0.00,
+  215.00,
+  0.00,
+  '2026-04-12T13:40:00+01'::timestamptz
+);
+
+INSERT INTO billing.payments (id, business_id, location_id, visit_id, appointment_id, provider, provider_reference, status, direction, amount, currency_code, received_at)
+VALUES (
+  'b1030001-0001-4001-8001-000000000082'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000012'::uuid,
+  'e0000001-0001-4001-8001-000000000082'::uuid,
+  NULL,
+  'card'::billing.payment_provider,
+  'ch_seed_bob_visit_082',
+  'succeeded'::billing.payment_status,
+  'inbound'::billing.payment_direction,
+  215.00,
+  'GBP',
+  '2026-04-12T13:41:00+01'::timestamptz
+);
+
+INSERT INTO billing.visit_totals (id, business_id, location_id, visit_id, subtotal_amount, discount_amount, tax_amount, deposit_amount, payment_amount, refund_amount, total_amount, balance_due_amount, closed_at)
+VALUES (
+  'b1020001-0001-4001-8001-000000000081'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000011'::uuid,
+  'e0000001-0001-4001-8001-000000000081'::uuid,
+  72.00,
+  0.00,
+  0.00,
+  0.00,
+  72.00,
+  0.00,
+  72.00,
+  0.00,
+  '2026-04-10T15:10:00+01'::timestamptz
+);
+
+-- ---------------------------------------------------------------------------
+-- Comms: preference history + notification + logs (WhatsApp provider + SMS)
+-- ---------------------------------------------------------------------------
+INSERT INTO comms.communication_preferences_history (id, business_id, location_id, client_profile_id, changed_by_user_id, channel, preference_status, source, reason, effective_at)
+SELECT
+  'a3a00001-0001-4001-8001-000000000031'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000011'::uuid,
+  'a0000001-0001-4001-8001-000000000031'::uuid,
+  u.id,
+  'sms'::core.communication_channel,
+  'opted_in'::comms.preference_status,
+  'onboarding',
+  'Marketing SMS off by default; transactional SMS allowed.',
+  '2026-01-05T10:00:00+00'::timestamptz
+FROM auth.users u WHERE lower(u.email) = 'owner@sheer.local';
+
+INSERT INTO comms.communication_preferences_history (id, business_id, location_id, client_profile_id, changed_by_user_id, channel, preference_status, source, reason, effective_at)
+SELECT
+  'a3a00001-0001-4001-8001-000000000032'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000012'::uuid,
+  'a0000001-0001-4001-8001-000000000032'::uuid,
+  u.id,
+  'sms'::core.communication_channel,
+  'opted_in'::comms.preference_status,
+  'onboarding',
+  'Bob prefers SMS confirmations.',
+  '2026-01-06T10:00:00+00'::timestamptz
+FROM auth.users u WHERE lower(u.email) = 'owner@sheer.local';
+
+INSERT INTO comms.communication_preferences_history (id, business_id, location_id, client_profile_id, changed_by_user_id, channel, preference_status, source, reason, effective_at)
+SELECT
+  'a3a00001-0001-4001-8001-000000000033'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000011'::uuid,
+  'a0000001-0001-4001-8001-000000000031'::uuid,
+  u.id,
+  'push'::core.communication_channel,
+  'opted_in'::comms.preference_status,
+  'whatsapp_business',
+  'Alice opted into WhatsApp-style push notifications for booking updates.',
+  '2026-02-01T10:00:00+00'::timestamptz
+FROM auth.users u WHERE lower(u.email) = 'owner@sheer.local';
+
+INSERT INTO comms.notification_events (id, business_id, location_id, client_profile_id, appointment_id, template_id, channel, trigger_event, status, scheduled_for, sent_at, payload)
+VALUES (
+  'a3b00001-0001-4001-8001-000000000071'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000011'::uuid,
+  'a0000001-0001-4001-8001-000000000031'::uuid,
+  'd0000001-0001-4001-8001-000000000071'::uuid,
+  'b3010001-0001-4001-8001-000000000013'::uuid,
+  'push'::core.communication_channel,
+  'appointment_reminder',
+  'queued'::comms.notification_status,
+  '2026-04-26T18:00:00+01'::timestamptz,
+  NULL,
+  '{"fixture":true,"appointment_id":"d0000001-0001-4001-8001-000000000071"}'::jsonb
+);
+
+INSERT INTO comms.message_logs (id, business_id, location_id, client_profile_id, user_id, notification_event_id, channel, direction, provider, provider_message_id, status, subject, body_excerpt, occurred_at)
+VALUES
+  (
+    'a3c00001-0001-4001-8001-000000000071'::uuid,
+    'a0000001-0001-4001-8001-000000000001'::uuid,
+    'a0000001-0001-4001-8001-000000000011'::uuid,
+    'a0000001-0001-4001-8001-000000000031'::uuid,
+    NULL,
+    NULL,
+    'push'::core.communication_channel,
+    'outbound'::comms.message_direction,
+    'whatsapp',
+    'wamid.seed.alice.confirm.001',
+    'delivered'::comms.notification_status,
+    'Booking confirmed',
+    'Your Chelsea appointment is confirmed for Mon 27 Apr 10:00. Reply STOP to opt out.',
+    '2026-04-24T09:20:00+01'::timestamptz
+  ),
+  (
+    'a3c00001-0001-4001-8001-000000000073'::uuid,
+    'a0000001-0001-4001-8001-000000000001'::uuid,
+    'a0000001-0001-4001-8001-000000000012'::uuid,
+    'a0000001-0001-4001-8001-000000000032'::uuid,
+    NULL,
+    NULL,
+    'sms'::core.communication_channel,
+    'outbound'::comms.message_direction,
+    'twilio',
+    'SM_seed_bob_reminder_001',
+    'sent'::comms.notification_status,
+    'Reminder',
+    'Reminder: Soho balayage on Wed 29 Apr 15:00. Reply HELP for options.',
+    '2026-04-28T09:00:00+01'::timestamptz
+  );
+
+-- ---------------------------------------------------------------------------
+-- Analytics: target snapshots (supports service_target = hourly*3*hours)
+-- ---------------------------------------------------------------------------
+INSERT INTO analytics.stylist_target_snapshots (
+  id, business_id, location_id, staff_profile_id, snapshot_date,
+  rota_hours, absence_hours, service_target_amount, retail_target_amount,
+  actual_service_sales_amount, actual_retail_sales_amount, progressive_base_rate_percent, source_formula
+)
+VALUES
+  (
+    'a4a00001-0001-4001-8001-000000000021'::uuid,
+    'a0000001-0001-4001-8001-000000000001'::uuid,
+    'a0000001-0001-4001-8001-000000000011'::uuid,
+    'a0000001-0001-4001-8001-000000000021'::uuid,
+    '2026-04-24',
+    37.50,
+    0.00,
+    2137.50,
+    213.75,
+    72.00,
+    0.00,
+    12.50,
+    'hourly_rate * 3 * rota_hours'
+  ),
+  (
+    'a4a00001-0001-4001-8001-000000000022'::uuid,
+    'a0000001-0001-4001-8001-000000000001'::uuid,
+    'a0000001-0001-4001-8001-000000000012'::uuid,
+    'a0000001-0001-4001-8001-000000000022'::uuid,
+    '2026-04-24',
+    31.00,
+    8.00,
+    1860.00,
+    186.00,
+    170.00,
+    0.00,
+    10.00,
+    'hourly_rate * 3 * rota_hours'
+  );
+
+INSERT INTO analytics.commission_runs (id, business_id, location_id, period_start, period_end, status, rules_version, result_payload, created_by_user_id)
+SELECT
+  'a4b00001-0001-4001-8001-000000000001'::uuid,
+  'a0000001-0001-4001-8001-000000000001'::uuid,
+  NULL,
+  '2026-04-01',
+  '2026-04-30',
+  'draft'::analytics.commission_run_status,
+  'fixture-v1',
+  '{"note":"Placeholder commission payload for owner/admin testing."}'::jsonb,
+  u.id
+FROM auth.users u WHERE lower(u.email) = 'owner@sheer.local';
+
+INSERT INTO analytics.location_daily_metrics (id, business_id, location_id, metric_date, bookings_count, completed_visits_count, no_show_count, service_revenue_amount, retail_revenue_amount, formula_revenue_amount)
+VALUES
+  (
+    'a4c00001-0001-4001-8001-000000000011'::uuid,
+    'a0000001-0001-4001-8001-000000000001'::uuid,
+    'a0000001-0001-4001-8001-000000000011'::uuid,
+    '2026-04-10',
+    1,
+    1,
+    0,
+    72.00,
+    0.00,
+    0.00
+  ),
+  (
+    'a4c00001-0001-4001-8001-000000000012'::uuid,
+    'a0000001-0001-4001-8001-000000000001'::uuid,
+    'a0000001-0001-4001-8001-000000000012'::uuid,
+    '2026-04-12',
+    1,
+    1,
+    0,
+    170.00,
+    0.00,
+    45.00
+  );
+
+COMMIT;

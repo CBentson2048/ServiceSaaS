@@ -24,6 +24,6 @@
     "outDir": "./dist",
     "types": ["node", "jest"]
   },
-  "include": ["src/**/*", "test/**/*"],
+  "include": ["src/**/*", "test/**/*", "scripts/**/*"],
   "exclude": ["node_modules", "dist"]
 }

@@ -1,28 +1,54 @@
 # Database
 
-Source of truth for the Sheer Platform data layer. We target **PostgreSQL** via **Supabase**.
+Production-minded PostgreSQL/Supabase schema assets for the Sheer Platform.
 
-## Layout
+## Source of truth
 
-- `schema/` — raw SQL schema files (one file per domain, e.g. `auth.sql`, `booking.sql`).
-- `migrations/` — ordered, timestamped migration files (applied by Supabase CLI or a migrator of choice).
-- `policies/` — Row Level Security policies. Kept separate from schema for easy review.
-- `seeds/` — seed data for development and staging environments.
+- `database/migrations/` — ordered, runnable SQL migrations
+- `database/schema/` — schema intent and modeling notes
+- `database/policies/` — RLS rationale and access model notes
+- `database/seeds/` — seed strategy and environment guidance
 
-## Tooling (planned)
+## Runtime schemas
 
-- Supabase CLI for local dev DB + migrations (`supabase start`, `supabase db push`).
-- `drizzle-kit` or `prisma` in the API layer once we commit to an ORM.
+- `core`
+- `booking`
+- `crm`
+- `rota`
+- `lab`
+- `inventory`
+- `billing`
+- `analytics`
+- `comms`
+- `audit`
 
-## Conventions
+## Design rules
 
-- Snake_case for tables and columns.
-- `id uuid primary key default gen_random_uuid()` on all mutable entities.
-- `created_at`, `updated_at` timestamps everywhere.
-- Every tenant-scoped table has a `location_id` (or `tenant_id`) column and a matching RLS policy.
+- Multi-business tenancy is anchored at `core.businesses`.
+- `core.locations` provides current location isolation and future white-label readiness.
+- Operational tables keep raw source-of-truth data; analytics tables are snapshots, not replacements.
+- UUID primary keys, `timestamptz`, `snake_case`, and `created_at` / `updated_at` are the default.
+- Financial data is stored in the database, but default RLS remains conservative for stylist-facing access.
+- Rota is the source of truth for availability and target calculations.
 
-## Environments
+## Migration sequence
 
-- **Local** — Supabase running in Docker via `supabase start`.
-- **Staging** — dedicated Supabase project.
-- **Production** — dedicated Supabase project with backups + point-in-time recovery.
+1. `0001_extensions_and_helpers.sql`
+2. `0002_create_app_schemas.sql`
+3. `0003_core_businesses_locations_users.sql`
+4. `0004_core_settings_roles_clients.sql`
+5. `0005_booking_services_appointments_visits.sql`
+6. `0006_crm_notes_patchtests_photos.sql`
+7. `0007_rota_shifts_breaks_leave_absence.sql`
+8. `0008_lab_formulas_formula_items.sql`
+9. `0009_inventory_products_stock_movements.sql`
+10. `0010_billing_tax_rules_charges_payments.sql`
+11. `0011_comms_notifications_message_logs.sql`
+12. `0012_analytics_targets_commissions.sql`
+13. `0013_audit_events_webhooks.sql`
+14. `0014_rls_helpers_and_policies.sql`
+15. `0015_indexes_constraints_views.sql`
+
+## Operational note
+
+This repo keeps migration authoring under `database/migrations/`. If your deployment workflow still expects a different execution path, wire that runner explicitly rather than splitting schema intent across duplicate SQL sources.
