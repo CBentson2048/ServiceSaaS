@@ -1,18 +1,28 @@
 # Schema
 
-Declarative SQL schema per domain. Migrations in `../migrations` are derived from changes here.
+This folder documents schema intent. Executable SQL lives in `supabase/migrations/`.
 
-## Planned files
+## Week 1 foundation domains
 
-- `auth.sql` — users, roles, tenants, invites.
-- `locations.sql` — salon locations, opening hours.
-- `staff.sql` — stylists, assistants, front-desk; links to auth users.
-- `clients.sql` — client profiles, contact info, consent flags.
-- `services.sql` — service catalogue, durations, pricing.
-- `bookings.sql` — appointments, statuses, deposits.
-- `rota.sql` — shifts, availability, time off.
-- `sheer_lab.sql` — BLE formula sessions, saved recipes.
-- `billing.sql` — Stripe customer/subscription links, invoices.
-- `commission.sql` — commission rules, payroll runs.
+- `core` — businesses, locations, user profiles, memberships, staff, clients, location settings
+- `booking` — services, appointments, appointment services, deposits, visits
+- `rota` — shifts, breaks, leave requests, absence events
+- `billing` — tax settings and location billing rules
+- `comms` — notification events and message logs
 
-Keep each file idempotent where possible (`create table if not exists ...`) for easy re-runs in dev.
+## Reserved schemas
+
+These schemas are created in Week 1 so the platform layout is stable, but their deeper table sets are intentionally deferred:
+
+- `crm`
+- `lab`
+- `inventory`
+- `analytics`
+- `audit`
+
+## Modeling posture
+
+- Model for multiple businesses and multiple locations from day one.
+- Keep the operational source of truth normalized.
+- Carry `business_id` and `location_id` through tenant-owned operational tables where it matters for joins and RLS.
+- Use conservative separation between operational access and finance/config access.

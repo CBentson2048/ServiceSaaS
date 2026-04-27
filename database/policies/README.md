@@ -1,20 +1,33 @@
-# Row Level Security policies
+# Row Level Security Policies
 
-Every tenant-scoped table **must** have RLS enabled and at least one policy per role that should access it.
+RLS is implemented in `supabase/migrations/0007_rls_helpers_and_policies.sql`.
 
-## Guiding rules
+## Week 1 posture
 
-- `owner` / `manager` — full access within their tenant/location(s).
-- `stylist` / `assistant` / `front_desk` — read their location's operational data, write only to their own records (e.g. their own bookings, notes).
-- `client` — read/write only their own profile, bookings, and messages.
-- Service role key (backend only) — bypasses RLS for system jobs.
+- All Week 1 tenant-owned operational tables have RLS enabled.
+- Policies are membership-driven using `business_id`, `location_id`, and authenticated user relationships.
+- Owners are business-wide.
+- Managers are location-scoped.
+- Stylists only get their own appointment/rota context where explicitly allowed.
+- Clients only get their own appointment, deposit, visit, and communication history.
 
-## Structure
+## Helper functions
 
-One file per table or domain (e.g. `bookings.sql`, `clients.sql`). Each file:
+The initial policy layer uses small `security definer` helpers:
 
-1. Enables RLS on the target table.
-2. Defines policies, grouped by role.
-3. Ends with a comment block listing expected queries and whether they pass/fail.
+- `public.is_business_owner(...)`
+- `public.has_location_membership(...)`
+- `public.has_location_management_scope(...)`
+- `public.has_location_desk_access(...)`
+- `public.current_staff_profile_id(...)`
+- `public.is_staff_profile_owner(...)`
+- `public.is_client_profile_owner(...)`
+- `public.can_access_appointment(...)`
 
-Keep policies narrow. Prefer many small policies over one that tries to cover every case.
+## Conservative boundary
+
+Week 1 keeps direct write access tight. The intended pattern is:
+
+- client apps read through RLS-safe tables/views
+- privileged writes go through the NestJS API using service-role access
+- later domain tables inherit the same membership-first policy structure
