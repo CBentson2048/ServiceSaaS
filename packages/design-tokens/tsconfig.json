@@ -1,0 +1,11 @@
+{
+  "extends": "@sheer/config/tsconfig/base",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "noEmit": true,
+    "module": "CommonJS",
+    "moduleResolution": "Node"
+  },
+  "include": ["src/**/*"]
+}

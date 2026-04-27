@@ -16,6 +16,7 @@
     "build": "echo \"Mobile production builds use EAS: pnpm --filter mobile exec eas build\""
   },
   "dependencies": {
+    "@sheer/design-tokens": "workspace:*",
     "@sheer/types": "workspace:*",
     "@sheer/utils": "workspace:*",
     "expo": "~51.0.28",

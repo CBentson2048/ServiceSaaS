@@ -1,49 +1,64 @@
-import { formatCurrency, formatDate } from '@sheer/utils';
-import { StatCard } from '../components/StatCard';
-
-const CARDS = [
-  { title: 'Bookings', description: 'Upcoming and recent appointments across locations.' },
-  { title: 'CRM', description: 'Client profiles, visit history, and notes.' },
-  { title: 'Rota', description: 'Staff schedules, availability, and time off.' },
-  { title: 'Sheer Lab', description: 'BLE formula workflows and saved colour recipes.' },
-  { title: 'Commission', description: 'Per-stylist earnings and payroll exports.' },
-];
+import { useState } from 'react';
+import { AppText } from '../design';
+import { DiagnosticCard } from '../components/dashboard/DiagnosticCard';
+import { KpiStrip } from '../components/dashboard/KpiStrip';
+import { LocationCard } from '../components/dashboard/LocationCard';
+import { RangeTabs, type DashboardRange } from '../components/dashboard/RangeTabs';
+import { SectionLabel } from '../components/dashboard/SectionLabel';
+import { StylistsTable } from '../components/dashboard/StylistsTable';
+import { useDashboardSnapshot } from '../hooks/useDashboardSnapshot';
+import { toKpiItem, toLocationCardProps, toStylistRow } from './dashboardMappers';
 
 export function DashboardPage() {
+  const [range, setRange] = useState<DashboardRange>('today');
+  const { data } = useDashboardSnapshot(range);
+  const { greeting, kpis, salons, stylists, diagnostics } = data;
+
   return (
-    <div className="mx-auto max-w-6xl">
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-slate-900">Dashboard</h1>
-        <p className="text-sm text-slate-500">
-          {formatDate(new Date(), { dateStyle: 'full' })}
-        </p>
-      </div>
+    <div className="mx-auto w-full max-w-6xl px-4 py-6 lg:px-8">
+      <div className="overflow-hidden rounded-card-lg border border-border-strong bg-bg">
+        <div className="flex flex-col gap-3 border-b border-border bg-surface px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <AppText as="div" variant="subtitle" weight="medium">
+              Good morning, {greeting.ownerName}
+            </AppText>
+            <AppText as="div" variant="caption" tone="muted" className="mt-0.5">
+              {greeting.locationCount} locations · {greeting.stylistsOnToday} stylists on today · Last updated {greeting.lastUpdatedLabel}
+            </AppText>
+          </div>
+          <RangeTabs value={range} onChange={setRange} />
+        </div>
 
-      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <StatCard
-          title="Revenue today"
-          value={formatCurrency(0)}
-          description="Connect Stripe to start tracking takings."
-        />
-        <StatCard
-          title="Appointments"
-          value="0"
-          description="No bookings yet — connect a location to begin."
-        />
-        <StatCard
-          title="Active clients"
-          value="0"
-          description="CRM empty. Import from existing systems when ready."
-        />
-      </div>
+        <KpiStrip items={kpis.map(toKpiItem)} />
 
-      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
-        Modules
-      </h2>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {CARDS.map((card) => (
-          <StatCard key={card.title} title={card.title} description={card.description} />
-        ))}
+        <div className="px-6 py-5">
+          <SectionLabel>Salons at a glance</SectionLabel>
+          <div className="mb-6 grid gap-3.5 md:grid-cols-2">
+            {salons.map((salon) => (
+              <LocationCard key={salon.id} {...toLocationCardProps(salon)} />
+            ))}
+          </div>
+
+          <SectionLabel>All stylists today</SectionLabel>
+          <div className="mb-6">
+            <StylistsTable rows={stylists.map(toStylistRow)} />
+          </div>
+
+          <SectionLabel>Diagnostics</SectionLabel>
+          <div className="grid gap-3.5 lg:grid-cols-3">
+            {diagnostics.map((d) => (
+              <DiagnosticCard
+                key={d.id}
+                title={d.title}
+                subtitle={d.subtitle}
+                rows={d.rows}
+                footerLabel={d.footerLabel}
+                footerValue={d.footerValue}
+                footerTone={d.footerTone}
+              />
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );

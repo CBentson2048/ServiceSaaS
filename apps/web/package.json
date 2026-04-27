@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@sheer/design-tokens": "workspace:*",
     "@sheer/types": "workspace:*",
     "@sheer/utils": "workspace:*",
     "react": "^18.3.1",
