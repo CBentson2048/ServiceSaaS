@@ -11,7 +11,7 @@ export interface KpiItem {
 const HINT_CLASS: Record<NonNullable<KpiItem['hintTone']>, string> = {
   good: 'text-success-fill',
   purple: 'text-primary',
-  muted: 'text-white/40',
+  muted: '!text-white/50',
 };
 
 export interface KpiStripProps {
@@ -31,7 +31,8 @@ export function KpiStrip({ items }: KpiStripProps) {
             as="div"
             variant="title"
             weight="medium"
-            className="text-text-on-primary"
+            tone="onPrimary"
+            className="!text-white"
           >
             {item.value}
           </AppText>
@@ -39,7 +40,7 @@ export function KpiStrip({ items }: KpiStripProps) {
             as="div"
             variant="micro"
             uppercase
-            className="mt-1 text-white/40"
+            className="mt-1 !text-white/50"
           >
             {item.label}
           </AppText>

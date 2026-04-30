@@ -58,6 +58,9 @@ const TONE: Record<AppTextTone, string> = {
   brand: 'text-primary',
 };
 
+const TEXT_COLOR_OVERRIDE =
+  /(?:^|\s)text-(?:white|black|transparent|current|primary|text-|success|warning|danger|surface|bg|border|neutral|brand|ink)(?:[\s/-]|$)/;
+
 export function AppText(props: AppTextProps) {
   const {
     as: Component = 'span',
@@ -68,13 +71,14 @@ export function AppText(props: AppTextProps) {
     className,
     children,
   } = props;
+  const hasColorOverride = className ? TEXT_COLOR_OVERRIDE.test(className) : false;
 
   return (
     <Component
       className={cn(
         VARIANT[variant],
         WEIGHT[weight],
-        TONE[tone],
+        !hasColorOverride && TONE[tone],
         uppercase && 'uppercase tracking-[0.08em]',
         className,
       )}

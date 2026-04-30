@@ -19,11 +19,12 @@ export function Sidebar() {
           as="div"
           variant="subtitle"
           weight="medium"
-          className="tracking-[0.2em] text-text-on-primary"
+          tone="onPrimary"
+          className="tracking-[0.2em] !text-white"
         >
           SH<span className="text-primary">EE</span>R
         </AppText>
-        <AppText as="div" variant="micro" uppercase className="mt-1 text-white/40">
+        <AppText as="div" variant="micro" uppercase className="mt-1 !text-white/50">
           Operations
         </AppText>
       </div>
@@ -52,7 +53,7 @@ export function Sidebar() {
       </nav>
 
       <div className="border-t border-white/10 px-4 py-3">
-        <AppText variant="micro" uppercase className="text-white/40">
+        <AppText variant="micro" uppercase className="!text-white/50">
           v0.1.0
         </AppText>
       </div>
