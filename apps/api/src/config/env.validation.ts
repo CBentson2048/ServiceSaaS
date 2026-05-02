@@ -1,5 +1,24 @@
-import { plainToInstance } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, IsString, Max, Min, validateSync } from 'class-validator';
+import { plainToInstance, Transform } from 'class-transformer';
+import {
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+  validateSync,
+  type ValidationError,
+} from 'class-validator';
+
+/** Shell / CI often sets `PORT=` (empty). Dotenv does not override existing keys, so empty wins over `.env`. */
+function normalizePort(value: unknown): unknown {
+  const fallback = 3001;
+  if (value === '' || value === undefined || value === null) return fallback;
+  const s = String(value).trim();
+  if (s === '') return fallback;
+  const n = Number.parseInt(s, 10);
+  return Number.isNaN(n) ? value : n;
+}
 
 export enum NodeEnv {
   Development = 'development',
@@ -12,6 +31,7 @@ export class EnvConfig {
   @IsEnum(NodeEnv)
   NODE_ENV: NodeEnv = NodeEnv.Development;
 
+  @Transform(({ value }) => normalizePort(value))
   @IsInt()
   @Min(1)
   @Max(65535)
@@ -35,7 +55,7 @@ export function validateEnv(config: Record<string, unknown>): EnvConfig {
   const errors = validateSync(validated, { skipMissingProperties: false });
   if (errors.length > 0) {
     const message = errors
-      .map((e) => `${e.property}: ${Object.values(e.constraints ?? {}).join(', ')}`)
+      .map((e: ValidationError) => `${e.property}: ${Object.values(e.constraints ?? {}).join(', ')}`)
       .join('; ');
     throw new Error(`Invalid environment configuration: ${message}`);
   }
