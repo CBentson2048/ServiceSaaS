@@ -10,7 +10,7 @@
       "turbo.json",
       "tsconfig.base.json"
     ],
-    "buildCommand": "corepack enable && corepack prepare pnpm@10.33.0 --activate && CI=true pnpm install --frozen-lockfile && pnpm exec turbo run build --filter=@sheer/api"
+    "buildCommand": "pnpm exec turbo run build --filter=@sheer/api"
   },
   "deploy": {
     "startCommand": "node apps/api/dist/main.js",
