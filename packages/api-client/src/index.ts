@@ -1,4 +1,13 @@
-import type { PinUnlockRequest, PinUnlockResponse, SharedDevice } from '@sheer/domain';
+import type {
+  CurrentUserResponse,
+  LoginRequest,
+  LoginResponse,
+  LogoutRequest,
+  PinUnlockRequest,
+  PinUnlockResponse,
+  RefreshSessionRequest,
+  SharedDevice,
+} from '@sheer/domain';
 import type { AppointmentDetail, AppointmentSummary } from '@sheer/booking-core';
 import type { FormulaDraft, FormulaSavePayload } from '@sheer/lab-core';
 
@@ -8,11 +17,19 @@ export interface ApiClientOptions {
 }
 
 export interface ApiClient {
+  auth: AuthClient;
   labDevices: LabDeviceClient;
   labSessions: LabSessionClient;
   labPins: LabPinClient;
   labAppointments: LabAppointmentClient;
   labFormulas: LabFormulaClient;
+}
+
+export interface AuthClient {
+  login: (payload: LoginRequest) => Promise<LoginResponse>;
+  logout: (payload?: LogoutRequest) => Promise<void>;
+  me: () => Promise<CurrentUserResponse>;
+  refresh: (payload: RefreshSessionRequest) => Promise<LoginResponse>;
 }
 
 export interface LabDeviceClient {
@@ -87,6 +104,12 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
   const request = createRequest(options);
 
   return {
+    auth: {
+      login: (payload) => request('/auth/login', { method: 'POST', body: payload }),
+      logout: (payload = {}) => request('/auth/logout', { method: 'POST', body: payload }),
+      me: () => request('/auth/me'),
+      refresh: (payload) => request('/auth/refresh', { method: 'POST', body: payload }),
+    },
     labDevices: {
       register: (payload) => request('/lab/device/register', { method: 'POST', body: payload }),
       status: () => request('/lab/device/status'),

@@ -1,13 +1,15 @@
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { AuthProvider } from '../src/auth/AuthProvider';
 
 export default function RootLayout() {
   return (
-    <>
-      <StatusBar style="auto" />
+    <AuthProvider>
+      <StatusBar style="light" />
       <Stack
         screenOptions={{
-          headerStyle: { backgroundColor: '#ffffff' },
+          headerStyle: { backgroundColor: '#1C1628' },
+          headerTintColor: '#ffffff',
           headerTitleStyle: { fontWeight: '600' },
         }}
       >
@@ -18,6 +20,6 @@ export default function RootLayout() {
         <Stack.Screen name="rota" options={{ title: 'Rota' }} />
         <Stack.Screen name="performance" options={{ title: 'Performance' }} />
       </Stack>
-    </>
+    </AuthProvider>
   );
 }

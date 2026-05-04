@@ -40,6 +40,15 @@ export class EnvConfig {
   @IsOptional()
   @IsString()
   CORS_ORIGINS?: string;
+
+  @IsString()
+  SUPABASE_URL!: string;
+
+  @IsString()
+  SUPABASE_ANON_KEY!: string;
+
+  @IsString()
+  SUPABASE_SERVICE_ROLE_KEY!: string;
 }
 
 /**

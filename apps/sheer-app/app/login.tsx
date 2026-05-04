@@ -1,20 +1,92 @@
-import { router } from 'expo-router';
+import { useState } from 'react';
+import { Redirect, router } from 'expo-router';
+import { StyleSheet, Text, TextInput, View } from 'react-native';
+import { palette, radius, spacing } from '@sheer/design-tokens';
 import { AppButton, Card, Screen, SectionHeader } from '@sheer/ui-mobile';
+import { useAuth } from '../src/auth/AuthProvider';
 
 export default function LoginScreen() {
+  const auth = useAuth();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  if (auth.user?.role === 'stylist') {
+    return <Redirect href="/dashboard" />;
+  }
+
+  async function onSubmit() {
+    setError(null);
+    setIsSubmitting(true);
+
+    try {
+      await auth.signIn(email, password);
+      router.replace('/dashboard');
+    } catch {
+      setError('Sign in failed. Use an active stylist account for this app.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   return (
     <Screen>
       <SectionHeader
-        title="Sheer App"
-        subtitle="Personal stylist login placeholder. BLE scale workflows are intentionally not part of this app."
+        title="SHEER"
+        subtitle="Personal stylist app"
       />
       <Card>
         <SectionHeader
-          title="Sign in"
-          subtitle="Production auth will use normal personal credentials. Biometric login can be added in V2."
+          title="Welcome back"
+          subtitle="Sign in with your personal stylist credentials. Sheer Lab shared-device PIN auth is intentionally separate and will be implemented later."
         />
-        <AppButton label="Continue to dashboard" onPress={() => router.replace('/dashboard')} />
+        <View style={styles.form}>
+          <TextInput
+            autoCapitalize="none"
+            autoComplete="email"
+            inputMode="email"
+            onChangeText={setEmail}
+            placeholder="Email"
+            placeholderTextColor="rgba(255,255,255,0.4)"
+            style={styles.input}
+            value={email}
+          />
+          <TextInput
+            autoCapitalize="none"
+            onChangeText={setPassword}
+            placeholder="Password"
+            placeholderTextColor="rgba(255,255,255,0.4)"
+            secureTextEntry
+            style={styles.input}
+            value={password}
+          />
+          {error ? <Text style={styles.error}>{error}</Text> : null}
+        </View>
+        <AppButton
+          label={isSubmitting ? 'Signing in...' : 'Sign in'}
+          disabled={isSubmitting}
+          onPress={onSubmit}
+        />
       </Card>
     </Screen>
   );
 }
+
+const styles = StyleSheet.create({
+  form: {
+    gap: spacing.sm,
+  },
+  input: {
+    minHeight: 52,
+    borderRadius: radius.input,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.16)',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    color: palette.white,
+    paddingHorizontal: spacing.base,
+  },
+  error: {
+    color: '#FCA5A5',
+  },
+});

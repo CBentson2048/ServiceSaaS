@@ -1,28 +1,35 @@
 import { router } from 'expo-router';
 import { AppButton, Card, Screen, SectionHeader, StatTile } from '@sheer/ui-mobile';
+import { ProtectedScreen } from '../src/auth/ProtectedScreen';
+import { useAuth } from '../src/auth/AuthProvider';
 
 export default function DashboardScreen() {
+  const { signOut, user } = useAuth();
+
   return (
-    <Screen>
-      <SectionHeader
-        title="Stylist dashboard"
-        subtitle="Personal view of today, performance, bookings, rota, and commissions."
-      />
-      <StatTile label="Today's bookings" value="6" />
-      <StatTile label="Projected commission" value="GBP 124" />
-      <Card>
+    <ProtectedScreen allowedRoles={['stylist']}>
+      <Screen>
         <SectionHeader
-          title="App boundary"
-          subtitle="No BLE modules are imported here. Sheer Lab formula and scale workflows live in the separate tablet app and shared lab-core package."
+          title={`Hi ${user?.profile.fullName.split(' ')[0] ?? 'stylist'}`}
+          subtitle="Your personal dashboard, bookings, rota, and performance."
         />
-      </Card>
-      <AppButton label="Bookings" onPress={() => router.push('/bookings')} />
-      <AppButton label="Rota" variant="secondary" onPress={() => router.push('/rota')} />
-      <AppButton
-        label="Performance"
-        variant="secondary"
-        onPress={() => router.push('/performance')}
-      />
-    </Screen>
+        <StatTile label="Today's bookings" value="6" />
+        <StatTile label="Projected commission" value="GBP 124" />
+        <Card>
+          <SectionHeader
+            title="App boundary"
+            subtitle="Only stylist-facing areas are available here. Sheer Lab auth remains separate for the shared iPad workflow."
+          />
+        </Card>
+        <AppButton label="Bookings" onPress={() => router.push('/bookings')} />
+        <AppButton label="Rota" variant="secondary" onPress={() => router.push('/rota')} />
+        <AppButton
+          label="Performance"
+          variant="secondary"
+          onPress={() => router.push('/performance')}
+        />
+        <AppButton label="Logout" variant="secondary" onPress={() => void signOut()} />
+      </Screen>
+    </ProtectedScreen>
   );
 }

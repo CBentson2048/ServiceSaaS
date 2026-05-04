@@ -7,6 +7,7 @@
     "baseUrl": ".",
     "paths": {
       "@sheer/design-tokens": ["../../packages/design-tokens/src/index.ts"],
+      "@sheer/domain": ["../../packages/domain/src/index.ts"],
       "@sheer/ui-mobile": ["../../packages/ui-mobile/src/index.tsx"]
     }
   },
