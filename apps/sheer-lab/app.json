@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "Sheer Lab",
+    "slug": "sheer-lab",
+    "version": "0.1.0",
+    "scheme": "sheer-lab",
+    "orientation": "landscape",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": false,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.sheer.lab"
+    },
+    "android": {
+      "package": "com.sheer.lab"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": ["expo-router"],
+    "experiments": {
+      "typedRoutes": false
+    }
+  }
+}

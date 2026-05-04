@@ -11,7 +11,7 @@ export default function RootLayout() {
           headerTitleStyle: { fontWeight: '600' },
         }}
       >
-        <Stack.Screen name="index" options={{ title: 'Sheer Platform' }} />
+        <Stack.Screen name="index" options={{ title: 'Sheer App' }} />
       </Stack>
     </>
   );

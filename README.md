@@ -9,7 +9,8 @@ This repository is a **pnpm + TurboRepo monorepo**. All apps and shared packages
 ```
 .
 ├── apps
-│   ├── mobile   # Expo React Native app (staff + client experiences)
+│   ├── mobile   # Expo React Native app (personal Sheer App for stylists)
+│   ├── sheer-lab # Expo React Native app (shared salon tablet for basin workflows)
 │   ├── web      # Vite + React dashboard (owner/manager)
 │   └── api      # NestJS backend API
 ├── packages
@@ -28,7 +29,8 @@ This repository is a **pnpm + TurboRepo monorepo**. All apps and shared packages
 
 ## Apps
 
-- **apps/mobile** — Expo + TypeScript app using Expo Router. Entry point for stylists and clients (booking, check-in, Sheer Lab BLE formula workflows).
+- **apps/mobile** — Expo + TypeScript app using Expo Router. Personal Sheer App for stylists: dashboard, performance, commissions, bookings, and rota.
+- **apps/sheer-lab** — Expo + TypeScript app using Expo Router. Shared salon tablet app for device binding, salon-scoped stylist PIN login, formula capture, product usage tracking, BLE scale status, and billing handoff.
 - **apps/web** — Vite + React + TypeScript + React Router + Tailwind CSS. Owner/manager dashboard: bookings, CRM, rota, commission, reporting.
 - **apps/api** — NestJS + TypeScript backend. Modular structure ready for auth, booking, CRM, rota, sheer-lab, billing, and commission modules.
 
@@ -37,7 +39,7 @@ This repository is a **pnpm + TurboRepo monorepo**. All apps and shared packages
 - Node.js **20 LTS** (`nvm use` will pick up `.nvmrc`)
 - **pnpm** 9+ (`npm install -g pnpm`)
 - For mobile:
-  - [Expo CLI](https://docs.expo.dev/) (runs via `pnpm --filter mobile start`)
+  - [Expo CLI](https://docs.expo.dev/) (runs via `pnpm --filter mobile start` or `pnpm --filter @sheer/sheer-lab start`)
   - Xcode (iOS) / Android Studio (Android) if running native builds
 
 ## Install
@@ -66,6 +68,7 @@ Run for a single workspace:
 pnpm --filter web dev
 pnpm --filter api dev
 pnpm --filter mobile start
+pnpm --filter @sheer/sheer-lab start
 ```
 
 ## Build
@@ -79,6 +82,7 @@ Turbo caches build artifacts per-package. Individual build outputs:
 - `apps/web/dist`
 - `apps/api/dist`
 - `apps/mobile` — bundled via Expo (`eas build` for production binaries)
+- `apps/sheer-lab` — bundled via Expo (`eas build` for production tablet binaries)
 
 ## Environments
 

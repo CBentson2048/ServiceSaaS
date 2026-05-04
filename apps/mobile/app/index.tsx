@@ -9,19 +9,19 @@ interface ModuleCard {
 }
 
 const MODULES: ModuleCard[] = [
-  { title: 'Booking', description: 'Book, reschedule, and manage appointments.', href: '/' },
-  { title: 'Client CRM', description: 'Client profiles, notes, and visit history.', href: '/' },
-  { title: 'Sheer Lab', description: 'BLE formula workflows and saved recipes.', href: '/' },
-  { title: 'Dashboard', description: 'Today at a glance — bookings and revenue.', href: '/' },
+  { title: 'Dashboard', description: 'Today at a glance: bookings, rota, and revenue.', href: '/' },
+  { title: 'Performance', description: 'Track stats, goals, commissions, and trends.', href: '/' },
+  { title: 'Bookings', description: 'View upcoming appointments and client notes.', href: '/' },
+  { title: 'Rota', description: 'See shifts, breaks, and availability.', href: '/' },
 ];
 
 export default function Home() {
   return (
     <SafeAreaView style={styles.safe} edges={['bottom']}>
       <ScrollView contentContainerStyle={styles.content}>
-        <Text style={styles.heading}>Sheer Platform Mobile</Text>
+        <Text style={styles.heading}>Sheer App</Text>
         <Text style={styles.subheading}>
-          Staff and client tools for multi-location salon operations.
+          Personal stylist app for dashboard, performance, commissions, bookings, and rota.
         </Text>
 
         <View style={styles.grid}>
