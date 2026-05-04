@@ -1,6 +1,7 @@
 import { Redirect, router } from 'expo-router';
 import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { ScaleStatusBar } from '../src/ble/ScaleStatusBar';
+import { useLabActivity } from '../src/session/LabActivityBoundary';
 import { useSheerLabSession } from '../src/session/SheerLabSessionProvider';
 import { LabButton } from '../src/ui/LabButton';
 import { LabCard } from '../src/ui/LabCard';
@@ -17,13 +18,14 @@ const INGREDIENTS = [
 
 export default function MixFormulaScreen() {
   const { boundSalon, stylistSession } = useSheerLabSession();
+  const recordActivity = useLabActivity();
 
   if (!boundSalon) {
     return <Redirect href="/bind" />;
   }
 
   if (!stylistSession) {
-    return <Redirect href="/pin" />;
+    return <Redirect href="/locked" />;
   }
 
   return (
@@ -99,7 +101,11 @@ export default function MixFormulaScreen() {
             </View>
             <View style={styles.quickAmounts}>
               {['+5g', '+10g', '+25g'].map((amount) => (
-                <Pressable key={amount} style={styles.quickAmount}>
+                <Pressable
+                  key={amount}
+                  style={styles.quickAmount}
+                  onPress={() => recordActivity('ble_capture')}
+                >
                   <LabText weight="bold" tone="brand">
                     {amount}
                   </LabText>
@@ -119,6 +125,7 @@ export default function MixFormulaScreen() {
               keyboardType="decimal-pad"
               placeholder="Enter grams manually"
               placeholderTextColor={labTheme.colors.inputPlaceholder}
+              onChangeText={() => recordActivity('formula_editing')}
               style={styles.input}
             />
           </LabCard>
@@ -143,7 +150,14 @@ export default function MixFormulaScreen() {
             </LabText>
             <StatusPill label="Inventory update pending" tone="warning" />
             <StatusPill label="Billing handoff prepared" tone="success" />
-            <LabButton label="Save formula" fullWidth onPress={() => router.push('/review')} />
+            <LabButton
+              label="Save formula"
+              fullWidth
+              onPress={() => {
+                recordActivity('save_action');
+                router.push('/review');
+              }}
+            />
           </LabCard>
         </View>
       </View>

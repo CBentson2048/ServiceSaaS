@@ -1,3 +1,4 @@
+import { useRouter } from 'expo-router';
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { clearBoundSalon, readBoundSalon, writeBoundSalon } from './deviceBindingStorage';
 import { verifySalonScopedPin } from '../domain/mockDirectory';
@@ -21,6 +22,7 @@ interface SheerLabSessionValue {
 const SheerLabSessionContext = createContext<SheerLabSessionValue | null>(null);
 
 export function SheerLabSessionProvider({ children }: { children: ReactNode }) {
+  const router = useRouter();
   const [isHydrating, setIsHydrating] = useState(true);
   const [boundSalon, setBoundSalon] = useState<BoundSalon | null>(null);
   const [stylistSession, setStylistSession] = useState<StylistSession | null>(null);
@@ -81,9 +83,10 @@ export function SheerLabSessionProvider({ children }: { children: ReactNode }) {
       },
       signOutStylist: () => {
         setStylistSession(null);
+        router.replace('/locked');
       },
     }),
-    [boundSalon, isHydrating, stylistSession],
+    [boundSalon, isHydrating, router, stylistSession],
   );
 
   return (

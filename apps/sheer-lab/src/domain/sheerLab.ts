@@ -25,6 +25,6 @@ export interface StylistPinRecord {
   salonId: string;
   stylistId: string;
   stylistName: string;
-  pin: string;
+  pinHash: string;
   role: 'stylist' | 'manager';
 }

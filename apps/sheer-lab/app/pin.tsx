@@ -1,6 +1,8 @@
 import { Redirect, router } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
+import { ConnectionBadge } from '@sheer/ui-mobile';
+import { useLabActivity } from '../src/session/LabActivityBoundary';
 import { useSheerLabSession } from '../src/session/SheerLabSessionProvider';
 import { LabButton } from '../src/ui/LabButton';
 import { LabCard } from '../src/ui/LabCard';
@@ -13,6 +15,7 @@ const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'clear', '0', 'back']
 
 export default function StylistPinScreen() {
   const { boundSalon, signInWithPin, unbindSalon } = useSheerLabSession();
+  const recordActivity = useLabActivity();
   const [pin, setPin] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -28,7 +31,8 @@ export default function StylistPinScreen() {
 
     if (result.ok) {
       setError(null);
-      router.replace('/home');
+      recordActivity('pin_unlock');
+      router.replace('/unlocking');
       return;
     }
 
@@ -66,6 +70,7 @@ export default function StylistPinScreen() {
     <LabScreen scroll={false} contentStyle={styles.content}>
       <View style={styles.contextPanel}>
         <StatusPill label="Shared salon tablet" />
+        <ConnectionBadge label="Scale reconnecting" state="reconnecting" />
         <LabText variant="display" weight="bold">
           Stylist PIN
         </LabText>

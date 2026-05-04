@@ -16,7 +16,7 @@ export default function FormulaReviewScreen() {
   }
 
   if (!stylistSession) {
-    return <Redirect href="/pin" />;
+    return <Redirect href="/locked" />;
   }
 
   return (
@@ -69,7 +69,7 @@ export default function FormulaReviewScreen() {
 
       <View style={styles.actions}>
         <LabButton label="Start another formula" onPress={() => router.replace('/mix')} />
-        <LabButton label="Return home" variant="secondary" onPress={() => router.replace('/home')} />
+        <LabButton label="Return home" variant="secondary" onPress={() => router.replace('/')} />
       </View>
     </LabScreen>
   );

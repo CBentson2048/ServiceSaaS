@@ -1,0 +1,41 @@
+{
+  "name": "@sheer/auth",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared auth contracts and session helpers for Sheer Platform.",
+  "main": "./dist/cjs/index.js",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/cjs/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/cjs/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.js",
+      "default": "./dist/cjs/index.js"
+    }
+  },
+  "files": ["dist/"],
+  "scripts": {
+    "build": "pnpm run build:cjs && pnpm run build:esm && pnpm run build:esm:pkg",
+    "build:cjs": "tsc -p tsconfig.cjs.json",
+    "build:esm": "tsc -p tsconfig.esm.json",
+    "build:esm:pkg": "node -e \"require('fs').writeFileSync('dist/esm/package.json', JSON.stringify({type:'module'},null,2))\"",
+    "dev": "tsc -p tsconfig.cjs.json --watch",
+    "lint": "eslint \"src/**/*.ts\"",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist .turbo"
+  },
+  "dependencies": {
+    "@sheer/domain": "workspace:*"
+  },
+  "devDependencies": {
+    "@sheer/config": "workspace:*",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-import": "^2.31.0",
+    "rimraf": "^5.0.10",
+    "typescript": "^5.5.4"
+  }
+}

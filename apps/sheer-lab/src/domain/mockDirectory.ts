@@ -16,20 +16,41 @@ export const SALON_OPTIONS: SalonOption[] = [
 ];
 
 const STYLIST_PINS: StylistPinRecord[] = [
-  { salonId: 'salon-soho', stylistId: 'sty-aria', stylistName: 'Aria Stone', pin: '1234', role: 'stylist' },
-  { salonId: 'salon-soho', stylistId: 'sty-maya', stylistName: 'Maya Reed', pin: '2468', role: 'manager' },
-  { salonId: 'salon-shoreditch', stylistId: 'sty-noor', stylistName: 'Noor Patel', pin: '1234', role: 'stylist' },
+  {
+    salonId: 'salon-soho',
+    stylistId: 'sty-aria',
+    stylistName: 'Aria Stone',
+    pinHash: 'lab_pin_scaffold_b68a7768',
+    role: 'stylist',
+  },
+  {
+    salonId: 'salon-soho',
+    stylistId: 'sty-maya',
+    stylistName: 'Maya Reed',
+    pinHash: 'lab_pin_scaffold_3476503c',
+    role: 'manager',
+  },
+  {
+    salonId: 'salon-shoreditch',
+    stylistId: 'sty-noor',
+    stylistName: 'Noor Patel',
+    pinHash: 'lab_pin_scaffold_8997838e',
+    role: 'stylist',
+  },
   {
     salonId: 'salon-shoreditch',
     stylistId: 'sty-jules',
     stylistName: 'Jules Hart',
-    pin: '8642',
+    pinHash: 'lab_pin_scaffold_7b658f8a',
     role: 'manager',
   },
 ];
 
 export function verifySalonScopedPin(salonId: string, pin: string): StylistSession | null {
-  const stylist = STYLIST_PINS.find((record) => record.salonId === salonId && record.pin === pin);
+  const pinHash = hashPinForScaffold(pin, salonId);
+  const stylist = STYLIST_PINS.find(
+    (record) => record.salonId === salonId && record.pinHash === pinHash,
+  );
 
   if (!stylist) {
     return null;
@@ -42,4 +63,16 @@ export function verifySalonScopedPin(salonId: string, pin: string): StylistSessi
     role: stylist.role,
     startedAtIso: new Date().toISOString(),
   };
+}
+
+function hashPinForScaffold(pin: string, salonId: string): string {
+  // TODO: move to the API and replace with Argon2/bcrypt plus server-side salt/pepper handling.
+  let hash = 2166136261;
+
+  for (const char of `${salonId}:${pin}`) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return `lab_pin_scaffold_${(hash >>> 0).toString(16)}`;
 }

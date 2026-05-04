@@ -16,12 +16,11 @@ export default function SessionHomeScreen() {
   }
 
   if (!stylistSession) {
-    return <Redirect href="/pin" />;
+    return <Redirect href="/locked" />;
   }
 
   function handleSignOut() {
     signOutStylist();
-    router.replace('/pin');
   }
 
   return (

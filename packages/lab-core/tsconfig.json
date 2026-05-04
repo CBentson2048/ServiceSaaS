@@ -1,0 +1,16 @@
+{
+  "extends": "../config/tsconfig/base.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "outDir": "dist",
+    "noEmit": true,
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "baseUrl": ".",
+    "rootDirs": ["src", "../domain/src"],
+    "paths": {
+      "@sheer/domain": ["../domain/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*"]
+}

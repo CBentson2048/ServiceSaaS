@@ -21,6 +21,13 @@
     "sourceMap": true,
     "removeComments": true,
     "baseUrl": "./",
+    "paths": {
+      "@sheer/auth": ["../../packages/auth/src/index.ts"],
+      "@sheer/booking-core": ["../../packages/booking-core/src/index.ts"],
+      "@sheer/design-tokens": ["../../packages/design-tokens/src/index.ts"],
+      "@sheer/domain": ["../../packages/domain/src/index.ts"],
+      "@sheer/lab-core": ["../../packages/lab-core/src/index.ts"]
+    },
     "outDir": "./dist",
     "types": ["node", "jest"]
   },

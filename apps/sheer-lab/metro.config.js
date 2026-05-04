@@ -1,5 +1,5 @@
 // Expo + pnpm monorepo Metro config.
-// Matches apps/mobile so workspace packages hot-reload and React resolves once.
+// Matches apps/sheer-app so workspace packages hot-reload and React resolves once.
 const { getDefaultConfig } = require('expo/metro-config');
 const path = require('path');
 

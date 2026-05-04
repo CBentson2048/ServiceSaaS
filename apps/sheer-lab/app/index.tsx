@@ -21,10 +21,14 @@ export default function EntryRoute() {
   }
 
   if (!stylistSession) {
-    return <Redirect href="/pin" />;
+    return <Redirect href="/locked" />;
   }
 
-  return <Redirect href="/home" />;
+  if (stylistSession.role === 'manager') {
+    return <Redirect href="/manager" />;
+  }
+
+  return <Redirect href="/appointments" />;
 }
 
 const styles = StyleSheet.create({

@@ -1,8 +1,8 @@
-import { palette } from '../tokens/colors.js';
-import { radius } from '../tokens/radius.js';
-import { spacing } from '../tokens/spacing.js';
-import { typography } from '../tokens/typography.js';
-import type { Theme } from './types.js';
+import { palette } from '../tokens/colors';
+import { radius } from '../tokens/radius';
+import { spacing } from '../tokens/spacing';
+import { typography } from '../tokens/typography';
+import type { Theme } from './types';
 
 /**
  * Client mobile theme — light.

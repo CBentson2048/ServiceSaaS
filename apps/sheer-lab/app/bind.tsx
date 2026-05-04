@@ -20,7 +20,7 @@ export default function DeviceBindingScreen() {
     }
 
     await bindSalon(salon);
-    router.replace('/pin');
+    router.replace('/locked');
   }
 
   async function handleManagerReset() {

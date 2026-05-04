@@ -5,7 +5,7 @@ formula capture, product usage tracking, BLE scale status, and billing handoff.
 
 ## Architecture notes
 
-- This is a separate Expo app from `apps/mobile`; `apps/mobile` remains the personal Sheer App.
+- This is a separate Expo app from `apps/sheer-app`; `apps/sheer-app` remains the personal Sheer App.
 - Stylist PIN login is scoped by `salonId + pin`. A PIN must never be looked up globally.
 - Device binding is persisted locally so a bound tablet skips setup on the next launch.
 - BLE scale code is intentionally contained under `src/ble` in this app.

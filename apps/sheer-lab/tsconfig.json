@@ -3,7 +3,15 @@
   "compilerOptions": {
     "strict": true,
     "jsx": "react-jsx",
-    "moduleResolution": "Bundler"
+    "moduleResolution": "Bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@sheer/auth": ["../../packages/auth/src/index.ts"],
+      "@sheer/design-tokens": ["../../packages/design-tokens/src/index.ts"],
+      "@sheer/domain": ["../../packages/domain/src/index.ts"],
+      "@sheer/lab-core": ["../../packages/lab-core/src/index.ts"],
+      "@sheer/ui-mobile": ["../../packages/ui-mobile/src/index.tsx"]
+    }
   },
   "include": [
     "**/*.ts",

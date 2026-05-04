@@ -9,14 +9,21 @@ This repository is a **pnpm + TurboRepo monorepo**. All apps and shared packages
 ```
 .
 ├── apps
-│   ├── mobile   # Expo React Native app (personal Sheer App for stylists)
+│   ├── sheer-app # Expo React Native app (personal Sheer App for stylists)
 │   ├── sheer-lab # Expo React Native app (shared salon tablet for basin workflows)
 │   ├── web      # Vite + React dashboard (owner/manager)
 │   └── api      # NestJS backend API
 ├── packages
-│   ├── config   # Shared ESLint / tsconfig helpers
-│   ├── types    # Shared domain types
-│   └── utils    # Shared utilities (formatters, className helper, etc.)
+│   ├── domain       # Shared domain contracts and DTO-style types
+│   ├── api-client   # Typed HTTP client wrappers
+│   ├── auth         # Auth/session helper contracts
+│   ├── ui-mobile    # Shared React Native primitives
+│   ├── lab-core     # Reusable Sheer Lab domain logic
+│   ├── booking-core # Shared booking/queue contracts
+│   ├── design-tokens
+│   ├── config
+│   ├── types
+│   └── utils
 ├── database
 │   ├── schema     # SQL / Supabase schema definitions
 │   ├── migrations # Ordered migration files
@@ -29,7 +36,7 @@ This repository is a **pnpm + TurboRepo monorepo**. All apps and shared packages
 
 ## Apps
 
-- **apps/mobile** — Expo + TypeScript app using Expo Router. Personal Sheer App for stylists: dashboard, performance, commissions, bookings, and rota.
+- **apps/sheer-app** — Expo + TypeScript app using Expo Router. Personal Sheer App for stylists: dashboard, performance, commissions, bookings, and rota. BLE is intentionally excluded.
 - **apps/sheer-lab** — Expo + TypeScript app using Expo Router. Shared salon tablet app for device binding, salon-scoped stylist PIN login, formula capture, product usage tracking, BLE scale status, and billing handoff.
 - **apps/web** — Vite + React + TypeScript + React Router + Tailwind CSS. Owner/manager dashboard: bookings, CRM, rota, commission, reporting.
 - **apps/api** — NestJS + TypeScript backend. Modular structure ready for auth, booking, CRM, rota, sheer-lab, billing, and commission modules.
@@ -39,7 +46,7 @@ This repository is a **pnpm + TurboRepo monorepo**. All apps and shared packages
 - Node.js **20 LTS** (`nvm use` will pick up `.nvmrc`)
 - **pnpm** 9+ (`npm install -g pnpm`)
 - For mobile:
-  - [Expo CLI](https://docs.expo.dev/) (runs via `pnpm --filter mobile start` or `pnpm --filter @sheer/sheer-lab start`)
+  - [Expo CLI](https://docs.expo.dev/) (runs via `pnpm --filter @sheer/sheer-app start` or `pnpm --filter @sheer/sheer-lab start`)
   - Xcode (iOS) / Android Studio (Android) if running native builds
 
 ## Install
@@ -67,7 +74,7 @@ Run for a single workspace:
 ```bash
 pnpm --filter web dev
 pnpm --filter api dev
-pnpm --filter mobile start
+pnpm --filter @sheer/sheer-app start
 pnpm --filter @sheer/sheer-lab start
 ```
 
@@ -81,7 +88,7 @@ Turbo caches build artifacts per-package. Individual build outputs:
 
 - `apps/web/dist`
 - `apps/api/dist`
-- `apps/mobile` — bundled via Expo (`eas build` for production binaries)
+- `apps/sheer-app` — bundled via Expo (`eas build` for production phone binaries)
 - `apps/sheer-lab` — bundled via Expo (`eas build` for production tablet binaries)
 
 ## Environments

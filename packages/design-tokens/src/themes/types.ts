@@ -1,6 +1,6 @@
-import type { Radius } from '../tokens/radius.js';
-import type { Spacing } from '../tokens/spacing.js';
-import type { Typography } from '../tokens/typography.js';
+import type { Radius } from '../tokens/radius';
+import type { Spacing } from '../tokens/spacing';
+import type { Typography } from '../tokens/typography';
 
 export type ThemeMode = 'light' | 'dark';
 export type ThemeName = 'staff' | 'client' | 'web';

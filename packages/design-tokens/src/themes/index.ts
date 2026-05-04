@@ -1,12 +1,12 @@
-export * from './types.js';
-export { staffTheme } from './staffTheme.js';
-export { clientTheme } from './clientTheme.js';
-export { webTheme } from './webTheme.js';
+export * from './types';
+export { staffTheme } from './staffTheme';
+export { clientTheme } from './clientTheme';
+export { webTheme } from './webTheme';
 
-import { clientTheme } from './clientTheme.js';
-import { staffTheme } from './staffTheme.js';
-import { webTheme } from './webTheme.js';
-import type { Theme, ThemeName } from './types.js';
+import { clientTheme } from './clientTheme';
+import { staffTheme } from './staffTheme';
+import { webTheme } from './webTheme';
+import type { Theme, ThemeName } from './types';
 
 export const themes: Record<ThemeName, Theme> = {
   staff: staffTheme,

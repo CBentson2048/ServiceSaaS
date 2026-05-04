@@ -6,5 +6,7 @@ build
 coverage
 pnpm-lock.yaml
 .expo
-apps/mobile/android
-apps/mobile/ios
+apps/sheer-app/android
+apps/sheer-app/ios
+apps/sheer-lab/android
+apps/sheer-lab/ios
