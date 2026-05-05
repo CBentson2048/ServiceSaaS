@@ -49,6 +49,25 @@ export class EnvConfig {
 
   @IsString()
   SUPABASE_SERVICE_ROLE_KEY!: string;
+
+  /** Resend API key. Optional in dev — when missing, the EmailService logs payloads instead of sending. */
+  @IsOptional()
+  @IsString()
+  RESEND_API_KEY?: string;
+
+  /**
+   * RFC 5322 sender used by Resend (e.g. `Sheer <team@sheer.app>`). Must be on a verified
+   * domain in your Resend account. Falls back to `Sheer <onboarding@resend.dev>` (Resend's
+   * test sender) when unset, which can only deliver to the account owner's email.
+   */
+  @IsOptional()
+  @IsString()
+  RESEND_FROM_EMAIL?: string;
+
+  /** Public base URL the staff invitation link points to. Defaults to the first CORS origin. */
+  @IsOptional()
+  @IsString()
+  STAFF_INVITE_BASE_URL?: string;
 }
 
 /**

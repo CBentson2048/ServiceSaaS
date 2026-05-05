@@ -14,6 +14,7 @@ export function LoginPage() {
 
   const from = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname ?? '/';
   const justOnboarded = searchParams.get('onboarded') === '1';
+  const justAcceptedInvitation = searchParams.get('invitation') === 'accepted';
 
   if (auth.user) {
     return <Navigate to={from} replace />;
@@ -52,6 +53,12 @@ export function LoginPage() {
           {justOnboarded ? (
             <div className="rounded-input-lg border border-success-border bg-success-soft px-4 py-3 text-sm text-success">
               Your business workspace is ready. Sign in to access the owner dashboard.
+            </div>
+          ) : null}
+
+          {justAcceptedInvitation ? (
+            <div className="rounded-input-lg border border-success-border bg-success-soft px-4 py-3 text-sm text-success">
+              Invitation accepted. Sign in with the password you just created.
             </div>
           ) : null}
 

@@ -1,17 +1,32 @@
 import { NavLink } from 'react-router-dom';
+import type { UserRole } from '@sheer/domain';
 import { cn } from '@sheer/utils';
+import { useAuth } from '../auth/AuthProvider';
 import { AppText } from '../design';
 
-const NAV = [
+interface NavEntry {
+  to: string;
+  label: string;
+  end?: boolean;
+  allowedRoles?: UserRole[];
+}
+
+const NAV: NavEntry[] = [
   { to: '/', label: 'Dashboard', end: true },
   { to: '/bookings', label: 'Bookings' },
   { to: '/crm', label: 'CRM' },
   { to: '/rota', label: 'Rota' },
   { to: '/sheer-lab', label: 'Sheer Lab' },
   { to: '/commission', label: 'Commission' },
+  { to: '/team', label: 'Team', allowedRoles: ['owner'] },
 ];
 
 export function Sidebar() {
+  const { user } = useAuth();
+  const role = user?.role;
+  const visible = NAV.filter(
+    (entry) => !entry.allowedRoles || (role && entry.allowedRoles.includes(role)),
+  );
   return (
     <aside className="hidden w-60 shrink-0 flex-col bg-surface-ink-deep text-text-on-primary md:flex">
       <div className="px-6 py-5">
@@ -31,7 +46,7 @@ export function Sidebar() {
 
       <nav className="flex-1 px-3 py-2">
         <ul className="space-y-1">
-          {NAV.map((item) => (
+          {visible.map((item) => (
             <li key={item.to}>
               <NavLink
                 to={item.to}

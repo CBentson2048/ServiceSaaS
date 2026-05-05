@@ -1,11 +1,21 @@
 import type {
+  AcceptStaffInvitationRequest,
+  AcceptStaffInvitationResponse,
   BusinessSlugAvailabilityResponse,
   CreateAccountRequest,
+  CreateStaffInvitationRequest,
   CurrentUserResponse,
+  InvitationLookupResponse,
+  InvitationStatus,
+  ListStaffResponse,
   LoginResponse,
   OwnerOnboardingBootstrap,
   OwnerOnboardingRequest,
   OwnerOnboardingResponse,
+  StaffInvitation,
+  StaffInvitationWithToken,
+  UpdateStaffMemberRequest,
+  UpdateStaffMemberResponse,
 } from '@sheer/domain';
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL ?? 'http://localhost:3001').replace(/\/$/, '');
@@ -68,6 +78,103 @@ export async function registerOwnerOnboarding(
   payload: OwnerOnboardingRequest,
 ): Promise<OwnerOnboardingResponse> {
   return request<OwnerOnboardingResponse>('/owner/onboarding/register', {
+    method: 'POST',
+    body: payload,
+  });
+}
+
+// -------------------- Staff management (owner-only) --------------------
+
+export async function listStaff(accessToken: string): Promise<ListStaffResponse> {
+  return request<ListStaffResponse>('/owner/staff', { accessToken });
+}
+
+export async function updateStaffMember(
+  accessToken: string,
+  userId: string,
+  payload: UpdateStaffMemberRequest,
+): Promise<UpdateStaffMemberResponse> {
+  return request<UpdateStaffMemberResponse>(`/owner/staff/${encodeURIComponent(userId)}`, {
+    method: 'PATCH',
+    body: payload,
+    accessToken,
+  });
+}
+
+export async function deactivateStaffMember(
+  accessToken: string,
+  userId: string,
+): Promise<UpdateStaffMemberResponse> {
+  return request<UpdateStaffMemberResponse>(
+    `/owner/staff/${encodeURIComponent(userId)}/deactivate`,
+    { method: 'POST', accessToken },
+  );
+}
+
+export async function reactivateStaffMember(
+  accessToken: string,
+  userId: string,
+): Promise<UpdateStaffMemberResponse> {
+  return request<UpdateStaffMemberResponse>(
+    `/owner/staff/${encodeURIComponent(userId)}/reactivate`,
+    { method: 'POST', accessToken },
+  );
+}
+
+export async function listStaffInvitations(
+  accessToken: string,
+  status?: InvitationStatus | 'all',
+): Promise<StaffInvitation[]> {
+  const path =
+    status && status !== 'all'
+      ? `/owner/staff/invitations?status=${encodeURIComponent(status)}`
+      : '/owner/staff/invitations';
+  return request<StaffInvitation[]>(path, { accessToken });
+}
+
+export async function createStaffInvitation(
+  accessToken: string,
+  payload: CreateStaffInvitationRequest,
+): Promise<StaffInvitationWithToken> {
+  return request<StaffInvitationWithToken>('/owner/staff/invitations', {
+    method: 'POST',
+    body: payload,
+    accessToken,
+  });
+}
+
+export async function resendStaffInvitation(
+  accessToken: string,
+  invitationId: string,
+): Promise<StaffInvitationWithToken> {
+  return request<StaffInvitationWithToken>(
+    `/owner/staff/invitations/${encodeURIComponent(invitationId)}/resend`,
+    { method: 'POST', accessToken },
+  );
+}
+
+export async function revokeStaffInvitation(
+  accessToken: string,
+  invitationId: string,
+): Promise<StaffInvitation> {
+  return request<StaffInvitation>(
+    `/owner/staff/invitations/${encodeURIComponent(invitationId)}/revoke`,
+    { method: 'POST', accessToken },
+  );
+}
+
+// -------------------- Public invitation acceptance --------------------
+
+export async function inspectStaffInvitation(token: string): Promise<InvitationLookupResponse> {
+  return request<InvitationLookupResponse>(
+    `/staff/invitations/inspect?token=${encodeURIComponent(token)}`,
+  );
+}
+
+export async function acceptStaffInvitation(
+  payload: AcceptStaffInvitationRequest,
+): Promise<AcceptStaffInvitationResponse> {
+  return request<AcceptStaffInvitationResponse>('/staff/invitations/accept', {
     method: 'POST',
     body: payload,
   });

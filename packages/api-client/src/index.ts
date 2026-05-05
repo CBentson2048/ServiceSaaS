@@ -1,8 +1,14 @@
 import type {
+  AcceptStaffInvitationRequest,
+  AcceptStaffInvitationResponse,
   BusinessSlugAvailabilityResponse,
   CreateAccountRequest,
   CreateAccountResponse,
+  CreateStaffInvitationRequest,
   CurrentUserResponse,
+  InvitationLookupResponse,
+  InvitationStatus,
+  ListStaffResponse,
   LoginRequest,
   LoginResponse,
   LogoutRequest,
@@ -13,6 +19,10 @@ import type {
   PinUnlockResponse,
   RefreshSessionRequest,
   SharedDevice,
+  StaffInvitation,
+  StaffInvitationWithToken,
+  UpdateStaffMemberRequest,
+  UpdateStaffMemberResponse,
 } from '@sheer/domain';
 import type { AppointmentDetail, AppointmentSummary } from '@sheer/booking-core';
 import type { FormulaDraft, FormulaSavePayload } from '@sheer/lab-core';
@@ -25,6 +35,8 @@ export interface ApiClientOptions {
 export interface ApiClient {
   auth: AuthClient;
   ownerOnboarding: OwnerOnboardingClient;
+  ownerStaff: OwnerStaffClient;
+  staffInvitations: PublicStaffInvitationClient;
   labDevices: LabDeviceClient;
   labSessions: LabSessionClient;
   labPins: LabPinClient;
@@ -44,6 +56,27 @@ export interface OwnerOnboardingClient {
   bootstrap: () => Promise<OwnerOnboardingBootstrap>;
   checkBusinessSlug: (slug: string) => Promise<BusinessSlugAvailabilityResponse>;
   register: (payload: OwnerOnboardingRequest) => Promise<OwnerOnboardingResponse>;
+}
+
+export interface OwnerStaffClient {
+  list: () => Promise<ListStaffResponse>;
+  update: (
+    userId: string,
+    payload: UpdateStaffMemberRequest,
+  ) => Promise<UpdateStaffMemberResponse>;
+  deactivate: (userId: string) => Promise<UpdateStaffMemberResponse>;
+  reactivate: (userId: string) => Promise<UpdateStaffMemberResponse>;
+  invitations: {
+    create: (payload: CreateStaffInvitationRequest) => Promise<StaffInvitationWithToken>;
+    list: (status?: InvitationStatus | 'all') => Promise<StaffInvitation[]>;
+    resend: (id: string) => Promise<StaffInvitationWithToken>;
+    revoke: (id: string) => Promise<StaffInvitation>;
+  };
+}
+
+export interface PublicStaffInvitationClient {
+  inspect: (token: string) => Promise<InvitationLookupResponse>;
+  accept: (payload: AcceptStaffInvitationRequest) => Promise<AcceptStaffInvitationResponse>;
 }
 
 export interface LabDeviceClient {
@@ -130,6 +163,33 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       checkBusinessSlug: (slug) =>
         request(`/owner/onboarding/check-business-slug?slug=${encodeURIComponent(slug)}`),
       register: (payload) => request('/owner/onboarding/register', { method: 'POST', body: payload }),
+    },
+    ownerStaff: {
+      list: () => request('/owner/staff'),
+      update: (userId, payload) =>
+        request(`/owner/staff/${encodeURIComponent(userId)}`, { method: 'PATCH', body: payload }),
+      deactivate: (userId) =>
+        request(`/owner/staff/${encodeURIComponent(userId)}/deactivate`, { method: 'POST' }),
+      reactivate: (userId) =>
+        request(`/owner/staff/${encodeURIComponent(userId)}/reactivate`, { method: 'POST' }),
+      invitations: {
+        create: (payload) => request('/owner/staff/invitations', { method: 'POST', body: payload }),
+        list: (status) =>
+          request(
+            status && status !== 'all'
+              ? `/owner/staff/invitations?status=${encodeURIComponent(status)}`
+              : '/owner/staff/invitations',
+          ),
+        resend: (id) =>
+          request(`/owner/staff/invitations/${encodeURIComponent(id)}/resend`, { method: 'POST' }),
+        revoke: (id) =>
+          request(`/owner/staff/invitations/${encodeURIComponent(id)}/revoke`, { method: 'POST' }),
+      },
+    },
+    staffInvitations: {
+      inspect: (token) =>
+        request(`/staff/invitations/inspect?token=${encodeURIComponent(token)}`),
+      accept: (payload) => request('/staff/invitations/accept', { method: 'POST', body: payload }),
     },
     labDevices: {
       register: (payload) => request('/lab/device/register', { method: 'POST', body: payload }),

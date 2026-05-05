@@ -2,7 +2,9 @@
 
 This document describes the public owner onboarding flow that lets a brand-new
 salon owner create their Sheer workspace from `apps/web`. Staff invitation is
-intentionally **not** part of this phase.
+intentionally **not** part of this phase — it lives in
+[`staff-invitations.md`](./staff-invitations.md) and reuses the same
+auth/session infrastructure.
 
 ## Goals
 

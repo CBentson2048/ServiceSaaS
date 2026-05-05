@@ -133,6 +133,152 @@ export interface OwnerOnboardingBootstrap {
   countries: Array<{ code: string; label: string }>;
 }
 
+// ---------------------------------------------------------------------------
+// Staff invitation + management (Phase 2)
+// ---------------------------------------------------------------------------
+
+export type InvitableRole = Extract<UserRole, 'manager' | 'stylist'>;
+
+export type InvitationStatus = 'pending' | 'accepted' | 'revoked' | 'expired';
+
+export type MembershipStatus = 'invited' | 'active' | 'suspended' | 'revoked';
+
+export interface BusinessLocationSummary {
+  id: string;
+  name: string;
+  code?: string;
+  slug?: string;
+}
+
+export interface StaffInvitation {
+  id: string;
+  businessId: string;
+  locationId: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  phone?: string;
+  role: InvitableRole;
+  status: InvitationStatus;
+  expiresAt: string;
+  createdAt: string;
+  updatedAt: string;
+  invitedByUserProfileId: string;
+  acceptedByUserProfileId?: string;
+  acceptedAt?: string;
+  revokedAt?: string;
+  location?: BusinessLocationSummary;
+  invitedBy?: { id: string; fullName: string; email: string };
+}
+
+export interface StaffInvitationWithToken extends StaffInvitation {
+  /**
+   * Plaintext invite token. Returned only at creation/resend time so the
+   * caller can email the deep link to the invitee. The DB only stores the
+   * SHA-256 hash.
+   */
+  inviteToken: string;
+  inviteUrl: string;
+}
+
+export interface CreateStaffInvitationRequest {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone?: string;
+  role: InvitableRole;
+  locationId: string;
+  /** Optional stylist-only: display name for the chair. */
+  displayName?: string;
+  colorHex?: string;
+  bio?: string;
+  /** Optional override; defaults to 14 days from now on the server. */
+  expiresInHours?: number;
+}
+
+export interface ListStaffInvitationsQuery {
+  status?: InvitationStatus | 'all';
+}
+
+export interface AcceptStaffInvitationRequest {
+  token: string;
+  password: string;
+  firstName?: string;
+  lastName?: string;
+  phone?: string;
+  displayName?: string;
+}
+
+export interface AcceptStaffInvitationResponse {
+  userProfileId: string;
+  businessId: string;
+  locationId: string;
+  membershipId: string;
+  staffProfileId?: string;
+  /** Owner-onboarding-style next step + redirect for the web app. */
+  nextStep: 'sign_in' | 'dashboard';
+  redirectTo: string;
+  session?: AuthSession;
+  user?: AuthUser;
+}
+
+export interface InvitationLookupResponse {
+  /** Subset of fields safe to return from the public `inspect` endpoint. */
+  invitationId: string;
+  businessName: string;
+  locationName: string;
+  role: InvitableRole;
+  email: string;
+  firstName: string;
+  lastName: string;
+  expiresAt: string;
+  status: InvitationStatus;
+}
+
+export interface StaffMember {
+  userProfileId: string;
+  email: string;
+  fullName: string;
+  phone?: string;
+  avatarUrl?: string;
+  role: UserRole;
+  membershipId: string;
+  membershipStatus: MembershipStatus;
+  location?: BusinessLocationSummary;
+  staffProfile?: {
+    id: string;
+    displayName: string;
+    employmentStatus: 'active' | 'on_leave' | 'notice' | 'terminated';
+    isBookable: boolean;
+    colorHex?: string;
+    bio?: string;
+  };
+  invitedAt?: string;
+  activatedAt?: string;
+  suspendedAt?: string;
+  revokedAt?: string;
+}
+
+export interface ListStaffResponse {
+  staff: StaffMember[];
+  pendingInvitations: StaffInvitation[];
+  locations: BusinessLocationSummary[];
+}
+
+export interface UpdateStaffMemberRequest {
+  role?: InvitableRole;
+  locationId?: string;
+  membershipStatus?: Extract<MembershipStatus, 'active' | 'suspended' | 'revoked'>;
+  displayName?: string;
+  colorHex?: string;
+  bio?: string;
+  isBookable?: boolean;
+}
+
+export interface UpdateStaffMemberResponse {
+  staff: StaffMember;
+}
+
 export interface RefreshSessionRequest {
   refreshToken: string;
   surface?: Extract<AppSurface, 'api' | 'web_dashboard' | 'sheer_app'>;
