@@ -26,7 +26,7 @@ export default function ActiveAppointmentsScreen() {
         <View style={styles.copy}>
           <StatusPill label="Stylist view" />
           <LabText variant="display" weight="bold">
-            Today's appointments
+            Today{"'"}s appointments
           </LabText>
           <LabText tone="secondary">
             Showing appointments for {stylistSession.stylistName} at {boundSalon.name}.

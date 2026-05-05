@@ -358,7 +358,7 @@ export function TeamPage() {
             No invitations match this filter
           </div>
           <div className="mt-1 text-[13px] text-text-secondary">
-            Try clearing the search or switching to "All".
+            Try clearing the search or switching to &quot;All&quot;.
           </div>
         </section>
       ) : null}

@@ -24,5 +24,13 @@ module.exports = {
     '@typescript-eslint/no-explicit-any': 'warn',
     'no-console': ['warn', { allow: ['warn', 'error', 'info'] }],
   },
-  ignorePatterns: ['dist', 'build', 'node_modules', '.turbo', 'coverage'],
+  ignorePatterns: [
+    'dist',
+    'build',
+    'node_modules',
+    '.turbo',
+    'coverage',
+    // `**/*.ts` globs accidentally match `.d.ts`; never type-check declarations as TS sources.
+    '**/*.d.ts',
+  ],
 };

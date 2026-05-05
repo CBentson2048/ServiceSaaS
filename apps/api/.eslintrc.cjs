@@ -1,6 +1,6 @@
 module.exports = {
   root: true,
-  extends: ['@sheer/config/eslint-node'],
+  extends: [require.resolve('@sheer/config/eslint-node')],
   parserOptions: {
     tsconfigRootDir: __dirname,
     project: './tsconfig.json',

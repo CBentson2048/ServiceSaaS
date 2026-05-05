@@ -56,7 +56,7 @@ export default function SessionHomeScreen() {
 
         <LabCard style={styles.card}>
           <LabText variant="title" weight="bold">
-            Today's appointments
+            Today{"'"}s appointments
           </LabText>
           <LabText tone="secondary">
             Placeholder for booked clients, walk-in lookup, and linking a formula to a service.

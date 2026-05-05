@@ -142,7 +142,7 @@ export function AcceptInvitationPage() {
             </p>
           ) : (
             <p className="mt-1 text-[13px] text-text-secondary">
-              Set up your password to join your team's workspace.
+              Set up your password to join your team{"'"}s workspace.
             </p>
           )}
         </header>
