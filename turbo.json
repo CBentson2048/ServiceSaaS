@@ -2,7 +2,17 @@
   "$schema": "https://turbo.build/schema.json",
   "ui": "tui",
   "globalDependencies": [".env", "tsconfig.base.json"],
-  "globalEnv": ["NODE_ENV"],
+  "globalEnv": [
+    "NODE_ENV",
+    "VITE_API_URL",
+    "VITE_SUPABASE_URL",
+    "VITE_SUPABASE_ANON_KEY",
+    "VITE_STRIPE_PUBLISHABLE_KEY",
+    "VITE_SHEER_APP_DEEP_LINK",
+    "VITE_SHEER_APP_IOS_URL",
+    "VITE_SHEER_APP_ANDROID_URL",
+    "VITE_SHEER_APP_GENERIC_URL"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
