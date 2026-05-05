@@ -1,8 +1,14 @@
 import type {
+  BusinessSlugAvailabilityResponse,
+  CreateAccountRequest,
+  CreateAccountResponse,
   CurrentUserResponse,
   LoginRequest,
   LoginResponse,
   LogoutRequest,
+  OwnerOnboardingBootstrap,
+  OwnerOnboardingRequest,
+  OwnerOnboardingResponse,
   PinUnlockRequest,
   PinUnlockResponse,
   RefreshSessionRequest,
@@ -18,6 +24,7 @@ export interface ApiClientOptions {
 
 export interface ApiClient {
   auth: AuthClient;
+  ownerOnboarding: OwnerOnboardingClient;
   labDevices: LabDeviceClient;
   labSessions: LabSessionClient;
   labPins: LabPinClient;
@@ -26,10 +33,17 @@ export interface ApiClient {
 }
 
 export interface AuthClient {
+  createAccount: (payload: CreateAccountRequest) => Promise<CreateAccountResponse>;
   login: (payload: LoginRequest) => Promise<LoginResponse>;
   logout: (payload?: LogoutRequest) => Promise<void>;
   me: () => Promise<CurrentUserResponse>;
   refresh: (payload: RefreshSessionRequest) => Promise<LoginResponse>;
+}
+
+export interface OwnerOnboardingClient {
+  bootstrap: () => Promise<OwnerOnboardingBootstrap>;
+  checkBusinessSlug: (slug: string) => Promise<BusinessSlugAvailabilityResponse>;
+  register: (payload: OwnerOnboardingRequest) => Promise<OwnerOnboardingResponse>;
 }
 
 export interface LabDeviceClient {
@@ -105,10 +119,17 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
 
   return {
     auth: {
+      createAccount: (payload) => request('/auth/register', { method: 'POST', body: payload }),
       login: (payload) => request('/auth/login', { method: 'POST', body: payload }),
       logout: (payload = {}) => request('/auth/logout', { method: 'POST', body: payload }),
       me: () => request('/auth/me'),
       refresh: (payload) => request('/auth/refresh', { method: 'POST', body: payload }),
+    },
+    ownerOnboarding: {
+      bootstrap: () => request('/owner/onboarding/bootstrap'),
+      checkBusinessSlug: (slug) =>
+        request(`/owner/onboarding/check-business-slug?slug=${encodeURIComponent(slug)}`),
+      register: (payload) => request('/owner/onboarding/register', { method: 'POST', body: payload }),
     },
     labDevices: {
       register: (payload) => request('/lab/device/register', { method: 'POST', body: payload }),

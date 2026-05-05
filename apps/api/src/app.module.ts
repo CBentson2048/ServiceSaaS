@@ -7,6 +7,7 @@ import { LabDeviceModule } from './lab-device/lab-device.module';
 import { LabFormulaModule } from './lab-formula/lab-formula.module';
 import { LabPinModule } from './lab-pin/lab-pin.module';
 import { LabSessionModule } from './lab-session/lab-session.module';
+import { OwnerOnboardingModule } from './owner-onboarding/owner-onboarding.module';
 import { validateEnv } from './config/env.validation';
 
 @Module({
@@ -18,6 +19,7 @@ import { validateEnv } from './config/env.validation';
       envFilePath: ['.env.local', '.env'],
     }),
     AuthModule,
+    OwnerOnboardingModule,
     HealthModule,
     LabDeviceModule,
     LabSessionModule,

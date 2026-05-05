@@ -10,6 +10,9 @@ enabled = true
 port = 54321
 # Schemas to expose in your API. Tables, views and stored procedures in this schema will get API
 # endpoints. `public` and `graphql_public` schemas are included by default.
+#
+# `core` holds tenant tables (e.g. user_profiles, businesses, locations). It must appear here so
+# PostgREST exposes them for supabase-js calls such as `.schema('core').from('user_profiles')`.
 schemas = ["public", "graphql_public", "core", "booking", "crm", "rota", "lab", "inventory", "billing", "analytics", "comms", "audit"]
 # Extra schemas to add to the search_path of every request.
 extra_search_path = ["public", "extensions", "core", "booking", "crm", "rota", "lab", "inventory", "billing", "analytics", "comms", "audit"]

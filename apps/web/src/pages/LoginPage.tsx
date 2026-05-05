@@ -1,17 +1,19 @@
 import { FormEvent, useState } from 'react';
-import { Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider';
 
 export function LoginPage() {
   const auth = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const from = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname ?? '/';
+  const justOnboarded = searchParams.get('onboarded') === '1';
 
   if (auth.user) {
     return <Navigate to={from} replace />;
@@ -47,6 +49,12 @@ export function LoginPage() {
         </div>
 
         <form className="space-y-4 px-8 py-7" onSubmit={onSubmit}>
+          {justOnboarded ? (
+            <div className="rounded-input-lg border border-success-border bg-success-soft px-4 py-3 text-sm text-success">
+              Your business workspace is ready. Sign in to access the owner dashboard.
+            </div>
+          ) : null}
+
           <label className="block">
             <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8A7D94]">
               Email
@@ -88,6 +96,13 @@ export function LoginPage() {
           >
             {isSubmitting ? 'Signing in...' : 'Sign in'}
           </button>
+
+          <p className="text-center text-sm text-[#776A82]">
+            New to Sheer?{' '}
+            <Link className="font-semibold text-primary-deep" to="/owner/onboarding">
+              Set up your business
+            </Link>
+          </p>
         </form>
       </section>
     </main>

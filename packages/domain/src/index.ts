@@ -49,9 +49,88 @@ export interface LoginRequest {
   surface?: Extract<AppSurface, 'api' | 'web_dashboard' | 'sheer_app'>;
 }
 
+export interface CreateAccountRequest {
+  email: string;
+  password: string;
+  fullName: string;
+  businessName: string;
+  surface?: Extract<AppSurface, 'api' | 'web_dashboard'>;
+}
+
 export interface LoginResponse {
   session: AuthSession;
   user: AuthUser;
+}
+
+export interface CreateAccountResponse extends LoginResponse {}
+
+export interface OwnerOnboardingOwnerInput {
+  firstName: string;
+  lastName: string;
+  email: string;
+  password: string;
+  phone?: string;
+}
+
+export interface OwnerOnboardingBusinessInput {
+  name: string;
+  slug: string;
+  defaultCurrency: string;
+  defaultTimezone: string;
+  countryCode: string;
+}
+
+export interface OwnerOnboardingLocationInput {
+  name: string;
+  slug: string;
+  phone?: string;
+  email?: string;
+  timezone?: string;
+  addressLine1?: string;
+  addressLine2?: string;
+  city?: string;
+  region?: string;
+  postalCode?: string;
+  countryCode?: string;
+}
+
+export interface OwnerOnboardingRequest {
+  owner: OwnerOnboardingOwnerInput;
+  business: OwnerOnboardingBusinessInput;
+  location: OwnerOnboardingLocationInput;
+}
+
+export interface OwnerOnboardingResult {
+  userProfileId: string;
+  businessId: string;
+  locationId: string;
+  nextStep: 'sign_in' | 'dashboard';
+  redirectTo: string;
+}
+
+export interface OwnerOnboardingResponse extends OwnerOnboardingResult {
+  /**
+   * Optional auto-issued session. Present when the API was able to sign
+   * the new owner in immediately, otherwise the client should redirect
+   * to `/login` and use the email it just registered.
+   */
+  session?: AuthSession;
+  user?: AuthUser;
+}
+
+export interface BusinessSlugAvailabilityResponse {
+  slug: string;
+  available: boolean;
+  reason?: string;
+}
+
+export interface OwnerOnboardingBootstrap {
+  defaultCurrency: string;
+  defaultTimezone: string;
+  defaultCountryCode: string;
+  currencies: Array<{ code: string; label: string }>;
+  timezones: Array<{ value: string; label: string }>;
+  countries: Array<{ code: string; label: string }>;
 }
 
 export interface RefreshSessionRequest {

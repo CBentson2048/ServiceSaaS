@@ -1,4 +1,12 @@
-import type { CurrentUserResponse, LoginResponse } from '@sheer/domain';
+import type {
+  BusinessSlugAvailabilityResponse,
+  CreateAccountRequest,
+  CurrentUserResponse,
+  LoginResponse,
+  OwnerOnboardingBootstrap,
+  OwnerOnboardingRequest,
+  OwnerOnboardingResponse,
+} from '@sheer/domain';
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL ?? 'http://localhost:3001').replace(/\/$/, '');
 
@@ -9,6 +17,15 @@ interface LoginInput {
 
 export async function login(input: LoginInput): Promise<LoginResponse> {
   return request<LoginResponse>('/auth/login', {
+    method: 'POST',
+    body: { ...input, surface: 'web_dashboard' },
+  });
+}
+
+export async function createAccount(
+  input: Omit<CreateAccountRequest, 'surface'>,
+): Promise<LoginResponse> {
+  return request<LoginResponse>('/auth/register', {
     method: 'POST',
     body: { ...input, surface: 'web_dashboard' },
   });
@@ -35,6 +52,39 @@ export async function logout(accessToken?: string, refreshToken?: string): Promi
   });
 }
 
+export async function getOwnerOnboardingBootstrap(): Promise<OwnerOnboardingBootstrap> {
+  return request<OwnerOnboardingBootstrap>('/owner/onboarding/bootstrap');
+}
+
+export async function checkBusinessSlugAvailability(
+  slug: string,
+): Promise<BusinessSlugAvailabilityResponse> {
+  return request<BusinessSlugAvailabilityResponse>(
+    `/owner/onboarding/check-business-slug?slug=${encodeURIComponent(slug)}`,
+  );
+}
+
+export async function registerOwnerOnboarding(
+  payload: OwnerOnboardingRequest,
+): Promise<OwnerOnboardingResponse> {
+  return request<OwnerOnboardingResponse>('/owner/onboarding/register', {
+    method: 'POST',
+    body: payload,
+  });
+}
+
+export class ApiRequestError extends Error {
+  readonly status: number;
+  readonly details?: unknown;
+
+  constructor(message: string, status: number, details?: unknown) {
+    super(message);
+    this.name = 'ApiRequestError';
+    this.status = status;
+    this.details = details;
+  }
+}
+
 async function request<T>(
   path: string,
   init: { method?: string; body?: unknown; accessToken?: string } = {},
@@ -49,8 +99,15 @@ async function request<T>(
   });
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(errorText || `Request failed with ${response.status}`);
+    const raw = await response.text();
+    let parsed: unknown;
+    try {
+      parsed = raw ? JSON.parse(raw) : undefined;
+    } catch {
+      parsed = undefined;
+    }
+    const message = extractErrorMessage(parsed) ?? raw ?? `Request failed with ${response.status}`;
+    throw new ApiRequestError(message, response.status, parsed);
   }
 
   if (response.status === 204) {
@@ -58,4 +115,14 @@ async function request<T>(
   }
 
   return (await response.json()) as T;
+}
+
+function extractErrorMessage(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== 'object') return undefined;
+  const value = (payload as { message?: unknown }).message;
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value) && value.length > 0) {
+    return value.map((entry) => (typeof entry === 'string' ? entry : JSON.stringify(entry))).join(', ');
+  }
+  return undefined;
 }

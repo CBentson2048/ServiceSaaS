@@ -1,4 +1,10 @@
-import { ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  InternalServerErrorException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type {
@@ -6,6 +12,8 @@ import type {
   AuthLocation,
   AuthSession,
   AuthUser,
+  CreateAccountRequest,
+  CreateAccountResponse,
   LoginResponse,
   UserRole,
 } from '@sheer/domain';
@@ -73,6 +81,49 @@ export class AuthService {
     this.admin = createClient(this.supabaseUrl, serviceRoleKey, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
+  }
+
+  async createAccount(input: CreateAccountRequest): Promise<CreateAccountResponse> {
+    const email = input.email.trim().toLowerCase();
+    const fullName = input.fullName.trim();
+    const businessName = input.businessName.trim();
+    let createdUserId: string | undefined;
+    let createdBusinessId: string | undefined;
+
+    const existingProfile = await this.findProfileByEmail(email);
+    if (existingProfile) {
+      throw new ConflictException('An account already exists for this email');
+    }
+
+    try {
+      const { data: createdUser, error: createUserError } = await this.admin.auth.admin.createUser({
+        email,
+        password: input.password,
+        email_confirm: true,
+        user_metadata: {
+          full_name: fullName,
+        },
+      });
+
+      if (createUserError || !createdUser.user) {
+        throw new ConflictException(createUserError?.message ?? 'Unable to create account');
+      }
+
+      createdUserId = createdUser.user.id;
+      const business = await this.createBusiness(businessName);
+      createdBusinessId = business.id;
+
+      await this.createUserProfile(createdUserId, email, fullName);
+      await this.createOwnerMembership(createdBusinessId, createdUserId);
+
+      return this.login(email, input.password, input.surface ?? 'web_dashboard');
+    } catch (error) {
+      await this.rollbackCreatedAccount(createdUserId, createdBusinessId);
+      if (error instanceof ConflictException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Unable to create account');
+    }
   }
 
   async login(email: string, password: string, surface: RuntimeSurface = 'api'): Promise<LoginResponse> {
@@ -261,6 +312,81 @@ export class AuthService {
     return data;
   }
 
+  private async findProfileByEmail(email: string): Promise<ProfileRow | undefined> {
+    const { data, error } = await this.admin
+      .schema('core')
+      .from('user_profiles')
+      .select('id,email,full_name,avatar_url')
+      .eq('email', email)
+      .maybeSingle<ProfileRow>();
+
+    if (error) {
+      throw new InternalServerErrorException('Unable to check existing account');
+    }
+
+    return data ?? undefined;
+  }
+
+  private async createBusiness(name: string): Promise<BusinessRow> {
+    const baseSlug = slugify(name);
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const slug = attempt === 0 ? baseSlug : `${baseSlug}-${randomSuffix()}`;
+      const { data, error } = await this.admin
+        .schema('core')
+        .from('businesses')
+        .insert({ name, slug })
+        .select('id,name,slug')
+        .single<BusinessRow>();
+
+      if (!error && data) {
+        return data;
+      }
+
+      if (!String(error?.message ?? '').toLowerCase().includes('duplicate')) {
+        throw new InternalServerErrorException('Unable to create business');
+      }
+    }
+
+    throw new ConflictException('Business name is already taken');
+  }
+
+  private async createUserProfile(userId: string, email: string, fullName: string): Promise<void> {
+    const { error } = await this.admin.schema('core').from('user_profiles').insert({
+      id: userId,
+      email,
+      full_name: fullName,
+    });
+
+    if (error) {
+      throw new InternalServerErrorException('Unable to create user profile');
+    }
+  }
+
+  private async createOwnerMembership(businessId: string, userId: string): Promise<void> {
+    const { error } = await this.admin.schema('core').from('user_memberships').insert({
+      business_id: businessId,
+      user_profile_id: userId,
+      role: 'owner',
+      status: 'active',
+      activated_at: new Date().toISOString(),
+    });
+
+    if (error) {
+      throw new InternalServerErrorException('Unable to create owner membership');
+    }
+  }
+
+  private async rollbackCreatedAccount(userId?: string, businessId?: string): Promise<void> {
+    if (businessId) {
+      await this.admin.schema('core').from('businesses').delete().eq('id', businessId);
+    }
+
+    if (userId) {
+      await this.admin.auth.admin.deleteUser(userId);
+    }
+  }
+
   private async fetchMemberships(userId: string): Promise<MembershipRow[]> {
     const { data, error } = await this.admin
       .schema('core')
@@ -356,4 +482,18 @@ export class AuthService {
       expiresAt: session.expires_at ? new Date(session.expires_at * 1000).toISOString() : undefined,
     };
   }
+}
+
+function slugify(value: string): string {
+  const slug = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+  return slug || `business-${randomSuffix()}`;
+}
+
+function randomSuffix(): string {
+  return Math.random().toString(36).slice(2, 8);
 }

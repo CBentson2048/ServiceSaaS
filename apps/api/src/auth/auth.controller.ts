@@ -1,13 +1,18 @@
 import { Body, Controller, Get, Headers, HttpCode, Post, UseGuards } from '@nestjs/common';
-import type { CurrentUserResponse, LoginResponse } from '@sheer/domain';
+import type { CreateAccountResponse, CurrentUserResponse, LoginResponse } from '@sheer/domain';
 import { AuthService } from './auth.service';
 import { CurrentUser } from './current-user.decorator';
-import { LoginDto, LogoutDto, RefreshSessionDto } from './dto';
+import { CreateAccountDto, LoginDto, LogoutDto, RefreshSessionDto } from './dto';
 import { SupabaseAuthGuard } from './supabase-auth.guard';
 
 @Controller('auth')
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
+
+  @Post('register')
+  async register(@Body() body: CreateAccountDto): Promise<CreateAccountResponse> {
+    return this.auth.createAccount(body);
+  }
 
   @Post('login')
   async login(@Body() body: LoginDto): Promise<LoginResponse> {

@@ -1,6 +1,10 @@
 /**
  * Creates deterministic Supabase Auth users for RLS + workflow testing.
  *
+ * Environment files:
+ * - Loads repo-root `.env.local` then `.env` first (monorepo convenience)
+ * - Then loads `apps/api/.env.local` then `apps/api/.env` **with override**, so API-local values win
+ *
  * Requires:
  *   SUPABASE_URL
  *   SUPABASE_SERVICE_ROLE_KEY
@@ -14,7 +18,20 @@
  * Idempotent: skips users that already exist (matched by email, case-insensitive).
  */
 
+import path from 'node:path';
+import dotenv from 'dotenv';
 import { createClient, type User } from '@supabase/supabase-js';
+
+const apiRoot = path.resolve(__dirname, '..');
+const repoRoot = path.resolve(apiRoot, '..', '..');
+
+// Load env files with predictable precedence:
+// - repo root first
+// - then `apps/api` last (override) so local API secrets win over accidental root values
+dotenv.config({ path: path.join(repoRoot, '.env.local') });
+dotenv.config({ path: path.join(repoRoot, '.env') });
+dotenv.config({ path: path.join(apiRoot, '.env.local'), override: true });
+dotenv.config({ path: path.join(apiRoot, '.env'), override: true });
 
 const SEED_TAG = 'sheer_rls_fixture';
 
@@ -34,6 +51,44 @@ function requireEnv(name: string): string {
     throw new Error(`Missing required environment variable: ${name}`);
   }
   return v.trim();
+}
+
+function decodeJwtPayload(jwt: string): Record<string, unknown> | null {
+  const parts = jwt.split('.');
+  if (parts.length !== 3) return null;
+
+  const b64url = parts[1];
+  if (!b64url) return null;
+
+  // JWT uses base64url without padding; normalize to base64 for broad Node compatibility.
+  const b64 = b64url.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = b64.padEnd(b64.length + ((4 - (b64.length % 4)) % 4), '=');
+  try {
+    const json = Buffer.from(padded, 'base64').toString('utf8');
+    return JSON.parse(json) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function assertSupabaseServiceRoleKey(serviceRoleKey: string): void {
+  const trimmed = serviceRoleKey.trim();
+  const payload = decodeJwtPayload(trimmed);
+  const role = typeof payload?.role === 'string' ? payload.role : undefined;
+
+  if (role === 'anon') {
+    throw new Error(
+      'SUPABASE_SERVICE_ROLE_KEY looks like the anon/public key (JWT role is "anon"). ' +
+        'Use the service_role secret from Supabase Dashboard → Project Settings → API.',
+    );
+  }
+
+  if (role && role !== 'service_role') {
+    throw new Error(
+      `SUPABASE_SERVICE_ROLE_KEY JWT role is "${role}", expected "service_role". ` +
+        'Paste the service_role secret from Supabase Dashboard → Project Settings → API.',
+    );
+  }
 }
 
 async function findUserByEmail(
@@ -56,6 +111,7 @@ async function findUserByEmail(
 async function main(): Promise<void> {
   const url = requireEnv('SUPABASE_URL');
   const serviceRoleKey = requireEnv('SUPABASE_SERVICE_ROLE_KEY');
+  assertSupabaseServiceRoleKey(serviceRoleKey);
   const password = process.env.SHEER_TEST_USER_PASSWORD?.trim() || 'SheerTest123!';
 
   const supabase = createClient(url, serviceRoleKey, {

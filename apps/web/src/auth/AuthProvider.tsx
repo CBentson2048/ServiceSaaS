@@ -16,8 +16,15 @@ interface AuthState {
   status: 'bootstrapping' | 'authenticated' | 'anonymous';
   user: AuthUser | null;
   session: AuthSession | null;
+  createAccount: (input: {
+    email: string;
+    password: string;
+    fullName: string;
+    businessName: string;
+  }) => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
+  applyAuthenticatedSession: (session: AuthSession, user: AuthUser) => void;
 }
 
 const AuthContext = createContext<AuthState | undefined>(undefined);
@@ -86,6 +93,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [applySession],
   );
 
+  const createAccount = useCallback(
+    async (input: { email: string; password: string; fullName: string; businessName: string }) => {
+      const response = await authApi.createAccount(input);
+      applySession(response.session, response.user);
+    },
+    [applySession],
+  );
+
   const signOut = useCallback(async () => {
     const currentSession = session;
     clearSession();
@@ -93,8 +108,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [clearSession, session]);
 
   const value = useMemo<AuthState>(
-    () => ({ status, user, session, signIn, signOut }),
-    [session, signIn, signOut, status, user],
+    () => ({
+      status,
+      user,
+      session,
+      createAccount,
+      signIn,
+      signOut,
+      applyAuthenticatedSession: applySession,
+    }),
+    [applySession, createAccount, session, signIn, signOut, status, user],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
