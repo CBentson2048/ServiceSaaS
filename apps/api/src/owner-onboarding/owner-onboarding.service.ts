@@ -348,7 +348,6 @@ export class OwnerOnboardingService {
   }
 
   private async assertEmailNotTaken(email: string): Promise<void> {
-    console.log(process.env.SUPABASE_URL,"SUPABASESUPASBSE",process.env.SUPABASE_SERVICE_ROLE_KEY);
     const { data, error } = await this.admin
       .schema('core')
       .from('user_profiles')
