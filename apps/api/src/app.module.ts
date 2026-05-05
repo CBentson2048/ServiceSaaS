@@ -7,6 +7,7 @@ import { LabDeviceModule } from './lab-device/lab-device.module';
 import { LabFormulaModule } from './lab-formula/lab-formula.module';
 import { LabPinModule } from './lab-pin/lab-pin.module';
 import { LabSessionModule } from './lab-session/lab-session.module';
+import { LocationsModule } from './locations/locations.module';
 import { OwnerOnboardingModule } from './owner-onboarding/owner-onboarding.module';
 import { StaffModule } from './staff/staff.module';
 import { validateEnv } from './config/env.validation';
@@ -22,6 +23,7 @@ import { validateEnv } from './config/env.validation';
     AuthModule,
     OwnerOnboardingModule,
     StaffModule,
+    LocationsModule,
     HealthModule,
     LabDeviceModule,
     LabSessionModule,

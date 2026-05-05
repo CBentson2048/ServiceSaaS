@@ -4,11 +4,14 @@ import type {
   BusinessSlugAvailabilityResponse,
   CreateAccountRequest,
   CreateAccountResponse,
+  CreateLocationRequest,
   CreateStaffInvitationRequest,
   CurrentUserResponse,
   InvitationLookupResponse,
   InvitationStatus,
+  ListLocationsResponse,
   ListStaffResponse,
+  LocationDetailResponse,
   LoginRequest,
   LoginResponse,
   LogoutRequest,
@@ -21,6 +24,7 @@ import type {
   SharedDevice,
   StaffInvitation,
   StaffInvitationWithToken,
+  UpdateLocationRequest,
   UpdateStaffMemberRequest,
   UpdateStaffMemberResponse,
 } from '@sheer/domain';
@@ -37,6 +41,8 @@ export interface ApiClient {
   ownerOnboarding: OwnerOnboardingClient;
   ownerStaff: OwnerStaffClient;
   staffInvitations: PublicStaffInvitationClient;
+  locations: LocationsClient;
+  ownerLocations: OwnerLocationsClient;
   labDevices: LabDeviceClient;
   labSessions: LabSessionClient;
   labPins: LabPinClient;
@@ -77,6 +83,18 @@ export interface OwnerStaffClient {
 export interface PublicStaffInvitationClient {
   inspect: (token: string) => Promise<InvitationLookupResponse>;
   accept: (payload: AcceptStaffInvitationRequest) => Promise<AcceptStaffInvitationResponse>;
+}
+
+export interface LocationsClient {
+  list: () => Promise<ListLocationsResponse>;
+  detail: (id: string) => Promise<LocationDetailResponse>;
+}
+
+export interface OwnerLocationsClient {
+  create: (payload: CreateLocationRequest) => Promise<LocationDetailResponse>;
+  update: (id: string, payload: UpdateLocationRequest) => Promise<LocationDetailResponse>;
+  deactivate: (id: string) => Promise<LocationDetailResponse>;
+  reactivate: (id: string) => Promise<LocationDetailResponse>;
 }
 
 export interface LabDeviceClient {
@@ -190,6 +208,19 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       inspect: (token) =>
         request(`/staff/invitations/inspect?token=${encodeURIComponent(token)}`),
       accept: (payload) => request('/staff/invitations/accept', { method: 'POST', body: payload }),
+    },
+    locations: {
+      list: () => request('/locations'),
+      detail: (id) => request(`/locations/${encodeURIComponent(id)}`),
+    },
+    ownerLocations: {
+      create: (payload) => request('/owner/locations', { method: 'POST', body: payload }),
+      update: (id, payload) =>
+        request(`/owner/locations/${encodeURIComponent(id)}`, { method: 'PATCH', body: payload }),
+      deactivate: (id) =>
+        request(`/owner/locations/${encodeURIComponent(id)}/deactivate`, { method: 'POST' }),
+      reactivate: (id) =>
+        request(`/owner/locations/${encodeURIComponent(id)}/reactivate`, { method: 'POST' }),
     },
     labDevices: {
       register: (payload) => request('/lab/device/register', { method: 'POST', body: payload }),

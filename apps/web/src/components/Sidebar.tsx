@@ -19,6 +19,7 @@ const NAV: NavEntry[] = [
   { to: '/sheer-lab', label: 'Sheer Lab' },
   { to: '/commission', label: 'Commission' },
   { to: '/team', label: 'Team', allowedRoles: ['owner'] },
+  { to: '/locations', label: 'Locations', allowedRoles: ['owner', 'manager'] },
 ];
 
 export function Sidebar() {

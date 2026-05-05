@@ -150,6 +150,71 @@ export interface BusinessLocationSummary {
   slug?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Location management (owner CRUD; manager: read-own only)
+// ---------------------------------------------------------------------------
+
+export interface BusinessLocation {
+  id: string;
+  businessId: string;
+  name: string;
+  slug: string;
+  code: string;
+  timezone: string;
+  phone?: string;
+  email?: string;
+  addressLine1?: string;
+  addressLine2?: string;
+  city?: string;
+  region?: string;
+  postalCode?: string;
+  countryCode: string;
+  isActive: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ListLocationsResponse {
+  locations: BusinessLocation[];
+  /** Echoes the requesting user's role so the client can branch UI without re-querying /auth/me. */
+  scope: 'owner' | 'manager';
+}
+
+export interface LocationDetailResponse {
+  location: BusinessLocation;
+}
+
+export interface CreateLocationRequest {
+  name: string;
+  slug: string;
+  /** Falls back to the business default timezone server-side if omitted. */
+  timezone?: string;
+  phone?: string;
+  email?: string;
+  addressLine1?: string;
+  addressLine2?: string;
+  city?: string;
+  region?: string;
+  postalCode?: string;
+  /** ISO 3166-1 alpha-2; falls back to business default. */
+  countryCode?: string;
+}
+
+export interface UpdateLocationRequest {
+  name?: string;
+  slug?: string;
+  timezone?: string;
+  phone?: string | null;
+  email?: string | null;
+  addressLine1?: string | null;
+  addressLine2?: string | null;
+  city?: string | null;
+  region?: string | null;
+  postalCode?: string | null;
+  countryCode?: string;
+}
+
 export interface StaffInvitation {
   id: string;
   businessId: string;

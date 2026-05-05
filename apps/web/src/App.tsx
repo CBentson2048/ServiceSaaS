@@ -2,7 +2,11 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { ProtectedRoute } from './auth/ProtectedRoute';
 import { DashboardLayout } from './layouts/DashboardLayout';
 import { AcceptInvitationPage } from './pages/AcceptInvitationPage';
+import { CreateLocationPage } from './pages/CreateLocationPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { EditLocationPage } from './pages/EditLocationPage';
+import { LocationDetailPage } from './pages/LocationDetailPage';
+import { LocationsPage } from './pages/LocationsPage';
 import { LoginPage } from './pages/LoginPage';
 import { OwnerOnboardingPage } from './pages/OwnerOnboardingPage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
@@ -25,11 +29,15 @@ export function App() {
           <Route path="/rota" element={<PlaceholderPage title="Rota" />} />
           <Route path="/sheer-lab" element={<PlaceholderPage title="Sheer Lab" />} />
           <Route path="/commission" element={<PlaceholderPage title="Commission" />} />
+          <Route path="/locations" element={<LocationsPage />} />
+          <Route path="/locations/:id" element={<LocationDetailPage />} />
         </Route>
       </Route>
       <Route element={<ProtectedRoute allowedRoles={['owner']} />}>
         <Route element={<DashboardLayout />}>
           <Route path="/team" element={<TeamPage />} />
+          <Route path="/locations/new" element={<CreateLocationPage />} />
+          <Route path="/locations/:id/edit" element={<EditLocationPage />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

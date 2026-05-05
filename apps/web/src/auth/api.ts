@@ -3,17 +3,21 @@ import type {
   AcceptStaffInvitationResponse,
   BusinessSlugAvailabilityResponse,
   CreateAccountRequest,
+  CreateLocationRequest,
   CreateStaffInvitationRequest,
   CurrentUserResponse,
   InvitationLookupResponse,
   InvitationStatus,
+  ListLocationsResponse,
   ListStaffResponse,
+  LocationDetailResponse,
   LoginResponse,
   OwnerOnboardingBootstrap,
   OwnerOnboardingRequest,
   OwnerOnboardingResponse,
   StaffInvitation,
   StaffInvitationWithToken,
+  UpdateLocationRequest,
   UpdateStaffMemberRequest,
   UpdateStaffMemberResponse,
 } from '@sheer/domain';
@@ -159,6 +163,64 @@ export async function revokeStaffInvitation(
 ): Promise<StaffInvitation> {
   return request<StaffInvitation>(
     `/owner/staff/invitations/${encodeURIComponent(invitationId)}/revoke`,
+    { method: 'POST', accessToken },
+  );
+}
+
+// -------------------- Locations (owner + manager) --------------------
+
+export async function listLocations(accessToken: string): Promise<ListLocationsResponse> {
+  return request<ListLocationsResponse>('/locations', { accessToken });
+}
+
+export async function getLocation(
+  accessToken: string,
+  locationId: string,
+): Promise<LocationDetailResponse> {
+  return request<LocationDetailResponse>(
+    `/locations/${encodeURIComponent(locationId)}`,
+    { accessToken },
+  );
+}
+
+export async function createLocation(
+  accessToken: string,
+  payload: CreateLocationRequest,
+): Promise<LocationDetailResponse> {
+  return request<LocationDetailResponse>('/owner/locations', {
+    method: 'POST',
+    body: payload,
+    accessToken,
+  });
+}
+
+export async function updateLocation(
+  accessToken: string,
+  locationId: string,
+  payload: UpdateLocationRequest,
+): Promise<LocationDetailResponse> {
+  return request<LocationDetailResponse>(
+    `/owner/locations/${encodeURIComponent(locationId)}`,
+    { method: 'PATCH', body: payload, accessToken },
+  );
+}
+
+export async function deactivateLocation(
+  accessToken: string,
+  locationId: string,
+): Promise<LocationDetailResponse> {
+  return request<LocationDetailResponse>(
+    `/owner/locations/${encodeURIComponent(locationId)}/deactivate`,
+    { method: 'POST', accessToken },
+  );
+}
+
+export async function reactivateLocation(
+  accessToken: string,
+  locationId: string,
+): Promise<LocationDetailResponse> {
+  return request<LocationDetailResponse>(
+    `/owner/locations/${encodeURIComponent(locationId)}/reactivate`,
     { method: 'POST', accessToken },
   );
 }
