@@ -35,6 +35,18 @@ describe('StaffService — invitation acceptance', () => {
   it.todo('does not roll back an existing auth user when only linking');
   it.todo('rolls back the freshly-created auth user if RPC fails');
   it.todo('returns nextStep=dashboard with a session when auto sign-in succeeds');
+  // Role-aware completion contract (post-account-creation flow).
+  it.todo(
+    'manager invitation acceptance returns targetSurface=web + nextAction=redirect_to_dashboard',
+  );
+  it.todo(
+    'stylist invitation acceptance returns targetSurface=mobile + nextAction=show_completion_page',
+  );
+  it.todo('stylist invitation acceptance does NOT issue a web_dashboard session');
+  it.todo(
+    "stylist invitation acceptance redirects to '/auth/account-created?role=stylist'",
+  );
+  it.todo('response.role is always derived from the invitation row, never the request body');
 });
 
 describe('StaffService — staff management', () => {

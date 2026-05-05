@@ -89,6 +89,21 @@ export function AcceptInvitationPage() {
         phone: phone.trim() || undefined,
         displayName: displayName.trim() || undefined,
       });
+
+      // Role-aware post-success routing — the API tells us where to go.
+      //
+      // Stylist / client (`targetSurface: 'mobile'`) must NEVER be
+      // auto-logged into the web dashboard. Even if a session ever
+      // sneaks back from the server (defence in depth), we drop it on
+      // the floor and route to the public completion page.
+      if (response.nextAction === 'show_completion_page') {
+        navigate(response.redirectTo || `/auth/account-created?role=${response.role}`, {
+          replace: true,
+          state: { role: response.role },
+        });
+        return;
+      }
+
       if (response.session && response.user) {
         auth.applyAuthenticatedSession(response.session, response.user);
         navigate(response.redirectTo === '/' ? '/' : response.redirectTo, { replace: true });

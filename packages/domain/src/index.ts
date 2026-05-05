@@ -100,12 +100,39 @@ export interface OwnerOnboardingRequest {
   location: OwnerOnboardingLocationInput;
 }
 
+/**
+ * Where the freshly-created account is supposed to land.
+ *
+ * - `web`    — owner / manager. They keep using the dashboard.
+ * - `mobile` — stylist / client. The web flow only existed to claim the
+ *              account; the actual product surface for them is the Sheer App.
+ */
+export type AccountCreationTargetSurface = 'web' | 'mobile';
+
+/**
+ * What the web client should do immediately after a successful account
+ * creation / invitation acceptance.
+ *
+ * - `redirect_to_dashboard` — owner / manager: enter the web dashboard.
+ * - `show_completion_page`  — stylist / client: render the post-claim
+ *                             completion page that points them to the
+ *                             Sheer App. They MUST NOT be auto-logged into
+ *                             the web dashboard.
+ */
+export type AccountCreationNextAction = 'redirect_to_dashboard' | 'show_completion_page';
+
 export interface OwnerOnboardingResult {
   userProfileId: string;
   businessId: string;
   locationId: string;
   nextStep: 'sign_in' | 'dashboard';
   redirectTo: string;
+  /** Always `'owner'` — onboarding cannot produce any other role. */
+  role: Extract<UserRole, 'owner'>;
+  /** Owners always continue on the web dashboard. */
+  targetSurface: Extract<AccountCreationTargetSurface, 'web'>;
+  /** Owners always continue on the web dashboard. */
+  nextAction: Extract<AccountCreationNextAction, 'redirect_to_dashboard'>;
 }
 
 export interface OwnerOnboardingResponse extends OwnerOnboardingResult {
@@ -283,6 +310,24 @@ export interface AcceptStaffInvitationResponse {
   /** Owner-onboarding-style next step + redirect for the web app. */
   nextStep: 'sign_in' | 'dashboard';
   redirectTo: string;
+  /**
+   * The role the invitee just claimed. Derived server-side from the
+   * invitation row (never trusted from the client) so the frontend can
+   * render the role-aware completion flow without re-querying `/auth/me`.
+   */
+  role: UserRole;
+  /**
+   * Where this user's primary product surface lives. `mobile` means the
+   * web is only an account-claim shell and the next product step is in
+   * the Sheer App (stylist / client). `web` means the dashboard is their
+   * day-to-day surface (owner / manager).
+   */
+  targetSurface: AccountCreationTargetSurface;
+  /**
+   * What the web client should do right after acceptance succeeds.
+   * Branches `redirectTo` between dashboard and the completion page.
+   */
+  nextAction: AccountCreationNextAction;
   session?: AuthSession;
   user?: AuthUser;
 }

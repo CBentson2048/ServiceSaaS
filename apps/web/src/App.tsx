@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { ProtectedRoute } from './auth/ProtectedRoute';
 import { DashboardLayout } from './layouts/DashboardLayout';
 import { AcceptInvitationPage } from './pages/AcceptInvitationPage';
+import { AccountCreatedPage } from './pages/AccountCreatedPage';
 import { CreateLocationPage } from './pages/CreateLocationPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { EditLocationPage } from './pages/EditLocationPage';
@@ -20,6 +21,14 @@ export function App() {
       <Route path="/create-account" element={<Navigate to="/owner/onboarding" replace />} />
       <Route path="/owner/onboarding" element={<OwnerOnboardingPage />} />
       <Route path="/staff/accept-invite" element={<AcceptInvitationPage />} />
+      {/*
+        Public, auth-adjacent route shown to stylist/client after they
+        finish claiming their account on the web. Deliberately mounted
+        OUTSIDE the dashboard ProtectedRoute so it does not require an
+        owner/manager session and does not bypass dashboard guards for
+        any other route.
+      */}
+      <Route path="/auth/account-created" element={<AccountCreatedPage />} />
       <Route path="/unauthorized" element={<UnauthorizedPage />} />
       <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} />}>
         <Route element={<DashboardLayout />}>

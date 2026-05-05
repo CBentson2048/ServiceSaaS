@@ -11,6 +11,8 @@ import { ConfigService } from '@nestjs/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { createHash, randomBytes } from 'node:crypto';
 import type {
+  AccountCreationNextAction,
+  AccountCreationTargetSurface,
   AcceptStaffInvitationRequest,
   AcceptStaffInvitationResponse,
   AuthUser,
@@ -26,6 +28,7 @@ import type {
   StaffMember,
   UpdateStaffMemberRequest,
   UpdateStaffMemberResponse,
+  UserRole,
 } from '@sheer/domain';
 import { AuthService } from '../auth/auth.service';
 import { EmailService } from '../email/email.service';
@@ -393,7 +396,27 @@ export class StaffService {
       const row = pickAcceptRow(rpcRows);
       if (!row) throw new InternalServerErrorException('Invitation acceptance returned no rows');
 
-      const session = await this.tryAutoSignIn(email, input.password);
+      const role: UserRole = invitation.role;
+      const targetSurface: AccountCreationTargetSurface = isWebSurfaceRole(role) ? 'web' : 'mobile';
+
+      // Owner / manager continue into the dashboard; we still try to issue
+      // a session so they don't have to type their password again. Stylist
+      // and client have no business in the dashboard, so we deliberately
+      // skip the auto sign-in (which would 403 anyway against the
+      // `web_dashboard` surface) and send them straight to the completion
+      // page that points them at the Sheer App.
+      const session =
+        targetSurface === 'web' ? await this.tryAutoSignIn(email, input.password) : undefined;
+
+      const nextAction: AccountCreationNextAction =
+        targetSurface === 'web' ? 'redirect_to_dashboard' : 'show_completion_page';
+
+      const redirectTo =
+        targetSurface === 'mobile'
+          ? `/auth/account-created?role=${encodeURIComponent(role)}`
+          : session
+            ? '/'
+            : '/login?invitation=accepted';
 
       return {
         userProfileId: row.user_profile_id,
@@ -402,7 +425,10 @@ export class StaffService {
         membershipId: row.membership_id,
         staffProfileId: row.staff_profile_id ?? undefined,
         nextStep: session ? 'dashboard' : 'sign_in',
-        redirectTo: session ? '/' : '/login?invitation=accepted',
+        redirectTo,
+        role,
+        targetSurface,
+        nextAction,
         session: session?.session,
         user: session?.user,
       };
@@ -971,6 +997,16 @@ function pickAcceptRow(value: unknown): AcceptRpcRow | undefined {
   if (Array.isArray(value)) return value[0] as AcceptRpcRow | undefined;
   if (value && typeof value === 'object') return value as AcceptRpcRow;
   return undefined;
+}
+
+/**
+ * Roles whose primary product surface is the web dashboard. Stylists and
+ * clients are allowed to *claim* their account on the web (invitation /
+ * password setup), but the day-to-day product for them lives in the
+ * Sheer App, so they should never be auto-logged into the dashboard.
+ */
+function isWebSurfaceRole(role: UserRole): boolean {
+  return role === 'owner' || role === 'manager';
 }
 
 function roleOrder(role: 'owner' | 'manager' | 'stylist' | 'client'): number {

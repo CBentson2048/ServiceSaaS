@@ -314,6 +314,13 @@ export class OwnerOnboardingService {
         locationId: row.location_id,
         nextStep: session ? 'dashboard' : 'sign_in',
         redirectTo: session ? '/' : '/login?onboarded=1',
+        // Owner onboarding always produces an `owner` role on the web
+        // dashboard. We surface those constants explicitly so the web
+        // client can use the same role-aware switch it uses for the
+        // staff invitation acceptance response.
+        role: 'owner',
+        targetSurface: 'web',
+        nextAction: 'redirect_to_dashboard',
         session: session?.session,
         user: session?.user,
       };
