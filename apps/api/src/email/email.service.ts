@@ -39,7 +39,7 @@ export class EmailService {
 
   constructor(config: ConfigService) {
     const apiKey = config.get<string>('RESEND_API_KEY');
-    this.from = config.get<string>('RESEND_FROM_EMAIL') ?? 'Sheer <onboarding@resend.dev>';
+    this.from = resolveResendFromAddress(config);
     this.client = apiKey ? new Resend(apiKey) : null;
 
     if (!this.client) {
@@ -85,4 +85,26 @@ export class EmailService {
       return { delivered: false, error: message };
     }
   }
+}
+
+/**
+ * Resolve the `from` address used when calling Resend.
+ *
+ * Resolution order:
+ *   1. RESEND_FROM_EMAIL (preferred) — may already be RFC 5322 formatted
+ *      (e.g. `Sheer <noreply@yourdomain.com>`).
+ *   2. RESEND_FROM (alias) — typically a bare email; we wrap it as
+ *      `Sheer <addr>` so Resend accepts it.
+ *   3. Fallback to the Resend test sender, which can only deliver to the
+ *      Resend account owner's verified address.
+ */
+function resolveResendFromAddress(config: ConfigService): string {
+  const raw = (config.get<string>('RESEND_FROM_EMAIL') ?? config.get<string>('RESEND_FROM'))?.trim();
+  if (!raw) {
+    return 'Sheer <onboarding@resend.dev>';
+  }
+  if (/^[^\s<]+@[^\s>]+$/.test(raw)) {
+    return `Sheer <${raw}>`;
+  }
+  return raw;
 }

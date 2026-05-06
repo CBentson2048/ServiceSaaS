@@ -15,6 +15,9 @@ import type {
   OwnerOnboardingBootstrap,
   OwnerOnboardingRequest,
   OwnerOnboardingResponse,
+  PasswordResetCompleteResponse,
+  PasswordResetInspectResponse,
+  PasswordResetRequestResponse,
   StaffInvitation,
   StaffInvitationWithToken,
   UpdateLocationRequest,
@@ -63,6 +66,35 @@ export async function logout(accessToken?: string, refreshToken?: string): Promi
     method: 'POST',
     accessToken,
     body: { refreshToken },
+  });
+}
+
+// -------------------- Password reset (public) --------------------
+
+export async function requestPasswordReset(
+  email: string,
+): Promise<PasswordResetRequestResponse> {
+  return request<PasswordResetRequestResponse>('/auth/password-reset/request', {
+    method: 'POST',
+    body: { email },
+  });
+}
+
+export async function inspectPasswordResetToken(
+  token: string,
+): Promise<PasswordResetInspectResponse> {
+  return request<PasswordResetInspectResponse>(
+    `/auth/password-reset/inspect?token=${encodeURIComponent(token)}`,
+  );
+}
+
+export async function completePasswordReset(input: {
+  token: string;
+  password: string;
+}): Promise<PasswordResetCompleteResponse> {
+  return request<PasswordResetCompleteResponse>('/auth/password-reset/complete', {
+    method: 'POST',
+    body: input,
   });
 }
 

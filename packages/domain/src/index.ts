@@ -164,6 +164,70 @@ export interface OwnerOnboardingBootstrap {
 // Staff invitation + management (Phase 2)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Password reset (self-serve, web)
+// ---------------------------------------------------------------------------
+
+export type PasswordResetTokenStatus = 'valid' | 'expired' | 'used' | 'unknown';
+
+export interface PasswordResetRequestRequest {
+  email: string;
+}
+
+export interface PasswordResetRequestResponse {
+  /**
+   * Always `true` — the endpoint never reveals whether the email matched a
+   * real account. Operators can still inspect logs to see whether a token
+   * was actually issued + delivered.
+   */
+  accepted: true;
+}
+
+export interface PasswordResetInspectResponse {
+  status: PasswordResetTokenStatus;
+  /**
+   * Masked form of the user's email (e.g. `j***@example.com`). Only present
+   * when the token resolves to a real row, regardless of validity. The web
+   * UI can render this as a hint without leaking the full address.
+   */
+  emailMasked?: string;
+  /** ISO timestamp the token expires at — for "Link expires in N minutes" UI. */
+  expiresAt?: string;
+}
+
+export interface PasswordResetCompleteRequest {
+  token: string;
+  /** New password. The server enforces minimum length (8). */
+  password: string;
+}
+
+export interface PasswordResetCompleteResponse {
+  success: true;
+  /**
+   * Default redirect target the web client should use if it does not need
+   * any custom branching. The role-aware fields below override this for
+   * stylist/client (see `nextAction`).
+   */
+  redirectTo: string;
+  /**
+   * Role of the account whose password was just reset. Derived from the
+   * user's primary active membership (NOT from the request body), so the
+   * client can render the role-aware completion screen safely.
+   */
+  role: UserRole;
+  /**
+   * Where the user's primary product surface lives.
+   * - `web`    — owner / manager — continue to web sign-in.
+   * - `mobile` — stylist / client — direct them to the Sheer App.
+   */
+  targetSurface: AccountCreationTargetSurface;
+  /**
+   * What the web client should do after success.
+   * Mirrors the staff-invitation acceptance contract.
+   */
+  nextAction: AccountCreationNextAction;
+}
+
 export type InvitableRole = Extract<UserRole, 'manager' | 'stylist'>;
 
 export type InvitationStatus = 'pending' | 'accepted' | 'revoked' | 'expired';

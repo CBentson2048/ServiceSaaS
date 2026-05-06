@@ -1,4 +1,5 @@
-import { FormEvent, useState } from 'react';
+import type { FormEvent} from 'react';
+import { useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider';
 
@@ -15,6 +16,7 @@ export function LoginPage() {
   const from = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname ?? '/';
   const justOnboarded = searchParams.get('onboarded') === '1';
   const justAcceptedInvitation = searchParams.get('invitation') === 'accepted';
+  const justResetPassword = searchParams.get('password') === 'reset';
 
   if (auth.user) {
     return <Navigate to={from} replace />;
@@ -62,6 +64,12 @@ export function LoginPage() {
             </div>
           ) : null}
 
+          {justResetPassword ? (
+            <div className="rounded-input-lg border border-success-border bg-success-soft px-4 py-3 text-sm text-success">
+              Password updated. Sign in with your new password.
+            </div>
+          ) : null}
+
           <label className="block">
             <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8A7D94]">
               Email
@@ -77,8 +85,16 @@ export function LoginPage() {
           </label>
 
           <label className="block">
-            <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8A7D94]">
-              Password
+            <span className="flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8A7D94]">
+                Password
+              </span>
+              <Link
+                to="/forgot-password"
+                className="text-[12px] font-medium text-primary-deep hover:underline"
+              >
+                Forgot password?
+              </Link>
             </span>
             <input
               className="mt-2 w-full rounded-input-lg border border-[#E5D9CC] bg-[#FFFCF8] px-4 py-3 text-sm outline-none transition focus:border-primary"

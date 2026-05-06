@@ -49,3 +49,24 @@ export class LogoutDto {
   @IsString()
   refreshToken?: string;
 }
+
+export class PasswordResetRequestDto {
+  @IsEmail()
+  email!: string;
+}
+
+export class PasswordResetInspectQueryDto {
+  @IsString()
+  @MinLength(20)
+  token!: string;
+}
+
+export class PasswordResetCompleteDto {
+  @IsString()
+  @MinLength(20)
+  token!: string;
+
+  @IsString()
+  @MinLength(8)
+  password!: string;
+}

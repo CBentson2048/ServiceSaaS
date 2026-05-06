@@ -64,10 +64,20 @@ export class EnvConfig {
   @IsString()
   RESEND_FROM_EMAIL?: string;
 
+  /** Bare-email alias for RESEND_FROM_EMAIL. The API wraps it as `Sheer <addr>` for RFC 5322. */
+  @IsOptional()
+  @IsString()
+  RESEND_FROM?: string;
+
   /** Public base URL the staff invitation link points to. Defaults to the first CORS origin. */
   @IsOptional()
   @IsString()
   STAFF_INVITE_BASE_URL?: string;
+
+  /** Public base URL the password-reset email link points to. Defaults to the first CORS origin. */
+  @IsOptional()
+  @IsString()
+  PASSWORD_RESET_BASE_URL?: string;
 }
 
 /**

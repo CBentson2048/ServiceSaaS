@@ -1,22 +1,33 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
   InternalServerErrorException,
+  Logger,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { createHash, randomBytes } from 'node:crypto';
 import type {
+  AccountCreationNextAction,
+  AccountCreationTargetSurface,
   AppSurface,
-  AuthLocation,
   AuthSession,
   AuthUser,
   CreateAccountRequest,
   CreateAccountResponse,
   LoginResponse,
+  PasswordResetCompleteResponse,
+  PasswordResetInspectResponse,
+  PasswordResetRequestResponse,
+  PasswordResetTokenStatus,
   UserRole,
 } from '@sheer/domain';
+import { EmailService } from '../email/email.service';
+import { renderPasswordResetEmail } from '../email/templates/password-reset.template';
 
 type RuntimeSurface = Extract<AppSurface, 'api' | 'web_dashboard' | 'sheer_app'>;
 
@@ -63,14 +74,32 @@ const ROLE_PRIORITY: Record<UserRole, number> = {
   client: 3,
 };
 
+interface PasswordResetRow {
+  id: string;
+  user_profile_id: string;
+  email: string;
+  token_hash: string;
+  expires_at: string;
+  used_at: string | null;
+  created_at: string;
+}
+
+const PASSWORD_RESET_EXPIRY_HOURS = 1;
+const PASSWORD_RESET_MIN_LENGTH = 8;
+
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
   private readonly supabaseUrl: string;
   private readonly anonKey: string;
   private readonly anon: SupabaseClient;
   private readonly admin: SupabaseClient;
+  private readonly resetBaseUrl: string;
 
-  constructor(config: ConfigService) {
+  constructor(
+    config: ConfigService,
+    private readonly email: EmailService,
+  ) {
     this.supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
     this.anonKey = config.getOrThrow<string>('SUPABASE_ANON_KEY');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
@@ -81,6 +110,15 @@ export class AuthService {
     this.admin = createClient(this.supabaseUrl, serviceRoleKey, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
+
+    // Where the reset link points to. Falls back to the first CORS origin
+    // (same convention used by the staff invitation flow), then localhost.
+    const corsOrigins = (config.get<string>('CORS_ORIGINS') ?? 'http://localhost:5173')
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean);
+    const explicit = config.get<string>('PASSWORD_RESET_BASE_URL');
+    this.resetBaseUrl = (explicit ?? corsOrigins[0] ?? 'http://localhost:5173').replace(/\/$/, '');
   }
 
   async createAccount(input: CreateAccountRequest): Promise<CreateAccountResponse> {
@@ -259,6 +297,221 @@ export class AuthService {
       staffProfileId: staffProfile?.id,
       clientProfileId: clientProfile?.id,
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Password reset (self-serve, web)
+  //
+  // Mirrors the staff invitation token shape: a high-entropy plaintext token
+  // is emailed to the user; we only store its sha256 hash. Acceptance is
+  // single-use and rotates the password via supabase.auth.admin.updateUserById,
+  // which means we never see the user's old password and never put one in
+  // application logs.
+  // ---------------------------------------------------------------------------
+
+  async requestPasswordReset(
+    rawEmail: string,
+    meta: { ip?: string; userAgent?: string } = {},
+  ): Promise<PasswordResetRequestResponse> {
+    const email = rawEmail.trim().toLowerCase();
+
+    // Look up the profile but do NOT reveal whether it exists. The endpoint
+    // ALWAYS responds 'accepted' so the response cannot be used as an email
+    // enumeration oracle.
+    const profile = await this.findProfileByEmail(email);
+    if (!profile) {
+      return { accepted: true };
+    }
+
+    const { token, hash } = generateResetToken();
+    const expiresAt = new Date(Date.now() + PASSWORD_RESET_EXPIRY_HOURS * 3600 * 1000).toISOString();
+
+    // Invalidate previous outstanding tokens for this account so the most
+    // recent email is the only one that works (defence against double-clicks
+    // and against an attacker who phished a stale token).
+    await this.admin
+      .schema('core')
+      .from('password_reset_tokens')
+      .update({ used_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .eq('user_profile_id', profile.id)
+      .is('used_at', null);
+
+    const { error: insertError } = await this.admin.schema('core').from('password_reset_tokens').insert({
+      user_profile_id: profile.id,
+      email,
+      token_hash: hash,
+      expires_at: expiresAt,
+      request_ip: meta.ip ?? null,
+      request_user_agent: meta.userAgent ?? null,
+    });
+
+    if (insertError) {
+      this.logger.error(`Unable to persist password reset token: ${insertError.message}`);
+      // Still respond 'accepted' to avoid leaking infra problems to anonymous
+      // callers. Operators see the error in logs.
+      return { accepted: true };
+    }
+
+    const resetUrl = this.buildResetUrl(token);
+    const rendered = renderPasswordResetEmail({
+      recipientName: profile.full_name?.split(' ')[0],
+      resetUrl,
+      expiresAt,
+      requestIp: meta.ip,
+    });
+
+    const result = await this.email.send({
+      to: email,
+      subject: rendered.subject,
+      html: rendered.html,
+      text: rendered.text,
+      tags: [
+        { name: 'category', value: 'password_reset' },
+        { name: 'user_profile_id', value: profile.id },
+      ],
+    });
+
+    if (result.delivered) {
+      this.logger.log(
+        `Password reset email delivered to ${email} (resend_id=${result.id ?? 'n/a'})`,
+      );
+    } else if (result.skipped) {
+      this.logger.warn(
+        `Password reset email skipped for ${email} — RESEND_API_KEY not configured. Reset URL: ${resetUrl}`,
+      );
+    } else {
+      this.logger.warn(
+        `Password reset email failed for ${email}: ${result.error ?? 'unknown'}.`,
+      );
+    }
+
+    return { accepted: true };
+  }
+
+  async inspectPasswordResetToken(token: string): Promise<PasswordResetInspectResponse> {
+    const row = await this.findPasswordResetToken(token);
+    if (!row) {
+      return { status: 'unknown' };
+    }
+    const status = this.evaluateResetStatus(row);
+    if (status === 'expired') {
+      // Mark it used so a one-time link can never be reactivated by waiting.
+      await this.markResetTokenUsed(row.id);
+    }
+    return {
+      status,
+      emailMasked: maskEmail(row.email),
+      expiresAt: row.expires_at,
+    };
+  }
+
+  async completePasswordReset(token: string, newPassword: string): Promise<PasswordResetCompleteResponse> {
+    if (typeof newPassword !== 'string' || newPassword.length < PASSWORD_RESET_MIN_LENGTH) {
+      throw new BadRequestException(
+        `Password must be at least ${PASSWORD_RESET_MIN_LENGTH} characters`,
+      );
+    }
+
+    const row = await this.findPasswordResetToken(token);
+    if (!row) {
+      throw new NotFoundException('Reset link is invalid');
+    }
+
+    const status = this.evaluateResetStatus(row);
+    if (status === 'expired') {
+      await this.markResetTokenUsed(row.id);
+      throw new BadRequestException('Reset link has expired');
+    }
+    if (status === 'used') {
+      throw new BadRequestException('Reset link has already been used');
+    }
+    if (status !== 'valid') {
+      throw new BadRequestException('Reset link is invalid');
+    }
+
+    const { error: updateError } = await this.admin.auth.admin.updateUserById(row.user_profile_id, {
+      password: newPassword,
+    });
+    if (updateError) {
+      this.logger.error(`updateUserById failed for password reset: ${updateError.message}`);
+      throw new InternalServerErrorException('Unable to reset password');
+    }
+
+    await this.markResetTokenUsed(row.id);
+
+    // Derive the role from the *primary* active membership (source of
+    // truth) so we can return a role-aware completion contract that
+    // matches the staff-invitation acceptance flow. Any role is allowed
+    // to reset their password on the web; only the *destination*
+    // differs.
+    const role = await this.resolvePrimaryRole(row.user_profile_id);
+    const targetSurface: AccountCreationTargetSurface = isWebSurfaceRole(role) ? 'web' : 'mobile';
+    const nextAction: AccountCreationNextAction =
+      targetSurface === 'web' ? 'redirect_to_dashboard' : 'show_completion_page';
+    const redirectTo =
+      targetSurface === 'mobile'
+        ? `/auth/password-reset-complete?role=${encodeURIComponent(role)}`
+        : '/login?password=reset';
+
+    return {
+      success: true,
+      redirectTo,
+      role,
+      targetSurface,
+      nextAction,
+    };
+  }
+
+  /**
+   * Resolve the user's "primary" role for surface routing. We pick the
+   * highest-privilege active membership, mirroring `resolveAuthUser`.
+   * Falls back to `'client'` if the user has no active membership at all
+   * (e.g. a freshly-created client profile pending activation) so the
+   * password-reset completion flow always has a target surface; it never
+   * 403s like the dashboard-resolving path does.
+   */
+  private async resolvePrimaryRole(userId: string): Promise<UserRole> {
+    const memberships = await this.fetchMemberships(userId);
+    const active = memberships.filter((m) => m.status === 'active');
+    if (active.length === 0) {
+      return 'client';
+    }
+    return [...active].sort((a, b) => ROLE_PRIORITY[a.role] - ROLE_PRIORITY[b.role])[0].role;
+  }
+
+  private async findPasswordResetToken(token: string): Promise<PasswordResetRow | null> {
+    if (!token || token.length < 20) return null;
+    const hash = hashResetToken(token);
+    const { data, error } = await this.admin
+      .schema('core')
+      .from('password_reset_tokens')
+      .select('id,user_profile_id,email,token_hash,expires_at,used_at,created_at')
+      .eq('token_hash', hash)
+      .maybeSingle<PasswordResetRow>();
+
+    if (error) {
+      this.logger.error(`Unable to look up password reset token: ${error.message}`);
+      throw new InternalServerErrorException('Unable to verify reset link');
+    }
+    return data ?? null;
+  }
+
+  private evaluateResetStatus(row: PasswordResetRow): PasswordResetTokenStatus {
+    if (row.used_at) return 'used';
+    if (new Date(row.expires_at).getTime() < Date.now()) return 'expired';
+    return 'valid';
+  }
+
+  private async markResetTokenUsed(id: string): Promise<void> {
+    await this.admin
+      .schema('core')
+      .from('password_reset_tokens')
+      .update({ used_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .eq('id', id);
+  }
+
+  private buildResetUrl(token: string): string {
+    return `${this.resetBaseUrl}/auth/reset-password?token=${encodeURIComponent(token)}`;
   }
 
   canAccessLocation(user: AuthUser, locationId: string): boolean {
@@ -482,6 +735,40 @@ export class AuthService {
       expiresAt: session.expires_at ? new Date(session.expires_at * 1000).toISOString() : undefined,
     };
   }
+}
+
+/**
+ * Generate a high-entropy URL-safe reset token plus its sha256 hash.
+ *
+ * The plaintext token is the bearer credential that goes into the email
+ * link; only its hash is persisted, so a database leak alone cannot
+ * reset anyone's password.
+ */
+function generateResetToken(): { token: string; hash: string } {
+  const token = randomBytes(32).toString('base64url');
+  return { token, hash: hashResetToken(token) };
+}
+
+function hashResetToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+/** `j***@example.com` style mask. Never returns a string the receiver can use to enumerate. */
+function maskEmail(email: string): string {
+  const [local, domain] = email.split('@');
+  if (!domain || !local) return '***';
+  const head = local.slice(0, 1);
+  return `${head}${'*'.repeat(Math.max(local.length - 1, 1))}@${domain}`;
+}
+
+/**
+ * Roles whose primary product surface is the web dashboard. Stylists and
+ * clients are allowed to *reset* their password on the web (the link goes
+ * there because we control the host), but their day-to-day surface is the
+ * Sheer App, so we do not auto-sign them into the dashboard.
+ */
+function isWebSurfaceRole(role: UserRole): boolean {
+  return role === 'owner' || role === 'manager';
 }
 
 function slugify(value: string): string {

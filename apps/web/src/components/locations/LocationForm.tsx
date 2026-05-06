@@ -1,4 +1,5 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import type { FormEvent} from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { CreateLocationRequest, UpdateLocationRequest } from '@sheer/domain';
 import { SelectField, TextField } from '../onboarding/FormField';
 

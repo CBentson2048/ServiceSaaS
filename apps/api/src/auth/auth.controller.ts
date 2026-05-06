@@ -1,8 +1,33 @@
-import { Body, Controller, Get, Headers, HttpCode, Post, UseGuards } from '@nestjs/common';
-import type { CreateAccountResponse, CurrentUserResponse, LoginResponse } from '@sheer/domain';
+import {
+  Body,
+  Controller,
+  Get,
+  Headers,
+  HttpCode,
+  Ip,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
+import type {
+  CreateAccountResponse,
+  CurrentUserResponse,
+  LoginResponse,
+  PasswordResetCompleteResponse,
+  PasswordResetInspectResponse,
+  PasswordResetRequestResponse,
+} from '@sheer/domain';
 import { AuthService } from './auth.service';
 import { CurrentUser } from './current-user.decorator';
-import { CreateAccountDto, LoginDto, LogoutDto, RefreshSessionDto } from './dto';
+import {
+  CreateAccountDto,
+  LoginDto,
+  LogoutDto,
+  PasswordResetCompleteDto,
+  PasswordResetInspectQueryDto,
+  PasswordResetRequestDto,
+  RefreshSessionDto,
+} from './dto';
 import { SupabaseAuthGuard } from './supabase-auth.guard';
 
 @Controller('auth')
@@ -37,6 +62,46 @@ export class AuthController {
   @UseGuards(SupabaseAuthGuard)
   me(@CurrentUser() user: CurrentUserResponse['user']): CurrentUserResponse {
     return { user };
+  }
+
+  // -------------------------------------------------------------------------
+  // Public password reset flow (anonymous; no bearer required)
+  //
+  // Three endpoints, all returning the schema documented in
+  // `packages/domain/src/index.ts`:
+  //
+  //   POST /api/auth/password-reset/request  → always { accepted: true }
+  //   GET  /api/auth/password-reset/inspect  → { status, emailMasked?, expiresAt? }
+  //   POST /api/auth/password-reset/complete → { success, redirectTo, role, ... }
+  //
+  // Acceptance and completion only return the user's role — never an
+  // access token — because stylist/client are not allowed in the web
+  // dashboard. The web client uses `nextAction` to decide whether to
+  // send the user to `/login` or to the role-aware completion page.
+  // -------------------------------------------------------------------------
+
+  @Post('password-reset/request')
+  @HttpCode(200)
+  async requestPasswordReset(
+    @Body() body: PasswordResetRequestDto,
+    @Ip() ip: string,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<PasswordResetRequestResponse> {
+    return this.auth.requestPasswordReset(body.email, { ip, userAgent });
+  }
+
+  @Get('password-reset/inspect')
+  inspectPasswordReset(
+    @Query() query: PasswordResetInspectQueryDto,
+  ): Promise<PasswordResetInspectResponse> {
+    return this.auth.inspectPasswordResetToken(query.token);
+  }
+
+  @Post('password-reset/complete')
+  completePasswordReset(
+    @Body() body: PasswordResetCompleteDto,
+  ): Promise<PasswordResetCompleteResponse> {
+    return this.auth.completePasswordReset(body.token, body.password);
   }
 }
 
