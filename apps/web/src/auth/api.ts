@@ -1,13 +1,22 @@
 import type {
+  AbsenceMutationResponse,
   AcceptStaffInvitationRequest,
   AcceptStaffInvitationResponse,
+  ApproveLeaveRequestRequest,
+  BreakMutationResponse,
   BusinessSlugAvailabilityResponse,
+  CreateAbsenceRequest,
   CreateAccountRequest,
+  CreateBreakRequest,
   CreateLocationRequest,
+  CreateShiftRequest,
   CreateStaffInvitationRequest,
   CurrentUserResponse,
   InvitationLookupResponse,
   InvitationStatus,
+  LeaveRequestMutationResponse,
+  LeaveRequestStatus,
+  ListLeaveRequestsResponse,
   ListLocationsResponse,
   ListStaffResponse,
   LocationDetailResponse,
@@ -18,11 +27,18 @@ import type {
   PasswordResetCompleteResponse,
   PasswordResetInspectResponse,
   PasswordResetRequestResponse,
+  RejectLeaveRequestRequest,
+  SaveWeeklyRotaRequest,
+  SaveWeeklyRotaResponse,
+  ShiftMutationResponse,
   StaffInvitation,
   StaffInvitationWithToken,
+  UpdateBreakRequest,
   UpdateLocationRequest,
+  UpdateShiftRequest,
   UpdateStaffMemberRequest,
   UpdateStaffMemberResponse,
+  WeeklyRotaResponse,
 } from '@sheer/domain';
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL ?? 'http://localhost:3001').replace(/\/$/, '');
@@ -255,6 +271,173 @@ export async function reactivateLocation(
     `/owner/locations/${encodeURIComponent(locationId)}/reactivate`,
     { method: 'POST', accessToken },
   );
+}
+
+// -------------------- Rota (manager + owner) --------------------
+
+export async function getWeeklyRota(
+  accessToken: string,
+  params: { locationId?: string; weekStart: string },
+): Promise<WeeklyRotaResponse> {
+  const search = new URLSearchParams();
+  if (params.locationId) search.set('locationId', params.locationId);
+  search.set('weekStart', params.weekStart);
+  return request<WeeklyRotaResponse>(`/rota/week?${search.toString()}`, { accessToken });
+}
+
+export async function createRotaShift(
+  accessToken: string,
+  payload: CreateShiftRequest,
+): Promise<ShiftMutationResponse> {
+  return request<ShiftMutationResponse>('/rota/shifts', {
+    method: 'POST',
+    body: payload,
+    accessToken,
+  });
+}
+
+export async function updateRotaShift(
+  accessToken: string,
+  shiftId: string,
+  payload: UpdateShiftRequest,
+): Promise<ShiftMutationResponse> {
+  return request<ShiftMutationResponse>(`/rota/shifts/${encodeURIComponent(shiftId)}`, {
+    method: 'PATCH',
+    body: payload,
+    accessToken,
+  });
+}
+
+export async function deleteRotaShift(
+  accessToken: string,
+  shiftId: string,
+  pastEditReason?: string,
+): Promise<{ success: true }> {
+  const search = pastEditReason
+    ? `?pastEditReason=${encodeURIComponent(pastEditReason)}`
+    : '';
+  return request<{ success: true }>(
+    `/rota/shifts/${encodeURIComponent(shiftId)}${search}`,
+    { method: 'DELETE', accessToken },
+  );
+}
+
+export async function addRotaBreak(
+  accessToken: string,
+  shiftId: string,
+  payload: CreateBreakRequest,
+): Promise<BreakMutationResponse> {
+  return request<BreakMutationResponse>(
+    `/rota/shifts/${encodeURIComponent(shiftId)}/breaks`,
+    { method: 'POST', body: payload, accessToken },
+  );
+}
+
+export async function updateRotaBreak(
+  accessToken: string,
+  shiftId: string,
+  breakId: string,
+  payload: UpdateBreakRequest,
+): Promise<BreakMutationResponse> {
+  return request<BreakMutationResponse>(
+    `/rota/shifts/${encodeURIComponent(shiftId)}/breaks/${encodeURIComponent(breakId)}`,
+    { method: 'PATCH', body: payload, accessToken },
+  );
+}
+
+export async function deleteRotaBreak(
+  accessToken: string,
+  shiftId: string,
+  breakId: string,
+  pastEditReason?: string,
+): Promise<{ success: true }> {
+  const search = pastEditReason
+    ? `?pastEditReason=${encodeURIComponent(pastEditReason)}`
+    : '';
+  return request<{ success: true }>(
+    `/rota/shifts/${encodeURIComponent(shiftId)}/breaks/${encodeURIComponent(breakId)}${search}`,
+    { method: 'DELETE', accessToken },
+  );
+}
+
+export async function listRotaLeaveRequests(
+  accessToken: string,
+  params: { locationId?: string; status?: LeaveRequestStatus | 'all' } = {},
+): Promise<ListLeaveRequestsResponse> {
+  const search = new URLSearchParams();
+  if (params.locationId) search.set('locationId', params.locationId);
+  if (params.status) search.set('status', params.status);
+  const query = search.toString();
+  return request<ListLeaveRequestsResponse>(
+    `/rota/leave-requests${query ? `?${query}` : ''}`,
+    { accessToken },
+  );
+}
+
+export async function approveRotaLeaveRequest(
+  accessToken: string,
+  requestId: string,
+  payload: ApproveLeaveRequestRequest = {},
+): Promise<LeaveRequestMutationResponse> {
+  return request<LeaveRequestMutationResponse>(
+    `/rota/leave-requests/${encodeURIComponent(requestId)}/approve`,
+    { method: 'POST', body: payload, accessToken },
+  );
+}
+
+export async function rejectRotaLeaveRequest(
+  accessToken: string,
+  requestId: string,
+  payload: RejectLeaveRequestRequest = {},
+): Promise<LeaveRequestMutationResponse> {
+  return request<LeaveRequestMutationResponse>(
+    `/rota/leave-requests/${encodeURIComponent(requestId)}/reject`,
+    { method: 'POST', body: payload, accessToken },
+  );
+}
+
+export async function markRotaAbsence(
+  accessToken: string,
+  payload: CreateAbsenceRequest,
+): Promise<AbsenceMutationResponse> {
+  return request<AbsenceMutationResponse>('/rota/absence-events', {
+    method: 'POST',
+    body: payload,
+    accessToken,
+  });
+}
+
+export async function saveWeeklyRota(
+  accessToken: string,
+  payload: SaveWeeklyRotaRequest,
+): Promise<SaveWeeklyRotaResponse> {
+  return request<SaveWeeklyRotaResponse>('/rota/week/save', {
+    method: 'POST',
+    body: payload,
+    accessToken,
+  });
+}
+
+export async function previewNewWeek(
+  accessToken: string,
+  payload: import('@sheer/domain').PreviewNewWeekRequest,
+): Promise<import('@sheer/domain').PreviewNewWeekResponse> {
+  return request<import('@sheer/domain').PreviewNewWeekResponse>('/rota/weeks/preview', {
+    method: 'POST',
+    body: payload,
+    accessToken,
+  });
+}
+
+export async function createNewWeek(
+  accessToken: string,
+  payload: import('@sheer/domain').CreateNewWeekRequest,
+): Promise<import('@sheer/domain').CreateNewWeekResponse> {
+  return request<import('@sheer/domain').CreateNewWeekResponse>('/rota/weeks/create', {
+    method: 'POST',
+    body: payload,
+    accessToken,
+  });
 }
 
 // -------------------- Public invitation acceptance --------------------

@@ -525,3 +525,261 @@ export interface SharedDevice {
   registeredAt: string;
   lastSeenAt?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Rota — manager-facing core (also reusable by future owner + stylist UIs)
+// ---------------------------------------------------------------------------
+
+export type ShiftStatus = 'draft' | 'published' | 'completed' | 'cancelled';
+
+export type LeaveRequestStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
+
+export type AbsenceType =
+  | 'sickness'
+  | 'emergency'
+  | 'bereavement'
+  | 'unauthorised'
+  | 'other';
+
+export interface RotaBreak {
+  id: string;
+  shiftId: string;
+  startedAt: string;
+  endedAt: string;
+  isPaid: boolean;
+  notes?: string;
+}
+
+export interface RotaShift {
+  id: string;
+  businessId: string;
+  locationId: string;
+  staffProfileId: string;
+  status: ShiftStatus;
+  scheduledStartAt: string;
+  scheduledEndAt: string;
+  publishedAt?: string;
+  notes?: string;
+  breaks: RotaBreak[];
+}
+
+export interface RotaStaffSummary {
+  staffProfileId: string;
+  userProfileId: string;
+  fullName: string;
+  displayName: string;
+  email: string;
+  colorHex?: string;
+  isBookable: boolean;
+  /** Default break length in minutes (per-stylist config). */
+  defaultBreakMinutes: number;
+  /** Whether the default break is paid (per-stylist config). */
+  defaultBreakIsPaid: boolean;
+  defaultBreakNotes?: string;
+}
+
+export interface RotaLeaveIndicator {
+  id: string;
+  staffProfileId: string;
+  status: LeaveRequestStatus;
+  startDate: string;
+  endDate: string;
+  reason?: string;
+}
+
+export interface RotaAbsenceIndicator {
+  id: string;
+  staffProfileId: string;
+  absenceType: AbsenceType;
+  startsAt: string;
+  endsAt?: string;
+  notes?: string;
+}
+
+export interface WeeklyRotaResponse {
+  locationId: string;
+  /** ISO date for the Monday at the start of the requested week (local to the location). */
+  weekStart: string;
+  /** ISO date for the Monday _after_ the requested week (exclusive end). */
+  weekEnd: string;
+  staff: RotaStaffSummary[];
+  shifts: RotaShift[];
+  leave: RotaLeaveIndicator[];
+  absences: RotaAbsenceIndicator[];
+  /** Echoed location holiday-notice rule (in days). */
+  holidayNoticeDays: number;
+  /** Echoes the actor's role so the client can branch UI without re-querying /auth/me. */
+  scope: 'owner' | 'manager';
+}
+
+export interface CreateShiftRequest {
+  staffProfileId: string;
+  locationId: string;
+  /** ISO timestamp. */
+  scheduledStartAt: string;
+  /** ISO timestamp; must be strictly after scheduledStartAt. */
+  scheduledEndAt: string;
+  status?: ShiftStatus;
+  notes?: string;
+  /** Required when scheduledStartAt is in the past. */
+  pastEditReason?: string;
+}
+
+export interface UpdateShiftRequest {
+  scheduledStartAt?: string;
+  scheduledEndAt?: string;
+  status?: ShiftStatus;
+  notes?: string | null;
+  /** Required if the shift is in the past or being moved into the past. */
+  pastEditReason?: string;
+}
+
+export interface ShiftMutationResponse {
+  shift: RotaShift;
+}
+
+export interface CreateBreakRequest {
+  startedAt: string;
+  endedAt: string;
+  isPaid?: boolean;
+  notes?: string;
+  pastEditReason?: string;
+}
+
+export interface UpdateBreakRequest {
+  startedAt?: string;
+  endedAt?: string;
+  isPaid?: boolean;
+  notes?: string | null;
+  pastEditReason?: string;
+}
+
+export interface BreakMutationResponse {
+  shift: RotaShift;
+  break: RotaBreak;
+}
+
+export interface RotaLeaveRequest {
+  id: string;
+  businessId: string;
+  locationId: string;
+  staffProfileId: string;
+  startDate: string;
+  endDate: string;
+  status: LeaveRequestStatus;
+  reason?: string;
+  reviewedAt?: string;
+  reviewedByUserProfileId?: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+  /** Hydrated staff identity for list rendering. */
+  staff?: RotaStaffSummary;
+  /** Number of days between today and start_date — useful to render the threshold pill. */
+  noticeDays: number;
+  /** True when the leave request falls inside the location holiday-notice rule. */
+  insideNoticeWindow: boolean;
+}
+
+export interface ListLeaveRequestsResponse {
+  leaveRequests: RotaLeaveRequest[];
+  holidayNoticeDays: number;
+  scope: 'owner' | 'manager';
+}
+
+export interface ApproveLeaveRequestRequest {
+  /** Manager override of the holiday-notice auto-decline rule. Captured in audit. */
+  override?: boolean;
+  /** Free-form note attached to the approval audit row. */
+  reviewerNote?: string;
+}
+
+export interface RejectLeaveRequestRequest {
+  /** Reason returned to the requesting stylist + captured in audit. */
+  reason?: string;
+}
+
+export interface LeaveRequestMutationResponse {
+  leaveRequest: RotaLeaveRequest;
+}
+
+export interface CreateAbsenceRequest {
+  staffProfileId: string;
+  locationId: string;
+  absenceType: AbsenceType;
+  startsAt: string;
+  endsAt?: string;
+  notes?: string;
+}
+
+export interface AbsenceMutationResponse {
+  absence: RotaAbsenceIndicator;
+}
+
+export interface SaveWeeklyRotaShiftInput {
+  /** Optional id — when set, the shift is updated; otherwise created. */
+  id?: string;
+  staffProfileId: string;
+  scheduledStartAt: string;
+  scheduledEndAt: string;
+  status?: ShiftStatus;
+  notes?: string;
+}
+
+export interface SaveWeeklyRotaRequest {
+  locationId: string;
+  weekStart: string;
+  shifts: SaveWeeklyRotaShiftInput[];
+  /** Required if any shift in the payload starts before now. */
+  pastEditReason?: string;
+}
+
+export interface SaveWeeklyRotaResponse {
+  saved: RotaShift[];
+}
+
+export type RotaCreationMode = 'blank' | 'clone_last_week' | 'generate_from_defaults';
+
+export interface NewWeekDraftBreakInput {
+  startedAt: string;
+  endedAt: string;
+  isPaid?: boolean;
+  notes?: string;
+}
+
+export interface NewWeekDraftShiftInput {
+  staffProfileId: string;
+  scheduledStartAt: string;
+  scheduledEndAt: string;
+  notes?: string;
+  breaks?: NewWeekDraftBreakInput[];
+}
+
+export interface PreviewNewWeekRequest {
+  weekStart: string;
+  creationMode: RotaCreationMode;
+  locationId?: string;
+}
+
+export interface PreviewNewWeekResponse {
+  weekStart: string;
+  creationMode: RotaCreationMode;
+  staffCount: number;
+  shiftsToCreate: number;
+  breaksToCreate: number;
+  warnings: string[];
+  draftShifts?: RotaShift[];
+}
+
+export interface CreateNewWeekRequest {
+  weekStart: string;
+  creationMode: RotaCreationMode;
+  locationId?: string;
+  shifts?: NewWeekDraftShiftInput[];
+}
+
+export interface CreateNewWeekResponse {
+  weekStart: string;
+  shiftsCreated: number;
+  breaksCreated: number;
+}

@@ -14,6 +14,8 @@ import { OwnerOnboardingPage } from './pages/OwnerOnboardingPage';
 import { PasswordResetCompletePage } from './pages/PasswordResetCompletePage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 import { ResetPasswordPage } from './pages/ResetPasswordPage';
+import { RotaPage } from './pages/RotaPage';
+import { NewWeekRotaPage } from './pages/NewWeekRotaPage';
 import { TeamPage } from './pages/TeamPage';
 import { UnauthorizedPage } from './pages/UnauthorizedPage';
 
@@ -46,7 +48,8 @@ export function App() {
           <Route index element={<DashboardPage />} />
           <Route path="/bookings" element={<PlaceholderPage title="Bookings" />} />
           <Route path="/crm" element={<PlaceholderPage title="CRM" />} />
-          <Route path="/rota" element={<PlaceholderPage title="Rota" />} />
+          <Route path="/rota" element={<RotaPage />} />
+          <Route path="/rota/new-week" element={<NewWeekRotaPage />} />
           <Route path="/sheer-lab" element={<PlaceholderPage title="Sheer Lab" />} />
           <Route path="/commission" element={<PlaceholderPage title="Commission" />} />
           <Route path="/locations" element={<LocationsPage />} />
