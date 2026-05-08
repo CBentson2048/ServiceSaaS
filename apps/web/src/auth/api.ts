@@ -27,6 +27,12 @@ import type {
   PasswordResetCompleteResponse,
   PasswordResetInspectResponse,
   PasswordResetRequestResponse,
+  CreatePublicBookingRequest,
+  CreatePublicBookingResponse,
+  PublicBookingAvailabilityResponse,
+  PublicBookingLocationsResponse,
+  PublicBookingServiceSelectionResponse,
+  PublicBookingStylistsResponse,
   RejectLeaveRequestRequest,
   SaveWeeklyRotaRequest,
   SaveWeeklyRotaResponse,
@@ -82,6 +88,99 @@ export async function logout(accessToken?: string, refreshToken?: string): Promi
     method: 'POST',
     accessToken,
     body: { refreshToken },
+  });
+}
+
+// -------------------- Public booking flow --------------------
+
+export async function listPublicBookingLocations(): Promise<PublicBookingLocationsResponse> {
+  return request<PublicBookingLocationsResponse>('/public/booking/locations');
+}
+
+export async function getPublicBookingSelection(params: {
+  locationId?: string;
+  businessSlug?: string;
+  locationSlug?: string;
+}): Promise<PublicBookingServiceSelectionResponse> {
+  const search = new URLSearchParams();
+  if (params.locationId) search.set('locationId', params.locationId);
+  if (params.businessSlug) search.set('businessSlug', params.businessSlug);
+  if (params.locationSlug) search.set('locationSlug', params.locationSlug);
+  return request<PublicBookingServiceSelectionResponse>(
+    `/public/booking/selection?${search.toString()}`,
+  );
+}
+
+export async function getPublicBookingStylists(params: {
+  serviceId: string;
+  locationId?: string;
+  businessSlug?: string;
+  locationSlug?: string;
+}): Promise<PublicBookingStylistsResponse> {
+  const search = new URLSearchParams();
+  search.set('serviceId', params.serviceId);
+  if (params.locationId) search.set('locationId', params.locationId);
+  if (params.businessSlug) search.set('businessSlug', params.businessSlug);
+  if (params.locationSlug) search.set('locationSlug', params.locationSlug);
+  return request<PublicBookingStylistsResponse>(
+    `/public/booking/stylists?${search.toString()}`,
+  );
+}
+
+export async function getPublicBookingAvailability(params: {
+  locationId: string;
+  serviceId: string;
+  stylistId?: string;
+  nextAvailable?: boolean;
+  dateFrom: string;
+  dateTo: string;
+}): Promise<PublicBookingAvailabilityResponse> {
+  const search = new URLSearchParams();
+  search.set('locationId', params.locationId);
+  search.set('serviceId', params.serviceId);
+  if (params.stylistId) search.set('stylistId', params.stylistId);
+  if (params.nextAvailable) search.set('nextAvailable', 'true');
+  search.set('dateFrom', params.dateFrom);
+  search.set('dateTo', params.dateTo);
+  return request<PublicBookingAvailabilityResponse>(
+    `/public/booking/availability?${search.toString()}`,
+  );
+}
+
+export async function createPublicBooking(
+  payload: CreatePublicBookingRequest,
+): Promise<CreatePublicBookingResponse> {
+  return request<CreatePublicBookingResponse>('/public/booking/appointments', {
+    method: 'POST',
+    body: payload,
+  });
+}
+
+export async function createClientBookingAccount(payload: {
+  locationId: string;
+  email: string;
+  password: string;
+  firstName: string;
+  lastName: string;
+  phone?: string;
+  communicationPreference: 'whatsapp' | 'sms' | 'email';
+}): Promise<LoginResponse> {
+  return request<LoginResponse>('/auth/client-booking/register', {
+    method: 'POST',
+    body: payload,
+  });
+}
+
+export async function loginClientBookingAccount(payload: {
+  locationId: string;
+  email: string;
+  password: string;
+  phone?: string;
+  communicationPreference: 'whatsapp' | 'sms' | 'email';
+}): Promise<LoginResponse> {
+  return request<LoginResponse>('/auth/client-booking/login', {
+    method: 'POST',
+    body: payload,
   });
 }
 

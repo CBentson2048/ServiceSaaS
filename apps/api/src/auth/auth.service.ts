@@ -26,6 +26,7 @@ import type {
   PasswordResetTokenStatus,
   UserRole,
 } from '@sheer/domain';
+import type { ClientBookingAccountDto, ClientBookingLoginDto } from './dto';
 import { EmailService } from '../email/email.service';
 import { renderPasswordResetEmail } from '../email/templates/password-reset.template';
 
@@ -35,6 +36,7 @@ interface ProfileRow {
   id: string;
   email: string;
   full_name: string;
+  phone: string | null;
   avatar_url: string | null;
 }
 
@@ -53,6 +55,7 @@ interface BusinessRow {
 
 interface LocationRow {
   id: string;
+  business_id?: string;
   name: string;
   code: string | null;
   slug: string | null;
@@ -65,6 +68,16 @@ interface StaffProfileRow {
 
 interface ClientProfileRow {
   id: string;
+  first_name?: string;
+  last_name?: string;
+  email?: string | null;
+  phone?: string | null;
+}
+
+interface BookingLocationRow {
+  id: string;
+  business_id: string;
+  name: string;
 }
 
 const ROLE_PRIORITY: Record<UserRole, number> = {
@@ -162,6 +175,91 @@ export class AuthService {
       }
       throw new InternalServerErrorException('Unable to create account');
     }
+  }
+
+  async createClientBookingAccount(input: ClientBookingAccountDto): Promise<LoginResponse> {
+    const location = await this.fetchBookingLocation(input.locationId);
+    const email = input.email.trim().toLowerCase();
+    const firstName = input.firstName.trim();
+    const lastName = input.lastName.trim();
+    const fullName = `${firstName} ${lastName}`.trim();
+    let createdUserId: string | undefined;
+
+    const existingProfile = await this.findProfileByEmail(email);
+    if (existingProfile) {
+      throw new ConflictException('An account already exists for this email. Sign in to continue.');
+    }
+
+    try {
+      const { data: createdUser, error: createUserError } = await this.admin.auth.admin.createUser({
+        email,
+        password: input.password,
+        email_confirm: true,
+        user_metadata: {
+          full_name: fullName,
+        },
+      });
+
+      if (createUserError || !createdUser.user) {
+        throw new ConflictException(createUserError?.message ?? 'Unable to create account');
+      }
+
+      createdUserId = createdUser.user.id;
+      await this.createUserProfile(createdUserId, email, fullName, input.phone);
+      await this.ensureClientMembership(location.business_id, createdUserId);
+      await this.ensureClientProfile(location.business_id, input.locationId, createdUserId, {
+        firstName,
+        lastName,
+        email,
+        phone: input.phone,
+        communicationPreference: input.communicationPreference,
+      });
+
+      return this.login(email, input.password, 'sheer_app');
+    } catch (error) {
+      if (createdUserId) {
+        await this.rollbackCreatedClientAccount(createdUserId, location.business_id);
+      }
+      if (error instanceof ConflictException) {
+        throw error;
+      }
+      this.logger.error(`createClientBookingAccount failed: ${error instanceof Error ? error.message : String(error)}`);
+      throw new InternalServerErrorException('Unable to create client account');
+    }
+  }
+
+  async loginClientForBooking(input: ClientBookingLoginDto): Promise<LoginResponse> {
+    const location = await this.fetchBookingLocation(input.locationId);
+    const email = input.email.trim().toLowerCase();
+    const { data, error } = await this.anon.auth.signInWithPassword({
+      email,
+      password: input.password,
+    });
+
+    if (error || !data.user || !data.session) {
+      throw new UnauthorizedException('Invalid email or password');
+    }
+
+    const profile = await this.fetchProfile(data.user.id);
+    await this.ensureClientMembership(location.business_id, data.user.id);
+    await this.ensureClientProfile(location.business_id, input.locationId, data.user.id, {
+      firstName: firstNameFromFullName(profile.full_name),
+      lastName: lastNameFromFullName(profile.full_name),
+      email,
+      phone: input.phone ?? profile.phone ?? undefined,
+      communicationPreference: input.communicationPreference,
+    });
+    if (input.phone?.trim()) {
+      await this.updateUserProfilePhone(data.user.id, input.phone);
+    }
+
+    const user = await this.resolveAuthUser(data.user.id);
+    this.assertSurfaceAccess(user, 'sheer_app');
+
+    return {
+      session: this.toAuthSession(data.session),
+      user,
+    };
   }
 
   async login(email: string, password: string, surface: RuntimeSurface = 'api'): Promise<LoginResponse> {
@@ -292,6 +390,7 @@ export class AuthService {
         id: profile.id,
         email: profile.email,
         fullName: profile.full_name,
+        phone: profile.phone ?? undefined,
         avatarUrl: profile.avatar_url ?? undefined,
       },
       staffProfileId: staffProfile?.id,
@@ -527,8 +626,8 @@ export class AuthService {
       throw new ForbiddenException('Web dashboard access is limited to owners and managers');
     }
 
-    if (surface === 'sheer_app' && user.role !== 'stylist') {
-      throw new ForbiddenException('Sheer App access is limited to stylist accounts');
+    if (surface === 'sheer_app' && user.role !== 'stylist' && user.role !== 'client') {
+      throw new ForbiddenException('Sheer App access is limited to stylist and client accounts');
     }
   }
 
@@ -554,7 +653,7 @@ export class AuthService {
     const { data, error } = await this.admin
       .schema('core')
       .from('user_profiles')
-      .select('id,email,full_name,avatar_url')
+      .select('id,email,full_name,phone,avatar_url')
       .eq('id', userId)
       .single<ProfileRow>();
 
@@ -569,7 +668,7 @@ export class AuthService {
     const { data, error } = await this.admin
       .schema('core')
       .from('user_profiles')
-      .select('id,email,full_name,avatar_url')
+      .select('id,email,full_name,phone,avatar_url')
       .eq('email', email)
       .maybeSingle<ProfileRow>();
 
@@ -604,15 +703,35 @@ export class AuthService {
     throw new ConflictException('Business name is already taken');
   }
 
-  private async createUserProfile(userId: string, email: string, fullName: string): Promise<void> {
+  private async createUserProfile(
+    userId: string,
+    email: string,
+    fullName: string,
+    phone?: string,
+  ): Promise<void> {
     const { error } = await this.admin.schema('core').from('user_profiles').insert({
       id: userId,
       email,
       full_name: fullName,
+      phone: phone?.trim() || null,
     });
 
     if (error) {
       throw new InternalServerErrorException('Unable to create user profile');
+    }
+  }
+
+  private async updateUserProfilePhone(userId: string, phone: string): Promise<void> {
+    const trimmed = phone.trim();
+    if (!trimmed) return;
+    const { error } = await this.admin
+      .schema('core')
+      .from('user_profiles')
+      .update({ phone: trimmed })
+      .eq('id', userId);
+
+    if (error) {
+      throw new InternalServerErrorException('Unable to update user profile phone');
     }
   }
 
@@ -628,6 +747,123 @@ export class AuthService {
     if (error) {
       throw new InternalServerErrorException('Unable to create owner membership');
     }
+  }
+
+  private async fetchBookingLocation(locationId: string): Promise<BookingLocationRow> {
+    const { data, error } = await this.admin
+      .schema('core')
+      .from('locations')
+      .select('id,business_id,name,location_settings(online_booking_enabled)')
+      .eq('id', locationId)
+      .eq('is_active', true)
+      .maybeSingle<BookingLocationRow & { location_settings?: { online_booking_enabled: boolean }[] }>();
+
+    if (error) {
+      this.logger.error(`fetchBookingLocation failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load booking location');
+    }
+    if (!data) throw new NotFoundException('Booking location not found');
+    const settings = data.location_settings?.[0];
+    if (settings && !settings.online_booking_enabled) {
+      throw new NotFoundException('Online booking is not available for this location');
+    }
+    return { id: data.id, business_id: data.business_id, name: data.name };
+  }
+
+  private async ensureClientMembership(businessId: string, userId: string): Promise<void> {
+    const { data: existing, error: lookupError } = await this.admin
+      .schema('core')
+      .from('user_memberships')
+      .select('business_id')
+      .eq('business_id', businessId)
+      .eq('user_profile_id', userId)
+      .eq('role', 'client')
+      .eq('status', 'active')
+      .maybeSingle<{ business_id: string }>();
+
+    if (lookupError) {
+      throw new InternalServerErrorException('Unable to load client membership');
+    }
+    if (existing) return;
+
+    const { error } = await this.admin.schema('core').from('user_memberships').insert({
+      business_id: businessId,
+      user_profile_id: userId,
+      role: 'client',
+      status: 'active',
+      activated_at: new Date().toISOString(),
+    });
+
+    if (error) {
+      throw new InternalServerErrorException('Unable to create client membership');
+    }
+  }
+
+  private async ensureClientProfile(
+    businessId: string,
+    locationId: string,
+    userId: string,
+    input: {
+      firstName: string;
+      lastName: string;
+      email: string;
+      phone?: string;
+      communicationPreference?: 'whatsapp' | 'sms' | 'email';
+    },
+  ): Promise<void> {
+    const { data: existing, error: lookupError } = await this.admin
+      .schema('core')
+      .from('client_profiles')
+      .select('id,first_name,last_name,email,phone')
+      .eq('business_id', businessId)
+      .eq('user_profile_id', userId)
+      .maybeSingle<ClientProfileRow>();
+
+    if (lookupError) {
+      throw new InternalServerErrorException('Unable to load client profile');
+    }
+
+    const payload = {
+      business_id: businessId,
+      primary_location_id: locationId,
+      user_profile_id: userId,
+      first_name: input.firstName,
+      last_name: input.lastName,
+      email: input.email,
+      phone: input.phone?.trim() || existing?.phone || null,
+      communication_preference: input.communicationPreference ?? null,
+      source: 'public_booking_flow',
+    };
+
+    const request = existing
+      ? this.admin.schema('core').from('client_profiles').update(payload).eq('id', existing.id)
+      : this.admin.schema('core').from('client_profiles').insert(payload);
+
+    const { error } = await request;
+    if (error) {
+      this.logger.error(`ensureClientProfile failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to save client profile');
+    }
+  }
+
+  private async rollbackCreatedClientAccount(userId: string, businessId: string): Promise<void> {
+    await this.admin
+      .schema('core')
+      .from('client_profiles')
+      .delete()
+      .eq('business_id', businessId)
+      .eq('user_profile_id', userId);
+
+    await this.admin
+      .schema('core')
+      .from('user_memberships')
+      .delete()
+      .eq('business_id', businessId)
+      .eq('user_profile_id', userId)
+      .eq('role', 'client');
+
+    await this.admin.schema('core').from('user_profiles').delete().eq('id', userId);
+    await this.admin.auth.admin.deleteUser(userId);
   }
 
   private async rollbackCreatedAccount(userId?: string, businessId?: string): Promise<void> {
@@ -783,4 +1019,16 @@ function slugify(value: string): string {
 
 function randomSuffix(): string {
   return Math.random().toString(36).slice(2, 8);
+}
+
+function firstNameFromFullName(fullName: string): string {
+  const trimmed = fullName.trim();
+  if (!trimmed) return 'Client';
+  return trimmed.split(/\s+/)[0] ?? 'Client';
+}
+
+function lastNameFromFullName(fullName: string): string {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  if (parts.length <= 1) return 'Client';
+  return parts.slice(1).join(' ');
 }

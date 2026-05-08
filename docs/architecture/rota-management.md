@@ -244,12 +244,27 @@ in the help text without another fetch.
       real Jest tests when a Jest harness lands.
 - [ ] Owner rota page (`/rota` for `role === 'owner'`) — add a
       location switcher, reuse the same `WeeklyRotaBoard`.
-- [ ] Stylist rota view in the Sheer App — wire up the same backend
-      with a `kind: 'self'` projection and the new
-      `RotaStaffSummary.userProfileId` filter.
 - [ ] Owner-side editor for `rota.staff_break_defaults` (so per-
       stylist defaults can be tuned without DB access).
-- [ ] Stylist-side leave request creation that respects the
-      holiday-notice rule client-side (server is authoritative).
 - [ ] Reproject week boundaries into the location's timezone instead
       of UTC when timezones outside Europe/London are introduced.
+
+## Stylist Self-Service Rota
+
+The Sheer App uses the same rota core with self-scoped endpoints:
+
+- `GET /api/rota/my-week` returns only the signed-in stylist's shifts,
+  shift breaks, approved leave indicators, and absence markers for the
+  requested week.
+- `GET /api/rota/my-leave-requests` returns only the signed-in stylist's
+  leave requests.
+- `POST /api/rota/leave-requests` creates a pending leave request for the
+  signed-in stylist's own `staff_profile_id`; the payload cannot nominate
+  another staff member.
+- `POST /api/rota/leave-requests/:id/cancel` lets a stylist cancel only
+  their own pending requests.
+
+Stylists cannot edit shifts, breaks, or team rota data. Manager / owner
+approval remains in the manager-facing rota flow. Holiday notice metadata
+is captured server-side on self-service leave requests so managers can
+apply the existing override rule during approval.

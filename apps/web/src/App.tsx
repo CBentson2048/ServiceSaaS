@@ -3,10 +3,17 @@ import { ProtectedRoute } from './auth/ProtectedRoute';
 import { DashboardLayout } from './layouts/DashboardLayout';
 import { AcceptInvitationPage } from './pages/AcceptInvitationPage';
 import { AccountCreatedPage } from './pages/AccountCreatedPage';
+import { ClientBookingAccountPage } from './pages/ClientBookingAccountPage';
+import { ClientBookingDateTimePage } from './pages/ClientBookingDateTimePage';
+import { ClientBookingLocationPage } from './pages/ClientBookingLocationPage';
+import { ClientBookingReviewPage } from './pages/ClientBookingReviewPage';
+import { ClientBookingServicePage } from './pages/ClientBookingServicePage';
+import { ClientBookingSuccessPage } from './pages/ClientBookingSuccessPage';
 import { CreateLocationPage } from './pages/CreateLocationPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { EditLocationPage } from './pages/EditLocationPage';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
+import { LandingPage } from './pages/LandingPage';
 import { LocationDetailPage } from './pages/LocationDetailPage';
 import { LocationsPage } from './pages/LocationsPage';
 import { LoginPage } from './pages/LoginPage';
@@ -22,6 +29,7 @@ import { UnauthorizedPage } from './pages/UnauthorizedPage';
 export function App() {
   return (
     <Routes>
+      <Route index element={<LandingPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/create-account" element={<Navigate to="/owner/onboarding" replace />} />
       <Route path="/owner/onboarding" element={<OwnerOnboardingPage />} />
@@ -38,6 +46,14 @@ export function App() {
       <Route path="/auth/reset-password" element={<ResetPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/auth/password-reset-complete" element={<PasswordResetCompletePage />} />
+      <Route path="/book/location" element={<ClientBookingLocationPage />} />
+      <Route path="/book/service" element={<ClientBookingServicePage />} />
+      <Route path="/book/date-time" element={<ClientBookingDateTimePage />} />
+      <Route path="/book/account" element={<ClientBookingAccountPage />} />
+      <Route path="/book/contact" element={<Navigate to="/book/account" replace />} />
+      <Route path="/book/preference" element={<Navigate to="/book/account" replace />} />
+      <Route path="/book/review" element={<ClientBookingReviewPage />} />
+      <Route path="/book/success" element={<ClientBookingSuccessPage />} />
       <Route
         path="/password-reset-complete"
         element={<Navigate to="/auth/password-reset-complete" replace />}
@@ -45,7 +61,7 @@ export function App() {
       <Route path="/unauthorized" element={<UnauthorizedPage />} />
       <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} />}>
         <Route element={<DashboardLayout />}>
-          <Route index element={<DashboardPage />} />
+          <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/bookings" element={<PlaceholderPage title="Bookings" />} />
           <Route path="/crm" element={<PlaceholderPage title="CRM" />} />
           <Route path="/rota" element={<RotaPage />} />

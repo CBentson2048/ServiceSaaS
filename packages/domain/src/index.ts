@@ -18,6 +18,7 @@ export interface AuthProfileSummary {
   id: string;
   email: string;
   fullName: string;
+  phone?: string;
   avatarUrl?: string;
 }
 
@@ -527,6 +528,135 @@ export interface SharedDevice {
 }
 
 // ---------------------------------------------------------------------------
+// Public client booking flow
+// ---------------------------------------------------------------------------
+
+export interface PublicBookingLocationSummary {
+  id: string;
+  businessId: string;
+  name: string;
+  slug: string;
+  timezone: string;
+  currencyCode: string;
+  appointmentSlotMinutes: number;
+  allowNextAvailable: boolean;
+  cancellationNoticeHours?: number;
+}
+
+export interface PublicBookingServiceSummary {
+  id: string;
+  name: string;
+  description?: string;
+  category?: string;
+  estimatedDurationMinutes: number;
+  startingPriceAmount: number;
+  depositRequiredAmount: number;
+  currencyCode: string;
+}
+
+export interface PublicBookingStylistSummary {
+  staffProfileId: string;
+  displayName: string;
+  colorHex?: string;
+  bio?: string;
+  nextAvailableAt?: string;
+}
+
+export interface PublicBookingServiceSelectionResponse {
+  location: PublicBookingLocationSummary;
+  services: PublicBookingServiceSummary[];
+}
+
+export interface PublicBookingLocationsResponse {
+  locations: PublicBookingLocationSummary[];
+}
+
+export interface PublicBookingStylistsResponse {
+  location: PublicBookingLocationSummary;
+  service: PublicBookingServiceSummary;
+  stylists: PublicBookingStylistSummary[];
+  nextAvailableAt?: string;
+}
+
+export interface PublicBookingAvailabilitySlot {
+  startAt: string;
+  endAt: string;
+  date: string;
+  locationId: string;
+  staffProfileId: string;
+  stylistName: string;
+}
+
+export interface PublicBookingAvailabilityResponse {
+  location: PublicBookingLocationSummary;
+  service: PublicBookingServiceSummary;
+  slots: PublicBookingAvailabilitySlot[];
+}
+
+export interface PublicBookingClientDetails {
+  firstName: string;
+  lastName: string;
+  email?: string;
+  phone?: string;
+}
+
+export interface CreatePublicBookingRequest {
+  locationId: string;
+  serviceId: string;
+  staffProfileId: string;
+  selectedStartAt: string;
+  staffRequestMode: 'specific_staff' | 'next_available';
+  client: PublicBookingClientDetails;
+  communicationPreference: 'whatsapp' | 'sms' | 'email';
+  clientProfileId: string;
+  bookedByUserProfileId: string;
+  clientNote?: string;
+}
+
+export interface PublicBookingAppointmentSummary {
+  id: string;
+  locationId: string;
+  serviceId: string;
+  serviceName: string;
+  staffProfileId: string;
+  stylistName: string;
+  scheduledStartAt: string;
+  scheduledEndAt: string;
+  status: AppointmentStatus;
+  clientDisplayName: string;
+  communicationPreference: string;
+  depositRequiredAmount: number;
+  currencyCode: string;
+}
+
+export interface CreatePublicBookingResponse {
+  appointment: PublicBookingAppointmentSummary;
+  depositRequired: boolean;
+  depositPlaceholder: boolean;
+}
+
+export interface ClientBookingSelection {
+  locationId: string;
+  location?: PublicBookingLocationSummary;
+  serviceId: string;
+  service?: PublicBookingServiceSummary;
+  staffRequestMode: 'specific_staff' | 'next_available';
+  staffProfileId?: string;
+  nextAvailableAt?: string;
+  selectedSlot?: PublicBookingAvailabilitySlot;
+  client?: PublicBookingClientDetails;
+  communicationPreference?: 'whatsapp' | 'sms' | 'email';
+  account?: {
+    accessToken: string;
+    refreshToken: string;
+    userProfileId: string;
+    clientProfileId: string;
+    email: string;
+  };
+  appointment?: PublicBookingAppointmentSummary;
+}
+
+// ---------------------------------------------------------------------------
 // Rota — manager-facing core (also reusable by future owner + stylist UIs)
 // ---------------------------------------------------------------------------
 
@@ -701,6 +831,27 @@ export interface RejectLeaveRequestRequest {
 
 export interface LeaveRequestMutationResponse {
   leaveRequest: RotaLeaveRequest;
+}
+
+export interface StylistMyWeekResponse {
+  weekStart: string;
+  weekEnd: string;
+  staffProfileId: string;
+  locationId: string;
+  shifts: RotaShift[];
+  leave: RotaLeaveIndicator[];
+  absences: RotaAbsenceIndicator[];
+}
+
+export interface MyLeaveRequestsResponse {
+  leaveRequests: RotaLeaveRequest[];
+  holidayNoticeDays: number;
+}
+
+export interface CreateMyLeaveRequest {
+  startDate: string;
+  endDate: string;
+  reason?: string;
 }
 
 export interface CreateAbsenceRequest {

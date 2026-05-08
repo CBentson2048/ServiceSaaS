@@ -1,4 +1,11 @@
-import type { CurrentUserResponse, LoginResponse } from '@sheer/domain';
+import type {
+  CreateMyLeaveRequest,
+  CurrentUserResponse,
+  LeaveRequestMutationResponse,
+  LoginResponse,
+  MyLeaveRequestsResponse,
+  StylistMyWeekResponse,
+} from '@sheer/domain';
 
 const API_BASE_URL = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3001').replace(/\/$/, '');
 
@@ -28,6 +35,44 @@ export async function logout(accessToken?: string, refreshToken?: string): Promi
   });
 }
 
+export async function getMyWeek(
+  accessToken: string,
+  weekStart: string,
+): Promise<StylistMyWeekResponse> {
+  return request<StylistMyWeekResponse>(
+    `/rota/my-week?weekStart=${encodeURIComponent(weekStart)}`,
+    { accessToken },
+  );
+}
+
+export async function getMyLeaveRequests(accessToken: string): Promise<MyLeaveRequestsResponse> {
+  return request<MyLeaveRequestsResponse>('/rota/my-leave-requests', { accessToken });
+}
+
+export async function createMyLeaveRequest(
+  accessToken: string,
+  payload: CreateMyLeaveRequest,
+): Promise<LeaveRequestMutationResponse> {
+  return request<LeaveRequestMutationResponse>('/rota/leave-requests', {
+    method: 'POST',
+    body: payload,
+    accessToken,
+  });
+}
+
+export async function cancelMyLeaveRequest(
+  accessToken: string,
+  requestId: string,
+): Promise<LeaveRequestMutationResponse> {
+  return request<LeaveRequestMutationResponse>(
+    `/rota/leave-requests/${encodeURIComponent(requestId)}/cancel`,
+    {
+      method: 'POST',
+      accessToken,
+    },
+  );
+}
+
 async function request<T>(
   path: string,
   init: { method?: string; body?: unknown; accessToken?: string } = {},
@@ -42,7 +87,15 @@ async function request<T>(
   });
 
   if (!response.ok) {
-    throw new Error(`Sheer API request failed with ${response.status}`);
+    const raw = await response.text();
+    let parsed: unknown;
+    try {
+      parsed = raw ? JSON.parse(raw) : undefined;
+    } catch {
+      parsed = undefined;
+    }
+    const message = extractErrorMessage(parsed) ?? raw ?? `Sheer API request failed with ${response.status}`;
+    throw new Error(message);
   }
 
   if (response.status === 204) {
@@ -50,4 +103,14 @@ async function request<T>(
   }
 
   return (await response.json()) as T;
+}
+
+function extractErrorMessage(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== 'object') return undefined;
+  const value = (payload as { message?: unknown }).message;
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value) && value.length > 0) {
+    return value.map((entry) => (typeof entry === 'string' ? entry : JSON.stringify(entry))).join(', ');
+  }
+  return undefined;
 }

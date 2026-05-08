@@ -16,12 +16,14 @@ import type {
   BreakMutationResponse,
   CreateAbsenceRequest,
   CreateBreakRequest,
+  CreateMyLeaveRequest,
   CreateNewWeekRequest,
   CreateNewWeekResponse,
   CreateShiftRequest,
   LeaveRequestMutationResponse,
   LeaveRequestStatus,
   ListLeaveRequestsResponse,
+  MyLeaveRequestsResponse,
   PreviewNewWeekRequest,
   PreviewNewWeekResponse,
   RejectLeaveRequestRequest,
@@ -34,6 +36,7 @@ import type {
   SaveWeeklyRotaResponse,
   ShiftMutationResponse,
   ShiftStatus,
+  StylistMyWeekResponse,
   UpdateBreakRequest,
   UpdateShiftRequest,
   WeeklyRotaResponse,
@@ -135,6 +138,7 @@ type AuditAction =
   | 'delete'
   | 'approve'
   | 'reject'
+  | 'cancel'
   | 'override'
   | 'mark_absence'
   | 'past_edit';
@@ -637,6 +641,232 @@ export class RotaService {
       holidayNoticeDays,
       scope: actor.role === 'owner' ? 'owner' : 'manager',
     };
+  }
+
+  async getMyWeek(actor: AuthUser, weekStartIso: string): Promise<StylistMyWeekResponse> {
+    const { staffProfileId, locationId } = this.resolveStylistScope(actor);
+    const weekStart = parseIsoDate(weekStartIso);
+    if (!weekStart) {
+      throw new BadRequestException('weekStart must be a valid ISO date (YYYY-MM-DD)');
+    }
+    const startOfWeek = mondayUtc(weekStart);
+    const endOfWeek = addDays(startOfWeek, 7);
+    const startIso = startOfWeek.toISOString();
+    const endIso = endOfWeek.toISOString();
+
+    const [shifts, breaks, leave, absences] = await Promise.all([
+      this.fetchShiftsInRange(actor.businessId, locationId, startIso, endIso),
+      this.fetchBreaksForRange(actor.businessId, locationId, startIso, endIso),
+      this.fetchLeaveOverlapping(
+        actor.businessId,
+        locationId,
+        toIsoDate(startOfWeek),
+        toIsoDate(endOfWeek),
+      ),
+      this.fetchAbsencesOverlapping(actor.businessId, locationId, startIso, endIso),
+    ]);
+
+    const ownShifts = shifts.filter((row) => row.staff_profile_id === staffProfileId);
+    const ownShiftIds = new Set(ownShifts.map((row) => row.id));
+    const breaksByShift = groupBreaksByShift(
+      breaks.filter((row) => ownShiftIds.has(row.shift_id)),
+    );
+
+    return {
+      weekStart: toIsoDate(startOfWeek),
+      weekEnd: toIsoDate(endOfWeek),
+      staffProfileId,
+      locationId,
+      shifts: ownShifts.map((row) => toRotaShift(row, breaksByShift.get(row.id) ?? [])),
+      leave: leave
+        .filter((row) => row.staff_profile_id === staffProfileId && row.status === 'approved')
+        .map((row) => ({
+          id: row.id,
+          staffProfileId: row.staff_profile_id,
+          status: row.status,
+          startDate: row.start_date,
+          endDate: row.end_date,
+          reason: row.reason ?? undefined,
+        })),
+      absences: absences
+        .filter((row) => row.staff_profile_id === staffProfileId)
+        .map(toRotaAbsenceIndicator),
+    };
+  }
+
+  async listMyLeaveRequests(actor: AuthUser): Promise<MyLeaveRequestsResponse> {
+    const { staffProfileId, locationId } = this.resolveStylistScope(actor);
+    const { data, error } = await this.admin
+      .schema('rota')
+      .from('leave_requests')
+      .select(LEAVE_COLUMNS)
+      .eq('business_id', actor.businessId)
+      .eq('staff_profile_id', staffProfileId)
+      .order('start_date', { ascending: false })
+      .returns<LeaveRequestRow[]>();
+
+    if (error) {
+      this.logger.error(`listMyLeaveRequests failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load leave requests');
+    }
+
+    const holidayNoticeDays = await this.fetchHolidayNoticeDays(locationId);
+    const todayUtc = startOfDayUtc(new Date());
+    return {
+      holidayNoticeDays,
+      leaveRequests: (data ?? []).map((row) => ({
+        id: row.id,
+        businessId: row.business_id,
+        locationId: row.location_id,
+        staffProfileId: row.staff_profile_id,
+        startDate: row.start_date,
+        endDate: row.end_date,
+        status: row.status,
+        reason: row.reason ?? undefined,
+        reviewedAt: row.reviewed_at ?? undefined,
+        reviewedByUserProfileId: row.reviewed_by_user_profile_id ?? undefined,
+        metadata: row.metadata ?? {},
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        noticeDays: differenceInDays(parseIsoDate(row.start_date) ?? todayUtc, todayUtc),
+        insideNoticeWindow:
+          differenceInDays(parseIsoDate(row.start_date) ?? todayUtc, todayUtc) < holidayNoticeDays,
+      })),
+    };
+  }
+
+  async createMyLeaveRequest(
+    actor: AuthUser,
+    input: CreateMyLeaveRequest,
+  ): Promise<LeaveRequestMutationResponse> {
+    const { staffProfileId, locationId } = this.resolveStylistScope(actor);
+    const startDate = parseIsoDate(input.startDate);
+    const endDate = parseIsoDate(input.endDate);
+    if (!startDate || !endDate) {
+      throw new BadRequestException('startDate and endDate must be valid ISO dates (YYYY-MM-DD)');
+    }
+    if (endDate.getTime() < startDate.getTime()) {
+      throw new BadRequestException('endDate must be on or after startDate');
+    }
+
+    const noticeDays = await this.fetchHolidayNoticeDays(locationId);
+    const daysUntilStart = differenceInDays(startDate, startOfDayUtc(new Date()));
+    const insideNoticeWindow = daysUntilStart < noticeDays;
+    const now = new Date().toISOString();
+
+    const { data, error } = await this.admin
+      .schema('rota')
+      .from('leave_requests')
+      .insert({
+        business_id: actor.businessId,
+        location_id: locationId,
+        staff_profile_id: staffProfileId,
+        requested_by_user_profile_id: actor.id,
+        start_date: toIsoDate(startDate),
+        end_date: toIsoDate(endDate),
+        status: 'pending',
+        reason: input.reason?.trim() || null,
+        metadata: {
+          inside_notice_window: insideNoticeWindow,
+          days_until_start: daysUntilStart,
+          required_notice_days: noticeDays,
+        },
+      })
+      .select(LEAVE_COLUMNS)
+      .single<LeaveRequestRow>();
+
+    if (error || !data) {
+      this.logger.error(`createMyLeaveRequest failed: ${error?.message ?? 'no row'}`);
+      throw new InternalServerErrorException('Unable to create leave request');
+    }
+
+    await this.recordAudit(actor, {
+      entity: 'leave_request',
+      entityId: data.id,
+      locationId,
+      action: 'create',
+      metadata: {
+        source: 'stylist_self_service',
+        start_date: data.start_date,
+        end_date: data.end_date,
+        inside_notice_window: insideNoticeWindow,
+      },
+    });
+
+    return {
+      leaveRequest: {
+        id: data.id,
+        businessId: data.business_id,
+        locationId: data.location_id,
+        staffProfileId: data.staff_profile_id,
+        startDate: data.start_date,
+        endDate: data.end_date,
+        status: data.status,
+        reason: data.reason ?? undefined,
+        reviewedAt: data.reviewed_at ?? undefined,
+        reviewedByUserProfileId: data.reviewed_by_user_profile_id ?? undefined,
+        metadata: data.metadata ?? {},
+        createdAt: data.created_at ?? now,
+        updatedAt: data.updated_at ?? now,
+        noticeDays: daysUntilStart,
+        insideNoticeWindow,
+      },
+    };
+  }
+
+  async cancelMyLeaveRequest(
+    actor: AuthUser,
+    requestId: string,
+  ): Promise<LeaveRequestMutationResponse> {
+    const { staffProfileId, locationId } = this.resolveStylistScope(actor);
+    const existing = await this.fetchLeaveRequest(actor.businessId, requestId);
+    if (existing.staff_profile_id !== staffProfileId || existing.location_id !== locationId) {
+      throw new ForbiddenException('Leave request is outside the signed-in stylist scope');
+    }
+    if (existing.status !== 'pending') {
+      throw new BadRequestException(
+        `Cannot cancel a leave request with status ${existing.status}`,
+      );
+    }
+
+    const cancelledAt = new Date().toISOString();
+    const { data, error } = await this.admin
+      .schema('rota')
+      .from('leave_requests')
+      .update({
+        status: 'cancelled',
+        updated_at: cancelledAt,
+        metadata: {
+          ...(existing.metadata ?? {}),
+          cancelled_at: cancelledAt,
+          cancelled_by_user_profile_id: actor.id,
+          cancelled_by: 'stylist_self_service',
+        },
+      })
+      .eq('id', requestId)
+      .eq('business_id', actor.businessId)
+      .eq('staff_profile_id', staffProfileId)
+      .eq('status', 'pending')
+      .select(LEAVE_COLUMNS)
+      .single<LeaveRequestRow>();
+
+    if (error || !data) {
+      this.logger.error(`cancelMyLeaveRequest failed: ${error?.message ?? 'no row'}`);
+      throw new InternalServerErrorException('Unable to cancel leave request');
+    }
+
+    await this.recordAudit(actor, {
+      entity: 'leave_request',
+      entityId: data.id,
+      locationId,
+      action: 'cancel',
+      metadata: {
+        source: 'stylist_self_service',
+        previous_status: existing.status,
+      },
+    });
+
+    return { leaveRequest: await this.hydrateLeaveRequest(data) };
   }
 
   async approveLeaveRequest(
@@ -1148,6 +1378,20 @@ export class RotaService {
     if (actor.role !== 'owner' && actor.role !== 'manager') {
       throw new ForbiddenException('Rota management is restricted to owners and managers');
     }
+  }
+
+  private resolveStylistScope(actor: AuthUser): { staffProfileId: string; locationId: string } {
+    if (actor.role !== 'stylist') {
+      throw new ForbiddenException('Stylist rota access is restricted to stylist accounts');
+    }
+    if (!actor.staffProfileId) {
+      throw new ForbiddenException('Stylist profile is not configured');
+    }
+    const locationId = actor.allowedLocationIds[0];
+    if (!locationId) {
+      throw new ForbiddenException('Stylist location is not configured');
+    }
+    return { staffProfileId: actor.staffProfileId, locationId };
   }
 
   private assertLocationScope(actor: AuthUser, locationId: string): void {

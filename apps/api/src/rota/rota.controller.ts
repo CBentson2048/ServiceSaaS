@@ -17,9 +17,11 @@ import type {
   CreateNewWeekResponse,
   LeaveRequestMutationResponse,
   ListLeaveRequestsResponse,
+  MyLeaveRequestsResponse,
   PreviewNewWeekResponse,
   SaveWeeklyRotaResponse,
   ShiftMutationResponse,
+  StylistMyWeekResponse,
   WeeklyRotaResponse,
 } from '@sheer/domain';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -29,6 +31,7 @@ import {
   ApproveLeaveRequestDto,
   CreateAbsenceDto,
   CreateBreakDto,
+  CreateMyLeaveRequestDto,
   CreateNewWeekDto,
   CreateShiftDto,
   GetWeeklyRotaQueryDto,
@@ -196,5 +199,42 @@ export class RotaController {
     @Body() body: SaveWeeklyRotaDto,
   ): Promise<SaveWeeklyRotaResponse> {
     return this.rota.saveWeeklyRota(actor, body);
+  }
+}
+
+@Controller('rota')
+@UseGuards(SupabaseAuthGuard, RolesGuard)
+@RequireRoles('stylist')
+export class StylistRotaController {
+  constructor(private readonly rota: RotaService) {}
+
+  @Get('my-week')
+  getMyWeek(
+    @CurrentUser() actor: AuthUser,
+    @Query() query: GetWeeklyRotaQueryDto,
+  ): Promise<StylistMyWeekResponse> {
+    return this.rota.getMyWeek(actor, query.weekStart);
+  }
+
+  @Get('my-leave-requests')
+  listMyLeaveRequests(@CurrentUser() actor: AuthUser): Promise<MyLeaveRequestsResponse> {
+    return this.rota.listMyLeaveRequests(actor);
+  }
+
+  @Post('leave-requests')
+  createMyLeaveRequest(
+    @CurrentUser() actor: AuthUser,
+    @Body() body: CreateMyLeaveRequestDto,
+  ): Promise<LeaveRequestMutationResponse> {
+    return this.rota.createMyLeaveRequest(actor, body);
+  }
+
+  @Post('leave-requests/:id/cancel')
+  @HttpCode(200)
+  cancelMyLeaveRequest(
+    @CurrentUser() actor: AuthUser,
+    @Param('id') id: string,
+  ): Promise<LeaveRequestMutationResponse> {
+    return this.rota.cancelMyLeaveRequest(actor, id);
   }
 }

@@ -85,3 +85,14 @@ describe('RotaService — new week generation', () => {
   it.todo('createNewWeek for clone_last_week is atomic when any shift or break insert fails');
   it.todo('createNewWeek for generate_from_defaults generates shifts and breaks from defaults');
 });
+
+describe('RotaService — stylist self-service', () => {
+  it.todo('stylist can fetch only their own weekly rota via my-week');
+  it.todo('stylist my-week includes own shifts, breaks, approved leave, and absences only');
+  it.todo('stylist can list only their own leave requests');
+  it.todo('stylist can create a leave request only for their own staff profile');
+  it.todo('stylist leave request records holiday notice metadata for manager review');
+  it.todo('stylist can cancel only their own pending leave request');
+  it.todo('stylist cannot cancel approved, rejected, or already-cancelled leave requests');
+  it.todo('owner and manager cannot call stylist self-service endpoints');
+});

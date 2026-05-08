@@ -172,6 +172,21 @@ export class RejectLeaveRequestDto {
   reason?: string;
 }
 
+export class CreateMyLeaveRequestDto {
+  @IsString()
+  @Matches(ISO_DATE, { message: 'startDate must be an ISO date (YYYY-MM-DD)' })
+  startDate!: string;
+
+  @IsString()
+  @Matches(ISO_DATE, { message: 'endDate must be an ISO date (YYYY-MM-DD)' })
+  endDate!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
+}
+
 export class CreateAbsenceDto {
   @IsUUID()
   staffProfileId!: string;

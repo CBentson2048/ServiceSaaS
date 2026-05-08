@@ -20,6 +20,8 @@ import type {
 import { AuthService } from './auth.service';
 import { CurrentUser } from './current-user.decorator';
 import {
+  ClientBookingAccountDto,
+  ClientBookingLoginDto,
   CreateAccountDto,
   LoginDto,
   LogoutDto,
@@ -42,6 +44,16 @@ export class AuthController {
   @Post('login')
   async login(@Body() body: LoginDto): Promise<LoginResponse> {
     return this.auth.login(body.email, body.password, body.surface);
+  }
+
+  @Post('client-booking/register')
+  async registerClientForBooking(@Body() body: ClientBookingAccountDto): Promise<LoginResponse> {
+    return this.auth.createClientBookingAccount(body);
+  }
+
+  @Post('client-booking/login')
+  async loginClientForBooking(@Body() body: ClientBookingLoginDto): Promise<LoginResponse> {
+    return this.auth.loginClientForBooking(body);
   }
 
   @Post('refresh')

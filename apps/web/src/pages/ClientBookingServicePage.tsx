@@ -1,0 +1,402 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import type {
+  ClientBookingSelection,
+  PublicBookingLocationSummary,
+  PublicBookingServiceSummary,
+  PublicBookingStylistSummary,
+} from '@sheer/domain';
+import { cn } from '@sheer/utils';
+import { ApiRequestError, getPublicBookingSelection, getPublicBookingStylists } from '../auth/api';
+import { AppButton, AppCard } from '../design';
+import { readClientBookingSelection, writeClientBookingSelection } from './clientBookingFlow';
+
+type StylistChoice =
+  | { mode: 'next_available' }
+  | { mode: 'specific_staff'; staffProfileId: string };
+
+export function ClientBookingServicePage() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const locationId = searchParams.get('locationId') ?? undefined;
+  const businessSlug = searchParams.get('businessSlug') ?? undefined;
+  const locationSlug = searchParams.get('locationSlug') ?? undefined;
+  const initialSelection = readClientBookingSelection();
+
+  const [location, setLocation] = useState<PublicBookingLocationSummary | null>(null);
+  const [services, setServices] = useState<PublicBookingServiceSummary[]>([]);
+  const [selectedServiceId, setSelectedServiceId] = useState<string | null>(
+    initialSelection?.serviceId || null,
+  );
+  const [stylists, setStylists] = useState<PublicBookingStylistSummary[]>([]);
+  const [nextAvailableAt, setNextAvailableAt] = useState<string | undefined>();
+  const [stylistChoice, setStylistChoice] = useState<StylistChoice | null>(
+    initialSelection?.staffProfileId
+      ? { mode: 'specific_staff', staffProfileId: initialSelection.staffProfileId }
+      : initialSelection?.staffRequestMode === 'next_available'
+        ? { mode: 'next_available' }
+        : null,
+  );
+  const [loadingServices, setLoadingServices] = useState(true);
+  const [loadingStylists, setLoadingStylists] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const selectedService = useMemo(
+    () => services.find((service) => service.id === selectedServiceId) ?? null,
+    [selectedServiceId, services],
+  );
+
+  const loadServices = useCallback(async () => {
+    setLoadingServices(true);
+    setError(null);
+    try {
+      const result = await getPublicBookingSelection({ locationId, businessSlug, locationSlug });
+      setLocation(result.location);
+      setServices(result.services);
+      setSelectedServiceId((current) =>
+        current && result.services.some((service) => service.id === current)
+          ? current
+          : result.services[0]?.id ?? null,
+      );
+    } catch (err) {
+      setError(toErrorMessage(err, 'Could not load services'));
+    } finally {
+      setLoadingServices(false);
+    }
+  }, [businessSlug, locationId, locationSlug]);
+
+  useEffect(() => {
+    void loadServices();
+  }, [loadServices]);
+
+  useEffect(() => {
+    if (!selectedServiceId) {
+      setStylists([]);
+      setNextAvailableAt(undefined);
+      setStylistChoice(null);
+      return;
+    }
+
+    const serviceId = selectedServiceId;
+    let cancelled = false;
+    async function loadStylists() {
+      setLoadingStylists(true);
+      setError(null);
+      setStylistChoice(null);
+      try {
+        const result = await getPublicBookingStylists({
+          locationId,
+          businessSlug,
+          locationSlug,
+          serviceId,
+        });
+        if (cancelled) return;
+        setStylists(result.stylists);
+        setNextAvailableAt(result.nextAvailableAt);
+      } catch (err) {
+        if (!cancelled) setError(toErrorMessage(err, 'Could not load stylists'));
+      } finally {
+        if (!cancelled) setLoadingStylists(false);
+      }
+    }
+    void loadStylists();
+    return () => {
+      cancelled = true;
+    };
+  }, [businessSlug, locationId, locationSlug, selectedServiceId]);
+
+  function selectService(serviceId: string) {
+    setSelectedServiceId(serviceId);
+    setStylistChoice(null);
+  }
+
+  function handleContinue() {
+    if (!location || !selectedService || !stylistChoice) return;
+    if (stylistChoice.mode === 'next_available' && !nextAvailableAt) return;
+    const selection: ClientBookingSelection = {
+      locationId: location.id,
+      location,
+      serviceId: selectedService.id,
+      service: selectedService,
+      staffRequestMode: stylistChoice.mode,
+      staffProfileId:
+        stylistChoice.mode === 'specific_staff' ? stylistChoice.staffProfileId : undefined,
+      nextAvailableAt,
+      selectedSlot: undefined,
+      client: undefined,
+      communicationPreference: undefined,
+      account: undefined,
+      appointment: undefined,
+    };
+    writeClientBookingSelection(selection);
+    navigate('/book/date-time');
+  }
+
+  const canContinue = Boolean(
+    selectedService &&
+      stylistChoice &&
+      (stylistChoice.mode === 'specific_staff' || nextAvailableAt),
+  );
+
+  return (
+    <div className="min-h-full bg-[#f7f4ff] text-text-primary">
+      <div className="mx-auto flex min-h-full w-full max-w-md flex-col bg-[#fbf9ff] shadow-hero sm:my-6 sm:min-h-[720px] sm:rounded-[28px]">
+        <header className="rounded-b-none bg-[#1C1628] px-4 pb-2 pt-3 text-white sm:rounded-t-[28px]">
+          <div className="flex items-center justify-between gap-3">
+            <button
+              type="button"
+              onClick={() => navigate(-1)}
+              className="text-[13px] font-medium text-white/85"
+            >
+              Back
+            </button>
+            <div className="text-[13px] font-semibold">Choose a service</div>
+            <div className="text-[11px] text-white/55">Step 2 of 5</div>
+          </div>
+          <div className="mt-3 h-1 rounded-full bg-white/12">
+            <div className="h-1 w-2/5 rounded-full bg-primary" />
+          </div>
+        </header>
+
+        <main className="flex-1 px-4 pb-28 pt-5">
+          <section>
+            <h1 className="text-[18px] font-semibold leading-6">What would you like?</h1>
+            <p className="mt-1 text-[12px] text-text-secondary">
+              {location ? location.name : 'Choose from available services'}
+            </p>
+          </section>
+
+          {error ? (
+            <div className="mt-4 rounded-input-lg border border-danger-border bg-danger-soft px-3 py-2 text-[13px] text-danger">
+              {error}
+            </div>
+          ) : null}
+
+          <section className="mt-5">
+            {loadingServices ? (
+              <LoadingCard label="Loading services..." />
+            ) : services.length === 0 ? (
+              <EmptyBlock
+                title="No services available"
+                body="This location does not have online-bookable services yet."
+              />
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                {services.map((service) => (
+                  <ServiceCard
+                    key={service.id}
+                    service={service}
+                    selected={service.id === selectedServiceId}
+                    onSelect={() => selectService(service.id)}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="mt-6">
+            <div className="mb-2 text-[12px] font-medium text-text-secondary">Choose your stylist</div>
+            {!selectedService ? (
+              <EmptyBlock title="Select a service first" body="Stylists appear after a service is selected." />
+            ) : loadingStylists ? (
+              <LoadingCard label="Loading stylists..." />
+            ) : stylists.length === 0 ? (
+              <EmptyBlock
+                title="No eligible stylists"
+                body="There are no bookable stylists for this location right now."
+              />
+            ) : (
+              <div className="space-y-2">
+                {location?.allowNextAvailable ? (
+                  <ChoiceCard
+                    selected={stylistChoice?.mode === 'next_available'}
+                    onSelect={() => setStylistChoice({ mode: 'next_available' })}
+                    avatarLabel="NA"
+                    title="Next available"
+                    subtitle={
+                      nextAvailableAt
+                        ? `Earliest slot ${formatAvailability(nextAvailableAt)}`
+                        : 'No rota-backed slot found yet'
+                    }
+                    accent={nextAvailableAt ? 'Best availability' : undefined}
+                  />
+                ) : null}
+
+                {stylists.map((stylist) => (
+                  <ChoiceCard
+                    key={stylist.staffProfileId}
+                    selected={
+                      stylistChoice?.mode === 'specific_staff' &&
+                      stylistChoice.staffProfileId === stylist.staffProfileId
+                    }
+                    onSelect={() =>
+                      setStylistChoice({
+                        mode: 'specific_staff',
+                        staffProfileId: stylist.staffProfileId,
+                      })
+                    }
+                    avatarLabel={initials(stylist.displayName)}
+                    title={stylist.displayName}
+                    subtitle={
+                      stylist.nextAvailableAt
+                        ? `Next available ${formatAvailability(stylist.nextAvailableAt)}`
+                        : 'No rota-backed slot found yet'
+                    }
+                    accent={stylist.bio}
+                    colorHex={stylist.colorHex}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+        </main>
+
+        <div className="sticky bottom-0 border-t border-border bg-[#fbf9ff]/95 px-4 py-4 backdrop-blur sm:rounded-b-[28px]">
+          <AppButton
+            size="lg"
+            fullWidth
+            disabled={!canContinue}
+            onClick={handleContinue}
+            className="min-h-12 bg-[#1C1628] text-white hover:bg-[#2A2139]"
+          >
+            Continue
+          </AppButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ServiceCard({
+  service,
+  selected,
+  onSelect,
+}: {
+  service: PublicBookingServiceSummary;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button type="button" onClick={onSelect} className="text-left">
+      <AppCard
+        padding="sm"
+        elevation="none"
+        className={cn(
+          'min-h-[112px] border-[1.5px] transition-colors',
+          selected ? 'border-primary bg-primary/8' : 'border-border bg-surface',
+        )}
+      >
+        <div className="text-[22px]" aria-hidden>
+          {service.category ? service.category.slice(0, 1).toUpperCase() : 'S'}
+        </div>
+        <div className="mt-3 text-[14px] font-semibold">{service.name}</div>
+        <div className="mt-1 text-[11px] text-text-secondary">
+          {formatDuration(service.estimatedDurationMinutes)}
+        </div>
+        <div className="mt-1 text-[12px] font-medium text-primary">
+          {formatPrice(service.startingPriceAmount, service.currencyCode)}
+        </div>
+      </AppCard>
+    </button>
+  );
+}
+
+function ChoiceCard({
+  selected,
+  onSelect,
+  avatarLabel,
+  title,
+  subtitle,
+  accent,
+  colorHex,
+}: {
+  selected: boolean;
+  onSelect: () => void;
+  avatarLabel: string;
+  title: string;
+  subtitle: string;
+  accent?: string;
+  colorHex?: string;
+}) {
+  return (
+    <button type="button" onClick={onSelect} className="block w-full text-left">
+      <AppCard
+        padding="sm"
+        elevation="none"
+        className={cn(
+          'flex items-center gap-3 border-[1.5px] transition-colors',
+          selected ? 'border-primary bg-primary/5' : 'border-border bg-surface',
+        )}
+      >
+        <div
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[12px] font-semibold text-white"
+          style={{ backgroundColor: colorHex || '#A67CF5' }}
+        >
+          {avatarLabel}
+        </div>
+        <div className="min-w-0">
+          <div className="truncate text-[13px] font-semibold">{title}</div>
+          <div className="truncate text-[11px] text-text-secondary">{subtitle}</div>
+          {accent ? <div className="mt-0.5 truncate text-[11px] text-primary">{accent}</div> : null}
+        </div>
+      </AppCard>
+    </button>
+  );
+}
+
+function LoadingCard({ label }: { label: string }) {
+  return (
+    <AppCard elevation="none" className="border-border bg-surface text-center text-[13px] text-text-secondary">
+      {label}
+    </AppCard>
+  );
+}
+
+function EmptyBlock({ title, body }: { title: string; body: string }) {
+  return (
+    <AppCard elevation="none" className="border-dashed text-center">
+      <div className="text-[14px] font-semibold">{title}</div>
+      <div className="mt-1 text-[12px] text-text-secondary">{body}</div>
+    </AppCard>
+  );
+}
+
+function toErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof ApiRequestError) return err.message;
+  if (err instanceof Error) return err.message;
+  return fallback;
+}
+
+function formatDuration(minutes: number): string {
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder ? `${hours} hr ${remainder} min` : `${hours} hr`;
+}
+
+function formatPrice(amount: number, currencyCode: string): string {
+  return new Intl.NumberFormat(undefined, {
+    style: 'currency',
+    currency: currencyCode,
+    maximumFractionDigits: amount % 1 === 0 ? 0 : 2,
+  }).format(amount);
+}
+
+function formatAvailability(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function initials(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? '')
+    .join('');
+}
