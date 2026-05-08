@@ -68,6 +68,8 @@ export default function LoginScreen() {
           disabled={isSubmitting}
           onPress={onSubmit}
         />
+        <Text>{process.env.EXPO_PUBLIC_API_URL}</Text>
+        <Text>{password + " " + email}</Text>
       </Card>
     </Screen>
   );

@@ -1,6 +1,7 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module';
+import { RequestResponseLoggingMiddleware } from './common/request-response-logging.middleware';
 import { HealthModule } from './health/health.module';
 import { LabAppointmentsModule } from './lab-appointments/lab-appointments.module';
 import { LabDeviceModule } from './lab-device/lab-device.module';
@@ -36,4 +37,8 @@ import { validateEnv } from './config/env.validation';
     LabFormulaModule,
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(RequestResponseLoggingMiddleware).forRoutes('*');
+  }
+}
