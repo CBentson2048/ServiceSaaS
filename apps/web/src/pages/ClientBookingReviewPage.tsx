@@ -59,6 +59,7 @@ export function ClientBookingReviewPage() {
       <p className="mt-1 text-[12px] text-text-secondary">We will re-check this slot before creating the appointment.</p>
       {error ? <div className="mt-4 rounded-input-lg border border-danger-border bg-danger-soft px-3 py-2 text-[13px] text-danger">{error}</div> : null}
       <AppCard className="mt-5">
+        <div className="grid gap-x-6 md:grid-cols-2">
         <Summary label="Location" value={currentSelection.location.name} />
         <Summary label="Service" value={currentSelection.service.name} />
         <Summary label="When" value={`${formatDate(currentSelection.selectedSlot.startAt)} at ${formatTime(currentSelection.selectedSlot.startAt)}`} />
@@ -66,6 +67,7 @@ export function ClientBookingReviewPage() {
         <Summary label="Contact" value={`${currentSelection.client.firstName} ${currentSelection.client.lastName}`} />
         <Summary label="Preference" value={formatPreference(currentSelection.communicationPreference)} />
         <Summary label="Account" value={currentSelection.account.email} />
+        </div>
       </AppCard>
       <AppCard className="mt-4 border-primary/30 bg-primary/5">
         <div className="text-[13px] font-semibold">Deposit</div>

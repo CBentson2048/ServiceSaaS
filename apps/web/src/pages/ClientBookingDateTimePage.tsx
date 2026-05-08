@@ -111,7 +111,7 @@ export function ClientBookingDateTimePage() {
           <div className="mt-1 text-[12px] text-text-secondary">Try a different day or stylist.</div>
         </AppCard>
       ) : null}
-      <div className="mt-4 grid grid-cols-2 gap-2">
+      <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-4">
         {slots.map((slot) => (
           <button key={`${slot.staffProfileId}-${slot.startAt}`} type="button" onClick={() => setSelectedSlot(slot)} className="text-left">
             <AppCard

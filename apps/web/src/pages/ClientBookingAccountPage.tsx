@@ -142,7 +142,7 @@ export function ClientBookingAccountPage() {
         </ModeButton>
       </div>
 
-      <div className="mt-5 space-y-3">
+      <div className="mt-5 grid gap-3 md:grid-cols-2">
         {mode === 'create' ? (
           <>
             <Input label="First name" value={firstName} onChange={setFirstName} />
@@ -166,7 +166,7 @@ export function ClientBookingAccountPage() {
 
       <div className="mt-6">
         <div className="text-[13px] font-semibold">Communication preference</div>
-        <div className="mt-2 space-y-2">
+        <div className="mt-2 grid gap-2 md:grid-cols-3">
           {(['whatsapp', 'sms', 'email'] as CommunicationPreference[]).map((option) => (
             <button
               key={option}

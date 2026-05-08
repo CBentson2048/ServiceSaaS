@@ -31,12 +31,14 @@ export function ClientBookingSuccessPage() {
       </div>
 
       <AppCard className="mt-5">
+        <div className="grid gap-x-6 md:grid-cols-2">
         <Summary label="Service" value={appointment.serviceName} />
         <Summary label="When" value={formatDateTime(appointment.scheduledStartAt)} />
         <Summary label="Stylist" value={appointment.stylistName} />
         <Summary label="Client" value={appointment.clientDisplayName} />
         <Summary label="Status" value={formatStatus(appointment.status)} />
         <Summary label="Contact preference" value={formatPreference(appointment.communicationPreference)} />
+        </div>
         {appointment.depositRequiredAmount > 0 ? (
           <div className="mt-3 rounded-input-lg bg-warning-soft px-3 py-2 text-[12px] text-warning">
             Deposit collection is prepared but payment is not enabled yet. No payment has been taken.

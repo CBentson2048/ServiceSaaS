@@ -139,9 +139,9 @@ export function ClientBookingServicePage() {
   );
 
   return (
-    <div className="min-h-full bg-[#f7f4ff] text-text-primary">
-      <div className="mx-auto flex min-h-full w-full max-w-md flex-col bg-[#fbf9ff] shadow-hero sm:my-6 sm:min-h-[720px] sm:rounded-[28px]">
-        <header className="rounded-b-none bg-[#1C1628] px-4 pb-2 pt-3 text-white sm:rounded-t-[28px]">
+    <div className="min-h-screen bg-[#f7f4ff] text-text-primary">
+      <div className="mx-auto flex min-h-screen w-full max-w-5xl flex-col bg-[#fbf9ff] shadow-hero sm:my-6 sm:min-h-[720px] sm:rounded-[28px] lg:min-h-[760px]">
+        <header className="rounded-b-none bg-[#1C1628] px-4 pb-2 pt-3 text-white sm:rounded-t-[28px] lg:px-6">
           <div className="flex items-center justify-between gap-3">
             <button
               type="button"
@@ -158,7 +158,8 @@ export function ClientBookingServicePage() {
           </div>
         </header>
 
-        <main className="flex-1 px-4 pb-28 pt-5">
+        <div className="flex flex-1 flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_320px]">
+        <main className="flex-1 px-4 pb-28 pt-5 lg:px-6 lg:pb-8 lg:pt-6">
           <section>
             <h1 className="text-[18px] font-semibold leading-6">What would you like?</h1>
             <p className="mt-1 text-[12px] text-text-secondary">
@@ -181,7 +182,7 @@ export function ClientBookingServicePage() {
                 body="This location does not have online-bookable services yet."
               />
             ) : (
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
                 {services.map((service) => (
                   <ServiceCard
                     key={service.id}
@@ -206,7 +207,7 @@ export function ClientBookingServicePage() {
                 body="There are no bookable stylists for this location right now."
               />
             ) : (
-              <div className="space-y-2">
+              <div className="grid gap-2 md:grid-cols-2">
                 {location?.allowNextAvailable ? (
                   <ChoiceCard
                     selected={stylistChoice?.mode === 'next_available'}
@@ -251,7 +252,28 @@ export function ClientBookingServicePage() {
           </section>
         </main>
 
-        <div className="sticky bottom-0 border-t border-border bg-[#fbf9ff]/95 px-4 py-4 backdrop-blur sm:rounded-b-[28px]">
+        <aside className="hidden border-l border-border bg-surface/55 px-5 py-6 lg:block">
+          <div className="sticky top-6 space-y-4">
+            <ServiceSummary
+              locationName={location?.name}
+              serviceName={selectedService?.name}
+              stylistLabel={selectedStylistLabel(stylistChoice, stylists)}
+              nextAvailableAt={nextAvailableAt}
+            />
+            <AppButton
+              size="lg"
+              fullWidth
+              disabled={!canContinue}
+              onClick={handleContinue}
+              className="min-h-12 bg-[#1C1628] text-white hover:bg-[#2A2139]"
+            >
+              Continue
+            </AppButton>
+          </div>
+        </aside>
+        </div>
+
+        <div className="sticky bottom-0 border-t border-border bg-[#fbf9ff]/95 px-4 py-4 backdrop-blur sm:rounded-b-[28px] lg:hidden">
           <AppButton
             size="lg"
             fullWidth
@@ -359,6 +381,54 @@ function EmptyBlock({ title, body }: { title: string; body: string }) {
       <div className="mt-1 text-[12px] text-text-secondary">{body}</div>
     </AppCard>
   );
+}
+
+function ServiceSummary({
+  locationName,
+  serviceName,
+  stylistLabel,
+  nextAvailableAt,
+}: {
+  locationName?: string;
+  serviceName?: string;
+  stylistLabel?: string;
+  nextAvailableAt?: string;
+}) {
+  const rows = [
+    ['Location', locationName],
+    ['Service', serviceName],
+    ['Stylist', stylistLabel],
+    ['Earliest', nextAvailableAt ? formatAvailability(nextAvailableAt) : undefined],
+  ].filter((row): row is [string, string] => Boolean(row[1]));
+
+  return (
+    <AppCard elevation="none" className="border-border bg-white/75">
+      <div className="text-[13px] font-semibold">Booking summary</div>
+      {rows.length > 0 ? (
+        <div className="mt-3 space-y-2">
+          {rows.map(([label, value]) => (
+            <div key={label} className="border-b border-border pb-2 last:border-0 last:pb-0">
+              <div className="text-[10px] uppercase tracking-wide text-text-muted">{label}</div>
+              <div className="mt-0.5 text-[12px] font-medium">{value}</div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-2 text-[12px] text-text-secondary">
+          Select a service and stylist to continue.
+        </div>
+      )}
+    </AppCard>
+  );
+}
+
+function selectedStylistLabel(
+  choice: StylistChoice | null,
+  stylists: PublicBookingStylistSummary[],
+): string | undefined {
+  if (!choice) return undefined;
+  if (choice.mode === 'next_available') return 'Next available';
+  return stylists.find((stylist) => stylist.staffProfileId === choice.staffProfileId)?.displayName;
 }
 
 function toErrorMessage(err: unknown, fallback: string): string {

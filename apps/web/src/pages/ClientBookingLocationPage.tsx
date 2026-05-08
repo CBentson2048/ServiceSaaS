@@ -106,7 +106,7 @@ export function ClientBookingLocationPage() {
         </AppCard>
       ) : null}
       {locations.length > 0 ? (
-        <div className="mt-5 space-y-2">
+        <div className="mt-5 grid gap-2 md:grid-cols-2">
           {locations.map((location) => (
             <button
               key={location.id}
