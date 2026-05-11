@@ -71,6 +71,7 @@ function BookingSummary({
     ['Stylist', selection?.selectedSlot?.stylistName ?? stylistLabel(selection)],
     ['Time', selection?.selectedSlot ? formatDateTime(selection.selectedSlot.startAt) : undefined],
     ['Client', selection?.client ? `${selection.client.firstName} ${selection.client.lastName}` : undefined],
+    ['Deposit', selection?.bookingAttempt ? formatMoney(selection.bookingAttempt.depositAmount, selection.bookingAttempt.currencyCode) : undefined],
   ].filter((row): row is [string, string] => Boolean(row[1]));
 
   return (
@@ -108,4 +109,11 @@ function formatDateTime(iso: string): string {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+function formatMoney(amount: number, currencyCode: string): string {
+  return new Intl.NumberFormat(undefined, {
+    style: 'currency',
+    currency: currencyCode,
+  }).format(amount);
 }

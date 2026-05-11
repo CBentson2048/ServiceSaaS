@@ -12,16 +12,20 @@ describe('PublicBookingService — availability', () => {
   it.todo('approved leave removes otherwise-valid slots');
   it.todo('absence events remove otherwise-valid slots');
   it.todo('existing active appointments block overlapping slots');
+  it.todo('pending non-expired booking attempts block overlapping slots during checkout');
   it.todo('specific stylist returns slots for only that stylist');
   it.todo('next available returns the earliest valid slots across eligible stylists');
 });
 
-describe('PublicBookingService — appointment creation', () => {
-  it.todo('client account context is required before creating an appointment');
-  it.todo('appointment creation revalidates the selected slot before insert');
-  it.todo('appointment creation rejects if the slot became unavailable');
-  it.todo('appointment creation derives duration and price from booking.services');
-  it.todo('appointment creation persists communication preference on appointment and client profile');
-  it.todo('appointment creation remains deposit-ready through deposit_required_amount');
-  it.todo('appointment creation does not create or pretend to complete a live payment');
+describe('PublicBookingService — payment-backed checkout', () => {
+  it.todo('start checkout requires linked client account context');
+  it.todo('start checkout revalidates the selected slot before creating a booking attempt');
+  it.todo('start checkout rejects if the slot became unavailable');
+  it.todo('start checkout derives duration, price, and deposit from booking.services');
+  it.todo('start checkout persists communication preference and phone on client/user profiles');
+  it.todo('start checkout creates a pending booking_attempt and pending booking.deposits row');
+  it.todo('start checkout creates a Stripe PaymentIntent with booking metadata and idempotency');
+  it.todo('successful payment finalizes one confirmed appointment and appointment service');
+  it.todo('failed payment marks attempt/deposit failed and creates no appointment');
+  it.todo('webhook replay does not duplicate appointments or deposit rows');
 });

@@ -613,6 +613,19 @@ export interface CreatePublicBookingRequest {
   clientNote?: string;
 }
 
+export interface StartPublicBookingCheckoutRequest {
+  locationId: string;
+  serviceId: string;
+  staffProfileId: string;
+  selectedStartAt: string;
+  staffRequestMode: 'specific_staff' | 'next_available';
+  client: PublicBookingClientDetails;
+  communicationPreference: 'whatsapp' | 'sms' | 'email';
+  clientProfileId: string;
+  bookedByUserProfileId: string;
+  clientNote?: string;
+}
+
 export interface PublicBookingAppointmentSummary {
   id: string;
   locationId: string;
@@ -627,6 +640,43 @@ export interface PublicBookingAppointmentSummary {
   communicationPreference: string;
   depositRequiredAmount: number;
   currencyCode: string;
+}
+
+export type PublicBookingAttemptStatus =
+  | 'pending_payment'
+  | 'confirmed'
+  | 'payment_failed'
+  | 'cancelled'
+  | 'expired';
+
+export interface PublicBookingAttemptSummary {
+  id: string;
+  status: PublicBookingAttemptStatus;
+  locationId: string;
+  serviceId: string;
+  serviceName: string;
+  staffProfileId: string;
+  stylistName: string;
+  selectedStartAt: string;
+  selectedEndAt: string;
+  clientDisplayName: string;
+  communicationPreference: string;
+  depositAmount: number;
+  currencyCode: string;
+  paymentStatus: 'pending' | 'paid' | 'failed' | 'cancelled';
+  appointment?: PublicBookingAppointmentSummary;
+}
+
+export interface StartPublicBookingCheckoutResponse {
+  bookingAttempt: PublicBookingAttemptSummary;
+  bookingAttemptId: string;
+  clientSecret: string;
+  depositAmount: number;
+  currencyCode: string;
+}
+
+export interface PublicBookingAttemptResponse {
+  bookingAttempt: PublicBookingAttemptSummary;
 }
 
 export interface CreatePublicBookingResponse {
@@ -654,6 +704,9 @@ export interface ClientBookingSelection {
     email: string;
   };
   appointment?: PublicBookingAppointmentSummary;
+  bookingAttempt?: PublicBookingAttemptSummary;
+  bookingAttemptId?: string;
+  paymentClientSecret?: string;
 }
 
 // ---------------------------------------------------------------------------

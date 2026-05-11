@@ -1,16 +1,20 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import type {
   CreatePublicBookingResponse,
+  PublicBookingAttemptResponse,
   PublicBookingAvailabilityResponse,
   PublicBookingLocationsResponse,
   PublicBookingServiceSelectionResponse,
   PublicBookingStylistsResponse,
+  StartPublicBookingCheckoutResponse,
 } from '@sheer/domain';
 import {
   CreatePublicBookingDto,
+  PublicBookingAttemptParamDto,
   PublicBookingAvailabilityQueryDto,
   PublicBookingSelectionQueryDto,
   PublicBookingStylistsQueryDto,
+  StartPublicBookingCheckoutDto,
 } from './dto';
 import { PublicBookingService } from './public-booking.service';
 
@@ -49,5 +53,19 @@ export class PublicBookingController {
     @Body() body: CreatePublicBookingDto,
   ): Promise<CreatePublicBookingResponse> {
     return this.booking.createAppointment(body);
+  }
+
+  @Post('start-checkout')
+  startCheckout(
+    @Body() body: StartPublicBookingCheckoutDto,
+  ): Promise<StartPublicBookingCheckoutResponse> {
+    return this.booking.startCheckout(body);
+  }
+
+  @Get('attempts/:id')
+  getBookingAttempt(
+    @Param() params: PublicBookingAttemptParamDto,
+  ): Promise<PublicBookingAttemptResponse> {
+    return this.booking.getBookingAttempt(params.id);
   }
 }

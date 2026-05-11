@@ -1,13 +1,68 @@
+import { useEffect, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
+import type { PublicBookingAttemptSummary } from '@sheer/domain';
+import { ApiRequestError, getPublicBookingAttempt } from '../auth/api';
 import { AppButton, AppCard } from '../design';
 import { ClientBookingShell } from './ClientBookingShell';
-import { clearClientBookingSelection, readClientBookingSelection } from './clientBookingFlow';
+import {
+  clearClientBookingSelection,
+  readClientBookingSelection,
+  updateClientBookingSelection,
+} from './clientBookingFlow';
 
 export function ClientBookingSuccessPage() {
   const navigate = useNavigate();
   const selection = readClientBookingSelection();
-  const appointment = selection?.appointment;
-  if (!appointment) return <Navigate to="/book/location" replace />;
+  const [attempt, setAttempt] = useState<PublicBookingAttemptSummary | null>(
+    selection?.bookingAttempt ?? null,
+  );
+  const [error, setError] = useState<string | null>(null);
+  const appointment = attempt?.appointment ?? selection?.appointment;
+
+  useEffect(() => {
+    const attemptId = selection?.bookingAttemptId ?? selection?.bookingAttempt?.id;
+    if (!attemptId) return;
+    const currentAttemptId = attemptId;
+    let cancelled = false;
+    async function load() {
+      try {
+        const result = await getPublicBookingAttempt(currentAttemptId);
+        if (cancelled) return;
+        setAttempt(result.bookingAttempt);
+        updateClientBookingSelection({
+          bookingAttempt: result.bookingAttempt,
+          appointment: result.bookingAttempt.appointment,
+        });
+      } catch (err) {
+        if (!cancelled) setError(toErrorMessage(err));
+      }
+    }
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [selection?.bookingAttempt?.id, selection?.bookingAttemptId]);
+
+  if (!selection?.bookingAttemptId && !selection?.bookingAttempt?.id) {
+    return <Navigate to="/book/location" replace />;
+  }
+  if (attempt && attempt.status !== 'confirmed') {
+    return <Navigate to="/book/review" replace />;
+  }
+  if (!appointment) {
+    return (
+      <ClientBookingShell title="Confirming booking" step="Done">
+        <AppCard className="text-center text-[13px] text-text-secondary">
+          Final confirmation is still processing. Refresh this page in a moment.
+        </AppCard>
+        {error ? (
+          <div className="mt-4 rounded-input-lg border border-danger-border bg-danger-soft px-3 py-2 text-[13px] text-danger">
+            {error}
+          </div>
+        ) : null}
+      </ClientBookingShell>
+    );
+  }
 
   function finish() {
     clearClientBookingSelection();
@@ -26,7 +81,7 @@ export function ClientBookingSuccessPage() {
         </div>
         <h1 className="mt-4 text-[20px] font-semibold leading-6">Your booking is in</h1>
         <p className="mt-2 text-[13px] text-text-secondary">
-          We created your reservation and linked it to your account. The salon will contact you using your selected preference.
+          Your deposit has been paid and your appointment is confirmed. The salon will contact you using your selected preference.
         </p>
       </div>
 
@@ -38,12 +93,11 @@ export function ClientBookingSuccessPage() {
         <Summary label="Client" value={appointment.clientDisplayName} />
         <Summary label="Status" value={formatStatus(appointment.status)} />
         <Summary label="Contact preference" value={formatPreference(appointment.communicationPreference)} />
+        <Summary
+          label="Deposit"
+          value={attempt ? `${formatMoney(attempt.depositAmount, attempt.currencyCode)} paid` : 'Paid'}
+        />
         </div>
-        {appointment.depositRequiredAmount > 0 ? (
-          <div className="mt-3 rounded-input-lg bg-warning-soft px-3 py-2 text-[12px] text-warning">
-            Deposit collection is prepared but payment is not enabled yet. No payment has been taken.
-          </div>
-        ) : null}
       </AppCard>
 
       <AppCard className="mt-4 border-border bg-surface">
@@ -83,4 +137,17 @@ function formatPreference(value: string): string {
   if (value === 'whatsapp') return 'WhatsApp';
   if (value === 'sms') return 'SMS';
   return 'Email';
+}
+
+function formatMoney(amount: number, currencyCode: string): string {
+  return new Intl.NumberFormat(undefined, {
+    style: 'currency',
+    currency: currencyCode,
+  }).format(amount);
+}
+
+function toErrorMessage(err: unknown): string {
+  if (err instanceof ApiRequestError) return err.message;
+  if (err instanceof Error) return err.message;
+  return 'Could not load booking confirmation';
 }
