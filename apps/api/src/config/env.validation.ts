@@ -78,6 +78,16 @@ export class EnvConfig {
   @IsOptional()
   @IsString()
   PASSWORD_RESET_BASE_URL?: string;
+
+  /** Stripe secret key used for server-side PaymentIntent creation. */
+  @IsOptional()
+  @IsString()
+  STRIPE_SECRET_KEY?: string;
+
+  /** Stripe webhook signing secret used to verify incoming payment events. */
+  @IsOptional()
+  @IsString()
+  STRIPE_WEBHOOK_SECRET?: string;
 }
 
 /**

@@ -27,8 +27,13 @@ import type {
   PasswordResetCompleteResponse,
   PasswordResetInspectResponse,
   PasswordResetRequestResponse,
+  CreateNewWeekRequest,
+  CreateNewWeekResponse,
   CreatePublicBookingRequest,
   CreatePublicBookingResponse,
+  PreviewNewWeekRequest,
+  PreviewNewWeekResponse,
+  PublicBookingAttemptResponse,
   PublicBookingAvailabilityResponse,
   PublicBookingLocationsResponse,
   PublicBookingServiceSelectionResponse,
@@ -37,6 +42,8 @@ import type {
   SaveWeeklyRotaRequest,
   SaveWeeklyRotaResponse,
   ShiftMutationResponse,
+  StartPublicBookingCheckoutRequest,
+  StartPublicBookingCheckoutResponse,
   StaffInvitation,
   StaffInvitationWithToken,
   UpdateBreakRequest,
@@ -154,6 +161,23 @@ export async function createPublicBooking(
     method: 'POST',
     body: payload,
   });
+}
+
+export async function startPublicBookingCheckout(
+  payload: StartPublicBookingCheckoutRequest,
+): Promise<StartPublicBookingCheckoutResponse> {
+  return request<StartPublicBookingCheckoutResponse>('/public/booking/start-checkout', {
+    method: 'POST',
+    body: payload,
+  });
+}
+
+export async function getPublicBookingAttempt(
+  bookingAttemptId: string,
+): Promise<PublicBookingAttemptResponse> {
+  return request<PublicBookingAttemptResponse>(
+    `/public/booking/attempts/${encodeURIComponent(bookingAttemptId)}`,
+  );
 }
 
 export async function createClientBookingAccount(payload: {
@@ -519,9 +543,9 @@ export async function saveWeeklyRota(
 
 export async function previewNewWeek(
   accessToken: string,
-  payload: import('@sheer/domain').PreviewNewWeekRequest,
-): Promise<import('@sheer/domain').PreviewNewWeekResponse> {
-  return request<import('@sheer/domain').PreviewNewWeekResponse>('/rota/weeks/preview', {
+  payload: PreviewNewWeekRequest,
+): Promise<PreviewNewWeekResponse> {
+  return request<PreviewNewWeekResponse>('/rota/weeks/preview', {
     method: 'POST',
     body: payload,
     accessToken,
@@ -530,9 +554,9 @@ export async function previewNewWeek(
 
 export async function createNewWeek(
   accessToken: string,
-  payload: import('@sheer/domain').CreateNewWeekRequest,
-): Promise<import('@sheer/domain').CreateNewWeekResponse> {
-  return request<import('@sheer/domain').CreateNewWeekResponse>('/rota/weeks/create', {
+  payload: CreateNewWeekRequest,
+): Promise<CreateNewWeekResponse> {
+  return request<CreateNewWeekResponse>('/rota/weeks/create', {
     method: 'POST',
     body: payload,
     accessToken,

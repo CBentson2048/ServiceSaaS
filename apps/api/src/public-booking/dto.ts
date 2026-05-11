@@ -102,3 +102,10 @@ export class CreatePublicBookingDto {
   @MaxLength(500)
   clientNote?: string;
 }
+
+export class StartPublicBookingCheckoutDto extends CreatePublicBookingDto {}
+
+export class PublicBookingAttemptParamDto {
+  @IsUUID()
+  id!: string;
+}
