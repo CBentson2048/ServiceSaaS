@@ -55,9 +55,11 @@ export function ClientBookingShell({
 }
 
 function progressWidth(step: string): string {
-  const match = /(\d+)/.exec(step);
+  if (/done|complete|confirmed/i.test(step)) return '100%';
+  const match = /(\d+)\s*of\s*(\d+)/i.exec(step);
   const current = match ? Number(match[1]) : 1;
-  return `${Math.min(100, Math.max(12, (current / 5) * 100))}%`;
+  const total = match ? Number(match[2]) : 6;
+  return `${Math.min(100, Math.max(12, (current / total) * 100))}%`;
 }
 
 function BookingSummary({

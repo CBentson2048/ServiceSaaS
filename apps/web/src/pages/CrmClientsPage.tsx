@@ -241,7 +241,8 @@ export function CrmClientsPage() {
 }
 
 function ClientRow({ client }: { client: CrmClientSummary }) {
-  const alertCount = client.alertCounts.activeAllergies + client.alertCounts.expiredPatchTests;
+  const { activeAllergies, expiredPatchTests } = client.alertCounts;
+  const alertCount = activeAllergies + expiredPatchTests;
   return (
     <tr>
       <td className="px-4 py-3">
@@ -259,9 +260,14 @@ function ClientRow({ client }: { client: CrmClientSummary }) {
       <td className="px-4 py-3 text-text-secondary">{formatDate(client.lastVisitAt)}</td>
       <td className="px-4 py-3">
         {alertCount > 0 ? (
-          <span className="inline-flex rounded-pill border border-danger-border bg-danger-soft px-2.5 py-1 text-[12px] font-medium text-danger">
-            {client.alertCounts.activeAllergies} allergy · {client.alertCounts.expiredPatchTests} patch
-          </span>
+          <div className="flex flex-wrap gap-1.5">
+            {activeAllergies > 0 ? (
+              <AlertBadge count={activeAllergies} singular="active allergy" />
+            ) : null}
+            {expiredPatchTests > 0 ? (
+              <AlertBadge count={expiredPatchTests} singular="expired patch test" />
+            ) : null}
+          </div>
         ) : (
           <span className="text-[12px] text-text-muted">No active alerts</span>
         )}
@@ -275,6 +281,15 @@ function ClientRow({ client }: { client: CrmClientSummary }) {
         </Link>
       </td>
     </tr>
+  );
+}
+
+function AlertBadge({ count, singular }: { count: number; singular: string }) {
+  return (
+    <span className="inline-flex rounded-pill border border-danger-border bg-danger-soft px-2.5 py-1 text-[12px] font-medium text-danger">
+      {count} {singular}
+      {count === 1 ? '' : 's'}
+    </span>
   );
 }
 

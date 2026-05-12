@@ -75,7 +75,7 @@ export function ClientBookingLocationPage() {
   return (
     <ClientBookingShell
       title="Choose a location"
-      step="Step 1 of 5"
+      step="Step 1 of 6"
       footer={
         <AppButton
           size="lg"

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import type { PublicBookingAttemptSummary } from '@sheer/domain';
 import { ApiRequestError, getPublicBookingAttempt } from '../auth/api';
+import { detectMobileStoreUrl, sheerAppDeepLink } from '../config/mobileApp';
 import { AppButton, AppCard } from '../design';
 import { ClientBookingShell } from './ClientBookingShell';
 import {
@@ -17,6 +18,7 @@ export function ClientBookingSuccessPage() {
     selection?.bookingAttempt ?? null,
   );
   const [error, setError] = useState<string | null>(null);
+  const [storeUrl] = useState(() => detectMobileStoreUrl());
   const appointment = attempt?.appointment ?? selection?.appointment;
 
   useEffect(() => {
@@ -51,7 +53,7 @@ export function ClientBookingSuccessPage() {
   }
   if (!appointment) {
     return (
-      <ClientBookingShell title="Confirming booking" step="Done">
+      <ClientBookingShell title="Confirming booking" step="Step 6 of 6">
         <AppCard className="text-center text-[13px] text-text-secondary">
           Final confirmation is still processing. Refresh this page in a moment.
         </AppCard>
@@ -66,13 +68,13 @@ export function ClientBookingSuccessPage() {
 
   function finish() {
     clearClientBookingSelection();
-    navigate('/book/location');
+    navigate('/');
   }
 
   return (
     <ClientBookingShell
       title="Booking confirmed"
-      step="Done"
+      step="Step 6 of 6"
       footer={<AppButton size="lg" fullWidth onClick={finish} className="min-h-12 bg-[#1C1628] text-white hover:bg-[#2A2139]">Done</AppButton>}
     >
       <div className="rounded-[24px] border border-primary/20 bg-primary/5 px-4 py-5 text-center">
@@ -100,11 +102,35 @@ export function ClientBookingSuccessPage() {
         </div>
       </AppCard>
 
-      <AppCard className="mt-4 border-border bg-surface">
-        <div className="text-[14px] font-semibold">Want easier access next time?</div>
-        <p className="mt-1 text-[12px] text-text-secondary">
-          Your account is already set up. The app recommendation belongs after booking so you can manage future visits more easily.
-        </p>
+      <AppCard className="mt-4 border-primary/25 bg-primary/5">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="text-[14px] font-semibold">Manage this booking in the Sheer App</div>
+            <p className="mt-1 text-[12px] leading-5 text-text-secondary">
+              Your account is ready. Install the app to view upcoming visits, rebook faster, and stay in touch with your salon.
+            </p>
+          </div>
+          <div className="flex shrink-0 flex-col gap-2 sm:flex-row md:flex-col">
+            <AppButton
+              variant="primary"
+              size="sm"
+              onClick={() => {
+                window.location.href = sheerAppDeepLink;
+              }}
+            >
+              Open app
+            </AppButton>
+            <AppButton
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                window.location.href = storeUrl;
+              }}
+            >
+              Download app
+            </AppButton>
+          </div>
+        </div>
       </AppCard>
     </ClientBookingShell>
   );
