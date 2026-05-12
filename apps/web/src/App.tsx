@@ -11,6 +11,8 @@ import { ClientBookingServicePage } from './pages/ClientBookingServicePage';
 import { ClientBookingSuccessPage } from './pages/ClientBookingSuccessPage';
 import { CreateAccountPage } from './pages/CreateAccountPage';
 import { CreateLocationPage } from './pages/CreateLocationPage';
+import { CrmClientDetailPage } from './pages/CrmClientDetailPage';
+import { CrmClientsPage } from './pages/CrmClientsPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { EditLocationPage } from './pages/EditLocationPage';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
@@ -64,7 +66,8 @@ export function App() {
         <Route element={<DashboardLayout />}>
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/bookings" element={<PlaceholderPage title="Bookings" />} />
-          <Route path="/crm" element={<PlaceholderPage title="CRM" />} />
+          <Route path="/crm" element={<CrmClientsPage />} />
+          <Route path="/crm/clients/:id" element={<CrmClientDetailPage />} />
           <Route path="/rota" element={<RotaPage />} />
           <Route path="/rota/new-week" element={<NewWeekRotaPage />} />
           <Route path="/sheer-lab" element={<PlaceholderPage title="Sheer Lab" />} />

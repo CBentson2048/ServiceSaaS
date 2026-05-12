@@ -23,7 +23,7 @@ export function LoginPage() {
 
   const from = bookingMode
     ? '/book/review'
-    : (location.state as { from?: { pathname?: string } } | null)?.from?.pathname ?? '/';
+    : (location.state as { from?: { pathname?: string } } | null)?.from?.pathname ?? '/dashboard';
   const justOnboarded = searchParams.get('onboarded') === '1';
   const justAcceptedInvitation = searchParams.get('invitation') === 'accepted';
   const justResetPassword = searchParams.get('password') === 'reset';

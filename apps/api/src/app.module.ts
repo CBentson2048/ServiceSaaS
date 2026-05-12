@@ -2,6 +2,7 @@ import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module';
 import { RequestResponseLoggingMiddleware } from './common/request-response-logging.middleware';
+import { CrmModule } from './crm/crm.module';
 import { HealthModule } from './health/health.module';
 import { LabAppointmentsModule } from './lab-appointments/lab-appointments.module';
 import { LabDeviceModule } from './lab-device/lab-device.module';
@@ -28,6 +29,7 @@ import { validateEnv } from './config/env.validation';
     StaffModule,
     LocationsModule,
     PublicBookingModule,
+    CrmModule,
     RotaModule,
     HealthModule,
     LabDeviceModule,

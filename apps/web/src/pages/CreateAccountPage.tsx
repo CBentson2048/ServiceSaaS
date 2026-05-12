@@ -76,7 +76,7 @@ export function CreateAccountPage() {
         navigate('/book/review', { replace: true });
       } else {
         await auth.createAccount({ email, password, fullName, businessName });
-        navigate('/', { replace: true });
+        navigate('/dashboard', { replace: true });
       }
     } catch {
       setError(

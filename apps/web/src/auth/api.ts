@@ -8,14 +8,27 @@ import type {
   CreateAbsenceRequest,
   CreateAccountRequest,
   CreateBreakRequest,
+  CreateCrmAllergyRecordRequest,
+  CreateCrmClientNoteRequest,
+  CreateCrmClientRequest,
+  CreateCrmPatchTestRequest,
+  CreateCrmVisitPhotoRequest,
   CreateLocationRequest,
   CreateShiftRequest,
   CreateStaffInvitationRequest,
+  CrmClientDetailResponse,
   CurrentUserResponse,
   InvitationLookupResponse,
   InvitationStatus,
   LeaveRequestMutationResponse,
   LeaveRequestStatus,
+  ListCrmClientAllergiesResponse,
+  ListCrmClientMessagesResponse,
+  ListCrmClientNotesResponse,
+  ListCrmClientPatchTestsResponse,
+  ListCrmClientVisitsResponse,
+  ListCrmClientsResponse,
+  ListCrmVisitPhotosResponse,
   ListLeaveRequestsResponse,
   ListLocationsResponse,
   ListStaffResponse,
@@ -47,6 +60,7 @@ import type {
   StaffInvitation,
   StaffInvitationWithToken,
   UpdateBreakRequest,
+  UpdateCrmClientRequest,
   UpdateLocationRequest,
   UpdateShiftRequest,
   UpdateStaffMemberRequest,
@@ -177,6 +191,155 @@ export async function getPublicBookingAttempt(
 ): Promise<PublicBookingAttemptResponse> {
   return request<PublicBookingAttemptResponse>(
     `/public/booking/attempts/${encodeURIComponent(bookingAttemptId)}`,
+  );
+}
+
+// -------------------- CRM (owner / manager / scoped stylist) --------------------
+
+export async function listCrmClients(
+  accessToken: string,
+  params: { q?: string; locationId?: string } = {},
+): Promise<ListCrmClientsResponse> {
+  const search = new URLSearchParams();
+  if (params.q) search.set('q', params.q);
+  if (params.locationId) search.set('locationId', params.locationId);
+  const query = search.toString();
+  return request<ListCrmClientsResponse>(`/crm/clients${query ? `?${query}` : ''}`, {
+    accessToken,
+  });
+}
+
+export async function createCrmClient(
+  accessToken: string,
+  payload: CreateCrmClientRequest,
+): Promise<{ client: ListCrmClientsResponse['clients'][number] }> {
+  return request<{ client: ListCrmClientsResponse['clients'][number] }>('/crm/clients', {
+    method: 'POST',
+    accessToken,
+    body: payload,
+  });
+}
+
+export async function getCrmClientDetail(
+  accessToken: string,
+  clientId: string,
+): Promise<CrmClientDetailResponse> {
+  return request<CrmClientDetailResponse>(`/crm/clients/${encodeURIComponent(clientId)}`, {
+    accessToken,
+  });
+}
+
+export async function updateCrmClient(
+  accessToken: string,
+  clientId: string,
+  payload: UpdateCrmClientRequest,
+): Promise<{ client: ListCrmClientsResponse['clients'][number] }> {
+  return request<{ client: ListCrmClientsResponse['clients'][number] }>(
+    `/crm/clients/${encodeURIComponent(clientId)}`,
+    { method: 'PATCH', accessToken, body: payload },
+  );
+}
+
+export async function listCrmClientVisits(
+  accessToken: string,
+  clientId: string,
+): Promise<ListCrmClientVisitsResponse> {
+  return request<ListCrmClientVisitsResponse>(
+    `/crm/clients/${encodeURIComponent(clientId)}/visits`,
+    { accessToken },
+  );
+}
+
+export async function listCrmClientNotes(
+  accessToken: string,
+  clientId: string,
+): Promise<ListCrmClientNotesResponse> {
+  return request<ListCrmClientNotesResponse>(
+    `/crm/clients/${encodeURIComponent(clientId)}/notes`,
+    { accessToken },
+  );
+}
+
+export async function createCrmClientNote(
+  accessToken: string,
+  clientId: string,
+  payload: CreateCrmClientNoteRequest,
+): Promise<ListCrmClientNotesResponse> {
+  return request<ListCrmClientNotesResponse>(
+    `/crm/clients/${encodeURIComponent(clientId)}/notes`,
+    { method: 'POST', accessToken, body: payload },
+  );
+}
+
+export async function listCrmClientAllergies(
+  accessToken: string,
+  clientId: string,
+): Promise<ListCrmClientAllergiesResponse> {
+  return request<ListCrmClientAllergiesResponse>(
+    `/crm/clients/${encodeURIComponent(clientId)}/allergies`,
+    { accessToken },
+  );
+}
+
+export async function createCrmClientAllergy(
+  accessToken: string,
+  clientId: string,
+  payload: CreateCrmAllergyRecordRequest,
+): Promise<ListCrmClientAllergiesResponse> {
+  return request<ListCrmClientAllergiesResponse>(
+    `/crm/clients/${encodeURIComponent(clientId)}/allergies`,
+    { method: 'POST', accessToken, body: payload },
+  );
+}
+
+export async function listCrmClientPatchTests(
+  accessToken: string,
+  clientId: string,
+): Promise<ListCrmClientPatchTestsResponse> {
+  return request<ListCrmClientPatchTestsResponse>(
+    `/crm/clients/${encodeURIComponent(clientId)}/patch-tests`,
+    { accessToken },
+  );
+}
+
+export async function createCrmClientPatchTest(
+  accessToken: string,
+  clientId: string,
+  payload: CreateCrmPatchTestRequest,
+): Promise<ListCrmClientPatchTestsResponse> {
+  return request<ListCrmClientPatchTestsResponse>(
+    `/crm/clients/${encodeURIComponent(clientId)}/patch-tests`,
+    { method: 'POST', accessToken, body: payload },
+  );
+}
+
+export async function listCrmClientMessages(
+  accessToken: string,
+  clientId: string,
+): Promise<ListCrmClientMessagesResponse> {
+  return request<ListCrmClientMessagesResponse>(
+    `/crm/clients/${encodeURIComponent(clientId)}/messages`,
+    { accessToken },
+  );
+}
+
+export async function listCrmVisitPhotos(
+  accessToken: string,
+  visitId: string,
+): Promise<ListCrmVisitPhotosResponse> {
+  return request<ListCrmVisitPhotosResponse>(`/crm/visits/${encodeURIComponent(visitId)}/photos`, {
+    accessToken,
+  });
+}
+
+export async function createCrmVisitPhoto(
+  accessToken: string,
+  visitId: string,
+  payload: CreateCrmVisitPhotoRequest,
+): Promise<{ photo: ListCrmVisitPhotosResponse['photos'][number] }> {
+  return request<{ photo: ListCrmVisitPhotosResponse['photos'][number] }>(
+    `/crm/visits/${encodeURIComponent(visitId)}/photos`,
+    { method: 'POST', accessToken, body: payload },
   );
 }
 

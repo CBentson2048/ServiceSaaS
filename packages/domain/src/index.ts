@@ -711,6 +711,232 @@ export interface ClientBookingSelection {
 }
 
 // ---------------------------------------------------------------------------
+// CRM — staff-facing client records
+// ---------------------------------------------------------------------------
+
+export type CrmNoteType = 'general' | 'consultation' | 'formula_note' | 'service_note' | 'gdpr';
+
+export type CrmAllergySeverity = 'unknown' | 'mild' | 'moderate' | 'severe';
+
+export type CrmPatchTestStatus = 'pending' | 'passed' | 'failed' | 'expired';
+
+export type CrmVisitPhotoType = 'before' | 'after' | 'inspiration' | 'condition' | 'other';
+
+export type CrmMessageChannel = 'sms' | 'email' | 'push' | 'whatsapp';
+
+export type CrmMessageDeliveryStatus = 'queued' | 'sent' | 'delivered' | 'failed' | 'cancelled';
+
+export interface CrmClientSummary {
+  id: string;
+  businessId: string;
+  primaryLocationId?: string;
+  firstName: string;
+  lastName: string;
+  displayName: string;
+  email?: string;
+  phone?: string;
+  communicationPreference?: 'whatsapp' | 'sms' | 'email' | string;
+  marketingOptIn: boolean;
+  tags: string[];
+  source?: string;
+  createdAt: string;
+  updatedAt: string;
+  lastVisitAt?: string;
+  alertCounts: {
+    activeAllergies: number;
+    expiredPatchTests: number;
+  };
+}
+
+export interface CrmClientProfile extends CrmClientSummary {
+  dateOfBirth?: string;
+  notesSummary?: string;
+  gdpr: {
+    exportReady: boolean;
+    pendingRequests: number;
+    deletionRequestPending: boolean;
+  };
+}
+
+export interface CrmClientNote {
+  id: string;
+  businessId: string;
+  locationId?: string;
+  clientProfileId: string;
+  visitId?: string;
+  noteType: CrmNoteType;
+  content: string;
+  createdByUserId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CrmAllergyRecord {
+  id: string;
+  businessId: string;
+  clientProfileId: string;
+  allergenName: string;
+  severity: CrmAllergySeverity;
+  notes?: string;
+  isActive: boolean;
+  recordedAt: string;
+  recordedByUserId?: string;
+}
+
+export interface CrmPatchTestRecord {
+  id: string;
+  businessId: string;
+  locationId?: string;
+  clientProfileId: string;
+  performedAt: string;
+  expiresAt?: string;
+  status: CrmPatchTestStatus;
+  notes?: string;
+  recordedByUserId?: string;
+  createdAt: string;
+  isExpired: boolean;
+}
+
+export interface CrmVisitSummary {
+  id: string;
+  businessId: string;
+  locationId: string;
+  appointmentId?: string;
+  clientProfileId: string;
+  primaryStaffProfileId?: string;
+  stylistName?: string;
+  status: string;
+  occurredAt: string;
+  serviceSummary?: string;
+  clientVisibleSummary?: string;
+  priceAmount?: number;
+  currencyCode?: string;
+}
+
+export interface CrmMessageLog {
+  id: string;
+  businessId: string;
+  locationId: string;
+  clientProfileId?: string;
+  appointmentId?: string;
+  visitId?: string;
+  channel: CrmMessageChannel;
+  eventKey?: string;
+  deliveryStatus: CrmMessageDeliveryStatus;
+  contentPreview?: string;
+  sentAt?: string;
+  deliveredAt?: string;
+  failedAt?: string;
+  createdAt: string;
+}
+
+export interface CrmVisitPhoto {
+  id: string;
+  businessId: string;
+  locationId: string;
+  visitId: string;
+  clientProfileId: string;
+  photoType: CrmVisitPhotoType;
+  storageBucket: string;
+  storagePath: string;
+  mimeType?: string;
+  uploadedByUserId?: string;
+  createdAt: string;
+}
+
+export interface CrmClientDetailResponse {
+  profile: CrmClientProfile;
+  notes: CrmClientNote[];
+  visits: CrmVisitSummary[];
+  allergies: CrmAllergyRecord[];
+  patchTests: CrmPatchTestRecord[];
+  messages: CrmMessageLog[];
+  photos: CrmVisitPhoto[];
+}
+
+export interface ListCrmClientsResponse {
+  clients: CrmClientSummary[];
+  scope: 'owner' | 'manager' | 'stylist';
+}
+
+export interface ListCrmClientNotesResponse {
+  notes: CrmClientNote[];
+}
+
+export interface ListCrmClientAllergiesResponse {
+  allergies: CrmAllergyRecord[];
+}
+
+export interface ListCrmClientPatchTestsResponse {
+  patchTests: CrmPatchTestRecord[];
+}
+
+export interface ListCrmClientVisitsResponse {
+  visits: CrmVisitSummary[];
+}
+
+export interface ListCrmClientMessagesResponse {
+  messages: CrmMessageLog[];
+}
+
+export interface ListCrmVisitPhotosResponse {
+  photos: CrmVisitPhoto[];
+}
+
+export interface CreateCrmClientRequest {
+  firstName: string;
+  lastName: string;
+  email?: string;
+  phone?: string;
+  primaryLocationId?: string;
+  communicationPreference?: 'whatsapp' | 'sms' | 'email';
+  marketingOptIn?: boolean;
+  source?: string;
+}
+
+export interface UpdateCrmClientRequest {
+  firstName?: string;
+  lastName?: string;
+  email?: string | null;
+  phone?: string | null;
+  primaryLocationId?: string | null;
+  communicationPreference?: 'whatsapp' | 'sms' | 'email' | null;
+  marketingOptIn?: boolean;
+  tags?: string[];
+  notesSummary?: string | null;
+}
+
+export interface CreateCrmClientNoteRequest {
+  locationId?: string;
+  visitId?: string;
+  noteType?: CrmNoteType;
+  content: string;
+}
+
+export interface CreateCrmAllergyRecordRequest {
+  allergenName: string;
+  severity?: CrmAllergySeverity;
+  notes?: string;
+  isActive?: boolean;
+}
+
+export interface CreateCrmPatchTestRequest {
+  locationId?: string;
+  performedAt: string;
+  expiresAt?: string;
+  status: CrmPatchTestStatus;
+  notes?: string;
+}
+
+export interface CreateCrmVisitPhotoRequest {
+  clientProfileId: string;
+  photoType?: CrmVisitPhotoType;
+  storageBucket: string;
+  storagePath: string;
+  mimeType?: string;
+}
+
+// ---------------------------------------------------------------------------
 // Rota — manager-facing core (also reusable by future owner + stylist UIs)
 // ---------------------------------------------------------------------------
 

@@ -342,7 +342,7 @@ export function OwnerOnboardingPage() {
         const response = await registerOwnerOnboarding(buildPayload());
         if (response.session && response.user) {
           auth.applyAuthenticatedSession(response.session, response.user);
-          navigate(response.redirectTo === '/' ? '/' : response.redirectTo, { replace: true });
+          navigate(response.redirectTo === '/' ? '/dashboard' : response.redirectTo, { replace: true });
           return;
         }
         navigate(response.redirectTo || '/login?onboarded=1', { replace: true });

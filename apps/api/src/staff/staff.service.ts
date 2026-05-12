@@ -415,7 +415,7 @@ export class StaffService {
         targetSurface === 'mobile'
           ? `/auth/account-created?role=${encodeURIComponent(role)}`
           : session
-            ? '/'
+            ? '/dashboard'
             : '/login?invitation=accepted';
 
       return {
