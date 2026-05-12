@@ -12,7 +12,7 @@ interface NavEntry {
 }
 
 const NAV: NavEntry[] = [
-  { to: '/', label: 'Dashboard', end: true },
+  { to: '/dashboard', label: 'Dashboard', end: true },
   { to: '/bookings', label: 'Bookings' },
   { to: '/crm', label: 'CRM' },
   { to: '/rota', label: 'Rota' },

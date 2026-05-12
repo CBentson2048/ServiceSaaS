@@ -206,10 +206,10 @@ export function ClientBookingServicePage() {
               Back
             </button>
             <div className="text-[13px] font-semibold">Choose a service</div>
-            <div className="text-[11px] text-white/55">Step 2 of 5</div>
+            <div className="text-[11px] text-white/55">Step 2 of 6</div>
           </div>
           <div className="mt-3 h-1 rounded-full bg-white/12">
-            <div className="h-1 w-2/5 rounded-full bg-primary" />
+            <div className="h-1 w-1/3 rounded-full bg-primary" />
           </div>
         </header>
 

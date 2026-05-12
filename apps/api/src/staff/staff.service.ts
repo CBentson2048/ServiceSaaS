@@ -457,6 +457,7 @@ export class StaffService {
           'id,business_id,location_id,user_profile_id,role,status,invited_by_user_profile_id,activated_at,suspended_at,revoked_at,created_at',
         )
         .eq('business_id', actor.businessId)
+        .in('role', ['owner', 'manager', 'stylist'])
         .returns<MembershipRow[]>(),
       this.fetchBusinessLocations(actor.businessId),
       this.listInvitations(actor, 'pending'),

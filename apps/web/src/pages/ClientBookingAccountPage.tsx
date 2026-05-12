@@ -25,7 +25,7 @@ export function ClientBookingAccountPage() {
   return (
     <ClientBookingShell
       title="Communication preference"
-      step="Step 4 of 5"
+      step="Step 4 of 6"
       footer={
         <AppButton
           size="lg"

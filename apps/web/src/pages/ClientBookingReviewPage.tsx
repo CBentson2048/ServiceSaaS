@@ -86,7 +86,7 @@ export function ClientBookingReviewPage() {
   return (
     <ClientBookingShell
       title="Review"
-      step="Step 5 of 5"
+      step="Step 5 of 6"
       footer={
         checkout && stripeOptions ? null : (
           <AppButton
