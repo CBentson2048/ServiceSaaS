@@ -68,10 +68,12 @@ interface StaffProfileRow {
 
 interface ClientProfileRow {
   id: string;
+  primary_location_id?: string | null;
   first_name?: string;
   last_name?: string;
   email?: string | null;
   phone?: string | null;
+  communication_preference?: 'whatsapp' | 'sms' | 'email' | null;
 }
 
 interface BookingLocationRow {
@@ -247,7 +249,6 @@ export class AuthService {
       lastName: lastNameFromFullName(profile.full_name),
       email,
       phone: input.phone ?? profile.phone ?? undefined,
-      communicationPreference: input.communicationPreference,
     });
     if (input.phone?.trim()) {
       await this.updateUserProfilePhone(data.user.id, input.phone);
@@ -349,7 +350,13 @@ export class AuthService {
       this.fetchBusiness(primaryMembership.business_id),
       this.fetchLocations(primaryMembership.business_id),
       this.fetchStaffProfile(primaryMembership.business_id, userId),
-      this.fetchClientProfile(primaryMembership.business_id, userId),
+      this.fetchClientProfile(
+        primaryMembership.business_id,
+        userId,
+        primaryMembership.role === 'client'
+          ? sameBusinessMemberships.map((membership) => membership.location_id).filter(isString)
+          : undefined,
+      ),
     ]);
 
     const allowedLocationIds = this.resolveAllowedLocationIds(
@@ -395,6 +402,7 @@ export class AuthService {
       },
       staffProfileId: staffProfile?.id,
       clientProfileId: clientProfile?.id,
+      clientCommunicationPreference: clientProfile?.communication_preference ?? undefined,
     };
   }
 
@@ -814,7 +822,7 @@ export class AuthService {
     const { data: existing, error: lookupError } = await this.admin
       .schema('core')
       .from('client_profiles')
-      .select('id,first_name,last_name,email,phone')
+      .select('id,first_name,last_name,email,phone,communication_preference')
       .eq('business_id', businessId)
       .eq('user_profile_id', userId)
       .maybeSingle<ClientProfileRow>();
@@ -831,7 +839,7 @@ export class AuthService {
       last_name: input.lastName,
       email: input.email,
       phone: input.phone?.trim() || existing?.phone || null,
-      communication_preference: input.communicationPreference ?? null,
+      communication_preference: input.communicationPreference ?? existing?.communication_preference ?? null,
       source: 'public_booking_flow',
     };
 
@@ -944,13 +952,22 @@ export class AuthService {
   private async fetchClientProfile(
     businessId: string,
     userId: string,
+    locationIds?: string[],
   ): Promise<ClientProfileRow | undefined> {
-    const { data, error } = await this.admin
+    let query = this.admin
       .schema('core')
       .from('client_profiles')
-      .select('id')
+      .select('id,primary_location_id,communication_preference')
       .eq('business_id', businessId)
-      .eq('user_profile_id', userId)
+      .eq('user_profile_id', userId);
+
+    if (locationIds?.length) {
+      query = query.in('primary_location_id', locationIds);
+    }
+
+    const { data, error } = await query
+      .order('updated_at', { ascending: false })
+      .limit(1)
       .maybeSingle<ClientProfileRow>();
 
     if (error) {
@@ -1031,4 +1048,8 @@ function lastNameFromFullName(fullName: string): string {
   const parts = fullName.trim().split(/\s+/).filter(Boolean);
   if (parts.length <= 1) return 'Client';
   return parts.slice(1).join(' ');
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
 }

@@ -116,7 +116,4 @@ export class ClientBookingLoginDto {
   @IsString()
   @MaxLength(40)
   phone?: string;
-
-  @IsIn(['whatsapp', 'sms', 'email'])
-  communicationPreference!: 'whatsapp' | 'sms' | 'email';
 }

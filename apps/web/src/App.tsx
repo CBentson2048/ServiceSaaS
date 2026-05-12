@@ -9,6 +9,7 @@ import { ClientBookingLocationPage } from './pages/ClientBookingLocationPage';
 import { ClientBookingReviewPage } from './pages/ClientBookingReviewPage';
 import { ClientBookingServicePage } from './pages/ClientBookingServicePage';
 import { ClientBookingSuccessPage } from './pages/ClientBookingSuccessPage';
+import { CreateAccountPage } from './pages/CreateAccountPage';
 import { CreateLocationPage } from './pages/CreateLocationPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { EditLocationPage } from './pages/EditLocationPage';
@@ -31,7 +32,7 @@ export function App() {
     <Routes>
       <Route index element={<LandingPage />} />
       <Route path="/login" element={<LoginPage />} />
-      <Route path="/create-account" element={<Navigate to="/owner/onboarding" replace />} />
+      <Route path="/create-account" element={<CreateAccountPage />} />
       <Route path="/owner/onboarding" element={<OwnerOnboardingPage />} />
       <Route path="/staff/accept-invite" element={<AcceptInvitationPage />} />
       {/*
@@ -49,9 +50,9 @@ export function App() {
       <Route path="/book/location" element={<ClientBookingLocationPage />} />
       <Route path="/book/service" element={<ClientBookingServicePage />} />
       <Route path="/book/date-time" element={<ClientBookingDateTimePage />} />
-      <Route path="/book/account" element={<ClientBookingAccountPage />} />
-      <Route path="/book/contact" element={<Navigate to="/book/account" replace />} />
-      <Route path="/book/preference" element={<Navigate to="/book/account" replace />} />
+      <Route path="/book/account" element={<Navigate to="/login?booking=1" replace />} />
+      <Route path="/book/contact" element={<Navigate to="/login?booking=1" replace />} />
+      <Route path="/book/preference" element={<ClientBookingAccountPage />} />
       <Route path="/book/review" element={<ClientBookingReviewPage />} />
       <Route path="/book/success" element={<ClientBookingSuccessPage />} />
       <Route

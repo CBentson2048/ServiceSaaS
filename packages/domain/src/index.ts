@@ -34,6 +34,7 @@ export interface AuthUser {
   profile: AuthProfileSummary;
   staffProfileId?: string;
   clientProfileId?: string;
+  clientCommunicationPreference?: 'whatsapp' | 'sms' | 'email';
 }
 
 export interface AuthSession {

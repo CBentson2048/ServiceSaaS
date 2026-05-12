@@ -2,12 +2,18 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import type {
   ClientBookingSelection,
+  PublicBookingAvailabilitySlot,
   PublicBookingLocationSummary,
   PublicBookingServiceSummary,
   PublicBookingStylistSummary,
 } from '@sheer/domain';
 import { cn } from '@sheer/utils';
-import { ApiRequestError, getPublicBookingSelection, getPublicBookingStylists } from '../auth/api';
+import {
+  ApiRequestError,
+  getPublicBookingAvailability,
+  getPublicBookingSelection,
+  getPublicBookingStylists,
+} from '../auth/api';
 import { AppButton, AppCard } from '../design';
 import { readClientBookingSelection, writeClientBookingSelection } from './clientBookingFlow';
 
@@ -31,14 +37,15 @@ export function ClientBookingServicePage() {
   const [stylists, setStylists] = useState<PublicBookingStylistSummary[]>([]);
   const [nextAvailableAt, setNextAvailableAt] = useState<string | undefined>();
   const [stylistChoice, setStylistChoice] = useState<StylistChoice | null>(
-    initialSelection?.staffProfileId
-      ? { mode: 'specific_staff', staffProfileId: initialSelection.staffProfileId }
-      : initialSelection?.staffRequestMode === 'next_available'
+    initialSelection?.staffRequestMode === 'next_available'
         ? { mode: 'next_available' }
-        : null,
+        : initialSelection?.staffProfileId
+          ? { mode: 'specific_staff', staffProfileId: initialSelection.staffProfileId }
+          : null,
   );
   const [loadingServices, setLoadingServices] = useState(true);
   const [loadingStylists, setLoadingStylists] = useState(false);
+  const [resolvingNextAvailable, setResolvingNextAvailable] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const selectedService = useMemo(
@@ -110,17 +117,21 @@ export function ClientBookingServicePage() {
     setStylistChoice(null);
   }
 
-  function handleContinue() {
+  async function handleContinue() {
     if (!location || !selectedService || !stylistChoice) return;
-    if (stylistChoice.mode === 'next_available' && !nextAvailableAt) return;
+
+    if (stylistChoice.mode === 'next_available') {
+      await continueWithNextAvailable(location, selectedService);
+      return;
+    }
+
     const selection: ClientBookingSelection = {
       locationId: location.id,
       location,
       serviceId: selectedService.id,
       service: selectedService,
       staffRequestMode: stylistChoice.mode,
-      staffProfileId:
-        stylistChoice.mode === 'specific_staff' ? stylistChoice.staffProfileId : undefined,
+      staffProfileId: stylistChoice.staffProfileId,
       nextAvailableAt,
       selectedSlot: undefined,
       client: undefined,
@@ -132,10 +143,54 @@ export function ClientBookingServicePage() {
     navigate('/book/date-time');
   }
 
+  async function continueWithNextAvailable(
+    currentLocation: PublicBookingLocationSummary,
+    currentService: PublicBookingServiceSummary,
+  ) {
+    setResolvingNextAvailable(true);
+    setError(null);
+    try {
+      const { dateFrom, dateTo } = nextAvailableSearchRange();
+      const result = await getPublicBookingAvailability({
+        locationId: currentLocation.id,
+        serviceId: currentService.id,
+        nextAvailable: true,
+        dateFrom,
+        dateTo,
+      });
+      const selectedSlot = earliestSlot(result.slots);
+      if (!selectedSlot) {
+        setError('No next available slot was found for this service. Try a specific stylist or another date.');
+        return;
+      }
+
+      const selection: ClientBookingSelection = {
+        locationId: currentLocation.id,
+        location: currentLocation,
+        serviceId: currentService.id,
+        service: currentService,
+        staffRequestMode: 'next_available',
+        staffProfileId: selectedSlot.staffProfileId,
+        nextAvailableAt: selectedSlot.startAt,
+        selectedSlot,
+        client: undefined,
+        communicationPreference: undefined,
+        account: undefined,
+        appointment: undefined,
+      };
+      writeClientBookingSelection(selection);
+      navigate('/login?booking=1');
+    } catch (err) {
+      setError(toErrorMessage(err, 'Could not resolve next available slot'));
+    } finally {
+      setResolvingNextAvailable(false);
+    }
+  }
+
   const canContinue = Boolean(
     selectedService &&
       stylistChoice &&
-      (stylistChoice.mode === 'specific_staff' || nextAvailableAt),
+      !resolvingNextAvailable,
   );
 
   return (
@@ -264,10 +319,11 @@ export function ClientBookingServicePage() {
               size="lg"
               fullWidth
               disabled={!canContinue}
-              onClick={handleContinue}
+              loading={resolvingNextAvailable}
+              onClick={() => void handleContinue()}
               className="min-h-12 bg-[#1C1628] text-white hover:bg-[#2A2139]"
             >
-              Continue
+              {stylistChoice?.mode === 'next_available' ? 'Find next available' : 'Continue'}
             </AppButton>
           </div>
         </aside>
@@ -278,10 +334,11 @@ export function ClientBookingServicePage() {
             size="lg"
             fullWidth
             disabled={!canContinue}
-            onClick={handleContinue}
+            loading={resolvingNextAvailable}
+            onClick={() => void handleContinue()}
             className="min-h-12 bg-[#1C1628] text-white hover:bg-[#2A2139]"
           >
-            Continue
+            {stylistChoice?.mode === 'next_available' ? 'Find next available' : 'Continue'}
           </AppButton>
         </div>
       </div>
@@ -437,6 +494,20 @@ function toErrorMessage(err: unknown, fallback: string): string {
   return fallback;
 }
 
+function nextAvailableSearchRange(): { dateFrom: string; dateTo: string } {
+  const dateFrom = new Date();
+  const dateTo = new Date(dateFrom);
+  dateTo.setDate(dateTo.getDate() + 60);
+  return {
+    dateFrom: toIsoDate(dateFrom),
+    dateTo: toIsoDate(dateTo),
+  };
+}
+
+function earliestSlot(slots: PublicBookingAvailabilitySlot[]): PublicBookingAvailabilitySlot | undefined {
+  return [...slots].sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())[0];
+}
+
 function formatDuration(minutes: number): string {
   if (minutes < 60) return `${minutes} min`;
   const hours = Math.floor(minutes / 60);
@@ -460,6 +531,10 @@ function formatAvailability(iso: string): string {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+function toIsoDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
 }
 
 function initials(name: string): string {

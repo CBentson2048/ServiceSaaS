@@ -46,7 +46,7 @@ export function ClientBookingReviewPage() {
     [checkout],
   );
   if (!isCompleteReviewSelection(selection)) {
-    return <Navigate to="/book/account" replace />;
+    return <Navigate to={nextIncompleteReviewStep(selection)} replace />;
   }
   const currentSelection = selection;
 
@@ -282,4 +282,11 @@ function isCompleteReviewSelection(selection: ClientBookingSelection | null): se
       selection.location &&
       selection.service,
   );
+}
+
+function nextIncompleteReviewStep(selection: ClientBookingSelection | null): string {
+  if (!selection?.selectedSlot) return '/book/date-time';
+  if (!selection.client || !selection.account) return '/login?booking=1';
+  if (!selection.communicationPreference) return '/book/preference';
+  return '/login?booking=1';
 }
