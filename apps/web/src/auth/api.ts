@@ -200,7 +200,6 @@ export async function loginClientBookingAccount(payload: {
   email: string;
   password: string;
   phone?: string;
-  communicationPreference: 'whatsapp' | 'sms' | 'email';
 }): Promise<LoginResponse> {
   return request<LoginResponse>('/auth/client-booking/login', {
     method: 'POST',

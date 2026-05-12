@@ -71,7 +71,7 @@ export function ClientBookingDateTimePage() {
       selectedSlot,
       staffProfileId: selectedSlot.staffProfileId,
     });
-    navigate('/book/account');
+    navigate('/login?booking=1');
   }
 
   return (
