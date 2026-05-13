@@ -12,7 +12,7 @@ export interface BookingPaymentIntentInput {
   currency: string;
   bookingAttemptId: string;
   locationId: string;
-  serviceId: string;
+  serviceIds: string[];
   stylistProfileId: string;
   clientProfileId: string;
   userProfileId: string;
@@ -46,11 +46,13 @@ export class StripeService {
     const params: StripePaymentIntentCreateParams = {
       amount: amountInMinorUnits,
       currency: input.currency.toLowerCase(),
-      automatic_payment_methods: { enabled: true },
+      // Card includes Apple Pay and Google Pay wallets in Stripe Payment Element.
+      // Explicitly listing it prevents Klarna/Revolut Pay on deposit collection.
+      payment_method_types: ['card'],
       metadata: {
         booking_attempt_id: input.bookingAttemptId,
         location_id: input.locationId,
-        service_id: input.serviceId,
+        service_ids: input.serviceIds.join(','),
         stylist_profile_id: input.stylistProfileId,
         client_profile_id: input.clientProfileId,
         user_profile_id: input.userProfileId,

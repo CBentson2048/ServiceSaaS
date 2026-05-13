@@ -21,14 +21,15 @@ export function ClientBookingDateTimePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const locationId = selection?.locationId;
-  const serviceId = selection?.serviceId;
+  const serviceIds = selection?.serviceIds ?? [];
+  const serviceIdsKey = serviceIds.join(',');
   const staffRequestMode = selection?.staffRequestMode;
   const staffProfileId = selection?.staffProfileId;
 
   useEffect(() => {
-    if (!locationId || !serviceId) return;
+    if (!locationId || serviceIds.length === 0) return;
     const currentLocationId = locationId;
-    const currentServiceId = serviceId;
+    const currentServiceIds = serviceIdsKey.split(',').filter(Boolean);
     const { dateFromIso, dateToIso } = selectedDayRange(dateFrom);
     let cancelled = false;
     async function load() {
@@ -37,7 +38,7 @@ export function ClientBookingDateTimePage() {
       try {
         const result = await getPublicBookingAvailability({
           locationId: currentLocationId,
-          serviceId: currentServiceId,
+          serviceIds: currentServiceIds,
           stylistId:
             staffRequestMode === 'specific_staff'
               ? staffProfileId
@@ -61,9 +62,9 @@ export function ClientBookingDateTimePage() {
     return () => {
       cancelled = true;
     };
-  }, [dateFrom, locationId, serviceId, staffProfileId, staffRequestMode]);
+  }, [dateFrom, locationId, serviceIdsKey, staffProfileId, staffRequestMode]);
 
-  if (!selection?.locationId || !selection.serviceId) return <Navigate to="/book/location" replace />;
+  if (!selection?.locationId || serviceIds.length === 0) return <Navigate to="/book/location" replace />;
 
   function continueNext() {
     if (!selectedSlot) return;

@@ -27,8 +27,9 @@ import type {
   UpdateLocationRequest,
   UpdateStaffMemberRequest,
   UpdateStaffMemberResponse,
+  ListStaffBookingsResponse,
+  StaffBookingDetail,
 } from '@sheer/domain';
-import type { AppointmentDetail, AppointmentSummary } from '@sheer/booking-core';
 import type { FormulaDraft, FormulaSavePayload } from '@sheer/lab-core';
 
 export interface ApiClientOptions {
@@ -118,8 +119,8 @@ export interface LabPinClient {
 }
 
 export interface LabAppointmentClient {
-  today: (locationId: string) => Promise<AppointmentSummary[]>;
-  detail: (appointmentId: string) => Promise<AppointmentDetail>;
+  today: (locationId?: string) => Promise<ListStaffBookingsResponse>;
+  detail: (appointmentId: string) => Promise<StaffBookingDetail>;
 }
 
 export interface LabFormulaClient {
@@ -240,8 +241,13 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       status: (locationId) => request(`/lab/pins/status?locationId=${encodeURIComponent(locationId)}`),
     },
     labAppointments: {
-      today: (locationId) => request(`/lab/appointments/today?locationId=${encodeURIComponent(locationId)}`),
-      detail: (appointmentId) => request(`/lab/appointments/${appointmentId}`),
+      today: (locationId) =>
+        request(
+          locationId
+            ? `/lab/appointments/today?locationId=${encodeURIComponent(locationId)}`
+            : '/lab/appointments/today',
+        ),
+      detail: (appointmentId) => request(`/lab/appointments/${encodeURIComponent(appointmentId)}`),
     },
     labFormulas: {
       start: (payload) => request('/lab/formulas/start', { method: 'POST', body: payload }),

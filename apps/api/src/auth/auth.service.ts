@@ -68,6 +68,7 @@ interface StaffProfileRow {
 
 interface ClientProfileRow {
   id: string;
+  client_code?: string;
   primary_location_id?: string | null;
   first_name?: string;
   last_name?: string;
@@ -402,6 +403,7 @@ export class AuthService {
       },
       staffProfileId: staffProfile?.id,
       clientProfileId: clientProfile?.id,
+      clientCode: clientProfile?.client_code,
       clientCommunicationPreference: clientProfile?.communication_preference ?? undefined,
     };
   }
@@ -822,7 +824,7 @@ export class AuthService {
     const { data: existing, error: lookupError } = await this.admin
       .schema('core')
       .from('client_profiles')
-      .select('id,first_name,last_name,email,phone,communication_preference')
+      .select('id,client_code,first_name,last_name,email,phone,communication_preference')
       .eq('business_id', businessId)
       .eq('user_profile_id', userId)
       .maybeSingle<ClientProfileRow>();
@@ -957,7 +959,7 @@ export class AuthService {
     let query = this.admin
       .schema('core')
       .from('client_profiles')
-      .select('id,primary_location_id,communication_preference')
+      .select('id,client_code,primary_location_id,communication_preference')
       .eq('business_id', businessId)
       .eq('user_profile_id', userId);
 

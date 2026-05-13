@@ -20,6 +20,7 @@ const NAV: NavEntry[] = [
   { to: '/commission', label: 'Commission' },
   { to: '/team', label: 'Team', allowedRoles: ['owner'] },
   { to: '/locations', label: 'Locations', allowedRoles: ['owner', 'manager'] },
+  { to: '/settings/booking', label: 'Booking settings', allowedRoles: ['owner'] },
 ];
 
 export function Sidebar() {

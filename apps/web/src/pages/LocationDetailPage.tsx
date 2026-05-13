@@ -111,14 +111,23 @@ export function LocationDetailPage() {
             </dl>
           </section>
 
-          <section className="mt-6 rounded-card-lg border border-dashed border-border bg-surface-alt px-5 py-8 text-center">
-            <h2 className="text-[14px] font-semibold text-text-primary">
-              Detailed location management
-            </h2>
-            <p className="mt-2 text-[13px] text-text-secondary">
-              Detailed location management — opening hours, services, payments, calendar rules —
-              will be added in the next phase.
-            </p>
+          <section className="mt-6 rounded-card-lg border border-border bg-surface px-5 py-5">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-[14px] font-semibold text-text-primary">Booking configuration</h2>
+                <p className="mt-1 text-[13px] text-text-secondary">
+                  Manage mandatory finishing services and upgrade prompts for this location.
+                </p>
+              </div>
+              {role === 'owner' ? (
+                <Link
+                  to={`/settings/booking?locationId=${encodeURIComponent(location.id)}`}
+                  className="inline-flex h-9 items-center justify-center rounded-pill bg-primary px-4 text-[13px] font-semibold text-text-on-primary transition hover:bg-primary-deep"
+                >
+                  Booking settings
+                </Link>
+              ) : null}
+            </div>
           </section>
         </>
       ) : null}

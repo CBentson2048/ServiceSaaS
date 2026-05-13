@@ -149,6 +149,7 @@ export function CrmClientDetailPage() {
                   {detail.profile.displayName}
                 </h1>
                 <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-text-secondary">
+                  <span>Q code {detail.profile.clientCode}</span>
                   <span>{detail.profile.email ?? 'No email'}</span>
                   <span>{detail.profile.phone ?? 'No phone'}</span>
                   <span>{detail.profile.communicationPreference ?? 'No preference'}</span>

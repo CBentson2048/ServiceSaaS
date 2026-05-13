@@ -3,9 +3,11 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import type {
   ClientBookingSelection,
   PublicBookingAvailabilitySlot,
+  PublicBookingFinishingRequirement,
   PublicBookingLocationSummary,
   PublicBookingServiceSummary,
   PublicBookingStylistSummary,
+  PublicBookingUpgradeSuggestion,
 } from '@sheer/domain';
 import { cn } from '@sheer/utils';
 import {
@@ -31,9 +33,11 @@ export function ClientBookingServicePage() {
 
   const [location, setLocation] = useState<PublicBookingLocationSummary | null>(null);
   const [services, setServices] = useState<PublicBookingServiceSummary[]>([]);
-  const [selectedServiceId, setSelectedServiceId] = useState<string | null>(
-    initialSelection?.serviceId || null,
+  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>(
+    initialSelection?.serviceIds ?? [],
   );
+  const [finishingRequirements, setFinishingRequirements] = useState<PublicBookingFinishingRequirement[]>([]);
+  const [upgradeSuggestions, setUpgradeSuggestions] = useState<PublicBookingUpgradeSuggestion[]>([]);
   const [stylists, setStylists] = useState<PublicBookingStylistSummary[]>([]);
   const [nextAvailableAt, setNextAvailableAt] = useState<string | undefined>();
   const [stylistChoice, setStylistChoice] = useState<StylistChoice | null>(
@@ -48,9 +52,32 @@ export function ClientBookingServicePage() {
   const [resolvingNextAvailable, setResolvingNextAvailable] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const selectedService = useMemo(
-    () => services.find((service) => service.id === selectedServiceId) ?? null,
-    [selectedServiceId, services],
+  const selectedServices = useMemo(
+    () => selectedServiceIds.map((id) => services.find((service) => service.id === id)).filter((service): service is PublicBookingServiceSummary => Boolean(service)),
+    [selectedServiceIds, services],
+  );
+  const selectedServiceIdSet = useMemo(() => new Set(selectedServiceIds), [selectedServiceIds]);
+  const totalDurationMinutes = selectedServices.reduce((sum, service) => sum + service.estimatedDurationMinutes, 0);
+  const totalPriceAmount = selectedServices.reduce((sum, service) => sum + service.startingPriceAmount, 0);
+  const applicableRequirements = useMemo(
+    () => finishingRequirements.filter((rule) => selectedServiceIdSet.has(rule.triggerServiceId)),
+    [finishingRequirements, selectedServiceIdSet],
+  );
+  const unmetRequirements = useMemo(
+    () =>
+      applicableRequirements.filter(
+        (rule) => !rule.requiredServiceIds.some((serviceId) => selectedServiceIdSet.has(serviceId)),
+      ),
+    [applicableRequirements, selectedServiceIdSet],
+  );
+  const applicableUpgrades = useMemo(
+    () =>
+      upgradeSuggestions.filter(
+        (suggestion) =>
+          selectedServiceIdSet.has(suggestion.triggerServiceId) &&
+          !selectedServiceIdSet.has(suggestion.suggestedServiceId),
+      ),
+    [selectedServiceIdSet, upgradeSuggestions],
   );
 
   const loadServices = useCallback(async () => {
@@ -60,10 +87,10 @@ export function ClientBookingServicePage() {
       const result = await getPublicBookingSelection({ locationId, businessSlug, locationSlug });
       setLocation(result.location);
       setServices(result.services);
-      setSelectedServiceId((current) =>
-        current && result.services.some((service) => service.id === current)
-          ? current
-          : result.services[0]?.id ?? null,
+      setFinishingRequirements(result.finishingRequirements);
+      setUpgradeSuggestions(result.upgradeSuggestions);
+      setSelectedServiceIds((current) =>
+        current.filter((serviceId) => result.services.some((service) => service.id === serviceId)),
       );
     } catch (err) {
       setError(toErrorMessage(err, 'Could not load services'));
@@ -77,14 +104,14 @@ export function ClientBookingServicePage() {
   }, [loadServices]);
 
   useEffect(() => {
-    if (!selectedServiceId) {
+    if (selectedServiceIds.length === 0 || unmetRequirements.length > 0) {
       setStylists([]);
       setNextAvailableAt(undefined);
       setStylistChoice(null);
       return;
     }
 
-    const serviceId = selectedServiceId;
+    const serviceIds = selectedServiceIds;
     let cancelled = false;
     async function loadStylists() {
       setLoadingStylists(true);
@@ -95,7 +122,7 @@ export function ClientBookingServicePage() {
           locationId,
           businessSlug,
           locationSlug,
-          serviceId,
+          serviceIds,
         });
         if (cancelled) return;
         setStylists(result.stylists);
@@ -110,26 +137,35 @@ export function ClientBookingServicePage() {
     return () => {
       cancelled = true;
     };
-  }, [businessSlug, locationId, locationSlug, selectedServiceId]);
+  }, [businessSlug, locationId, locationSlug, selectedServiceIds, unmetRequirements.length]);
 
   function selectService(serviceId: string) {
-    setSelectedServiceId(serviceId);
+    setSelectedServiceIds((current) =>
+      current.includes(serviceId) ? current.filter((id) => id !== serviceId) : [...current, serviceId],
+    );
+    setStylistChoice(null);
+  }
+
+  function addService(serviceId: string) {
+    setSelectedServiceIds((current) => (current.includes(serviceId) ? current : [...current, serviceId]));
     setStylistChoice(null);
   }
 
   async function handleContinue() {
-    if (!location || !selectedService || !stylistChoice) return;
+    if (!location || selectedServices.length === 0 || unmetRequirements.length > 0 || !stylistChoice) return;
 
     if (stylistChoice.mode === 'next_available') {
-      await continueWithNextAvailable(location, selectedService);
+      await continueWithNextAvailable(location, selectedServices);
       return;
     }
 
     const selection: ClientBookingSelection = {
       locationId: location.id,
       location,
-      serviceId: selectedService.id,
-      service: selectedService,
+      serviceIds: selectedServices.map((service) => service.id),
+      services: selectedServices,
+      finishingRequirements,
+      upgradeSuggestions,
       staffRequestMode: stylistChoice.mode,
       staffProfileId: stylistChoice.staffProfileId,
       nextAvailableAt,
@@ -145,7 +181,7 @@ export function ClientBookingServicePage() {
 
   async function continueWithNextAvailable(
     currentLocation: PublicBookingLocationSummary,
-    currentService: PublicBookingServiceSummary,
+    currentServices: PublicBookingServiceSummary[],
   ) {
     setResolvingNextAvailable(true);
     setError(null);
@@ -153,7 +189,7 @@ export function ClientBookingServicePage() {
       const { dateFrom, dateTo } = nextAvailableSearchRange();
       const result = await getPublicBookingAvailability({
         locationId: currentLocation.id,
-        serviceId: currentService.id,
+        serviceIds: currentServices.map((service) => service.id),
         nextAvailable: true,
         dateFrom,
         dateTo,
@@ -167,8 +203,10 @@ export function ClientBookingServicePage() {
       const selection: ClientBookingSelection = {
         locationId: currentLocation.id,
         location: currentLocation,
-        serviceId: currentService.id,
-        service: currentService,
+        serviceIds: currentServices.map((service) => service.id),
+        services: currentServices,
+        finishingRequirements,
+        upgradeSuggestions,
         staffRequestMode: 'next_available',
         staffProfileId: selectedSlot.staffProfileId,
         nextAvailableAt: selectedSlot.startAt,
@@ -188,7 +226,8 @@ export function ClientBookingServicePage() {
   }
 
   const canContinue = Boolean(
-    selectedService &&
+    selectedServices.length > 0 &&
+      unmetRequirements.length === 0 &&
       stylistChoice &&
       !resolvingNextAvailable,
   );
@@ -242,7 +281,7 @@ export function ClientBookingServicePage() {
                   <ServiceCard
                     key={service.id}
                     service={service}
-                    selected={service.id === selectedServiceId}
+                    selected={selectedServiceIdSet.has(service.id)}
                     onSelect={() => selectService(service.id)}
                   />
                 ))}
@@ -251,9 +290,59 @@ export function ClientBookingServicePage() {
           </section>
 
           <section className="mt-6">
+            <div className="mb-2 text-[12px] font-medium text-text-secondary">Finishing and upgrades</div>
+            {unmetRequirements.length > 0 ? (
+              <div className="space-y-3">
+                {unmetRequirements.map((rule) => (
+                  <AppCard key={rule.id} elevation="none" className="border-primary/30 bg-primary/5">
+                    <div className="text-[13px] font-semibold">{rule.title}</div>
+                    <p className="mt-1 text-[12px] text-text-secondary">
+                      {rule.description ?? 'Choose one finishing service to continue.'}
+                    </p>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      {rule.requiredServices.map((service) => (
+                        <button
+                          key={service.id}
+                          type="button"
+                          onClick={() => addService(service.id)}
+                          className="rounded-input-lg border border-border bg-surface px-3 py-2 text-left text-[12px] font-medium text-text-primary"
+                        >
+                          Add {service.name}
+                        </button>
+                      ))}
+                    </div>
+                  </AppCard>
+                ))}
+              </div>
+            ) : applicableUpgrades.length > 0 ? (
+              <div className="grid gap-3 md:grid-cols-2">
+                {applicableUpgrades.map((suggestion) => (
+                  <AppCard key={suggestion.id} elevation="none" className="border-border bg-surface">
+                    <div className="text-[13px] font-semibold">{suggestion.title}</div>
+                    <p className="mt-1 text-[12px] text-text-secondary">{suggestion.description}</p>
+                    <button
+                      type="button"
+                      onClick={() => addService(suggestion.suggestedServiceId)}
+                      className="mt-3 rounded-pill bg-primary px-3 py-1.5 text-[12px] font-semibold text-text-on-primary"
+                    >
+                      Add {suggestion.service.name}
+                    </button>
+                  </AppCard>
+                ))}
+              </div>
+            ) : (
+              <AppCard elevation="none" className="border-dashed text-center text-[12px] text-text-secondary">
+                Select services to see relevant finishing requirements and optional upgrades.
+              </AppCard>
+            )}
+          </section>
+
+          <section className="mt-6">
             <div className="mb-2 text-[12px] font-medium text-text-secondary">Choose your stylist</div>
-            {!selectedService ? (
-              <EmptyBlock title="Select a service first" body="Stylists appear after a service is selected." />
+            {selectedServices.length === 0 ? (
+              <EmptyBlock title="Select at least one service first" body="Stylists appear after services are selected." />
+            ) : unmetRequirements.length > 0 ? (
+              <EmptyBlock title="Finishing service required" body="Add one of the required finishing services before choosing a stylist." />
             ) : loadingStylists ? (
               <LoadingCard label="Loading stylists..." />
             ) : stylists.length === 0 ? (
@@ -311,7 +400,10 @@ export function ClientBookingServicePage() {
           <div className="sticky top-6 space-y-4">
             <ServiceSummary
               locationName={location?.name}
-              serviceName={selectedService?.name}
+              serviceNames={selectedServices.map((service) => service.name)}
+              totalDurationMinutes={totalDurationMinutes}
+              totalPriceAmount={totalPriceAmount}
+              currencyCode={location?.currencyCode}
               stylistLabel={selectedStylistLabel(stylistChoice, stylists)}
               nextAvailableAt={nextAvailableAt}
             />
@@ -442,18 +534,29 @@ function EmptyBlock({ title, body }: { title: string; body: string }) {
 
 function ServiceSummary({
   locationName,
-  serviceName,
+  serviceNames,
+  totalDurationMinutes,
+  totalPriceAmount,
+  currencyCode,
   stylistLabel,
   nextAvailableAt,
 }: {
   locationName?: string;
-  serviceName?: string;
+  serviceNames: string[];
+  totalDurationMinutes: number;
+  totalPriceAmount: number;
+  currencyCode?: string;
   stylistLabel?: string;
   nextAvailableAt?: string;
 }) {
   const rows = [
     ['Location', locationName],
-    ['Service', serviceName],
+    ['Services', serviceNames.length > 0 ? serviceNames.join(', ') : undefined],
+    ['Duration', totalDurationMinutes > 0 ? formatDuration(totalDurationMinutes) : undefined],
+    [
+      'Estimated total',
+      currencyCode && totalPriceAmount > 0 ? formatPrice(totalPriceAmount, currencyCode) : undefined,
+    ],
     ['Stylist', stylistLabel],
     ['Earliest', nextAvailableAt ? formatAvailability(nextAvailableAt) : undefined],
   ].filter((row): row is [string, string] => Boolean(row[1]));

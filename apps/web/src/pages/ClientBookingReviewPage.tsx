@@ -22,7 +22,7 @@ type CompleteReviewSelection = ClientBookingSelection &
   Required<
     Pick<
       ClientBookingSelection,
-      'selectedSlot' | 'client' | 'account' | 'communicationPreference' | 'location' | 'service'
+      'selectedSlot' | 'client' | 'account' | 'communicationPreference' | 'location' | 'services'
     >
   >;
 
@@ -61,7 +61,7 @@ export function ClientBookingReviewPage() {
     try {
       const result = await startPublicBookingCheckout({
         locationId: currentSelection.locationId,
-        serviceId: currentSelection.serviceId,
+        serviceIds: currentSelection.services.map((service) => service.id),
         staffProfileId: currentSelection.staffProfileId,
         selectedStartAt: currentSelection.selectedSlot.startAt,
         staffRequestMode: currentSelection.staffRequestMode,
@@ -109,7 +109,9 @@ export function ClientBookingReviewPage() {
       <AppCard className="mt-5">
         <div className="grid gap-x-6 md:grid-cols-2">
         <Summary label="Location" value={currentSelection.location.name} />
-        <Summary label="Service" value={currentSelection.service.name} />
+        <Summary label="Services" value={currentSelection.services.map((service) => service.name).join(', ')} />
+        <Summary label="Duration" value={formatDuration(totalDuration(currentSelection.services))} />
+        <Summary label="Estimated total" value={formatMoney(totalPrice(currentSelection.services), currentSelection.location.currencyCode)} />
         <Summary label="When" value={`${formatDate(currentSelection.selectedSlot.startAt)} at ${formatTime(currentSelection.selectedSlot.startAt)}`} />
         <Summary label="Stylist" value={currentSelection.selectedSlot.stylistName} />
         <Summary label="Contact" value={`${currentSelection.client.firstName} ${currentSelection.client.lastName}`} />
@@ -121,7 +123,7 @@ export function ClientBookingReviewPage() {
       <AppCard className="mt-4 border-primary/30 bg-primary/5">
         <div className="text-[13px] font-semibold">Deposit</div>
         <div className="mt-1 text-[12px] text-text-secondary">
-          {formatDeposit(currentSelection.service.depositRequiredAmount, currentSelection.location.currencyCode)}
+          {formatDeposit(totalDeposit(currentSelection.services), currentSelection.location.currencyCode)}
         </div>
         <div className="mt-2 text-[12px] text-text-secondary">
           Your card is charged by Stripe. If payment fails or is cancelled, no confirmed appointment is created.
@@ -183,7 +185,7 @@ function PaymentForm({ bookingAttempt }: { bookingAttempt: PublicBookingAttemptS
     <AppCard className="mt-4">
       <div className="text-[14px] font-semibold">Payment</div>
       <p className="mt-1 text-[12px] text-text-secondary">
-        Pay {formatDeposit(bookingAttempt.depositAmount, bookingAttempt.currencyCode)} to confirm this booking.
+        Pay {formatDeposit(bookingAttempt.depositAmount, bookingAttempt.currencyCode)} to confirm this booking by card, Apple Pay, or Google Pay.
       </p>
       <div className="mt-4">
         <PaymentElement />
@@ -267,6 +269,32 @@ function formatCancellationNotice(hours: number): string {
   return `Please give at least ${hours} hour${hours === 1 ? '' : 's'} notice for cancellations.`;
 }
 
+function totalDuration(services: Array<{ estimatedDurationMinutes: number }>): number {
+  return services.reduce((sum, service) => sum + service.estimatedDurationMinutes, 0);
+}
+
+function totalPrice(services: Array<{ startingPriceAmount: number }>): number {
+  return services.reduce((sum, service) => sum + service.startingPriceAmount, 0);
+}
+
+function totalDeposit(services: Array<{ depositRequiredAmount: number }>): number {
+  return services.reduce((sum, service) => sum + service.depositRequiredAmount, 0);
+}
+
+function formatDuration(minutes: number): string {
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder ? `${hours} hr ${remainder} min` : `${hours} hr`;
+}
+
+function formatMoney(amount: number, currencyCode: string, suffix = ''): string {
+  return new Intl.NumberFormat(undefined, {
+    style: 'currency',
+    currency: currencyCode,
+  }).format(amount) + suffix;
+}
+
 function toErrorMessage(err: unknown): string {
   if (err instanceof ApiRequestError) return err.message;
   if (err instanceof Error) return err.message;
@@ -280,7 +308,8 @@ function isCompleteReviewSelection(selection: ClientBookingSelection | null): se
       selection.account &&
       selection.communicationPreference &&
       selection.location &&
-      selection.service,
+      selection.services &&
+      selection.services.length > 0,
   );
 }
 

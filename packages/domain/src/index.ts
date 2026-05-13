@@ -34,6 +34,7 @@ export interface AuthUser {
   profile: AuthProfileSummary;
   staffProfileId?: string;
   clientProfileId?: string;
+  clientCode?: string;
   clientCommunicationPreference?: 'whatsapp' | 'sms' | 'email';
 }
 
@@ -308,6 +309,86 @@ export interface UpdateLocationRequest {
   countryCode?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Owner booking settings
+// ---------------------------------------------------------------------------
+
+export interface OwnerBookingService {
+  id: string;
+  businessId: string;
+  locationId?: string;
+  name: string;
+  description?: string;
+  category?: string;
+  estimatedDurationMinutes: number;
+  startingPriceAmount: number;
+  depositRequiredAmount: number;
+  currencyCode: string;
+  isActive: boolean;
+  sortOrder: number;
+}
+
+export interface OwnerServiceRequirementRule {
+  id: string;
+  businessId: string;
+  locationId?: string;
+  triggerServiceId: string;
+  title: string;
+  description?: string;
+  isActive: boolean;
+  requiredServiceIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OwnerServiceUpgradeSuggestion {
+  id: string;
+  businessId: string;
+  locationId?: string;
+  triggerServiceId: string;
+  suggestedServiceId: string;
+  title: string;
+  description: string;
+  isActive: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OwnerBookingSettingsResponse {
+  locations: BusinessLocationSummary[];
+  services: OwnerBookingService[];
+  requirementRules: OwnerServiceRequirementRule[];
+  upgradeSuggestions: OwnerServiceUpgradeSuggestion[];
+}
+
+export interface UpsertServiceRequirementRuleRequest {
+  locationId?: string | null;
+  triggerServiceId: string;
+  title: string;
+  description?: string | null;
+  requiredServiceIds: string[];
+  isActive?: boolean;
+}
+
+export interface UpsertServiceUpgradeSuggestionRequest {
+  locationId?: string | null;
+  triggerServiceId: string;
+  suggestedServiceId: string;
+  title: string;
+  description: string;
+  isActive?: boolean;
+  sortOrder?: number;
+}
+
+export interface ServiceRequirementRuleResponse {
+  rule: OwnerServiceRequirementRule;
+}
+
+export interface ServiceUpgradeSuggestionResponse {
+  suggestion: OwnerServiceUpgradeSuggestion;
+}
+
 export interface StaffInvitation {
   id: string;
   businessId: string;
@@ -468,15 +549,47 @@ export interface CurrentUserResponse {
   user: AuthUser;
 }
 
+export interface StaffBookingSummary {
+  id: string;
+  businessId: string;
+  locationId: string;
+  clientProfileId: string;
+  assignedStaffProfileId?: string;
+  requestedStaffProfileId?: string;
+  status: AppointmentStatus;
+  startsAt: string;
+  endsAt: string;
+  clientDisplayName: string;
+  serviceNames: string[];
+  durationMinutes?: number;
+  depositRequiredAmount?: number;
+  depositStatus?: string;
+  clientNote?: string;
+}
+
+export interface StaffBookingDetail extends StaffBookingSummary {
+  communicationPreference?: string;
+  internalNote?: string;
+}
+
+export interface ListStaffBookingsResponse {
+  bookings: StaffBookingSummary[];
+  scope: 'owner' | 'manager' | 'stylist';
+  rangeStart?: string;
+  rangeEnd?: string;
+}
+
 export type LabSessionStatus = 'unlocking' | 'active' | 'locked' | 'expired' | 'logged_out';
 
 export type DevicePairingStatus = 'unpaired' | 'pairing' | 'paired' | 'disconnected' | 'revoked';
 
 export type AppointmentStatus =
+  | 'pending'
   | 'draft'
   | 'booked'
   | 'confirmed'
   | 'checked_in'
+  | 'in_progress'
   | 'in_service'
   | 'completed'
   | 'cancelled'
@@ -555,6 +668,24 @@ export interface PublicBookingServiceSummary {
   currencyCode: string;
 }
 
+export interface PublicBookingUpgradeSuggestion {
+  id: string;
+  triggerServiceId: string;
+  suggestedServiceId: string;
+  title: string;
+  description: string;
+  service: PublicBookingServiceSummary;
+}
+
+export interface PublicBookingFinishingRequirement {
+  id: string;
+  triggerServiceId: string;
+  title: string;
+  description?: string;
+  requiredServiceIds: string[];
+  requiredServices: PublicBookingServiceSummary[];
+}
+
 export interface PublicBookingStylistSummary {
   staffProfileId: string;
   displayName: string;
@@ -566,6 +697,8 @@ export interface PublicBookingStylistSummary {
 export interface PublicBookingServiceSelectionResponse {
   location: PublicBookingLocationSummary;
   services: PublicBookingServiceSummary[];
+  finishingRequirements: PublicBookingFinishingRequirement[];
+  upgradeSuggestions: PublicBookingUpgradeSuggestion[];
 }
 
 export interface PublicBookingLocationsResponse {
@@ -574,7 +707,10 @@ export interface PublicBookingLocationsResponse {
 
 export interface PublicBookingStylistsResponse {
   location: PublicBookingLocationSummary;
-  service: PublicBookingServiceSummary;
+  services: PublicBookingServiceSummary[];
+  totalDurationMinutes: number;
+  totalPriceAmount: number;
+  totalDepositRequiredAmount: number;
   stylists: PublicBookingStylistSummary[];
   nextAvailableAt?: string;
 }
@@ -590,7 +726,8 @@ export interface PublicBookingAvailabilitySlot {
 
 export interface PublicBookingAvailabilityResponse {
   location: PublicBookingLocationSummary;
-  service: PublicBookingServiceSummary;
+  services: PublicBookingServiceSummary[];
+  totalDurationMinutes: number;
   slots: PublicBookingAvailabilitySlot[];
 }
 
@@ -603,7 +740,7 @@ export interface PublicBookingClientDetails {
 
 export interface CreatePublicBookingRequest {
   locationId: string;
-  serviceId: string;
+  serviceIds: string[];
   staffProfileId: string;
   selectedStartAt: string;
   staffRequestMode: 'specific_staff' | 'next_available';
@@ -616,7 +753,7 @@ export interface CreatePublicBookingRequest {
 
 export interface StartPublicBookingCheckoutRequest {
   locationId: string;
-  serviceId: string;
+  serviceIds: string[];
   staffProfileId: string;
   selectedStartAt: string;
   staffRequestMode: 'specific_staff' | 'next_available';
@@ -630,8 +767,10 @@ export interface StartPublicBookingCheckoutRequest {
 export interface PublicBookingAppointmentSummary {
   id: string;
   locationId: string;
-  serviceId: string;
-  serviceName: string;
+  serviceIds: string[];
+  serviceNames: string[];
+  totalDurationMinutes: number;
+  totalPriceAmount: number;
   staffProfileId: string;
   stylistName: string;
   scheduledStartAt: string;
@@ -654,8 +793,10 @@ export interface PublicBookingAttemptSummary {
   id: string;
   status: PublicBookingAttemptStatus;
   locationId: string;
-  serviceId: string;
-  serviceName: string;
+  serviceIds: string[];
+  serviceNames: string[];
+  totalDurationMinutes: number;
+  totalPriceAmount: number;
   staffProfileId: string;
   stylistName: string;
   selectedStartAt: string;
@@ -689,8 +830,10 @@ export interface CreatePublicBookingResponse {
 export interface ClientBookingSelection {
   locationId: string;
   location?: PublicBookingLocationSummary;
-  serviceId: string;
-  service?: PublicBookingServiceSummary;
+  serviceIds: string[];
+  services?: PublicBookingServiceSummary[];
+  finishingRequirements?: PublicBookingFinishingRequirement[];
+  upgradeSuggestions?: PublicBookingUpgradeSuggestion[];
   staffRequestMode: 'specific_staff' | 'next_available';
   staffProfileId?: string;
   nextAvailableAt?: string;
@@ -729,6 +872,7 @@ export type CrmMessageDeliveryStatus = 'queued' | 'sent' | 'delivered' | 'failed
 export interface CrmClientSummary {
   id: string;
   businessId: string;
+  clientCode: string;
   primaryLocationId?: string;
   firstName: string;
   lastName: string;

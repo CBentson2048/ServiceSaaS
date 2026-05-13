@@ -89,7 +89,8 @@ export function ClientBookingSuccessPage() {
 
       <AppCard className="mt-5">
         <div className="grid gap-x-6 md:grid-cols-2">
-        <Summary label="Service" value={appointment.serviceName} />
+        <Summary label="Services" value={appointment.serviceNames.join(', ')} />
+        <Summary label="Duration" value={formatDuration(appointment.totalDurationMinutes)} />
         <Summary label="When" value={formatDateTime(appointment.scheduledStartAt)} />
         <Summary label="Stylist" value={appointment.stylistName} />
         <Summary label="Client" value={appointment.clientDisplayName} />
@@ -170,6 +171,13 @@ function formatMoney(amount: number, currencyCode: string): string {
     style: 'currency',
     currency: currencyCode,
   }).format(amount);
+}
+
+function formatDuration(minutes: number): string {
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder ? `${hours} hr ${remainder} min` : `${hours} hr`;
 }
 
 function toErrorMessage(err: unknown): string {

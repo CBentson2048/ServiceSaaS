@@ -3,12 +3,14 @@ import { ProtectedRoute } from './auth/ProtectedRoute';
 import { DashboardLayout } from './layouts/DashboardLayout';
 import { AcceptInvitationPage } from './pages/AcceptInvitationPage';
 import { AccountCreatedPage } from './pages/AccountCreatedPage';
+import { BookingSettingsPage } from './pages/BookingSettingsPage';
 import { ClientBookingAccountPage } from './pages/ClientBookingAccountPage';
 import { ClientBookingDateTimePage } from './pages/ClientBookingDateTimePage';
 import { ClientBookingLocationPage } from './pages/ClientBookingLocationPage';
 import { ClientBookingReviewPage } from './pages/ClientBookingReviewPage';
 import { ClientBookingServicePage } from './pages/ClientBookingServicePage';
 import { ClientBookingSuccessPage } from './pages/ClientBookingSuccessPage';
+import { BookingsPage } from './pages/BookingsPage';
 import { CreateAccountPage } from './pages/CreateAccountPage';
 import { CreateLocationPage } from './pages/CreateLocationPage';
 import { CrmClientDetailPage } from './pages/CrmClientDetailPage';
@@ -65,7 +67,7 @@ export function App() {
       <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} />}>
         <Route element={<DashboardLayout />}>
           <Route path="/dashboard" element={<DashboardPage />} />
-          <Route path="/bookings" element={<PlaceholderPage title="Bookings" />} />
+          <Route path="/bookings" element={<BookingsPage />} />
           <Route path="/crm" element={<CrmClientsPage />} />
           <Route path="/crm/clients/:id" element={<CrmClientDetailPage />} />
           <Route path="/rota" element={<RotaPage />} />
@@ -79,6 +81,7 @@ export function App() {
       <Route element={<ProtectedRoute allowedRoles={['owner']} />}>
         <Route element={<DashboardLayout />}>
           <Route path="/team" element={<TeamPage />} />
+          <Route path="/settings/booking" element={<BookingSettingsPage />} />
           <Route path="/locations/new" element={<CreateLocationPage />} />
           <Route path="/locations/:id/edit" element={<EditLocationPage />} />
         </Route>

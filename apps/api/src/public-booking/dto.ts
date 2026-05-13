@@ -3,9 +3,11 @@ import {
   IsEmail,
   IsISO8601,
   IsIn,
+  IsArray,
   IsOptional,
   IsString,
   IsUUID,
+  ArrayMinSize,
   MaxLength,
   MinLength,
   ValidateNested,
@@ -26,8 +28,8 @@ export class PublicBookingSelectionQueryDto {
 }
 
 export class PublicBookingStylistsQueryDto extends PublicBookingSelectionQueryDto {
-  @IsUUID()
-  serviceId!: string;
+  @IsString()
+  serviceIds!: string;
 }
 
 export class PublicBookingAvailabilityQueryDto extends PublicBookingStylistsQueryDto {
@@ -72,8 +74,10 @@ export class CreatePublicBookingDto {
   @IsUUID()
   locationId!: string;
 
-  @IsUUID()
-  serviceId!: string;
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsUUID(undefined, { each: true })
+  serviceIds!: string[];
 
   @IsUUID()
   staffProfileId!: string;

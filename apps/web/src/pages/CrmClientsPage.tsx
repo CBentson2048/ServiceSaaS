@@ -49,6 +49,7 @@ export function CrmClientsPage() {
     return clients.filter((client) =>
       [
         client.displayName,
+        client.clientCode,
         client.email ?? '',
         client.phone ?? '',
         client.communicationPreference ?? '',
@@ -250,7 +251,8 @@ function ClientRow({ client }: { client: CrmClientSummary }) {
           {client.displayName}
         </Link>
         <div className="mt-0.5 text-[12px] text-text-secondary">
-          {client.communicationPreference ? `Prefers ${client.communicationPreference}` : 'No preference'}
+          Q code {client.clientCode}
+          {client.communicationPreference ? ` · Prefers ${client.communicationPreference}` : ''}
         </div>
       </td>
       <td className="px-4 py-3 text-text-secondary">

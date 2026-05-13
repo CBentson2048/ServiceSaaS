@@ -139,8 +139,8 @@ function writeInitialSelection(location: PublicBookingLocationSummary) {
   writeClientBookingSelection({
     locationId: location.id,
     location,
-    serviceId: '',
-    service: undefined,
+    serviceIds: [],
+    services: undefined,
     staffRequestMode: 'next_available',
   });
 }

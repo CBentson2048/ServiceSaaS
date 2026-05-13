@@ -2,8 +2,10 @@ import type {
   CreateMyLeaveRequest,
   CurrentUserResponse,
   LeaveRequestMutationResponse,
+  ListStaffBookingsResponse,
   LoginResponse,
   MyLeaveRequestsResponse,
+  StaffBookingDetail,
   StylistMyWeekResponse,
 } from '@sheer/domain';
 
@@ -71,6 +73,19 @@ export async function cancelMyLeaveRequest(
       accessToken,
     },
   );
+}
+
+export async function getMyBookings(accessToken: string): Promise<ListStaffBookingsResponse> {
+  return request<ListStaffBookingsResponse>('/lab/appointments/today', { accessToken });
+}
+
+export async function getBookingDetail(
+  accessToken: string,
+  bookingId: string,
+): Promise<StaffBookingDetail> {
+  return request<StaffBookingDetail>(`/lab/appointments/${encodeURIComponent(bookingId)}`, {
+    accessToken,
+  });
 }
 
 async function request<T>(

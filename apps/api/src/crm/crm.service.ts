@@ -38,6 +38,7 @@ import type { ListCrmClientsQueryDto } from './dto';
 interface ClientProfileRow {
   id: string;
   business_id: string;
+  client_code: string;
   user_profile_id: string | null;
   primary_location_id: string | null;
   first_name: string;
@@ -183,7 +184,7 @@ interface GdprRequestRow {
 }
 
 const CLIENT_COLUMNS =
-  'id,business_id,user_profile_id,primary_location_id,first_name,last_name,email,phone,date_of_birth,communication_preference,marketing_opt_in,source,tags,metadata,created_at,updated_at';
+  'id,business_id,client_code,user_profile_id,primary_location_id,first_name,last_name,email,phone,date_of_birth,communication_preference,marketing_opt_in,source,tags,metadata,created_at,updated_at';
 
 type CrmStaffScope = 'owner' | 'manager' | 'stylist';
 
@@ -959,6 +960,7 @@ function toClientSummary(
   return {
     id: row.id,
     businessId: row.business_id,
+    clientCode: row.client_code,
     primaryLocationId: row.primary_location_id ?? undefined,
     firstName: row.first_name,
     lastName: row.last_name,

@@ -69,7 +69,8 @@ function BookingSummary({
 }) {
   const rows = [
     ['Location', selection?.location?.name],
-    ['Service', selection?.service?.name],
+    ['Services', selection?.services?.map((service) => service.name).join(', ')],
+    ['Duration', selection?.services ? formatDuration(totalDuration(selection.services)) : undefined],
     ['Stylist', selection?.selectedSlot?.stylistName ?? stylistLabel(selection)],
     ['Time', selection?.selectedSlot ? formatDateTime(selection.selectedSlot.startAt) : undefined],
     ['Client', selection?.client ? `${selection.client.firstName} ${selection.client.lastName}` : undefined],
@@ -118,4 +119,15 @@ function formatMoney(amount: number, currencyCode: string): string {
     style: 'currency',
     currency: currencyCode,
   }).format(amount);
+}
+
+function totalDuration(services: Array<{ estimatedDurationMinutes: number }>): number {
+  return services.reduce((sum, service) => sum + service.estimatedDurationMinutes, 0);
+}
+
+function formatDuration(minutes: number): string {
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder ? `${hours} hr ${remainder} min` : `${hours} hr`;
 }

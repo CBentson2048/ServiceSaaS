@@ -10,6 +10,7 @@ import { LabFormulaModule } from './lab-formula/lab-formula.module';
 import { LabPinModule } from './lab-pin/lab-pin.module';
 import { LabSessionModule } from './lab-session/lab-session.module';
 import { LocationsModule } from './locations/locations.module';
+import { OwnerBookingSettingsModule } from './owner-booking-settings/owner-booking-settings.module';
 import { OwnerOnboardingModule } from './owner-onboarding/owner-onboarding.module';
 import { PublicBookingModule } from './public-booking/public-booking.module';
 import { RotaModule } from './rota/rota.module';
@@ -28,6 +29,7 @@ import { validateEnv } from './config/env.validation';
     OwnerOnboardingModule,
     StaffModule,
     LocationsModule,
+    OwnerBookingSettingsModule,
     PublicBookingModule,
     CrmModule,
     RotaModule,

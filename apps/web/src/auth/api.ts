@@ -22,6 +22,7 @@ import type {
   InvitationStatus,
   LeaveRequestMutationResponse,
   LeaveRequestStatus,
+  ListStaffBookingsResponse,
   ListCrmClientAllergiesResponse,
   ListCrmClientMessagesResponse,
   ListCrmClientNotesResponse,
@@ -34,6 +35,7 @@ import type {
   ListStaffResponse,
   LocationDetailResponse,
   LoginResponse,
+  OwnerBookingSettingsResponse,
   OwnerOnboardingBootstrap,
   OwnerOnboardingRequest,
   OwnerOnboardingResponse,
@@ -65,6 +67,8 @@ import type {
   UpdateShiftRequest,
   UpdateStaffMemberRequest,
   UpdateStaffMemberResponse,
+  UpsertServiceRequirementRuleRequest,
+  UpsertServiceUpgradeSuggestionRequest,
   WeeklyRotaResponse,
 } from '@sheer/domain';
 
@@ -133,13 +137,13 @@ export async function getPublicBookingSelection(params: {
 }
 
 export async function getPublicBookingStylists(params: {
-  serviceId: string;
+  serviceIds: string[];
   locationId?: string;
   businessSlug?: string;
   locationSlug?: string;
 }): Promise<PublicBookingStylistsResponse> {
   const search = new URLSearchParams();
-  search.set('serviceId', params.serviceId);
+  search.set('serviceIds', params.serviceIds.join(','));
   if (params.locationId) search.set('locationId', params.locationId);
   if (params.businessSlug) search.set('businessSlug', params.businessSlug);
   if (params.locationSlug) search.set('locationSlug', params.locationSlug);
@@ -150,7 +154,7 @@ export async function getPublicBookingStylists(params: {
 
 export async function getPublicBookingAvailability(params: {
   locationId: string;
-  serviceId: string;
+  serviceIds: string[];
   stylistId?: string;
   nextAvailable?: boolean;
   dateFrom: string;
@@ -158,7 +162,7 @@ export async function getPublicBookingAvailability(params: {
 }): Promise<PublicBookingAvailabilityResponse> {
   const search = new URLSearchParams();
   search.set('locationId', params.locationId);
-  search.set('serviceId', params.serviceId);
+  search.set('serviceIds', params.serviceIds.join(','));
   if (params.stylistId) search.set('stylistId', params.stylistId);
   if (params.nextAvailable) search.set('nextAvailable', 'true');
   search.set('dateFrom', params.dateFrom);
@@ -205,6 +209,20 @@ export async function listCrmClients(
   if (params.locationId) search.set('locationId', params.locationId);
   const query = search.toString();
   return request<ListCrmClientsResponse>(`/crm/clients${query ? `?${query}` : ''}`, {
+    accessToken,
+  });
+}
+
+// -------------------- Bookings (owner / manager dashboard) --------------------
+
+export async function listBookings(
+  accessToken: string,
+  params: { locationId?: string } = {},
+): Promise<ListStaffBookingsResponse> {
+  const search = new URLSearchParams();
+  if (params.locationId) search.set('locationId', params.locationId);
+  const query = search.toString();
+  return request<ListStaffBookingsResponse>(`/lab/appointments${query ? `?${query}` : ''}`, {
     accessToken,
   });
 }
@@ -555,6 +573,87 @@ export async function reactivateLocation(
   return request<LocationDetailResponse>(
     `/owner/locations/${encodeURIComponent(locationId)}/reactivate`,
     { method: 'POST', accessToken },
+  );
+}
+
+// -------------------- Owner booking settings --------------------
+
+export async function getOwnerBookingSettings(
+  accessToken: string,
+  params: { locationId?: string } = {},
+): Promise<OwnerBookingSettingsResponse> {
+  const search = new URLSearchParams();
+  if (params.locationId) search.set('locationId', params.locationId);
+  const query = search.toString();
+  return request<OwnerBookingSettingsResponse>(
+    `/owner/booking-settings${query ? `?${query}` : ''}`,
+    { accessToken },
+  );
+}
+
+export async function createServiceRequirementRule(
+  accessToken: string,
+  payload: UpsertServiceRequirementRuleRequest,
+): Promise<OwnerBookingSettingsResponse['requirementRules'][number]> {
+  const result = await request<{ rule: OwnerBookingSettingsResponse['requirementRules'][number] }>(
+    '/owner/booking-settings/requirement-rules',
+    { method: 'POST', accessToken, body: payload },
+  );
+  return result.rule;
+}
+
+export async function updateServiceRequirementRule(
+  accessToken: string,
+  ruleId: string,
+  payload: UpsertServiceRequirementRuleRequest,
+): Promise<OwnerBookingSettingsResponse['requirementRules'][number]> {
+  const result = await request<{ rule: OwnerBookingSettingsResponse['requirementRules'][number] }>(
+    `/owner/booking-settings/requirement-rules/${encodeURIComponent(ruleId)}`,
+    { method: 'PATCH', accessToken, body: payload },
+  );
+  return result.rule;
+}
+
+export async function deleteServiceRequirementRule(
+  accessToken: string,
+  ruleId: string,
+): Promise<void> {
+  await request<void>(`/owner/booking-settings/requirement-rules/${encodeURIComponent(ruleId)}`, {
+    method: 'DELETE',
+    accessToken,
+  });
+}
+
+export async function createServiceUpgradeSuggestion(
+  accessToken: string,
+  payload: UpsertServiceUpgradeSuggestionRequest,
+): Promise<OwnerBookingSettingsResponse['upgradeSuggestions'][number]> {
+  const result = await request<{ suggestion: OwnerBookingSettingsResponse['upgradeSuggestions'][number] }>(
+    '/owner/booking-settings/upgrade-suggestions',
+    { method: 'POST', accessToken, body: payload },
+  );
+  return result.suggestion;
+}
+
+export async function updateServiceUpgradeSuggestion(
+  accessToken: string,
+  suggestionId: string,
+  payload: UpsertServiceUpgradeSuggestionRequest,
+): Promise<OwnerBookingSettingsResponse['upgradeSuggestions'][number]> {
+  const result = await request<{ suggestion: OwnerBookingSettingsResponse['upgradeSuggestions'][number] }>(
+    `/owner/booking-settings/upgrade-suggestions/${encodeURIComponent(suggestionId)}`,
+    { method: 'PATCH', accessToken, body: payload },
+  );
+  return result.suggestion;
+}
+
+export async function deleteServiceUpgradeSuggestion(
+  accessToken: string,
+  suggestionId: string,
+): Promise<void> {
+  await request<void>(
+    `/owner/booking-settings/upgrade-suggestions/${encodeURIComponent(suggestionId)}`,
+    { method: 'DELETE', accessToken },
   );
 }
 

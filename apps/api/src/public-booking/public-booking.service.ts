@@ -18,12 +18,14 @@ import type {
   PublicBookingAttemptSummary,
   PublicBookingAvailabilityResponse,
   PublicBookingAvailabilitySlot,
+  PublicBookingFinishingRequirement,
   PublicBookingLocationsResponse,
   PublicBookingLocationSummary,
   PublicBookingServiceSelectionResponse,
   PublicBookingServiceSummary,
   PublicBookingStylistSummary,
   PublicBookingStylistsResponse,
+  PublicBookingUpgradeSuggestion,
   StartPublicBookingCheckoutRequest,
   StartPublicBookingCheckoutResponse,
 } from '@sheer/domain';
@@ -79,6 +81,26 @@ interface StaffRow {
   display_name: string;
   color_hex: string | null;
   bio: string | null;
+}
+
+interface ServiceRequirementRuleRow {
+  id: string;
+  trigger_service_id: string;
+  title: string;
+  description: string | null;
+  service_requirement_options:
+    | Array<{ service_id: string; services: ServiceRow | ServiceRow[] | null }>
+    | { service_id: string; services: ServiceRow | ServiceRow[] | null }
+    | null;
+}
+
+interface ServiceUpgradeSuggestionRow {
+  id: string;
+  trigger_service_id: string;
+  suggested_service_id: string;
+  title: string;
+  description: string;
+  suggested_service: ServiceRow | ServiceRow[] | null;
 }
 
 interface ShiftRow {
@@ -157,6 +179,15 @@ interface BookingAttemptRow {
   metadata: Record<string, unknown>;
 }
 
+interface BookingAttemptServiceRow {
+  service_id: string;
+  sequence_no: number;
+  service_name_snapshot: string;
+  duration_minutes: number;
+  price_amount: number | string;
+  deposit_required_amount: number | string;
+}
+
 interface DepositRow {
   id: string;
   status: 'pending' | 'requires_action' | 'authorized' | 'paid' | 'failed' | 'cancelled';
@@ -167,12 +198,18 @@ const LOCATION_COLUMNS =
 const SERVICE_COLUMNS =
   'id,business_id,location_id,name,description,category,estimated_duration_minutes,base_price,deposit_type,deposit_value,is_active,sort_order';
 const STAFF_COLUMNS = 'id,display_name,color_hex,bio';
+const REQUIREMENT_RULE_COLUMNS =
+  'id,trigger_service_id,title,description,service_requirement_options(service_id,services(id,business_id,location_id,name,description,category,estimated_duration_minutes,base_price,deposit_type,deposit_value,is_active,sort_order))';
+const UPGRADE_SUGGESTION_COLUMNS =
+  'id,trigger_service_id,suggested_service_id,title,description,suggested_service:services!service_upgrade_suggestions_suggested_service_id_fkey(id,business_id,location_id,name,description,category,estimated_duration_minutes,base_price,deposit_type,deposit_value,is_active,sort_order)';
 const SHIFT_COLUMNS = 'id,staff_profile_id,scheduled_start_at,scheduled_end_at';
 const BREAK_COLUMNS = 'shift_id,started_at,ended_at';
 const APPOINTMENT_COLUMNS = 'assigned_staff_profile_id,scheduled_start_at,scheduled_end_at';
 const BOOKING_ATTEMPT_BUSY_COLUMNS = 'id,stylist_profile_id,selected_start_at,selected_end_at';
 const BOOKING_ATTEMPT_COLUMNS =
   'id,business_id,location_id,service_id,stylist_profile_id,client_profile_id,user_profile_id,appointment_id,staff_request_mode,selected_start_at,selected_end_at,communication_preference,client_note,deposit_amount,currency_code,stripe_payment_intent_id,status,expires_at,metadata';
+const BOOKING_ATTEMPT_SERVICE_COLUMNS =
+  'service_id,sequence_no,service_name_snapshot,duration_minutes,price_amount,deposit_required_amount';
 const LEAVE_COLUMNS = 'staff_profile_id,start_date,end_date';
 const ABSENCE_COLUMNS = 'staff_profile_id,starts_at,ends_at';
 const LOOKAHEAD_DAYS = 28;
@@ -224,23 +261,29 @@ export class PublicBookingService {
   ): Promise<PublicBookingServiceSelectionResponse> {
     const location = await this.resolveLocation(query);
     const services = await this.fetchServices(location.businessId, location.id, location.currencyCode);
-    return { location, services };
+    const [finishingRequirements, upgradeSuggestions] = await Promise.all([
+      this.fetchFinishingRequirements(location.businessId, location.id, location.currencyCode),
+      this.fetchUpgradeSuggestions(location.businessId, location.id, location.currencyCode),
+    ]);
+    return { location, services, finishingRequirements, upgradeSuggestions };
   }
 
   async getStylists(query: PublicBookingStylistsQueryDto): Promise<PublicBookingStylistsResponse> {
     const location = await this.resolveLocation(query);
-    const service = await this.fetchService(
+    const services = await this.fetchServicesByIds(
       location.businessId,
       location.id,
-      query.serviceId,
+      parseServiceIds(query.serviceIds),
       location.currencyCode,
     );
+    await this.assertServiceRulesSatisfied(location.businessId, location.id, services, location.currencyCode);
+    const totalDurationMinutes = totalDuration(services);
     const staff = await this.fetchBookableStaff(location.businessId, location.id);
     const nextAvailableByStaff = await this.fetchNextAvailableByStaff(
       location.businessId,
       location.id,
       staff.map((row) => row.id),
-      service.estimatedDurationMinutes,
+      totalDurationMinutes,
       location.appointmentSlotMinutes,
       { firstOnly: true },
     );
@@ -255,7 +298,10 @@ export class PublicBookingService {
 
     return {
       location,
-      service,
+      services,
+      totalDurationMinutes,
+      totalPriceAmount: totalPrice(services),
+      totalDepositRequiredAmount: calculateDepositAmount(services),
       stylists,
       nextAvailableAt: earliest(Array.from(nextAvailableByStaff.values()).flat()),
     };
@@ -265,12 +311,14 @@ export class PublicBookingService {
     query: PublicBookingAvailabilityQueryDto,
   ): Promise<PublicBookingAvailabilityResponse> {
     const location = await this.resolveLocation(query);
-    const service = await this.fetchService(
+    const services = await this.fetchServicesByIds(
       location.businessId,
       location.id,
-      query.serviceId,
+      parseServiceIds(query.serviceIds),
       location.currencyCode,
     );
+    await this.assertServiceRulesSatisfied(location.businessId, location.id, services, location.currencyCode);
+    const totalDurationMinutes = totalDuration(services);
     const staff = await this.fetchBookableStaff(location.businessId, location.id);
     const requestedStaffIds = query.stylistId
       ? staff.filter((row) => row.id === query.stylistId).map((row) => row.id)
@@ -290,7 +338,7 @@ export class PublicBookingService {
       location.businessId,
       location.id,
       requestedStaffIds,
-      service.estimatedDurationMinutes,
+      totalDurationMinutes,
       location.appointmentSlotMinutes,
       { dateFrom, dateTo, firstOnly: query.nextAvailable === 'true' },
     );
@@ -302,7 +350,7 @@ export class PublicBookingService {
         if (!stylist) return [];
         return starts.map<PublicBookingAvailabilitySlot>((startAt) => {
           const endAt = new Date(
-            new Date(startAt).getTime() + service.estimatedDurationMinutes * 60_000,
+            new Date(startAt).getTime() + totalDurationMinutes * 60_000,
           ).toISOString();
           return {
             startAt,
@@ -316,7 +364,7 @@ export class PublicBookingService {
       })
       .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
 
-    return { location, service, slots };
+    return { location, services, totalDurationMinutes, slots };
   }
 
   async createAppointment(_input: CreatePublicBookingRequest): Promise<CreatePublicBookingResponse> {
@@ -337,7 +385,7 @@ export class PublicBookingService {
     );
     await this.syncUserProfilePhone(input.bookedByUserProfileId, input.client.phone);
 
-    const depositAmount = calculateDepositAmount(context.service);
+    const depositAmount = calculateDepositAmount(context.services);
     if (depositAmount <= 0) {
       throw new BadRequestException('This service does not have a deposit configured');
     }
@@ -346,7 +394,7 @@ export class PublicBookingService {
       input,
       client,
       location: context.location,
-      service: context.service,
+      services: context.services,
       stylist: context.stylist,
       selectedStart: context.selectedStart,
       selectedEnd: context.selectedEnd,
@@ -358,7 +406,7 @@ export class PublicBookingService {
       currency: context.location.currencyCode,
       bookingAttemptId: attempt.id,
       locationId: context.location.id,
-      serviceId: context.service.id,
+      serviceIds: context.services.map((service) => service.id),
       stylistProfileId: context.stylist.id,
       clientProfileId: client.id,
       userProfileId: input.bookedByUserProfileId,
@@ -513,6 +561,110 @@ export class PublicBookingService {
       throw new InternalServerErrorException('Unable to load service');
     }
     return toServiceSummary(data, currencyCode);
+  }
+
+  private async fetchServicesByIds(
+    businessId: string,
+    locationId: string,
+    serviceIds: string[],
+    currencyCode: string,
+  ): Promise<PublicBookingServiceSummary[]> {
+    const uniqueIds = unique(serviceIds);
+    if (uniqueIds.length === 0) throw new BadRequestException('At least one service is required');
+
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('services')
+      .select(SERVICE_COLUMNS)
+      .eq('business_id', businessId)
+      .eq('is_active', true)
+      .or(`location_id.is.null,location_id.eq.${locationId}`)
+      .in('id', uniqueIds)
+      .returns<ServiceRow[]>();
+
+    if (error) {
+      this.logger.error(`fetchServicesByIds failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load services');
+    }
+
+    const byId = new Map((data ?? []).map((row) => [row.id, toServiceSummary(row, currencyCode)]));
+    const ordered = uniqueIds.map((id) => byId.get(id)).filter((service): service is PublicBookingServiceSummary => Boolean(service));
+    if (ordered.length !== uniqueIds.length) {
+      throw new NotFoundException('One or more services were not found');
+    }
+    return ordered;
+  }
+
+  private async fetchFinishingRequirements(
+    businessId: string,
+    locationId: string,
+    currencyCode: string,
+  ): Promise<PublicBookingFinishingRequirement[]> {
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('service_requirement_rules')
+      .select(REQUIREMENT_RULE_COLUMNS)
+      .eq('business_id', businessId)
+      .eq('is_active', true)
+      .or(`location_id.is.null,location_id.eq.${locationId}`)
+      .returns<ServiceRequirementRuleRow[]>();
+
+    if (error) {
+      this.logger.error(`fetchFinishingRequirements failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load service requirements');
+    }
+
+    return (data ?? []).map((row) => {
+      const optionRows = arrayOf(row.service_requirement_options);
+      const requiredServices = optionRows
+        .map((option) => first(option.services))
+        .filter((service): service is ServiceRow => Boolean(service?.is_active))
+        .map((service) => toServiceSummary(service, currencyCode));
+      return {
+        id: row.id,
+        triggerServiceId: row.trigger_service_id,
+        title: row.title,
+        description: row.description ?? undefined,
+        requiredServiceIds: optionRows.map((option) => option.service_id),
+        requiredServices,
+      };
+    });
+  }
+
+  private async fetchUpgradeSuggestions(
+    businessId: string,
+    locationId: string,
+    currencyCode: string,
+  ): Promise<PublicBookingUpgradeSuggestion[]> {
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('service_upgrade_suggestions')
+      .select(UPGRADE_SUGGESTION_COLUMNS)
+      .eq('business_id', businessId)
+      .eq('is_active', true)
+      .or(`location_id.is.null,location_id.eq.${locationId}`)
+      .order('sort_order', { ascending: true })
+      .returns<ServiceUpgradeSuggestionRow[]>();
+
+    if (error) {
+      this.logger.error(`fetchUpgradeSuggestions failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load upgrade suggestions');
+    }
+
+    return (data ?? [])
+      .map((row) => {
+        const service = first(row.suggested_service);
+        if (!service?.is_active) return undefined;
+        return {
+          id: row.id,
+          triggerServiceId: row.trigger_service_id,
+          suggestedServiceId: row.suggested_service_id,
+          title: row.title,
+          description: row.description,
+          service: toServiceSummary(service, currencyCode),
+        };
+      })
+      .filter((suggestion): suggestion is PublicBookingUpgradeSuggestion => Boolean(suggestion));
   }
 
   private async fetchBookableStaff(businessId: string, locationId: string): Promise<StaffRow[]> {
@@ -778,18 +930,20 @@ export class PublicBookingService {
     excludeBookingAttemptId?: string,
   ): Promise<{
     location: PublicBookingLocationSummary;
-    service: PublicBookingServiceSummary;
+    services: PublicBookingServiceSummary[];
     stylist: StaffRow;
     selectedStart: Date;
     selectedEnd: Date;
   }> {
     const location = await this.resolveLocation({ locationId: input.locationId });
-    const service = await this.fetchService(
+    const services = await this.fetchServicesByIds(
       location.businessId,
       location.id,
-      input.serviceId,
+      input.serviceIds,
       location.currencyCode,
     );
+    await this.assertServiceRulesSatisfied(location.businessId, location.id, services, location.currencyCode);
+    const totalDurationMinutes = totalDuration(services);
     const staff = await this.fetchBookableStaff(location.businessId, location.id);
     const stylist = staff.find((row) => row.id === input.staffProfileId);
     if (!stylist) {
@@ -801,14 +955,14 @@ export class PublicBookingService {
 
     const selectedStart = parseDate(input.selectedStartAt, 'selectedStartAt');
     const selectedEnd = new Date(
-      selectedStart.getTime() + service.estimatedDurationMinutes * 60_000,
+      selectedStart.getTime() + totalDurationMinutes * 60_000,
     );
     const selectedStartIso = selectedStart.toISOString();
     const availability = await this.fetchNextAvailableByStaff(
       location.businessId,
       location.id,
       [input.staffProfileId],
-      service.estimatedDurationMinutes,
+      totalDurationMinutes,
       location.appointmentSlotMinutes,
       {
         dateFrom: new Date(selectedStart.getTime() - location.appointmentSlotMinutes * 60_000),
@@ -824,14 +978,33 @@ export class PublicBookingService {
       throw new BadRequestException('Selected slot is no longer available');
     }
 
-    return { location, service, stylist, selectedStart, selectedEnd };
+    return { location, services, stylist, selectedStart, selectedEnd };
+  }
+
+  private async assertServiceRulesSatisfied(
+    businessId: string,
+    locationId: string,
+    services: PublicBookingServiceSummary[],
+    currencyCode: string,
+  ): Promise<void> {
+    const selectedIds = new Set(services.map((service) => service.id));
+    const requirements = await this.fetchFinishingRequirements(businessId, locationId, currencyCode);
+    const missing = requirements.find(
+      (rule) =>
+        selectedIds.has(rule.triggerServiceId) &&
+        !rule.requiredServiceIds.some((serviceId) => selectedIds.has(serviceId)),
+    );
+    if (missing) {
+      const options = missing.requiredServices.map((service) => service.name).join(' or ');
+      throw new BadRequestException(`${missing.title}: add ${options || 'a required finishing service'} to continue`);
+    }
   }
 
   private async createPendingBookingAttempt(input: {
     input: StartPublicBookingCheckoutRequest;
     client: ClientProfileRow;
     location: PublicBookingLocationSummary;
-    service: PublicBookingServiceSummary;
+    services: PublicBookingServiceSummary[];
     stylist: StaffRow;
     selectedStart: Date;
     selectedEnd: Date;
@@ -844,7 +1017,7 @@ export class PublicBookingService {
       .insert({
         business_id: input.location.businessId,
         location_id: input.location.id,
-        service_id: input.service.id,
+        service_id: input.services[0].id,
         stylist_profile_id: input.stylist.id,
         client_profile_id: input.client.id,
         user_profile_id: input.input.bookedByUserProfileId,
@@ -859,7 +1032,8 @@ export class PublicBookingService {
         expires_at: expiresAt,
         metadata: {
           source: 'public_booking_flow',
-          service_name: input.service.name,
+          service_ids: input.services.map((service) => service.id),
+          service_names: input.services.map((service) => service.name),
           stylist_name: input.stylist.display_name,
           client_display_name: `${input.client.first_name} ${input.client.last_name}`.trim(),
         },
@@ -875,6 +1049,15 @@ export class PublicBookingService {
       this.logger.error(`createPendingBookingAttempt failed: ${message}`);
       throw new InternalServerErrorException('Unable to start booking checkout');
     }
+
+    await this.insertBookingAttemptServices(data.id, {
+      businessId: input.location.businessId,
+      locationId: input.location.id,
+      staffProfileId: input.stylist.id,
+      services: input.services,
+      selectedStart: input.selectedStart,
+      depositAmount: input.depositAmount,
+    });
 
     return data;
   }
@@ -898,6 +1081,46 @@ export class PublicBookingService {
     }
 
     return data;
+  }
+
+  private async insertBookingAttemptServices(
+    bookingAttemptId: string,
+    input: {
+      businessId: string;
+      locationId: string;
+      staffProfileId: string;
+      services: PublicBookingServiceSummary[];
+      selectedStart: Date;
+      depositAmount: number;
+    },
+  ): Promise<void> {
+    let cursor = input.selectedStart;
+    const rows = input.services.map((service, index) => {
+      const start = cursor;
+      const end = new Date(start.getTime() + service.estimatedDurationMinutes * 60_000);
+      cursor = end;
+      return {
+        business_id: input.businessId,
+        location_id: input.locationId,
+        booking_attempt_id: bookingAttemptId,
+        service_id: service.id,
+        assigned_staff_profile_id: input.staffProfileId,
+        sequence_no: index + 1,
+        service_name_snapshot: service.name,
+        duration_minutes: service.estimatedDurationMinutes,
+        price_amount: service.startingPriceAmount,
+        deposit_required_amount: service.depositRequiredAmount,
+        scheduled_start_at: start.toISOString(),
+        scheduled_end_at: end.toISOString(),
+      };
+    });
+
+    const { error } = await this.admin.schema('booking').from('booking_attempt_services').insert(rows);
+    if (error) {
+      this.logger.error(`insertBookingAttemptServices failed: ${error.message}`);
+      await this.admin.schema('booking').from('booking_attempts').delete().eq('id', bookingAttemptId);
+      throw new InternalServerErrorException('Unable to persist booking services');
+    }
   }
 
   private async upsertPendingDeposit(
@@ -961,6 +1184,23 @@ export class PublicBookingService {
     return data;
   }
 
+  private async fetchServiceIdsForAttempt(attempt: BookingAttemptRow): Promise<string[]> {
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('booking_attempt_services')
+      .select('service_id,sequence_no')
+      .eq('booking_attempt_id', attempt.id)
+      .order('sequence_no', { ascending: true })
+      .returns<Array<{ service_id: string; sequence_no: number }>>();
+
+    if (error) {
+      this.logger.error(`fetchServiceIdsForAttempt failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load booking services');
+    }
+    const serviceIds = (data ?? []).map((row) => row.service_id);
+    return serviceIds.length > 0 ? serviceIds : [attempt.service_id];
+  }
+
   private async finalizePaidBookingAttempt(
     attempt: BookingAttemptRow,
     paymentIntent: StripePaymentIntent,
@@ -972,7 +1212,7 @@ export class PublicBookingService {
     const context = await this.resolveBookingContext(
       {
         locationId: attempt.location_id,
-        serviceId: attempt.service_id,
+        serviceIds: await this.fetchServiceIdsForAttempt(attempt),
         staffProfileId: attempt.stylist_profile_id,
         selectedStartAt: attempt.selected_start_at,
         staffRequestMode: attempt.staff_request_mode,
@@ -986,7 +1226,7 @@ export class PublicBookingService {
     );
 
     const appointment = await this.insertAppointmentForAttempt(attempt, context, paymentIntent.id);
-    await this.insertAppointmentServiceForAttempt(attempt, context, appointment.id);
+    await this.insertAppointmentServicesForAttempt(attempt, context, appointment.id);
 
     const { error } = await this.admin
       .schema('booking')
@@ -1007,7 +1247,7 @@ export class PublicBookingService {
     attempt: BookingAttemptRow,
     context: {
       location: PublicBookingLocationSummary;
-      service: PublicBookingServiceSummary;
+      services: PublicBookingServiceSummary[];
       stylist: StaffRow;
       selectedStart: Date;
       selectedEnd: Date;
@@ -1053,30 +1293,36 @@ export class PublicBookingService {
     return appointment;
   }
 
-  private async insertAppointmentServiceForAttempt(
+  private async insertAppointmentServicesForAttempt(
     attempt: BookingAttemptRow,
     context: {
-      service: PublicBookingServiceSummary;
+      services: PublicBookingServiceSummary[];
       selectedStart: Date;
-      selectedEnd: Date;
     },
     appointmentId: string,
   ): Promise<void> {
-    const { error } = await this.admin.schema('booking').from('appointment_services').insert({
-      business_id: attempt.business_id,
-      location_id: attempt.location_id,
-      appointment_id: appointmentId,
-      service_id: context.service.id,
-      assigned_staff_profile_id: attempt.stylist_profile_id,
-      sequence_no: 1,
-      service_name_snapshot: context.service.name,
-      duration_minutes: context.service.estimatedDurationMinutes,
-      price_amount: context.service.startingPriceAmount,
-      deposit_required_amount: Number(attempt.deposit_amount),
-      status: 'scheduled',
-      scheduled_start_at: context.selectedStart.toISOString(),
-      scheduled_end_at: context.selectedEnd.toISOString(),
+    let cursor = context.selectedStart;
+    const rows = context.services.map((service, index) => {
+      const start = cursor;
+      const end = new Date(start.getTime() + service.estimatedDurationMinutes * 60_000);
+      cursor = end;
+      return {
+        business_id: attempt.business_id,
+        location_id: attempt.location_id,
+        appointment_id: appointmentId,
+        service_id: service.id,
+        assigned_staff_profile_id: attempt.stylist_profile_id,
+        sequence_no: index + 1,
+        service_name_snapshot: service.name,
+        duration_minutes: service.estimatedDurationMinutes,
+        price_amount: service.startingPriceAmount,
+        deposit_required_amount: service.depositRequiredAmount,
+        status: 'scheduled',
+        scheduled_start_at: start.toISOString(),
+        scheduled_end_at: end.toISOString(),
+      };
     });
+    const { error } = await this.admin.schema('booking').from('appointment_services').insert(rows);
 
     if (error) {
       this.logger.error(`insertAppointmentServiceForAttempt failed: ${error.message}`);
@@ -1165,21 +1411,27 @@ export class PublicBookingService {
   private async toBookingAttemptSummary(
     attempt: BookingAttemptRow,
   ): Promise<PublicBookingAttemptSummary> {
-    const [location, service, stylist, client, deposit, appointment] = await Promise.all([
+    const [location, attemptServices, stylist, client, deposit, appointment] = await Promise.all([
       this.resolveLocation({ locationId: attempt.location_id }),
-      this.fetchService(attempt.business_id, attempt.location_id, attempt.service_id, attempt.currency_code),
+      this.fetchBookingAttemptServices(attempt),
       this.fetchStaffById(attempt.business_id, attempt.location_id, attempt.stylist_profile_id),
       this.fetchClientById(attempt.business_id, attempt.client_profile_id),
       this.fetchDepositForAttempt(attempt.id),
       attempt.appointment_id ? this.fetchAppointmentInsertRow(attempt.appointment_id) : Promise.resolve(undefined),
     ]);
+    const serviceIds = attemptServices.map((service) => service.service_id);
+    const serviceNames = attemptServices.map((service) => service.service_name_snapshot);
+    const totalDurationMinutes = attemptServices.reduce((sum, service) => sum + Number(service.duration_minutes), 0);
+    const totalPriceAmount = attemptServices.reduce((sum, service) => sum + Number(service.price_amount), 0);
 
     return {
       id: attempt.id,
       status: attempt.status,
       locationId: location.id,
-      serviceId: service.id,
-      serviceName: service.name,
+      serviceIds,
+      serviceNames,
+      totalDurationMinutes,
+      totalPriceAmount,
       staffProfileId: stylist.id,
       stylistName: stylist.display_name,
       selectedStartAt: attempt.selected_start_at,
@@ -1193,7 +1445,7 @@ export class PublicBookingService {
         ? toAppointmentSummary({
             appointment,
             location,
-            service,
+            attemptServices,
             stylist,
             client,
             communicationPreference: attempt.communication_preference,
@@ -1201,6 +1453,39 @@ export class PublicBookingService {
           })
         : undefined,
     };
+  }
+
+  private async fetchBookingAttemptServices(attempt: BookingAttemptRow): Promise<BookingAttemptServiceRow[]> {
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('booking_attempt_services')
+      .select(BOOKING_ATTEMPT_SERVICE_COLUMNS)
+      .eq('booking_attempt_id', attempt.id)
+      .order('sequence_no', { ascending: true })
+      .returns<BookingAttemptServiceRow[]>();
+
+    if (error) {
+      this.logger.error(`fetchBookingAttemptServices failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load booking services');
+    }
+    if (data && data.length > 0) return data;
+
+    const service = await this.fetchService(
+      attempt.business_id,
+      attempt.location_id,
+      attempt.service_id,
+      attempt.currency_code,
+    );
+    return [
+      {
+        service_id: service.id,
+        sequence_no: 1,
+        service_name_snapshot: service.name,
+        duration_minutes: service.estimatedDurationMinutes,
+        price_amount: service.startingPriceAmount,
+        deposit_required_amount: service.depositRequiredAmount,
+      },
+    ];
   }
 
   private async fetchStaffById(
@@ -1342,8 +1627,16 @@ function dateRangeContains(row: LeaveRow, date: Date): boolean {
   return date >= range.start && date < range.end;
 }
 
-function calculateDepositAmount(service: PublicBookingServiceSummary): number {
-  return service.depositRequiredAmount;
+function calculateDepositAmount(services: PublicBookingServiceSummary[]): number {
+  return services.reduce((sum, service) => sum + service.depositRequiredAmount, 0);
+}
+
+function totalDuration(services: PublicBookingServiceSummary[]): number {
+  return services.reduce((sum, service) => sum + service.estimatedDurationMinutes, 0);
+}
+
+function totalPrice(services: PublicBookingServiceSummary[]): number {
+  return services.reduce((sum, service) => sum + service.startingPriceAmount, 0);
 }
 
 function calculateServiceDeposit(row: ServiceRow): number {
@@ -1357,17 +1650,21 @@ function calculateServiceDeposit(row: ServiceRow): number {
 function toAppointmentSummary(input: {
   appointment: AppointmentInsertRow;
   location: PublicBookingLocationSummary;
-  service: PublicBookingServiceSummary;
+  attemptServices: BookingAttemptServiceRow[];
   stylist: StaffRow;
   client: ClientProfileRow;
   communicationPreference: string;
   depositAmount: number;
 }): PublicBookingAppointmentSummary {
+  const serviceIds = input.attemptServices.map((service) => service.service_id);
+  const serviceNames = input.attemptServices.map((service) => service.service_name_snapshot);
   return {
     id: input.appointment.id,
     locationId: input.location.id,
-    serviceId: input.service.id,
-    serviceName: input.service.name,
+    serviceIds,
+    serviceNames,
+    totalDurationMinutes: input.attemptServices.reduce((sum, service) => sum + Number(service.duration_minutes), 0),
+    totalPriceAmount: input.attemptServices.reduce((sum, service) => sum + Number(service.price_amount), 0),
     staffProfileId: input.stylist.id,
     stylistName: input.stylist.display_name,
     scheduledStartAt: input.appointment.scheduled_start_at,
@@ -1398,6 +1695,15 @@ function parseDate(value: string, label: string): Date {
   return date;
 }
 
+function parseServiceIds(value: string): string[] {
+  return unique(
+    value
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean),
+  );
+}
+
 function toIsoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
@@ -1412,4 +1718,13 @@ function earliest(values: string[]): string | undefined {
 
 function first<T>(value: T | T[] | null): T | undefined {
   return Array.isArray(value) ? value[0] : value ?? undefined;
+}
+
+function arrayOf<T>(value: T | T[] | null | undefined): T[] {
+  if (!value) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values)];
 }
