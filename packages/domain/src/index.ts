@@ -724,7 +724,7 @@ export type CrmVisitPhotoType = 'before' | 'after' | 'inspiration' | 'condition'
 
 export type CrmMessageChannel = 'sms' | 'email' | 'push' | 'whatsapp';
 
-export type CrmMessageDeliveryStatus = 'queued' | 'sent' | 'delivered' | 'failed' | 'cancelled';
+export type CrmMessageDeliveryStatus = 'queued' | 'sent' | 'delivered' | 'failed' | 'cancelled' | 'skipped';
 
 export interface CrmClientSummary {
   id: string;
@@ -821,9 +821,18 @@ export interface CrmMessageLog {
   appointmentId?: string;
   visitId?: string;
   channel: CrmMessageChannel;
+  primaryIntendedChannel?: CrmMessageChannel;
   eventKey?: string;
+  messageType?: string;
   deliveryStatus: CrmMessageDeliveryStatus;
+  provider?: string;
+  providerMessageId?: string;
+  providerStatus?: string;
+  recipient?: string;
+  templateKey?: string;
   contentPreview?: string;
+  renderedSummary?: string;
+  failureReason?: string;
   sentAt?: string;
   deliveredAt?: string;
   failedAt?: string;
