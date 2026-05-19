@@ -11,5 +11,5 @@ module.exports = {
   settings: {
     react: { version: 'detect' },
   },
-  ignorePatterns: ['.expo/', 'ios/', 'android/', 'dist/'],
+  ignorePatterns: ['ios/', 'android/', 'dist/'],
 };

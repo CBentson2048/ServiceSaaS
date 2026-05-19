@@ -43,8 +43,11 @@ apps/sheer-app/android/
 apps/sheer-lab/.expo/
 apps/sheer-lab/web-build/
 apps/sheer-lab/dist/
-apps/sheer-lab/ios/
-apps/sheer-lab/android/
+apps/sheer-lab/ios/Pods/
+apps/sheer-lab/ios/build/
+apps/sheer-lab/android/.gradle/
+apps/sheer-lab/android/build/
+apps/sheer-lab/android/app/build/
 
 # Vite / Web
 apps/web/dist/

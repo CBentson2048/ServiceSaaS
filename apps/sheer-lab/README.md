@@ -1,21 +1,33 @@
 # Sheer Lab
 
-Shared salon tablet app for V1 basin workflows: device binding, salon-scoped stylist PIN login,
-formula capture, product usage tracking, BLE scale status, and billing handoff.
+Sheer Lab is a separate React Native CLI app for BLE-sensitive, staff-facing salon workflows:
+scale pairing, live weight capture, manual fallback, and formula capture.
 
-## Architecture notes
+`apps/sheer-app` remains the existing Expo app. Sheer Lab uses the same backend, auth model, and
+shared contracts through packages such as `@sheer/domain`, `@sheer/api-client`, and
+`@sheer/lab-core`; it should not grow a separate business logic universe.
 
-- This is a separate Expo app from `apps/sheer-app`; `apps/sheer-app` remains the personal Sheer App.
-- Stylist PIN login is scoped by `salonId + pin`. A PIN must never be looked up globally.
-- Device binding is persisted locally so a bound tablet skips setup on the next launch.
-- BLE scale code is intentionally contained under `src/ble` in this app.
-- Pure formula/session logic can move into packages later if V2 brings Sheer Lab flows into the
-  personal app, but V1 keeps the app boundary explicit.
+## Scaffolded Now
+
+- React Native CLI entry with generated `ios/` and `android/` projects.
+- Minimal native-stack navigation for Auth, Home, Device Pairing, Formula, Formula History, and Settings.
+- Dark staff-facing theme foundation using shared design tokens.
+- API/auth/storage/logging shells wired to shared packages.
+- BLE feature shell with native permissions/placeholders, but no hardware integration yet.
+
+## Next Work
+
+- Install and wire the selected BLE native library.
+- Implement Acaia Pearl scan/connect/reconnect/live-weight subscription.
+- Replace in-memory session storage with secure native storage.
+- Add real Sheer Lab auth/session handling and the formula capture workflow.
 
 ## Commands
 
 ```bash
+pnpm install
 pnpm --filter @sheer/sheer-lab start
-pnpm --filter @sheer/sheer-lab lint
+pnpm --filter @sheer/sheer-lab ios
+pnpm --filter @sheer/sheer-lab android
 pnpm --filter @sheer/sheer-lab typecheck
 ```

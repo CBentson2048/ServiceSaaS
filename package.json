@@ -14,6 +14,10 @@
     "lint": "turbo run lint",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
+    "sheer-lab:ios": "pnpm --filter @sheer/sheer-lab ios",
+    "sheer-lab:android": "pnpm --filter @sheer/sheer-lab android",
+    "sheer-lab:start": "pnpm --filter @sheer/sheer-lab start",
+    "sheer-lab:typecheck": "pnpm --filter @sheer/sheer-lab typecheck",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\" --ignore-path .gitignore",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\" --ignore-path .gitignore",
     "clean": "turbo run clean && rimraf node_modules"

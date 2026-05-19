@@ -1,23 +1,19 @@
 {
-  "extends": "expo/tsconfig.base",
+  "extends": "@react-native/typescript-config",
   "compilerOptions": {
     "strict": true,
     "jsx": "react-jsx",
-    "moduleResolution": "Bundler",
     "baseUrl": ".",
     "paths": {
+      "@/*": ["src/*"],
+      "@sheer/api-client": ["../../packages/api-client/src/index.ts"],
       "@sheer/auth": ["../../packages/auth/src/index.ts"],
       "@sheer/design-tokens": ["../../packages/design-tokens/src/index.ts"],
       "@sheer/domain": ["../../packages/domain/src/index.ts"],
       "@sheer/lab-core": ["../../packages/lab-core/src/index.ts"],
-      "@sheer/ui-mobile": ["../../packages/ui-mobile/src/index.tsx"]
+      "@sheer/utils": ["../../packages/utils/src/index.ts"]
     }
   },
-  "include": [
-    "**/*.ts",
-    "**/*.tsx"
-  ],
-  "exclude": [
-    "node_modules"
-  ]
+  "include": ["App.tsx", "src/**/*.ts", "src/**/*.tsx"],
+  "exclude": ["node_modules", "ios/Pods", "android/build", "android/app/build"]
 }

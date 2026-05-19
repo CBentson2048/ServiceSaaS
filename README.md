@@ -37,7 +37,7 @@ This repository is a **pnpm + TurboRepo monorepo**. All apps and shared packages
 ## Apps
 
 - **apps/sheer-app** — Expo + TypeScript app using Expo Router. Personal Sheer App for stylists: dashboard, performance, commissions, bookings, and rota. BLE is intentionally excluded.
-- **apps/sheer-lab** — Expo + TypeScript app using Expo Router. Shared salon tablet app for device binding, salon-scoped stylist PIN login, formula capture, product usage tracking, BLE scale status, and billing handoff.
+- **apps/sheer-lab** — React Native CLI + TypeScript app. Dedicated staff-facing Sheer Lab app for BLE scale pairing, weight capture, manual fallback, and formula workflows.
 - **apps/web** — Vite + React + TypeScript + React Router + Tailwind CSS. Owner/manager dashboard: bookings, CRM, rota, commission, reporting.
 - **apps/api** — NestJS + TypeScript backend. Modular structure ready for auth, booking, CRM, rota, sheer-lab, billing, and commission modules.
 
@@ -46,8 +46,8 @@ This repository is a **pnpm + TurboRepo monorepo**. All apps and shared packages
 - Node.js **20 LTS** (`nvm use` will pick up `.nvmrc`)
 - **pnpm** 9+ (`npm install -g pnpm`)
 - For mobile:
-  - [Expo CLI](https://docs.expo.dev/) (runs via `pnpm --filter @sheer/sheer-app start` or `pnpm --filter @sheer/sheer-lab start`)
-  - Xcode (iOS) / Android Studio (Android) if running native builds
+  - [Expo CLI](https://docs.expo.dev/) for `apps/sheer-app`
+  - React Native CLI native prerequisites, Xcode (iOS), and Android Studio (Android) for `apps/sheer-lab`
 
 ## Install
 
@@ -76,6 +76,8 @@ pnpm --filter web dev
 pnpm --filter api dev
 pnpm --filter @sheer/sheer-app start
 pnpm --filter @sheer/sheer-lab start
+pnpm --filter @sheer/sheer-lab ios
+pnpm --filter @sheer/sheer-lab android
 ```
 
 ## Build

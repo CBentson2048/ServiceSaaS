@@ -49,7 +49,7 @@ export interface AuthContext extends AuthUser {}
 export interface LoginRequest {
   email: string;
   password: string;
-  surface?: Extract<AppSurface, 'api' | 'web_dashboard' | 'sheer_app'>;
+  surface?: Extract<AppSurface, 'api' | 'web_dashboard' | 'sheer_app' | 'sheer_lab'>;
 }
 
 export interface CreateAccountRequest {
@@ -538,7 +538,7 @@ export interface UpdateStaffMemberResponse {
 
 export interface RefreshSessionRequest {
   refreshToken: string;
-  surface?: Extract<AppSurface, 'api' | 'web_dashboard' | 'sheer_app'>;
+  surface?: Extract<AppSurface, 'api' | 'web_dashboard' | 'sheer_app' | 'sheer_lab'>;
 }
 
 export interface LogoutRequest {

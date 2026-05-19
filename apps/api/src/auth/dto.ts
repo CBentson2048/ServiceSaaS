@@ -31,8 +31,8 @@ export class LoginDto {
   password!: string;
 
   @IsOptional()
-  @IsIn(['api', 'web_dashboard', 'sheer_app'])
-  surface?: Extract<AppSurface, 'api' | 'web_dashboard' | 'sheer_app'>;
+  @IsIn(['api', 'web_dashboard', 'sheer_app', 'sheer_lab'])
+  surface?: Extract<AppSurface, 'api' | 'web_dashboard' | 'sheer_app' | 'sheer_lab'>;
 }
 
 export class RefreshSessionDto {
@@ -40,8 +40,8 @@ export class RefreshSessionDto {
   refreshToken!: string;
 
   @IsOptional()
-  @IsIn(['api', 'web_dashboard', 'sheer_app'])
-  surface?: Extract<AppSurface, 'api' | 'web_dashboard' | 'sheer_app'>;
+  @IsIn(['api', 'web_dashboard', 'sheer_app', 'sheer_lab'])
+  surface?: Extract<AppSurface, 'api' | 'web_dashboard' | 'sheer_app' | 'sheer_lab'>;
 }
 
 export class LogoutDto {

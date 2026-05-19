@@ -1,0 +1,12 @@
+import React from 'react';
+
+import { AppProviders } from './src/app/providers/AppProviders';
+import { RootNavigator } from './src/app/navigation/RootNavigator';
+
+export default function App(): React.JSX.Element {
+  return (
+    <AppProviders>
+      <RootNavigator />
+    </AppProviders>
+  );
+}

@@ -30,7 +30,7 @@ import type { ClientBookingAccountDto, ClientBookingLoginDto } from './dto';
 import { EmailService } from '../email/email.service';
 import { renderPasswordResetEmail } from '../email/templates/password-reset.template';
 
-type RuntimeSurface = Extract<AppSurface, 'api' | 'web_dashboard' | 'sheer_app'>;
+type RuntimeSurface = Extract<AppSurface, 'api' | 'web_dashboard' | 'sheer_app' | 'sheer_lab'>;
 
 interface ProfileRow {
   id: string;
@@ -638,6 +638,15 @@ export class AuthService {
 
     if (surface === 'sheer_app' && user.role !== 'stylist' && user.role !== 'client') {
       throw new ForbiddenException('Sheer App access is limited to stylist and client accounts');
+    }
+
+    if (
+      surface === 'sheer_lab' &&
+      user.role !== 'owner' &&
+      user.role !== 'manager' &&
+      user.role !== 'stylist'
+    ) {
+      throw new ForbiddenException('Sheer Lab access is limited to staff accounts');
     }
   }
 
