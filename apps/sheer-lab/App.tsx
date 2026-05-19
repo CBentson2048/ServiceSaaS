@@ -1,4 +1,4 @@
-import React from 'react';
+import type React from 'react';
 
 import { AppProviders } from './src/app/providers/AppProviders';
 import { RootNavigator } from './src/app/navigation/RootNavigator';

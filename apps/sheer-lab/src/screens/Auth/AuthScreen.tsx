@@ -1,5 +1,5 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import React from 'react';
+import type React from 'react';
 
 import type { RootStackParamList } from '../../app/navigation/routes';
 import { useApiClient } from '../../lib/api/ApiProvider';

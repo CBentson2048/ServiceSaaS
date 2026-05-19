@@ -1,4 +1,4 @@
-import React from 'react';
+import type React from 'react';
 import { StyleSheet, Text } from 'react-native';
 
 import { labTheme } from '../../theme/labTheme';

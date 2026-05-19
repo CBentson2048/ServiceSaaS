@@ -1,4 +1,4 @@
-import React from 'react';
+import type React from 'react';
 
 import { LabScreen } from '../shared/LabScreen';
 import { PlaceholderText } from '../shared/PlaceholderText';

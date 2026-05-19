@@ -1,27 +1,34 @@
 import type { BleScaleAdapter, BleScaleState } from '@sheer/lab-core';
 
-const initialState: BleScaleState = {
-  state: 'disconnected',
-};
+import { bleManagerService } from './BleManagerService';
 
 export const bleScaleService: BleScaleAdapter = {
   getState() {
-    return initialState;
+    const state = bleManagerService.getState();
+    const adapterState =
+      state.status === 'reconnecting'
+        ? 'reconnecting'
+        : state.status === 'connected'
+          ? 'connected'
+          : 'disconnected';
+
+    return {
+      state: adapterState,
+      deviceIdentifier: state.connectedDevice?.id,
+      deviceName: state.connectedDevice?.name,
+      lastWeightGrams: state.liveWeight?.grams,
+      lastChangedAt: state.liveWeight?.capturedAt ?? state.lastConnectedAt ?? state.lastDisconnectedAt,
+    } satisfies BleScaleState;
   },
   async connect(deviceIdentifier: string) {
-    return {
-      state: 'connected',
-      deviceIdentifier,
-      lastChangedAt: new Date().toISOString(),
-    };
+    await bleManagerService.connect(deviceIdentifier);
+    return this.getState();
   },
   async disconnect() {
-    return {
-      state: 'disconnected',
-      lastChangedAt: new Date().toISOString(),
-    };
+    await bleManagerService.disconnect();
+    return this.getState();
   },
   async readWeight() {
-    return null;
+    return bleManagerService.getState().liveWeight?.grams ?? null;
   },
 };

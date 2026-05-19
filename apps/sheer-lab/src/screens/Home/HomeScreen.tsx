@@ -1,6 +1,6 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { DevicePairingStatus } from '@sheer/domain';
-import React from 'react';
+import type React from 'react';
 
 import type { RootStackParamList } from '../../app/navigation/routes';
 import { LabButton } from '../shared/LabButton';

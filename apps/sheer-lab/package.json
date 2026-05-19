@@ -8,7 +8,7 @@
     "start": "react-native start",
     "android": "react-native run-android",
     "ios": "react-native run-ios",
-    "lint": "eslint \"src/**/*.{ts,tsx}\" App.tsx index.js",
+    "lint": "eslint \"src/**/*.{ts,tsx}\" App.tsx",
     "typecheck": "tsc --noEmit",
     "prebuild": "pnpm --filter \"@sheer/domain\" --filter \"@sheer/lab-core\" --filter \"@sheer/api-client\" --filter \"@sheer/design-tokens\" --filter \"@sheer/utils\" --filter \"@sheer/auth\" run build",
     "build": "echo \"Sheer Lab native builds use React Native CLI: pnpm --filter @sheer/sheer-lab ios|android\"",
@@ -25,6 +25,7 @@
     "@sheer/utils": "workspace:*",
     "react": "19.2.0",
     "react-native": "0.83.6",
+    "react-native-ble-plx": "^3.5.1",
     "react-native-safe-area-context": "5.6.2",
     "react-native-screens": "4.23.0"
   },

@@ -1,6 +1,6 @@
 import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import React from 'react';
+import type React from 'react';
 
 import { AuthScreen } from '../../screens/Auth/AuthScreen';
 import { DevicePairingScreen } from '../../screens/DevicePairing/DevicePairingScreen';
