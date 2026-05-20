@@ -271,6 +271,8 @@
 				DEVELOPMENT_TEAM = 4PZPYWN27P;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = SheerLabNative/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = SheerLabNative;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.lifestyle";
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -282,7 +284,7 @@
 					"-ObjC",
 					"-lc++",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.sheer.lab;
+				PRODUCT_BUNDLE_IDENTIFIER = com.blesheer.app;
 				PRODUCT_NAME = SheerLab;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
@@ -299,6 +301,8 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 4PZPYWN27P;
 				INFOPLIST_FILE = SheerLabNative/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = SheerLabNative;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.lifestyle";
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -310,7 +314,7 @@
 					"-ObjC",
 					"-lc++",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.sheer.lab;
+				PRODUCT_BUNDLE_IDENTIFIER = com.blesheer.app;
 				PRODUCT_NAME = SheerLab;
 				SWIFT_VERSION = 5.0;
 				VERSIONING_SYSTEM = "apple-generic";
