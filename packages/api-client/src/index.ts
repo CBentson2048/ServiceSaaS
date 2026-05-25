@@ -9,6 +9,8 @@ import type {
   CurrentUserResponse,
   InvitationLookupResponse,
   InvitationStatus,
+  LabDeviceRegistrationResponse,
+  LabDeviceResolveResponse,
   ListLocationsResponse,
   ListStaffResponse,
   LocationDetailResponse,
@@ -29,8 +31,18 @@ import type {
   UpdateStaffMemberResponse,
   ListStaffBookingsResponse,
   StaffBookingDetail,
+  LabPinMutationResponse,
+  ListLabPinStatusesResponse,
+  ResetLabPinRequest,
+  SetLabPinRequest,
 } from '@sheer/domain';
-import type { FormulaDraft, FormulaSavePayload } from '@sheer/lab-core';
+import type {
+  FormulaDraft,
+  FormulaDuplicatePayload,
+  FormulaHistoryRecord,
+  FormulaSavePayload,
+  FormulaSaveResult,
+} from '@sheer/lab-core';
 
 export interface ApiClientOptions {
   baseUrl: string;
@@ -99,7 +111,8 @@ export interface OwnerLocationsClient {
 }
 
 export interface LabDeviceClient {
-  register: (payload: RegisterLabDeviceRequest) => Promise<SharedDevice>;
+  register: (payload: RegisterLabDeviceRequest) => Promise<LabDeviceRegistrationResponse>;
+  resolve: (deviceSessionToken: string) => Promise<LabDeviceResolveResponse>;
   status: () => Promise<SharedDevice>;
   pairScale: (payload: PairScaleRequest) => Promise<void>;
   unpairScale: () => Promise<void>;
@@ -113,19 +126,24 @@ export interface LabSessionClient {
 }
 
 export interface LabPinClient {
-  assign: (payload: AssignPinRequest) => Promise<void>;
-  reset: (payload: ResetPinRequest) => Promise<void>;
-  status: (locationId: string) => Promise<PinStatusResponse>;
+  assign: (payload: SetLabPinRequest) => Promise<LabPinMutationResponse>;
+  reset: (payload: ResetLabPinRequest) => Promise<LabPinMutationResponse>;
+  status: (locationId?: string) => Promise<ListLabPinStatusesResponse>;
 }
 
 export interface LabAppointmentClient {
   today: (locationId?: string) => Promise<ListStaffBookingsResponse>;
+  todayForSession: (sessionId: string) => Promise<ListStaffBookingsResponse>;
   detail: (appointmentId: string) => Promise<StaffBookingDetail>;
+  detailForSession: (sessionId: string, appointmentId: string) => Promise<StaffBookingDetail>;
 }
 
 export interface LabFormulaClient {
   start: (payload: StartFormulaRequest) => Promise<FormulaDraft>;
-  save: (payload: FormulaSavePayload) => Promise<FormulaDraft>;
+  save: (payload: FormulaSavePayload) => Promise<FormulaSaveResult>;
+  latestForClient: (clientProfileId: string) => Promise<FormulaHistoryRecord | null>;
+  historyForClient: (clientProfileId: string) => Promise<FormulaHistoryRecord[]>;
+  duplicate: (formulaId: string, payload: Omit<FormulaDuplicatePayload, 'sourceFormulaId'>) => Promise<FormulaDraft>;
 }
 
 export interface RegisterLabDeviceRequest {
@@ -139,25 +157,6 @@ export interface PairScaleRequest {
   bleDeviceIdentifier: string;
   bleDeviceName?: string;
   deviceModel?: string;
-}
-
-export interface AssignPinRequest {
-  businessId: string;
-  locationId: string;
-  userProfileId: string;
-  pin: string;
-}
-
-export interface ResetPinRequest {
-  businessId: string;
-  locationId: string;
-  userProfileId: string;
-}
-
-export interface PinStatusResponse {
-  locationId: string;
-  activeCredentialCount: number;
-  lockedCredentialCount: number;
 }
 
 export interface StartFormulaRequest {
@@ -225,6 +224,10 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     },
     labDevices: {
       register: (payload) => request('/lab/device/register', { method: 'POST', body: payload }),
+      resolve: (deviceSessionToken) =>
+        request('/lab/device/resolve', {
+          headers: { Authorization: `Bearer ${deviceSessionToken}` },
+        }),
       status: () => request('/lab/device/status'),
       pairScale: (payload) => request('/lab/device/pair-scale', { method: 'POST', body: payload }),
       unpairScale: () => request('/lab/device/unpair-scale', { method: 'POST' }),
@@ -238,7 +241,8 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     labPins: {
       assign: (payload) => request('/lab/pins/assign', { method: 'POST', body: payload }),
       reset: (payload) => request('/lab/pins/reset', { method: 'POST', body: payload }),
-      status: (locationId) => request(`/lab/pins/status?locationId=${encodeURIComponent(locationId)}`),
+      status: (locationId) =>
+        request(locationId ? `/lab/pins/status?locationId=${encodeURIComponent(locationId)}` : '/lab/pins/status'),
     },
     labAppointments: {
       today: (locationId) =>
@@ -247,11 +251,26 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
             ? `/lab/appointments/today?locationId=${encodeURIComponent(locationId)}`
             : '/lab/appointments/today',
         ),
+      todayForSession: (sessionId) =>
+        request(`/lab/appointments/session/${encodeURIComponent(sessionId)}/today`),
       detail: (appointmentId) => request(`/lab/appointments/${encodeURIComponent(appointmentId)}`),
+      detailForSession: (sessionId, appointmentId) =>
+        request(
+          `/lab/appointments/session/${encodeURIComponent(sessionId)}/${encodeURIComponent(appointmentId)}`,
+        ),
     },
     labFormulas: {
       start: (payload) => request('/lab/formulas/start', { method: 'POST', body: payload }),
       save: (payload) => request(`/lab/formulas/${payload.formulaId}/save`, { method: 'POST', body: payload }),
+      latestForClient: (clientProfileId) =>
+        request(`/lab/formulas/client/${encodeURIComponent(clientProfileId)}/latest`),
+      historyForClient: (clientProfileId) =>
+        request(`/lab/formulas/client/${encodeURIComponent(clientProfileId)}/history`),
+      duplicate: (formulaId, payload) =>
+        request(`/lab/formulas/${encodeURIComponent(formulaId)}/duplicate`, {
+          method: 'POST',
+          body: payload,
+        }),
     },
   };
 }
@@ -259,7 +278,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
 function createRequest(options: ApiClientOptions) {
   return async function request<TResponse>(
     path: string,
-    init: { method?: string; body?: unknown } = {},
+    init: { method?: string; body?: unknown; headers?: Record<string, string> } = {},
   ): Promise<TResponse> {
     const token = await options.getAccessToken?.();
     const response = await fetch(`${options.baseUrl}${path}`, {
@@ -267,6 +286,7 @@ function createRequest(options: ApiClientOptions) {
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(init.headers ?? {}),
       },
       body: init.body ? JSON.stringify(init.body) : undefined,
     });

@@ -11,9 +11,11 @@ import type {
   AppointmentStatus,
   AuthUser,
   ListStaffBookingsResponse,
+  StaffBookingPatchTestSummary,
   StaffBookingDetail,
   StaffBookingSummary,
 } from '@sheer/domain';
+import type { LabRuntimeSession } from '../lab-session/lab-session.service';
 
 interface AppointmentServiceRow {
   service_name_snapshot: string;
@@ -47,6 +49,13 @@ interface AppointmentRow {
   internal_note?: string | null;
   appointment_services: AppointmentServiceRow[] | AppointmentServiceRow | null;
   deposits?: DepositRow[] | DepositRow | null;
+}
+
+interface PatchTestRow {
+  client_profile_id: string;
+  status: 'pending' | 'passed' | 'failed' | 'expired';
+  performed_at: string;
+  expires_at: string | null;
 }
 
 interface ScopedAppointmentQuery<TQuery> {
@@ -144,6 +153,44 @@ export class LabAppointmentsService {
     };
   }
 
+  async todayForLabSession(session: LabRuntimeSession): Promise<ListStaffBookingsResponse> {
+    const { rangeStart, rangeEnd } = todayRange();
+    const staffProfileId = await this.fetchStaffProfileIdForSession(session);
+    const query = this.admin
+      .schema('booking')
+      .from('appointments')
+      .select(LIST_COLUMNS)
+      .eq('business_id', session.businessId)
+      .eq('location_id', session.locationId)
+      .eq('assigned_staff_profile_id', staffProfileId)
+      .gte('scheduled_start_at', rangeStart)
+      .lt('scheduled_start_at', rangeEnd)
+      .in('status', ACTIVE_BOOKING_STATUSES)
+      .order('scheduled_start_at', { ascending: true });
+
+    const { data, error } = await query.returns<AppointmentRow[]>();
+    if (error) {
+      this.logger.error(`todayForLabSession failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load scheduled clients');
+    }
+
+    const rows = data ?? [];
+    const clientIds = rows.map((row) => row.client_profile_id);
+    const [clientsById, patchTestsByClient] = await Promise.all([
+      this.fetchClientProfiles(session.businessId, clientIds),
+      this.fetchLatestPatchTests(session.businessId, session.locationId, clientIds),
+    ]);
+
+    return {
+      bookings: rows.map((row) =>
+        toBookingSummary(row, clientsById.get(row.client_profile_id), patchTestsByClient.get(row.client_profile_id)),
+      ),
+      scope: 'stylist',
+      rangeStart,
+      rangeEnd,
+    };
+  }
+
   private applyActorScope<TQuery extends ScopedAppointmentQuery<TQuery>>(
     query: TQuery,
     actor: AuthUser,
@@ -193,6 +240,36 @@ export class LabAppointmentsService {
     return toBookingDetail(data, clientsById.get(data.client_profile_id));
   }
 
+  async detailForLabSession(session: LabRuntimeSession, id: string): Promise<StaffBookingDetail> {
+    const staffProfileId = await this.fetchStaffProfileIdForSession(session);
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('appointments')
+      .select(DETAIL_COLUMNS)
+      .eq('id', id)
+      .eq('business_id', session.businessId)
+      .eq('location_id', session.locationId)
+      .eq('assigned_staff_profile_id', staffProfileId)
+      .maybeSingle<AppointmentRow>();
+
+    if (error) {
+      this.logger.error(`detailForLabSession failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load scheduled client');
+    }
+    if (!data) throw new NotFoundException('Scheduled client not found for this Lab session');
+
+    const [clientsById, patchTestsByClient] = await Promise.all([
+      this.fetchClientProfiles(session.businessId, [data.client_profile_id]),
+      this.fetchLatestPatchTests(session.businessId, session.locationId, [data.client_profile_id]),
+    ]);
+
+    return toBookingDetail(
+      data,
+      clientsById.get(data.client_profile_id),
+      patchTestsByClient.get(data.client_profile_id),
+    );
+  }
+
   private async fetchClientProfiles(
     businessId: string,
     clientProfileIds: string[],
@@ -214,6 +291,55 @@ export class LabAppointmentsService {
     }
 
     return new Map((data ?? []).map((client) => [client.id, client]));
+  }
+
+  private async fetchLatestPatchTests(
+    businessId: string,
+    locationId: string,
+    clientProfileIds: string[],
+  ): Promise<Map<string, StaffBookingPatchTestSummary>> {
+    const uniqueIds = [...new Set(clientProfileIds)];
+    if (uniqueIds.length === 0) return new Map();
+
+    const { data, error } = await this.admin
+      .schema('crm')
+      .from('patch_tests')
+      .select('client_profile_id,status,performed_at,expires_at')
+      .eq('business_id', businessId)
+      .eq('location_id', locationId)
+      .in('client_profile_id', uniqueIds)
+      .order('performed_at', { ascending: false })
+      .returns<PatchTestRow[]>();
+
+    if (error) {
+      this.logger.error(`fetchLatestPatchTests failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load patch test alerts');
+    }
+
+    const byClient = new Map<string, StaffBookingPatchTestSummary>();
+    for (const row of data ?? []) {
+      if (byClient.has(row.client_profile_id)) continue;
+      byClient.set(row.client_profile_id, toPatchTestSummary(row));
+    }
+    return byClient;
+  }
+
+  private async fetchStaffProfileIdForSession(session: LabRuntimeSession): Promise<string> {
+    const { data, error } = await this.admin
+      .schema('core')
+      .from('staff_profiles')
+      .select('id')
+      .eq('business_id', session.businessId)
+      .eq('user_profile_id', session.userProfileId)
+      .eq('primary_location_id', session.locationId)
+      .maybeSingle<{ id: string }>();
+
+    if (error) {
+      this.logger.error(`fetchStaffProfileIdForSession failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to validate stylist session');
+    }
+    if (!data) throw new ForbiddenException('Stylist profile is not valid for this Lab session location');
+    return data.id;
   }
 
   private resolveLocationForActor(actor: AuthUser, locationId?: string): string | undefined {
@@ -241,7 +367,11 @@ function todayRange(): { rangeStart: string; rangeEnd: string } {
   return { rangeStart: start.toISOString(), rangeEnd: end.toISOString() };
 }
 
-function toBookingSummary(row: AppointmentRow, client?: ClientProfileRow): StaffBookingSummary {
+function toBookingSummary(
+  row: AppointmentRow,
+  client?: ClientProfileRow,
+  patchTest?: StaffBookingPatchTestSummary,
+): StaffBookingSummary {
   const services = arrayOf(row.appointment_services);
   const deposits = arrayOf(row.deposits);
   const depositRequiredAmount = services.reduce(
@@ -269,14 +399,28 @@ function toBookingSummary(row: AppointmentRow, client?: ClientProfileRow): Staff
     depositRequiredAmount: depositRequiredAmount || undefined,
     depositStatus: deposits[0]?.status,
     clientNote: row.client_note ?? undefined,
+    patchTest,
   };
 }
 
-function toBookingDetail(row: AppointmentRow, client?: ClientProfileRow): StaffBookingDetail {
+function toBookingDetail(
+  row: AppointmentRow,
+  client?: ClientProfileRow,
+  patchTest?: StaffBookingPatchTestSummary,
+): StaffBookingDetail {
   return {
-    ...toBookingSummary(row, client),
+    ...toBookingSummary(row, client, patchTest),
     communicationPreference: row.communication_preference ?? undefined,
     internalNote: row.internal_note ?? undefined,
+  };
+}
+
+function toPatchTestSummary(row: PatchTestRow): StaffBookingPatchTestSummary {
+  const expiredByDate = row.expires_at ? new Date(row.expires_at).getTime() < Date.now() : false;
+  return {
+    status: row.status === 'passed' && expiredByDate ? 'expired' : row.status,
+    performedAt: row.performed_at,
+    expiresAt: row.expires_at ?? undefined,
   };
 }
 

@@ -197,8 +197,9 @@ class BleManagerService {
       binding.readCharacteristicUUID,
       (error, characteristic) => {
         if (error) {
-          bleScaleStore.setState({ status: 'error', error: error.message });
+          bleScaleStore.setState({ status: 'reconnecting', error: error.message, liveWeight: undefined });
           logger.error('Acaia notification error', { error: error.message });
+          this.handleDisconnect(error);
           return;
         }
 
@@ -244,6 +245,7 @@ class BleManagerService {
     bleScaleStore.setState({
       status: 'reconnecting',
       lastDisconnectedAt: new Date().toISOString(),
+      liveWeight: undefined,
       error: error?.message,
     });
     logger.warn('BLE disconnected unexpectedly', { error: error?.message });

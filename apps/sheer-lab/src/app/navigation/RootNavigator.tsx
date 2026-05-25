@@ -3,13 +3,17 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import type React from 'react';
 
 import { AuthScreen } from '../../screens/Auth/AuthScreen';
+import { DeviceBlockedScreen } from '../../screens/DeviceBlocked/DeviceBlockedScreen';
 import { DevicePairingScreen } from '../../screens/DevicePairing/DevicePairingScreen';
+import { DeviceRegistrationScreen } from '../../screens/DeviceRegistration/DeviceRegistrationScreen';
+import { DeviceResolvingScreen } from '../../screens/DeviceResolving/DeviceResolvingScreen';
 import { FormulaScreen } from '../../screens/Formula/FormulaScreen';
 import { FormulaHistoryScreen } from '../../screens/FormulaHistory/FormulaHistoryScreen';
 import { HomeScreen } from '../../screens/Home/HomeScreen';
 import { SettingsScreen } from '../../screens/Settings/SettingsScreen';
+import { useDeviceSession } from '../../features/sheer-lab/DeviceSessionProvider';
 import { labTheme } from '../../theme/labTheme';
-import type { RootStackParamList } from './routes';
+import type { DeviceStartupRouteName, RootStackParamList } from './routes';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -26,10 +30,13 @@ const navigationTheme = {
 };
 
 export function RootNavigator(): React.JSX.Element {
+  const { resolution } = useDeviceSession();
+  const routeName = getStartupRouteName(resolution.status);
+
   return (
-    <NavigationContainer theme={navigationTheme}>
+    <NavigationContainer key={routeName} theme={navigationTheme}>
       <Stack.Navigator
-        initialRouteName="Auth"
+        initialRouteName={routeName}
         screenOptions={{
           headerStyle: { backgroundColor: labTheme.colors.background },
           headerTintColor: labTheme.colors.textPrimary,
@@ -37,6 +44,21 @@ export function RootNavigator(): React.JSX.Element {
           contentStyle: { backgroundColor: labTheme.colors.background },
         }}
       >
+        <Stack.Screen
+          name="DeviceResolving"
+          component={DeviceResolvingScreen}
+          options={{ title: 'Sheer Lab' }}
+        />
+        <Stack.Screen
+          name="DeviceRegistration"
+          component={DeviceRegistrationScreen}
+          options={{ title: 'Register Device' }}
+        />
+        <Stack.Screen
+          name="DeviceBlocked"
+          component={DeviceBlockedScreen}
+          options={{ title: 'Device Blocked' }}
+        />
         <Stack.Screen name="Auth" component={AuthScreen} options={{ title: 'Sheer Lab' }} />
         <Stack.Screen name="Home" component={HomeScreen} options={{ title: 'Lab Home' }} />
         <Stack.Screen
@@ -54,4 +76,11 @@ export function RootNavigator(): React.JSX.Element {
       </Stack.Navigator>
     </NavigationContainer>
   );
+}
+
+function getStartupRouteName(status: ReturnType<typeof useDeviceSession>['resolution']['status']): DeviceStartupRouteName {
+  if (status === 'ready') return 'Auth';
+  if (status === 'unregistered') return 'DeviceRegistration';
+  if (status === 'disabled' || status === 'registration_required') return 'DeviceBlocked';
+  return 'DeviceResolving';
 }

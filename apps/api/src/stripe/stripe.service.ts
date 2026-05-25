@@ -46,9 +46,6 @@ export class StripeService {
     const params: StripePaymentIntentCreateParams = {
       amount: amountInMinorUnits,
       currency: input.currency.toLowerCase(),
-      // Card includes Apple Pay and Google Pay wallets in Stripe Payment Element.
-      // Explicitly listing it prevents Klarna/Revolut Pay on deposit collection.
-      payment_method_types: ['card'],
       metadata: {
         booking_attempt_id: input.bookingAttemptId,
         location_id: input.locationId,

@@ -43,6 +43,7 @@ export const bleScaleStore = {
       status: 'disconnected',
       connectedDevice: undefined,
       activeBinding: undefined,
+      liveWeight: undefined,
       error: undefined,
       lastDisconnectedAt: new Date().toISOString(),
     };

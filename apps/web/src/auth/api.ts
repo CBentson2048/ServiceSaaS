@@ -14,6 +14,9 @@ import type {
   CreateCrmPatchTestRequest,
   CreateCrmVisitPhotoRequest,
   CreateLocationRequest,
+  LabDeviceRegistrationResponse,
+  InventoryProductResponse,
+  InventoryStockMutationResponse,
   CreateShiftRequest,
   CreateStaffInvitationRequest,
   CrmClientDetailResponse,
@@ -22,6 +25,12 @@ import type {
   InvitationStatus,
   LeaveRequestMutationResponse,
   LeaveRequestStatus,
+  LabPinMutationResponse,
+  ListInventoryLowStockResponse,
+  ListInventoryMovementsResponse,
+  ListInventoryProductsResponse,
+  ListInventoryStockResponse,
+  ListLabPinStatusesResponse,
   ListStaffBookingsResponse,
   ListCrmClientAllergiesResponse,
   ListCrmClientMessagesResponse,
@@ -56,6 +65,8 @@ import type {
   RejectLeaveRequestRequest,
   SaveWeeklyRotaRequest,
   SaveWeeklyRotaResponse,
+  SheerLabAnalyticsRange,
+  SheerLabAnalyticsResponse,
   ShiftMutationResponse,
   StartPublicBookingCheckoutRequest,
   StartPublicBookingCheckoutResponse,
@@ -225,6 +236,189 @@ export async function listBookings(
   return request<ListStaffBookingsResponse>(`/lab/appointments${query ? `?${query}` : ''}`, {
     accessToken,
   });
+}
+
+export async function getSheerLabAnalytics(
+  accessToken: string,
+  params: { range?: SheerLabAnalyticsRange; locationId?: string } = {},
+): Promise<SheerLabAnalyticsResponse> {
+  const search = new URLSearchParams();
+  if (params.range) search.set('range', params.range);
+  if (params.locationId) search.set('locationId', params.locationId);
+  const query = search.toString();
+  return request<SheerLabAnalyticsResponse>(`/lab/analytics/summary${query ? `?${query}` : ''}`, {
+    accessToken,
+  });
+}
+
+export async function listLabPinStatuses(
+  accessToken: string,
+  params: { locationId?: string } = {},
+): Promise<ListLabPinStatusesResponse> {
+  const search = new URLSearchParams();
+  if (params.locationId) search.set('locationId', params.locationId);
+  const query = search.toString();
+  return request<ListLabPinStatusesResponse>(`/lab/pins/status${query ? `?${query}` : ''}`, {
+    accessToken,
+  });
+}
+
+export async function setLabPin(
+  accessToken: string,
+  payload: { locationId: string; userProfileId: string; pin: string },
+): Promise<LabPinMutationResponse> {
+  return request<LabPinMutationResponse>('/lab/pins/assign', {
+    method: 'POST',
+    accessToken,
+    body: payload,
+  });
+}
+
+export async function resetLabPin(
+  accessToken: string,
+  payload: { locationId: string; userProfileId: string },
+): Promise<LabPinMutationResponse> {
+  return request<LabPinMutationResponse>('/lab/pins/reset', {
+    method: 'POST',
+    accessToken,
+    body: payload,
+  });
+}
+
+export async function registerLabDevice(
+  accessToken: string,
+  payload: { businessId: string; locationId: string; deviceName: string; stationLabel?: string },
+): Promise<LabDeviceRegistrationResponse> {
+  return request<LabDeviceRegistrationResponse>('/lab/device/register', {
+    method: 'POST',
+    accessToken,
+    body: payload,
+  });
+}
+
+export async function listInventoryProducts(
+  accessToken: string,
+  params: { q?: string; includeInactive?: boolean } = {},
+): Promise<ListInventoryProductsResponse> {
+  const search = new URLSearchParams();
+  if (params.q) search.set('q', params.q);
+  if (params.includeInactive) search.set('includeInactive', 'true');
+  const query = search.toString();
+  return request<ListInventoryProductsResponse>(`/inventory/products${query ? `?${query}` : ''}`, { accessToken });
+}
+
+export async function createInventoryProduct(
+  accessToken: string,
+  payload: {
+    brand?: string | null;
+    name: string;
+    category?: string | null;
+    sku?: string | null;
+    sizeValue?: number | null;
+    sizeUnit?: string | null;
+    defaultCostPerGramCents?: number | null;
+    retailPriceCents?: number | null;
+    lowStockThresholdGrams?: number | null;
+  },
+): Promise<InventoryProductResponse> {
+  return request<InventoryProductResponse>('/inventory/products', { method: 'POST', accessToken, body: payload });
+}
+
+export async function updateInventoryProduct(
+  accessToken: string,
+  productId: string,
+  payload: Parameters<typeof createInventoryProduct>[1],
+): Promise<InventoryProductResponse> {
+  return request<InventoryProductResponse>(`/inventory/products/${encodeURIComponent(productId)}`, {
+    method: 'PATCH',
+    accessToken,
+    body: payload,
+  });
+}
+
+export async function archiveInventoryProduct(
+  accessToken: string,
+  productId: string,
+): Promise<InventoryProductResponse> {
+  return request<InventoryProductResponse>(`/inventory/products/${encodeURIComponent(productId)}/archive`, {
+    method: 'POST',
+    accessToken,
+  });
+}
+
+export async function listInventoryStock(
+  accessToken: string,
+  params: { locationId?: string; q?: string; lowStockOnly?: boolean } = {},
+): Promise<ListInventoryStockResponse> {
+  const search = new URLSearchParams();
+  if (params.locationId) search.set('locationId', params.locationId);
+  if (params.q) search.set('q', params.q);
+  if (params.lowStockOnly) search.set('lowStockOnly', 'true');
+  const query = search.toString();
+  return request<ListInventoryStockResponse>(`/inventory/stock${query ? `?${query}` : ''}`, { accessToken });
+}
+
+export async function initializeInventoryStock(
+  accessToken: string,
+  payload: { locationId: string; productId: string; quantityOnHandGrams?: number; lowStockThresholdGrams?: number | null },
+): Promise<InventoryStockMutationResponse> {
+  return request<InventoryStockMutationResponse>('/inventory/stock/initialize', {
+    method: 'POST',
+    accessToken,
+    body: payload,
+  });
+}
+
+export async function adjustInventoryStock(
+  accessToken: string,
+  payload: {
+    locationId: string;
+    productId: string;
+    quantityDeltaGrams: number;
+    movementType: 'opening_balance' | 'restock' | 'manual_adjustment' | 'retail_sale' | 'correction';
+    reason?: string | null;
+    notes?: string | null;
+  },
+): Promise<InventoryStockMutationResponse> {
+  return request<InventoryStockMutationResponse>('/inventory/stock/adjust', {
+    method: 'POST',
+    accessToken,
+    body: payload,
+  });
+}
+
+export async function updateInventoryStockThreshold(
+  accessToken: string,
+  stockId: string,
+  payload: { lowStockThresholdGrams?: number | null; isActive?: boolean },
+): Promise<InventoryStockMutationResponse> {
+  return request<InventoryStockMutationResponse>(`/inventory/stock/${encodeURIComponent(stockId)}`, {
+    method: 'PATCH',
+    accessToken,
+    body: payload,
+  });
+}
+
+export async function listInventoryMovements(
+  accessToken: string,
+  params: { locationId?: string; productId?: string; limit?: number } = {},
+): Promise<ListInventoryMovementsResponse> {
+  const search = new URLSearchParams();
+  if (params.locationId) search.set('locationId', params.locationId);
+  if (params.productId) search.set('productId', params.productId);
+  if (params.limit) search.set('limit', String(params.limit));
+  const query = search.toString();
+  return request<ListInventoryMovementsResponse>(`/inventory/movements${query ? `?${query}` : ''}`, { accessToken });
+}
+
+export async function listInventoryLowStock(
+  accessToken: string,
+  params: { locationId?: string } = {},
+): Promise<ListInventoryLowStockResponse> {
+  const search = new URLSearchParams();
+  if (params.locationId) search.set('locationId', params.locationId);
+  const query = search.toString();
+  return request<ListInventoryLowStockResponse>(`/inventory/low-stock${query ? `?${query}` : ''}`, { accessToken });
 }
 
 export async function createCrmClient(

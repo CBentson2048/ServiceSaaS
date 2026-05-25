@@ -3,6 +3,7 @@ import { StatusBar } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { ApiProvider } from '../../lib/api/ApiProvider';
+import { DeviceSessionProvider } from '../../features/sheer-lab/DeviceSessionProvider';
 import { labTheme } from '../../theme/labTheme';
 
 interface AppProvidersProps {
@@ -13,11 +14,13 @@ export function AppProviders({ children }: AppProvidersProps): React.JSX.Element
   return (
     <SafeAreaProvider>
       <ApiProvider>
-        <StatusBar
-          barStyle="light-content"
-          backgroundColor={labTheme.colors.background}
-        />
-        {children}
+        <DeviceSessionProvider>
+          <StatusBar
+            barStyle="light-content"
+            backgroundColor={labTheme.colors.background}
+          />
+          {children}
+        </DeviceSessionProvider>
       </ApiProvider>
     </SafeAreaProvider>
   );

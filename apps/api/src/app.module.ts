@@ -4,7 +4,9 @@ import { AuthModule } from './auth/auth.module';
 import { RequestResponseLoggingMiddleware } from './common/request-response-logging.middleware';
 import { CrmModule } from './crm/crm.module';
 import { HealthModule } from './health/health.module';
+import { InventoryModule } from './inventory/inventory.module';
 import { LabAppointmentsModule } from './lab-appointments/lab-appointments.module';
+import { LabAnalyticsModule } from './lab-analytics/lab-analytics.module';
 import { LabDeviceModule } from './lab-device/lab-device.module';
 import { LabFormulaModule } from './lab-formula/lab-formula.module';
 import { LabPinModule } from './lab-pin/lab-pin.module';
@@ -33,11 +35,13 @@ import { validateEnv } from './config/env.validation';
     PublicBookingModule,
     CrmModule,
     RotaModule,
+    InventoryModule,
     HealthModule,
     LabDeviceModule,
     LabSessionModule,
     LabPinModule,
     LabAppointmentsModule,
+    LabAnalyticsModule,
     LabFormulaModule,
   ],
 })

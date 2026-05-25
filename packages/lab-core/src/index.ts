@@ -22,22 +22,55 @@ export interface FormulaItem {
   id: string;
   productId?: string;
   productName: string;
+  brand?: string;
+  shade?: string;
+  developer?: string;
+  ratio?: string;
+  processingTimeMinutes?: number;
   targetGrams?: number;
   capturedGrams?: number;
+  wasteGrams?: number;
   entryMode: 'ble_scale' | 'manual';
   capturedAt?: string;
+  costPerGramCents?: number;
+  costCents?: number;
+  wasteCostCents?: number;
   notes?: string;
+}
+
+export interface FormulaClientContext {
+  clientProfileId?: string;
+  clientName?: string;
+}
+
+export interface FormulaVisitContext {
+  appointmentId?: string;
+  visitId?: string;
+  serviceType?: string;
 }
 
 export interface FormulaDraft {
   id: string;
   labSessionId: string;
   appointmentId?: string;
+  visitId?: string;
+  businessId?: string;
+  locationId?: string;
   clientProfileId?: string;
+  client?: FormulaClientContext;
+  visit?: FormulaVisitContext;
+  sourceFormulaId?: string;
   status: FormulaStatus;
   items: FormulaItem[];
   chargePreviewCents?: number;
+  totalCostCents?: number;
+  totalWasteCostCents?: number;
+  billableChargeCents?: number;
+  billingStatus?: 'not_requested' | 'applied' | 'skipped' | 'failed';
+  inventoryStatus?: 'not_requested' | 'applied' | 'partial' | 'failed';
   currencyCode: string;
+  savedAt?: string;
+  createdAt?: string;
   updatedAt: string;
 }
 
@@ -50,9 +83,89 @@ export interface ManualEntryFallback {
 export interface FormulaSavePayload {
   formulaId: string;
   labSessionId: string;
+  appointmentId?: string;
+  visitId?: string;
+  businessId?: string;
+  locationId?: string;
+  clientProfileId?: string;
+  sourceFormulaId?: string;
   items: FormulaItem[];
   manualFallbacks?: ManualEntryFallback[];
+  totalCostCents?: number;
+  totalWasteCostCents?: number;
+  billableChargeCents?: number;
+  currencyCode?: string;
   billingHandoffRequested: boolean;
+  inventoryDeductionRequested?: boolean;
+}
+
+export interface FormulaHistoryRecord extends FormulaDraft {
+  status: Extract<FormulaStatus, 'saved'>;
+  savedAt: string;
+}
+
+export interface FormulaHistoryResponse {
+  formulas: FormulaHistoryRecord[];
+}
+
+export interface FormulaDuplicatePayload {
+  sourceFormulaId: string;
+  labSessionId: string;
+  appointmentId?: string;
+  visitId?: string;
+  clientProfileId?: string;
+}
+
+export type FormulaBillingMode = 'cost_only' | 'cost_plus_markup_percent' | 'fixed_uplift';
+
+export interface FormulaBillingRule {
+  mode: FormulaBillingMode;
+  markupPercent?: number;
+  fixedUpliftCents?: number;
+  autoBillFormulaOnSave: boolean;
+  rebillFormulaOnEdit: boolean;
+  combineFormulasIntoSingleCharge: boolean;
+}
+
+export interface FormulaBillingBreakdown {
+  formulaId: string;
+  actualCostCents: number;
+  billableChargeCents: number;
+  currencyCode: string;
+}
+
+export interface FormulaSaveResult extends FormulaHistoryRecord {
+  billingLineItem?: {
+    visitId: string;
+    amountCents: number;
+    currencyCode: string;
+    formulaBreakdown: FormulaBillingBreakdown[];
+    updatedAt: string;
+  };
+  inventoryMovements: Array<{
+    productId: string;
+    quantityDeltaGrams: number;
+    remainingQuantityGrams?: number;
+    movementType: 'formula_usage' | 'formula_waste' | 'formula_reversal';
+  }>;
+  lowStockAlerts: Array<{
+    productId: string;
+    remainingQuantityGrams: number;
+    thresholdQuantityGrams: number;
+  }>;
+}
+
+export function calculateFormulaBillableChargeCents(
+  actualCostCents: number,
+  rule: FormulaBillingRule,
+): number {
+  if (rule.mode === 'cost_only') return Math.max(0, Math.round(actualCostCents));
+
+  if (rule.mode === 'fixed_uplift') {
+    return Math.max(0, Math.round(actualCostCents + (rule.fixedUpliftCents ?? 0)));
+  }
+
+  return Math.max(0, Math.round(actualCostCents * (1 + (rule.markupPercent ?? 0) / 100)));
 }
 
 export interface LocalFormulaBufferState {

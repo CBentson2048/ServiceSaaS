@@ -18,6 +18,7 @@ import { CrmClientsPage } from './pages/CrmClientsPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { EditLocationPage } from './pages/EditLocationPage';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
+import { InventoryPage } from './pages/InventoryPage';
 import { LandingPage } from './pages/LandingPage';
 import { LocationDetailPage } from './pages/LocationDetailPage';
 import { LocationsPage } from './pages/LocationsPage';
@@ -28,6 +29,7 @@ import { PlaceholderPage } from './pages/PlaceholderPage';
 import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { RotaPage } from './pages/RotaPage';
 import { NewWeekRotaPage } from './pages/NewWeekRotaPage';
+import { SheerLabPage } from './pages/SheerLabPage';
 import { TeamPage } from './pages/TeamPage';
 import { UnauthorizedPage } from './pages/UnauthorizedPage';
 
@@ -72,7 +74,8 @@ export function App() {
           <Route path="/crm/clients/:id" element={<CrmClientDetailPage />} />
           <Route path="/rota" element={<RotaPage />} />
           <Route path="/rota/new-week" element={<NewWeekRotaPage />} />
-          <Route path="/sheer-lab" element={<PlaceholderPage title="Sheer Lab" />} />
+          <Route path="/inventory" element={<InventoryPage />} />
+          <Route path="/sheer-lab" element={<SheerLabPage />} />
           <Route path="/commission" element={<PlaceholderPage title="Commission" />} />
           <Route path="/locations" element={<LocationsPage />} />
           <Route path="/locations/:id" element={<LocationDetailPage />} />

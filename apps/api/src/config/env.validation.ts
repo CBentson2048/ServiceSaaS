@@ -88,6 +88,16 @@ export class EnvConfig {
   @IsOptional()
   @IsString()
   STRIPE_WEBHOOK_SECRET?: string;
+
+  /** Server-side pepper for hashing Sheer Lab PINs. Required before real PIN credentials are issued. */
+  @IsOptional()
+  @IsString()
+  SHEER_LAB_PIN_PEPPER?: string;
+
+  /** Server-side pepper for hashing shared Sheer Lab device session tokens. */
+  @IsOptional()
+  @IsString()
+  SHEER_LAB_DEVICE_TOKEN_PEPPER?: string;
 }
 
 /**

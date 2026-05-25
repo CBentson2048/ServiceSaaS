@@ -2,9 +2,6 @@ import { IsOptional, IsString, IsUUID, Length } from 'class-validator';
 
 export class AssignLabPinDto {
   @IsUUID()
-  businessId!: string;
-
-  @IsUUID()
   locationId!: string;
 
   @IsUUID()
@@ -16,9 +13,6 @@ export class AssignLabPinDto {
 }
 
 export class ResetLabPinDto {
-  @IsUUID()
-  businessId!: string;
-
   @IsUUID()
   locationId!: string;
 

@@ -1,14 +1,36 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
-import { AddFormulaItemDto, CaptureWeightDto, SaveFormulaDto, StartFormulaDto } from './dto';
+import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import type { AuthUser } from '@sheer/domain';
+import { CurrentUser } from '../auth/current-user.decorator';
+import { RequireRoles, RolesGuard } from '../auth/roles.guard';
+import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
+import {
+  AddFormulaItemDto,
+  CaptureWeightDto,
+  DuplicateFormulaDto,
+  SaveFormulaDto,
+  StartFormulaDto,
+} from './dto';
 import { LabFormulaService } from './lab-formula.service';
 
 @Controller('lab/formulas')
+@UseGuards(SupabaseAuthGuard, RolesGuard)
+@RequireRoles('owner', 'manager', 'stylist')
 export class LabFormulaController {
   constructor(private readonly labFormulaService: LabFormulaService) {}
 
   @Post('start')
-  start(@Body() dto: StartFormulaDto) {
-    return this.labFormulaService.start(dto);
+  start(@CurrentUser() actor: AuthUser, @Body() dto: StartFormulaDto) {
+    return this.labFormulaService.start(actor, dto);
+  }
+
+  @Get('client/:clientProfileId/latest')
+  latestForClient(@CurrentUser() actor: AuthUser, @Param('clientProfileId') clientProfileId: string) {
+    return this.labFormulaService.latestForClient(actor, clientProfileId);
+  }
+
+  @Get('client/:clientProfileId/history')
+  historyForClient(@CurrentUser() actor: AuthUser, @Param('clientProfileId') clientProfileId: string) {
+    return this.labFormulaService.historyForClient(actor, clientProfileId);
   }
 
   @Get(':id')
@@ -32,8 +54,8 @@ export class LabFormulaController {
   }
 
   @Post(':id/save')
-  save(@Param('id') id: string, @Body() dto: SaveFormulaDto) {
-    return this.labFormulaService.save(id, dto);
+  save(@CurrentUser() actor: AuthUser, @Param('id') id: string, @Body() dto: SaveFormulaDto) {
+    return this.labFormulaService.save(actor, id, dto);
   }
 
   @Post(':id/recalculate')
@@ -42,7 +64,7 @@ export class LabFormulaController {
   }
 
   @Post(':id/duplicate')
-  duplicate(@Param('id') id: string) {
-    return this.labFormulaService.duplicate(id);
+  duplicate(@CurrentUser() actor: AuthUser, @Param('id') id: string, @Body() dto: DuplicateFormulaDto) {
+    return this.labFormulaService.duplicate(actor, id, dto);
   }
 }

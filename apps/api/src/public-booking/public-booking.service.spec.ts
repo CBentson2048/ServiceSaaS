@@ -37,5 +37,5 @@ describe('PublicBookingService — service rules and upgrades', () => {
 });
 
 describe('PublicBookingService — deposit payment methods', () => {
-  it.todo('deposit PaymentIntent is restricted to card so Apple Pay and Google Pay are available but Klarna/Revolut Pay are not');
+  it.todo('deposit PaymentIntent omits payment_method_types so Stripe dynamic payment methods remain dashboard-controlled');
 });

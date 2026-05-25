@@ -565,11 +565,18 @@ export interface StaffBookingSummary {
   depositRequiredAmount?: number;
   depositStatus?: string;
   clientNote?: string;
+  patchTest?: StaffBookingPatchTestSummary;
 }
 
 export interface StaffBookingDetail extends StaffBookingSummary {
   communicationPreference?: string;
   internalNote?: string;
+}
+
+export interface StaffBookingPatchTestSummary {
+  status: 'unknown' | 'pending' | 'passed' | 'failed' | 'expired';
+  performedAt?: string;
+  expiresAt?: string;
 }
 
 export interface ListStaffBookingsResponse {
@@ -608,10 +615,50 @@ export interface PinUnlockRequest {
 export interface PinUnlockResponse {
   sessionId: string;
   status: LabSessionStatus;
+  businessId?: string;
+  locationId?: string;
+  sharedDeviceId?: string;
   userProfileId: string;
+  staffProfileId?: string;
   displayName: string;
   role: Extract<UserRole, 'owner' | 'manager' | 'stylist'>;
   expiresAt: string;
+}
+
+export interface LabPinCredentialStatus {
+  userProfileId: string;
+  staffProfileId?: string;
+  displayName: string;
+  email: string;
+  locationId: string;
+  locationName: string;
+  status: 'not_set' | StylistPinCredentialStatus;
+  isActive: boolean;
+  failedAttempts: number;
+  lockedUntil?: string;
+  lastVerifiedAt?: string;
+  lastRotatedAt?: string;
+  updatedAt?: string;
+}
+
+export interface ListLabPinStatusesResponse {
+  stylists: LabPinCredentialStatus[];
+  scope: 'owner' | 'manager';
+}
+
+export interface SetLabPinRequest {
+  locationId: string;
+  userProfileId: string;
+  pin: string;
+}
+
+export interface ResetLabPinRequest {
+  locationId: string;
+  userProfileId: string;
+}
+
+export interface LabPinMutationResponse {
+  credential: LabPinCredentialStatus;
 }
 
 export interface LabSessionContext {
@@ -639,6 +686,244 @@ export interface SharedDevice {
   status: 'registered' | 'active' | 'inactive' | 'revoked';
   registeredAt: string;
   lastSeenAt?: string;
+}
+
+export interface LabDeviceRegistrationResponse {
+  device: SharedDevice;
+  deviceSessionToken: string;
+}
+
+export interface LabDeviceResolveResponse {
+  device: SharedDevice;
+  location: BusinessLocationSummary;
+}
+
+export type SheerLabAnalyticsRange = 'today' | 'week' | 'month';
+
+export interface SheerLabAnalyticsSummary {
+  colourRevenueCents: number;
+  formulaCostCents: number;
+  grossMarginCents: number;
+  grossMarginPercent: number;
+  wasteCostCents: number;
+  wastePercentOfRevenue: number;
+  formulasMixed: number;
+  worstLocationName?: string;
+  currencyCode: string;
+}
+
+export interface SheerLabLocationMetric {
+  locationId: string;
+  locationName: string;
+  colourRevenueCents: number;
+  formulaCostCents: number;
+  grossMarginCents: number;
+  grossMarginPercent: number;
+  wasteCostCents: number;
+  formulasMixed: number;
+  currencyCode: string;
+}
+
+export interface SheerLabStylistMetric {
+  stylistProfileId?: string;
+  stylistName: string;
+  locationId: string;
+  locationName: string;
+  colourRevenueCents: number;
+  formulaCostCents: number;
+  grossMarginCents: number;
+  grossMarginPercent: number;
+  wasteCostCents: number;
+  formulasMixed: number;
+  currencyCode: string;
+}
+
+export interface SheerLabServiceTypeMetric {
+  serviceType: string;
+  formulaCount: number;
+  averageFormulaCostCents: number;
+  currencyCode: string;
+}
+
+export interface SheerLabProductUsageMetric {
+  productId?: string;
+  productName: string;
+  brand?: string;
+  totalWeightGrams: number;
+  totalCostCents: number;
+  formulaCount: number;
+  currencyCode: string;
+}
+
+export interface SheerLabLowStockAlert {
+  id: string;
+  locationId: string;
+  locationName: string;
+  productId: string;
+  productName: string;
+  brand?: string;
+  remainingQuantityGrams: number;
+  thresholdQuantityGrams: number;
+  status: 'open' | 'acknowledged' | 'resolved';
+  lastTriggeredAt: string;
+}
+
+export interface SheerLabAnalyticsResponse {
+  range: SheerLabAnalyticsRange;
+  rangeStart: string;
+  rangeEnd: string;
+  scope: 'owner' | 'manager';
+  summary: SheerLabAnalyticsSummary;
+  byLocation: SheerLabLocationMetric[];
+  byStylist: SheerLabStylistMetric[];
+  averageFormulaCostByServiceType: SheerLabServiceTypeMetric[];
+  mostUsedProductsByWeight: SheerLabProductUsageMetric[];
+  mostUsedProductsByCost: SheerLabProductUsageMetric[];
+  lowStockAlerts: SheerLabLowStockAlert[];
+}
+
+// ---------------------------------------------------------------------------
+// Inventory management
+// ---------------------------------------------------------------------------
+
+export type InventoryStockMovementType =
+  | 'opening_balance'
+  | 'restock'
+  | 'manual_adjustment'
+  | 'formula_usage'
+  | 'formula_waste'
+  | 'formula_reversal'
+  | 'retail_sale'
+  | 'correction';
+
+export interface InventoryProduct {
+  id: string;
+  businessId: string;
+  brand?: string;
+  name: string;
+  category?: string;
+  sku?: string;
+  sizeValue?: number;
+  sizeUnit: string;
+  defaultUnit: string;
+  defaultCostPerGramCents?: number;
+  retailPriceCents?: number;
+  lowStockThresholdGrams: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InventoryLocationStock {
+  id: string;
+  businessId: string;
+  locationId: string;
+  locationName: string;
+  productId: string;
+  productName: string;
+  brand?: string;
+  sku?: string;
+  category?: string;
+  quantityOnHandGrams: number;
+  lowStockThresholdGrams?: number;
+  effectiveLowStockThresholdGrams: number;
+  isLowStock: boolean;
+  isActive: boolean;
+  updatedAt: string;
+}
+
+export interface InventoryStockMovement {
+  id: string;
+  businessId: string;
+  locationId: string;
+  locationName: string;
+  productId: string;
+  productName: string;
+  brand?: string;
+  locationStockId?: string;
+  movementType: InventoryStockMovementType;
+  quantityDeltaGrams: number;
+  unitCostCents?: number;
+  totalCostCents?: number;
+  referenceType?: string;
+  referenceId?: string;
+  reason?: string;
+  notes?: string;
+  createdBy?: string;
+  createdAt: string;
+}
+
+export interface InventoryLowStockAlert {
+  id: string;
+  locationId: string;
+  locationName: string;
+  productId: string;
+  productName: string;
+  brand?: string;
+  remainingQuantityGrams: number;
+  thresholdQuantityGrams: number;
+  status: 'open' | 'acknowledged' | 'resolved';
+  lastTriggeredAt: string;
+}
+
+export interface ListInventoryProductsResponse {
+  products: InventoryProduct[];
+}
+
+export interface InventoryProductResponse {
+  product: InventoryProduct;
+}
+
+export interface UpsertInventoryProductRequest {
+  brand?: string | null;
+  name: string;
+  category?: string | null;
+  sku?: string | null;
+  sizeValue?: number | null;
+  sizeUnit?: string | null;
+  defaultUnit?: string | null;
+  defaultCostPerGramCents?: number | null;
+  retailPriceCents?: number | null;
+  lowStockThresholdGrams?: number | null;
+}
+
+export interface ListInventoryStockResponse {
+  stock: InventoryLocationStock[];
+  locations: BusinessLocationSummary[];
+  scope: 'owner' | 'manager';
+}
+
+export interface InitializeInventoryStockRequest {
+  locationId: string;
+  productId: string;
+  quantityOnHandGrams?: number;
+  lowStockThresholdGrams?: number | null;
+}
+
+export interface AdjustInventoryStockRequest {
+  locationId: string;
+  productId: string;
+  quantityDeltaGrams: number;
+  movementType: Extract<InventoryStockMovementType, 'opening_balance' | 'restock' | 'manual_adjustment' | 'retail_sale' | 'correction'>;
+  reason?: string | null;
+  notes?: string | null;
+}
+
+export interface UpdateInventoryStockThresholdRequest {
+  lowStockThresholdGrams?: number | null;
+  isActive?: boolean;
+}
+
+export interface InventoryStockMutationResponse {
+  stock: InventoryLocationStock;
+}
+
+export interface ListInventoryMovementsResponse {
+  movements: InventoryStockMovement[];
+}
+
+export interface ListInventoryLowStockResponse {
+  alerts: InventoryLowStockAlert[];
 }
 
 // ---------------------------------------------------------------------------

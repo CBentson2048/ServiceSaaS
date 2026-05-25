@@ -436,6 +436,9 @@ export class PublicBookingService {
 
   async handlePaymentIntentSucceeded(paymentIntent: StripePaymentIntent): Promise<void> {
     const attempt = await this.fetchBookingAttemptForPaymentIntent(paymentIntent);
+    this.logger.log(
+      `Stripe payment_intent.succeeded received for attempt=${attempt.id} paymentIntent=${paymentIntent.id} status=${attempt.status}`,
+    );
     if (attempt.status === 'confirmed' && attempt.appointment_id) {
       await this.markDepositPaid(attempt, paymentIntent);
       return;
@@ -451,6 +454,9 @@ export class PublicBookingService {
     if (attempt.status === 'confirmed') return;
 
     const failureReason = paymentIntent.last_payment_error?.message ?? 'Payment failed';
+    this.logger.warn(
+      `Stripe payment_intent.payment_failed received for attempt=${attempt.id} paymentIntent=${paymentIntent.id} reason=${failureReason}`,
+    );
     const { error: attemptError } = await this.admin
       .schema('booking')
       .from('booking_attempts')
@@ -1080,6 +1086,7 @@ export class PublicBookingService {
       throw new InternalServerErrorException('Unable to attach payment intent');
     }
 
+    this.logger.log(`Attached Stripe PaymentIntent ${paymentIntentId} to booking attempt ${attempt.id}`);
     return data;
   }
 
@@ -1205,41 +1212,56 @@ export class PublicBookingService {
     attempt: BookingAttemptRow,
     paymentIntent: StripePaymentIntent,
   ): Promise<AppointmentInsertRow> {
-    if (attempt.appointment_id) {
-      return this.fetchAppointmentInsertRow(attempt.appointment_id);
+    const latestAttempt = await this.fetchBookingAttemptById(attempt.id);
+    if (latestAttempt.appointment_id) return this.fetchAppointmentInsertRow(latestAttempt.appointment_id);
+    if (latestAttempt.status !== 'pending_payment') {
+      throw new ConflictException('Booking attempt is no longer pending payment');
     }
 
     const context = await this.resolveBookingContext(
       {
-        locationId: attempt.location_id,
-        serviceIds: await this.fetchServiceIdsForAttempt(attempt),
-        staffProfileId: attempt.stylist_profile_id,
-        selectedStartAt: attempt.selected_start_at,
-        staffRequestMode: attempt.staff_request_mode,
-        client: await this.clientDetailsForAttempt(attempt),
-        communicationPreference: attempt.communication_preference,
-        clientProfileId: attempt.client_profile_id,
-        bookedByUserProfileId: attempt.user_profile_id,
-        clientNote: attempt.client_note ?? undefined,
+        locationId: latestAttempt.location_id,
+        serviceIds: await this.fetchServiceIdsForAttempt(latestAttempt),
+        staffProfileId: latestAttempt.stylist_profile_id,
+        selectedStartAt: latestAttempt.selected_start_at,
+        staffRequestMode: latestAttempt.staff_request_mode,
+        client: await this.clientDetailsForAttempt(latestAttempt),
+        communicationPreference: latestAttempt.communication_preference,
+        clientProfileId: latestAttempt.client_profile_id,
+        bookedByUserProfileId: latestAttempt.user_profile_id,
+        clientNote: latestAttempt.client_note ?? undefined,
       },
-      attempt.id,
+      latestAttempt.id,
     );
 
-    const appointment = await this.insertAppointmentForAttempt(attempt, context, paymentIntent.id);
-    await this.insertAppointmentServicesForAttempt(attempt, context, appointment.id);
+    const appointment = await this.insertAppointmentForAttempt(latestAttempt, context, paymentIntent.id);
+    await this.insertAppointmentServicesForAttempt(latestAttempt, context, appointment.id);
 
-    const { error } = await this.admin
+    const { data: confirmedAttempt, error } = await this.admin
       .schema('booking')
       .from('booking_attempts')
       .update({ status: 'confirmed', appointment_id: appointment.id })
-      .eq('id', attempt.id)
-      .eq('status', 'pending_payment');
+      .eq('id', latestAttempt.id)
+      .eq('status', 'pending_payment')
+      .is('appointment_id', null)
+      .select(BOOKING_ATTEMPT_COLUMNS)
+      .maybeSingle<BookingAttemptRow>();
 
     if (error) {
       this.logger.error(`finalizePaidBookingAttempt update attempt failed: ${error.message}`);
+      await this.deleteAppointmentAfterFailedFinalization(latestAttempt, appointment.id);
       throw new InternalServerErrorException('Unable to confirm booking attempt');
     }
+    if (!confirmedAttempt) {
+      await this.deleteAppointmentAfterFailedFinalization(latestAttempt, appointment.id);
+      const replayedAttempt = await this.fetchBookingAttemptById(latestAttempt.id);
+      if (replayedAttempt.appointment_id) return this.fetchAppointmentInsertRow(replayedAttempt.appointment_id);
+      throw new ConflictException('Booking attempt was finalized by another webhook worker');
+    }
 
+    this.logger.log(
+      `Finalized booking attempt ${confirmedAttempt.id} into appointment ${appointment.id} for PaymentIntent ${paymentIntent.id}`,
+    );
     return appointment;
   }
 
@@ -1336,6 +1358,25 @@ export class PublicBookingService {
     }
   }
 
+  private async deleteAppointmentAfterFailedFinalization(
+    attempt: BookingAttemptRow,
+    appointmentId: string,
+  ): Promise<void> {
+    const { error } = await this.admin
+      .schema('booking')
+      .from('appointments')
+      .delete()
+      .eq('id', appointmentId)
+      .eq('business_id', attempt.business_id)
+      .eq('location_id', attempt.location_id);
+
+    if (error) {
+      this.logger.error(
+        `deleteAppointmentAfterFailedFinalization failed for appointment=${appointmentId}: ${error.message}`,
+      );
+    }
+  }
+
   private async markDepositPaid(
     attempt: BookingAttemptRow,
     paymentIntent: StripePaymentIntent,
@@ -1358,6 +1399,9 @@ export class PublicBookingService {
       this.logger.error(`markDepositPaid failed: ${error.message}`);
       throw new InternalServerErrorException('Unable to mark deposit paid');
     }
+    this.logger.log(
+      `Marked booking deposit paid for attempt=${attempt.id} appointment=${attempt.appointment_id ?? 'pending'} paymentIntent=${paymentIntent.id}`,
+    );
   }
 
   private async fetchAppointmentInsertRow(appointmentId: string): Promise<AppointmentInsertRow> {

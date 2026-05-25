@@ -5,5 +5,6 @@ import { LabSessionService } from './lab-session.service';
 @Module({
   controllers: [LabSessionController],
   providers: [LabSessionService],
+  exports: [LabSessionService],
 })
 export class LabSessionModule {}

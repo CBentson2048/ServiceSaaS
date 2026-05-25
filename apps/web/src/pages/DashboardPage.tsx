@@ -8,12 +8,14 @@ import { SectionLabel } from '../components/dashboard/SectionLabel';
 import { StylistsTable } from '../components/dashboard/StylistsTable';
 import { useAuth } from '../auth/AuthProvider';
 import { useDashboardSnapshot } from '../hooks/useDashboardSnapshot';
+import { useSheerLabAnalytics } from '../hooks/useSheerLabAnalytics';
 import { toKpiItem, toLocationCardProps, toStylistRow } from './dashboardMappers';
 
 export function DashboardPage() {
   const { user } = useAuth();
   const [range, setRange] = useState<DashboardRange>('today');
   const { data } = useDashboardSnapshot(range);
+  const { data: labAnalytics, isLoading: labAnalyticsLoading } = useSheerLabAnalytics(range);
   const { greeting, kpis, salons, stylists, diagnostics } = data;
   const scopedLocationNames = new Set(user?.locations.map((location) => location.name.toLowerCase()) ?? []);
   const scopedSalons =
@@ -72,6 +74,20 @@ export function DashboardPage() {
 
           <SectionLabel>Diagnostics</SectionLabel>
           <div className="grid gap-3.5 lg:grid-cols-3">
+            <DiagnosticCard
+              title="Sheer Lab"
+              subtitle={labAnalyticsLoading ? 'Loading formula analytics' : 'Colour formulas, waste, and stock'}
+              rows={toSheerLabDiagnosticRows(labAnalytics)}
+              footerLabel="Waste / revenue"
+              footerValue={labAnalytics ? `${labAnalytics.summary.wastePercentOfRevenue.toFixed(1)}%` : '0.0%'}
+              footerTone={
+                labAnalytics && labAnalytics.summary.wastePercentOfRevenue > 8
+                  ? 'bad'
+                  : labAnalytics && labAnalytics.summary.wastePercentOfRevenue > 4
+                    ? 'warn'
+                    : 'good'
+              }
+            />
             {diagnostics.map((d) => (
               <DiagnosticCard
                 key={d.id}
@@ -88,4 +104,57 @@ export function DashboardPage() {
       </div>
     </div>
   );
+}
+
+function toSheerLabDiagnosticRows(
+  analytics: ReturnType<typeof useSheerLabAnalytics>['data'],
+) {
+  if (!analytics) {
+    return [
+      { label: 'Colour revenue', value: '£0', valueTone: 'ink' as const },
+      { label: 'Margin', value: '0.0%', valueTone: 'ink' as const },
+      { label: 'Waste cost', value: '£0', valueTone: 'good' as const },
+      { label: 'Formulas mixed', value: '0', valueTone: 'ink' as const },
+      { label: 'Low stock', value: '0 open', valueTone: 'good' as const },
+    ];
+  }
+
+  const { summary } = analytics;
+  return [
+    {
+      label: 'Colour revenue',
+      value: formatMoney(summary.colourRevenueCents, summary.currencyCode),
+      valueTone: 'purple' as const,
+    },
+    {
+      label: 'Margin',
+      value: `${summary.grossMarginPercent.toFixed(1)}%`,
+      valueTone: summary.grossMarginPercent >= 60 ? ('good' as const) : ('warn' as const),
+      pct: summary.grossMarginPercent,
+    },
+    {
+      label: 'Waste cost',
+      value: formatMoney(summary.wasteCostCents, summary.currencyCode),
+      valueTone: summary.wastePercentOfRevenue > 8 ? ('bad' as const) : ('warn' as const),
+    },
+    {
+      label: analytics.scope === 'owner' ? 'Worst location' : 'Location',
+      value: summary.worstLocationName ?? 'No formulas',
+      valueTone: 'ink' as const,
+    },
+    {
+      label: 'Formulas mixed',
+      value: summary.formulasMixed.toString(),
+      valueTone: 'ink' as const,
+      caption: `${analytics.lowStockAlerts.length} low-stock alerts`,
+    },
+  ];
+}
+
+function formatMoney(cents: number, currencyCode: string): string {
+  return new Intl.NumberFormat('en-GB', {
+    style: 'currency',
+    currency: currencyCode,
+    maximumFractionDigits: 0,
+  }).format(cents / 100);
 }
