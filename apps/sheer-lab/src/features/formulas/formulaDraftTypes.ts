@@ -3,7 +3,8 @@ import type { FormulaDraft, FormulaHistoryRecord, FormulaItem, FormulaSavePayloa
 import type { BleWeightReading } from '../ble/types';
 
 export type FormulaWeightSource = 'ble' | 'manual';
-export type FormulaDraftStatus = 'draft' | 'mixing';
+export type FormulaDraftStatus = 'draft' | 'mixing' | 'saved';
+export type FormulaIngredientIdentityMode = 'catalogue_product' | 'custom_manual';
 
 export interface FormulaPatchTestContext {
   status: 'unknown' | 'pending' | 'passed' | 'failed' | 'expired';
@@ -33,10 +34,14 @@ export interface FormulaCostBasis {
 
 export interface FormulaIngredientRow {
   id: string;
+  identityMode: FormulaIngredientIdentityMode;
   productId?: string;
   productName: string;
   brand?: string;
   shade?: string;
+  category?: string;
+  sku?: string;
+  displayName?: string;
   developer?: string;
   ratio?: string;
   processingTimeMinutes?: number;
@@ -68,6 +73,7 @@ export interface FormulaDraftSession {
   hasMissingCost: boolean;
   currencyCode: string;
   savedAt?: string;
+  finalizedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -75,8 +81,13 @@ export interface FormulaDraftSession {
 export type FormulaRowMetadataUpdate = Pick<
   FormulaIngredientRow,
   | 'productName'
+  | 'productId'
+  | 'identityMode'
   | 'brand'
   | 'shade'
+  | 'category'
+  | 'sku'
+  | 'displayName'
   | 'developer'
   | 'ratio'
   | 'processingTimeMinutes'
@@ -152,6 +163,13 @@ export function toLabCoreFormulaDraft(session: FormulaDraftSession): FormulaDraf
 }
 
 export function toFormulaSavePayload(session: FormulaDraftSession): FormulaSavePayload {
+  return toFormulaFinalSavePayload(session, false);
+}
+
+export function toFormulaFinalSavePayload(
+  session: FormulaDraftSession,
+  finalizeRequested = true,
+): FormulaSavePayload {
   return {
     formulaId: session.id,
     labSessionId: session.labSessionId,
@@ -173,6 +191,7 @@ export function toFormulaSavePayload(session: FormulaDraftSession): FormulaSaveP
     currencyCode: session.currencyCode,
     billingHandoffRequested: true,
     inventoryDeductionRequested: true,
+    finalizeRequested,
   };
 }
 

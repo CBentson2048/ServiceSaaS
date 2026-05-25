@@ -13,6 +13,8 @@ import type {
   LabDeviceResolveResponse,
   ListLocationsResponse,
   ListStaffResponse,
+  ListInventoryProductsResponse,
+  ListInventoryStockResponse,
   LocationDetailResponse,
   LoginRequest,
   LoginResponse,
@@ -61,6 +63,7 @@ export interface ApiClient {
   labPins: LabPinClient;
   labAppointments: LabAppointmentClient;
   labFormulas: LabFormulaClient;
+  inventory: InventoryClient;
 }
 
 export interface AuthClient {
@@ -144,6 +147,15 @@ export interface LabFormulaClient {
   latestForClient: (clientProfileId: string) => Promise<FormulaHistoryRecord | null>;
   historyForClient: (clientProfileId: string) => Promise<FormulaHistoryRecord[]>;
   duplicate: (formulaId: string, payload: Omit<FormulaDuplicatePayload, 'sourceFormulaId'>) => Promise<FormulaDraft>;
+}
+
+export interface InventoryClient {
+  products: (params?: { q?: string; category?: string; includeInactive?: boolean }) => Promise<ListInventoryProductsResponse>;
+  productsForLabSession: (
+    sessionId: string,
+    params?: { q?: string; category?: string },
+  ) => Promise<ListInventoryProductsResponse>;
+  stock: (params?: { locationId?: string; q?: string; lowStockOnly?: boolean }) => Promise<ListInventoryStockResponse>;
 }
 
 export interface RegisterLabDeviceRequest {
@@ -272,7 +284,21 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
           body: payload,
         }),
     },
+    inventory: {
+      products: (params = {}) => request(`/inventory/products${toQueryString(params)}`),
+      productsForLabSession: (sessionId, params = {}) =>
+        request(`/lab/inventory/session/${encodeURIComponent(sessionId)}/products${toQueryString(params)}`),
+      stock: (params = {}) => request(`/inventory/stock${toQueryString(params)}`),
+    },
   };
+}
+
+function toQueryString(params: Record<string, string | boolean | undefined>): string {
+  const query = Object.entries(params)
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
+    .join('&');
+  return query ? `?${query}` : '';
 }
 
 function createRequest(options: ApiClientOptions) {

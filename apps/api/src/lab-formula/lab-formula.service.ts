@@ -11,6 +11,7 @@ import type { AuthUser } from '@sheer/domain';
 import {
   calculateFormulaBillableChargeCents,
   createFormulaDraft,
+  type FormulaBillingBreakdown,
   type FormulaDraft,
   type FormulaHistoryRecord,
   type FormulaItem,
@@ -23,21 +24,27 @@ import type {
   SaveFormulaDto,
   StartFormulaDto,
 } from './dto';
+import type { LabRuntimeSession } from '../lab-session/lab-session.service';
 
 interface FormulaContext {
   businessId: string;
   locationId: string;
+  appointmentId?: string;
+  visitId?: string;
   clientProfileId?: string;
 }
 
 interface AppointmentFormulaContextRow {
+  id: string;
   business_id: string;
   location_id: string;
   client_profile_id: string;
   assigned_staff_profile_id: string | null;
+  appointment_services?: { service_name_snapshot: string }[] | { service_name_snapshot: string } | null;
 }
 
 interface VisitFormulaContextRow {
+  id: string;
   business_id: string;
   location_id: string;
   client_profile_id: string;
@@ -45,12 +52,42 @@ interface VisitFormulaContextRow {
   appointment_id: string | null;
 }
 
+interface FormulaReconciliationRpcResult {
+  formulaId?: string;
+  persistedFormulaId?: string;
+  actualCostCents?: number | string;
+  wasteCostCents?: number | string;
+  billableChargeCents?: number | string;
+  currencyCode?: string;
+  billingApplied?: boolean;
+  visitId?: string;
+}
+
+interface FormulaMovementRow {
+  product_id: string;
+  quantity_delta_grams: number | string;
+  movement_type: 'formula_usage' | 'formula_waste' | 'formula_reversal';
+}
+
+interface FormulaLowStockAlertRow {
+  product_id: string;
+  remaining_quantity_grams: number | string;
+  threshold_quantity_grams: number | string;
+}
+
+interface FormulaVisitLineItemRow {
+  visit_id: string;
+  amount_cents: number;
+  currency_code: string;
+  formula_breakdown: unknown;
+  updated_at: string;
+}
+
 @Injectable()
 export class LabFormulaService {
   private readonly logger = new Logger(LabFormulaService.name);
   private readonly admin: SupabaseClient;
   private readonly formulas = new Map<string, FormulaDraft | FormulaHistoryRecord>();
-  private readonly visitLineItems = new Map<string, { amountCents: number; formulaBreakdown: unknown[] }>();
 
   constructor(config: ConfigService) {
     const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
@@ -113,6 +150,7 @@ export class LabFormulaService {
   async save(actor: AuthUser, id: string, dto: SaveFormulaDto): Promise<FormulaSaveResult> {
     const context = await this.resolveFormulaContext(actor, dto);
     const savedAt = new Date().toISOString();
+    const items = normalizeItems(dto.items);
     const totalCostCents = dto.totalCostCents ?? sumItemCostCents(normalizeItems(dto.items));
     const totalWasteCostCents = dto.totalWasteCostCents ?? sumWasteCostCents(normalizeItems(dto.items));
     const billableChargeCents =
@@ -126,14 +164,14 @@ export class LabFormulaService {
     const formula: FormulaHistoryRecord = {
       id,
       labSessionId: dto.labSessionId,
-      appointmentId: dto.appointmentId,
-      visitId: dto.visitId,
+      appointmentId: context.appointmentId ?? dto.appointmentId,
+      visitId: context.visitId ?? dto.visitId,
       businessId: context.businessId,
       locationId: context.locationId,
       clientProfileId: context.clientProfileId ?? dto.clientProfileId,
       sourceFormulaId: dto.sourceFormulaId,
       status: 'saved',
-      items: normalizeItems(dto.items),
+      items,
       totalCostCents,
       totalWasteCostCents,
       billableChargeCents,
@@ -145,32 +183,68 @@ export class LabFormulaService {
       updatedAt: savedAt,
     };
 
-    this.formulas.set(formula.id, formula);
+    const rpcPayload = {
+      ...dto,
+      formulaId: id,
+      appointmentId: context.appointmentId ?? dto.appointmentId,
+      visitId: context.visitId ?? dto.visitId,
+      businessId: context.businessId,
+      locationId: context.locationId,
+      clientProfileId: context.clientProfileId ?? dto.clientProfileId,
+      items,
+      totalCostCents,
+      totalWasteCostCents,
+      billableChargeCents,
+    };
 
-    const fallbackResult = this.applyInMemoryReconciliation(formula, dto);
+    const { data, error } = await this.admin.schema('lab').rpc('save_formula_with_reconciliation', {
+      p_payload: rpcPayload,
+    });
 
-    try {
-      const { error } = await this.admin.rpc('save_formula_with_reconciliation', {
-        p_payload: {
-          ...dto,
-          formulaId: id,
-          businessId: context.businessId,
-          locationId: context.locationId,
-          clientProfileId: context.clientProfileId ?? dto.clientProfileId,
-          totalCostCents,
-          totalWasteCostCents,
-          billableChargeCents,
-        },
-      });
-
-      if (error) {
-        this.logger.warn(`save_formula_with_reconciliation failed, using in-memory fallback: ${error.message}`);
-      }
-    } catch (error) {
-      this.logger.warn(`save_formula_with_reconciliation unavailable, using in-memory fallback: ${String(error)}`);
+    if (error) {
+      this.logger.error(`save_formula_with_reconciliation failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to finalize formula');
     }
 
-    return fallbackResult;
+    const result = await this.buildFormulaSaveResult(formula, data, context.locationId);
+    this.formulas.set(formula.id, result);
+    this.logger.log(
+      JSON.stringify({
+        event: 'formula_finalized',
+        formulaId: id,
+        visitId: result.visitId,
+        itemCount: result.items.length,
+        inventoryMovements: result.inventoryMovements.length,
+        lowStockAlerts: result.lowStockAlerts.length,
+      }),
+    );
+
+    return result;
+  }
+
+  async saveForLabSession(session: LabRuntimeSession, id: string, dto: SaveFormulaDto): Promise<FormulaSaveResult> {
+    return this.finalizeForLabSession(session, id, dto);
+  }
+
+  async finalizeForLabSession(session: LabRuntimeSession, id: string, dto: SaveFormulaDto): Promise<FormulaSaveResult> {
+    this.validateFinalSavePayload(dto);
+    this.logger.log(
+      JSON.stringify({
+        event: 'formula_finalize_requested',
+        formulaId: id,
+        labSessionId: session.sessionId,
+        itemCount: Array.isArray(dto.items) ? dto.items.length : 0,
+      }),
+    );
+    return this.save(toAuthUserFromLabSession(session), id, {
+      ...dto,
+      labSessionId: session.sessionId,
+      businessId: session.businessId,
+      locationId: session.locationId,
+      billingHandoffRequested: true,
+      inventoryDeductionRequested: true,
+      finalizeRequested: true,
+    });
   }
 
   recalculate(id: string) {
@@ -223,56 +297,28 @@ export class LabFormulaService {
     };
   }
 
-  private applyInMemoryReconciliation(formula: FormulaHistoryRecord, dto: SaveFormulaDto): FormulaSaveResult {
-    const visitId = formula.visitId;
-    const visitFormulas = Array.from(this.formulas.values()).filter(
-      (candidate): candidate is FormulaHistoryRecord =>
-        candidate.status === 'saved' && Boolean(visitId) && candidate.visitId === visitId,
-    );
-    const formulaBreakdown = visitFormulas.map((candidate) => ({
-      formulaId: candidate.id,
-      actualCostCents: candidate.totalCostCents ?? 0,
-      billableChargeCents: candidate.billableChargeCents ?? candidate.totalCostCents ?? 0,
-      currencyCode: candidate.currencyCode,
-    }));
-    const amountCents = formulaBreakdown.reduce((sum, item) => sum + item.billableChargeCents, 0);
-
-    if (visitId && dto.billingHandoffRequested) {
-      this.visitLineItems.set(visitId, { amountCents, formulaBreakdown });
+  private validateFinalSavePayload(dto: SaveFormulaDto): void {
+    if (!dto.appointmentId && !dto.visitId) {
+      throw new BadRequestException('Final save requires appointment or visit context');
     }
 
-    return {
-      ...formula,
-      billingLineItem:
-        visitId && dto.billingHandoffRequested
-          ? {
-              visitId,
-              amountCents,
-              currencyCode: formula.currencyCode,
-              formulaBreakdown,
-              updatedAt: new Date().toISOString(),
-            }
-          : undefined,
-      inventoryMovements: formula.items
-        .filter((item) => item.productId && ((item.capturedGrams ?? 0) > 0 || (item.wasteGrams ?? 0) > 0))
-        .flatMap((item) => [
-          {
-            productId: item.productId ?? '',
-            quantityDeltaGrams: -(item.capturedGrams ?? 0),
-            movementType: 'formula_usage' as const,
-          },
-          ...(item.wasteGrams
-            ? [
-                {
-                  productId: item.productId ?? '',
-                  quantityDeltaGrams: -item.wasteGrams,
-                  movementType: 'formula_waste' as const,
-                },
-              ]
-            : []),
-        ]),
-      lowStockAlerts: [],
-    };
+    const items = normalizeItems(dto.items);
+    if (items.length === 0) throw new BadRequestException('Final save requires at least one ingredient');
+
+    for (const item of items) {
+      const capturedGrams = item.capturedGrams ?? 0;
+      const wasteGrams = item.wasteGrams ?? 0;
+      if (!item.productName?.trim()) throw new BadRequestException('Every final ingredient requires a product name');
+      if (capturedGrams <= 0 && wasteGrams <= 0) {
+        throw new BadRequestException('Every final ingredient requires captured grams or waste grams');
+      }
+      if (capturedGrams < 0 || wasteGrams < 0) {
+        throw new BadRequestException('Final ingredient grams cannot be negative');
+      }
+      if (item.productId && item.costPerGramCents == null) {
+        throw new BadRequestException('Catalogue ingredients require a cost basis before final save');
+      }
+    }
   }
 
   private async resolveFormulaContext(
@@ -311,7 +357,7 @@ export class LabFormulaService {
     const { data, error } = await this.admin
       .schema('booking')
       .from('appointments')
-      .select('business_id,location_id,client_profile_id,assigned_staff_profile_id')
+      .select('id,business_id,location_id,client_profile_id,assigned_staff_profile_id,appointment_services(service_name_snapshot)')
       .eq('id', appointmentId)
       .eq('business_id', actor.businessId)
       .maybeSingle<AppointmentFormulaContextRow>();
@@ -332,9 +378,13 @@ export class LabFormulaService {
       throw new ForbiddenException('Appointment is outside your client scope');
     }
 
+    const visitId = await this.ensureVisitForAppointment(data);
+
     return {
       businessId: data.business_id,
       locationId: data.location_id,
+      appointmentId: data.id,
+      visitId,
       clientProfileId: data.client_profile_id,
     };
   }
@@ -371,7 +421,160 @@ export class LabFormulaService {
     return {
       businessId: data.business_id,
       locationId: data.location_id,
+      appointmentId: data.appointment_id ?? undefined,
+      visitId: data.id,
       clientProfileId: data.client_profile_id,
+    };
+  }
+
+  private async ensureVisitForAppointment(appointment: AppointmentFormulaContextRow): Promise<string> {
+    const { data: existing, error: existingError } = await this.admin
+      .schema('booking')
+      .from('visits')
+      .select('id')
+      .eq('appointment_id', appointment.id)
+      .maybeSingle<{ id: string }>();
+
+    if (existingError) {
+      this.logger.error(`ensureVisitForAppointment lookup failed: ${existingError.message}`);
+      throw new InternalServerErrorException('Unable to resolve appointment visit');
+    }
+    if (existing) return existing.id;
+
+    const { data: created, error: createError } = await this.admin
+      .schema('booking')
+      .from('visits')
+      .insert({
+        business_id: appointment.business_id,
+        location_id: appointment.location_id,
+        appointment_id: appointment.id,
+        client_profile_id: appointment.client_profile_id,
+        primary_staff_profile_id: appointment.assigned_staff_profile_id,
+        status: 'checked_in',
+        source: 'sheer_lab_formula',
+        service_summary: summarizeAppointmentServices(appointment.appointment_services),
+      })
+      .select('id')
+      .single<{ id: string }>();
+
+    if (createError || !created) {
+      this.logger.error(`ensureVisitForAppointment create failed: ${createError?.message ?? 'no row'}`);
+      throw new InternalServerErrorException('Unable to create formula visit');
+    }
+
+    return created.id;
+  }
+
+  private async buildFormulaSaveResult(
+    formula: FormulaHistoryRecord,
+    rpcResult: unknown,
+    locationId: string,
+  ): Promise<FormulaSaveResult> {
+    const result = toRpcResult(rpcResult);
+    const persistedFormulaId = result.persistedFormulaId;
+    const billableChargeCents = toNumber(result.billableChargeCents) ?? formula.billableChargeCents ?? 0;
+    const totalCostCents = toNumber(result.actualCostCents) ?? formula.totalCostCents ?? 0;
+    const totalWasteCostCents = toNumber(result.wasteCostCents) ?? formula.totalWasteCostCents ?? 0;
+    const visitId = result.visitId ?? formula.visitId;
+    const currencyCode = result.currencyCode ?? formula.currencyCode;
+
+    const [movements, lowStockAlerts, billingLineItem] = await Promise.all([
+      persistedFormulaId ? this.fetchFormulaMovements(persistedFormulaId) : Promise.resolve([]),
+      this.fetchOpenLowStockAlerts(
+        locationId,
+        formula.items.map((item) => item.productId).filter((id): id is string => Boolean(id)),
+      ),
+      visitId && result.billingApplied ? this.fetchFormulaBillingLineItem(visitId) : Promise.resolve(undefined),
+    ]);
+
+    return {
+      ...formula,
+      visitId,
+      totalCostCents,
+      totalWasteCostCents,
+      billableChargeCents,
+      chargePreviewCents: billableChargeCents,
+      currencyCode,
+      billingStatus: result.billingApplied ? 'applied' : 'not_requested',
+      inventoryStatus: formula.inventoryStatus,
+      billingLineItem,
+      inventoryMovements: movements,
+      lowStockAlerts,
+    };
+  }
+
+  private async fetchFormulaMovements(persistedFormulaId: string): Promise<FormulaSaveResult['inventoryMovements']> {
+    const { data, error } = await this.admin
+      .schema('inventory')
+      .from('stock_movements')
+      .select('product_id,quantity_delta_grams,movement_type')
+      .eq('formula_id', persistedFormulaId)
+      .in('movement_type', ['formula_usage', 'formula_waste', 'formula_reversal'])
+      .returns<FormulaMovementRow[]>();
+
+    if (error) {
+      this.logger.error(`fetchFormulaMovements failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load formula inventory movements');
+    }
+
+    return (data ?? []).map((row) => ({
+      productId: row.product_id,
+      quantityDeltaGrams: Number(row.quantity_delta_grams),
+      movementType: row.movement_type,
+    }));
+  }
+
+  private async fetchOpenLowStockAlerts(
+    locationId: string,
+    productIds: string[],
+  ): Promise<FormulaSaveResult['lowStockAlerts']> {
+    const ids = [...new Set(productIds)];
+    if (ids.length === 0) return [];
+
+    const { data, error } = await this.admin
+      .schema('inventory')
+      .from('low_stock_alerts')
+      .select('product_id,remaining_quantity_grams,threshold_quantity_grams')
+      .eq('location_id', locationId)
+      .eq('status', 'open')
+      .in('product_id', ids)
+      .returns<FormulaLowStockAlertRow[]>();
+
+    if (error) {
+      this.logger.error(`fetchOpenLowStockAlerts failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load formula low-stock alerts');
+    }
+
+    return (data ?? []).map((row) => ({
+      productId: row.product_id,
+      remainingQuantityGrams: Number(row.remaining_quantity_grams),
+      thresholdQuantityGrams: Number(row.threshold_quantity_grams),
+    }));
+  }
+
+  private async fetchFormulaBillingLineItem(
+    visitId: string,
+  ): Promise<FormulaSaveResult['billingLineItem'] | undefined> {
+    const { data, error } = await this.admin
+      .schema('billing')
+      .from('visit_line_items')
+      .select('visit_id,amount_cents,currency_code,formula_breakdown,updated_at')
+      .eq('visit_id', visitId)
+      .eq('line_type', 'formula_colour')
+      .maybeSingle<FormulaVisitLineItemRow>();
+
+    if (error) {
+      this.logger.error(`fetchFormulaBillingLineItem failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load formula billing line item');
+    }
+    if (!data) return undefined;
+
+    return {
+      visitId: data.visit_id,
+      amountCents: data.amount_cents,
+      currencyCode: data.currency_code,
+      formulaBreakdown: parseFormulaBreakdown(data.formula_breakdown),
+      updatedAt: data.updated_at,
     };
   }
 
@@ -409,4 +612,73 @@ function sumItemCostCents(items: FormulaItem[]): number {
 
 function sumWasteCostCents(items: FormulaItem[]): number {
   return items.reduce((sum, item) => sum + (item.wasteCostCents ?? 0), 0);
+}
+
+function summarizeAppointmentServices(
+  services: AppointmentFormulaContextRow['appointment_services'],
+): string | null {
+  const rows = Array.isArray(services) ? services : services ? [services] : [];
+  const summary = rows.map((service) => service.service_name_snapshot).filter(Boolean).join(' + ');
+  return summary || null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object';
+}
+
+function toRpcResult(value: unknown): FormulaReconciliationRpcResult {
+  if (!isRecord(value)) return {};
+  return {
+    formulaId: toStringValue(value.formulaId),
+    persistedFormulaId: toStringValue(value.persistedFormulaId),
+    actualCostCents: toNumber(value.actualCostCents),
+    wasteCostCents: toNumber(value.wasteCostCents),
+    billableChargeCents: toNumber(value.billableChargeCents),
+    currencyCode: toStringValue(value.currencyCode),
+    billingApplied: value.billingApplied === true,
+    visitId: toStringValue(value.visitId),
+  };
+}
+
+function parseFormulaBreakdown(value: unknown): FormulaBillingBreakdown[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!isRecord(entry)) return [];
+    const formulaId = toStringValue(entry.formulaId);
+    const actualCostCents = toNumber(entry.actualCostCents);
+    const billableChargeCents = toNumber(entry.billableChargeCents);
+    const currencyCode = toStringValue(entry.currencyCode);
+    if (!formulaId || actualCostCents == null || billableChargeCents == null || !currencyCode) return [];
+    return [{ formulaId, actualCostCents, billableChargeCents, currencyCode }];
+  });
+}
+
+function toNumber(value: unknown): number | undefined {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number(value);
+    return Number.isNaN(parsed) ? undefined : parsed;
+  }
+  return undefined;
+}
+
+function toStringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+}
+
+function toAuthUserFromLabSession(session: LabRuntimeSession): AuthUser {
+  return {
+    id: session.userProfileId,
+    role: session.role,
+    businessId: session.businessId,
+    allowedLocationIds: [session.locationId],
+    locationScope: { kind: 'locations', locationIds: [session.locationId] },
+    locations: [{ id: session.locationId, name: 'Sheer Lab location' }],
+    profile: {
+      id: session.userProfileId,
+      email: 'sheer-lab-session@local',
+      fullName: 'Sheer Lab session',
+    },
+    staffProfileId: session.staffProfileId,
+  };
 }

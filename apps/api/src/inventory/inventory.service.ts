@@ -22,6 +22,7 @@ import type {
   ListInventoryProductsResponse,
   ListInventoryStockResponse,
 } from '@sheer/domain';
+import type { LabRuntimeSession } from '../lab-session/lab-session.service';
 import type {
   AdjustInventoryStockDto,
   InitializeInventoryStockDto,
@@ -116,27 +117,17 @@ export class InventoryService {
 
   async listProducts(actor: AuthUser, query: InventoryQueryDto): Promise<ListInventoryProductsResponse> {
     this.assertManagerOrOwner(actor);
-    let request = this.admin
-      .schema('inventory')
-      .from('products')
-      .select(PRODUCT_COLUMNS)
-      .eq('business_id', actor.businessId)
-      .order('brand', { ascending: true })
-      .order('name', { ascending: true });
+    return this.listProductsForBusiness(actor.businessId, query);
+  }
 
-    if (!query.includeInactive) request = request.eq('is_active', true);
-    if (query.category) request = request.ilike('category', `%${query.category.trim()}%`);
-    if (query.q?.trim()) {
-      const term = escapeSupabaseOr(query.q.trim());
-      request = request.or(`name.ilike.%${term}%,brand.ilike.%${term}%,sku.ilike.%${term}%,category.ilike.%${term}%`);
-    }
-
-    const { data, error } = await request.returns<ProductRow[]>();
-    if (error) {
-      this.logger.error(`listProducts failed: ${error.message}`);
-      throw new InternalServerErrorException('Unable to load inventory products');
-    }
-    return { products: (data ?? []).map(toProduct) };
+  async listProductsForLabSession(
+    session: LabRuntimeSession,
+    query: InventoryQueryDto,
+  ): Promise<ListInventoryProductsResponse> {
+    return this.listProductsForBusiness(session.businessId, {
+      ...query,
+      includeInactive: false,
+    });
   }
 
   async createProduct(actor: AuthUser, dto: UpsertInventoryProductDto): Promise<InventoryProductResponse> {
@@ -441,6 +432,33 @@ export class InventoryService {
     if (error) throw new InternalServerErrorException('Unable to load stock record');
     if (!data) throw new NotFoundException('Stock record not found');
     return data;
+  }
+
+  private async listProductsForBusiness(
+    businessId: string,
+    query: InventoryQueryDto,
+  ): Promise<ListInventoryProductsResponse> {
+    let request = this.admin
+      .schema('inventory')
+      .from('products')
+      .select(PRODUCT_COLUMNS)
+      .eq('business_id', businessId)
+      .order('brand', { ascending: true })
+      .order('name', { ascending: true });
+
+    if (!query.includeInactive) request = request.eq('is_active', true);
+    if (query.category) request = request.ilike('category', `%${query.category.trim()}%`);
+    if (query.q?.trim()) {
+      const term = escapeSupabaseOr(query.q.trim());
+      request = request.or(`name.ilike.%${term}%,brand.ilike.%${term}%,sku.ilike.%${term}%,category.ilike.%${term}%`);
+    }
+
+    const { data, error } = await request.returns<ProductRow[]>();
+    if (error) {
+      this.logger.error(`listProducts failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load inventory products');
+    }
+    return { products: (data ?? []).map(toProduct) };
   }
 
   private async fetchProductsById(businessId: string, productIds: string[]): Promise<Map<string, InventoryProduct>> {

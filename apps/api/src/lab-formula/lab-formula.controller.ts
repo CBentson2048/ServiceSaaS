@@ -3,6 +3,7 @@ import type { AuthUser } from '@sheer/domain';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { RequireRoles, RolesGuard } from '../auth/roles.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
+import { LabSessionService } from '../lab-session/lab-session.service';
 import {
   AddFormulaItemDto,
   CaptureWeightDto,
@@ -66,5 +67,23 @@ export class LabFormulaController {
   @Post(':id/duplicate')
   duplicate(@CurrentUser() actor: AuthUser, @Param('id') id: string, @Body() dto: DuplicateFormulaDto) {
     return this.labFormulaService.duplicate(actor, id, dto);
+  }
+}
+
+@Controller('lab/formulas/session')
+export class LabSessionFormulaController {
+  constructor(
+    private readonly labFormulaService: LabFormulaService,
+    private readonly labSessionService: LabSessionService,
+  ) {}
+
+  @Post(':sessionId/:id/finalize')
+  async finalize(
+    @Param('sessionId') sessionId: string,
+    @Param('id') id: string,
+    @Body() dto: SaveFormulaDto,
+  ) {
+    const session = await this.labSessionService.assertActiveSession(sessionId);
+    return this.labFormulaService.finalizeForLabSession(session, id, dto);
   }
 }

@@ -40,6 +40,10 @@ export class CaptureWeightDto {
 }
 
 export class SaveFormulaDto {
+  @IsOptional()
+  @IsString()
+  formulaId?: string;
+
   @IsString()
   labSessionId!: string;
 
@@ -71,6 +75,9 @@ export class SaveFormulaDto {
   items?: unknown[];
 
   @IsOptional()
+  manualFallbacks?: unknown[];
+
+  @IsOptional()
   @IsNumber()
   totalCostCents?: number;
 
@@ -91,6 +98,10 @@ export class SaveFormulaDto {
 
   @IsOptional()
   inventoryDeductionRequested?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  finalizeRequested?: boolean;
 }
 
 export class DuplicateFormulaDto {

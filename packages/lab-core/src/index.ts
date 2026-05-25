@@ -97,6 +97,7 @@ export interface FormulaSavePayload {
   currencyCode?: string;
   billingHandoffRequested: boolean;
   inventoryDeductionRequested?: boolean;
+  finalizeRequested?: boolean;
 }
 
 export interface FormulaHistoryRecord extends FormulaDraft {

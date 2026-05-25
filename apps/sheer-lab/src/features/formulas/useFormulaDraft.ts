@@ -30,6 +30,7 @@ export function useFormulaDraft() {
     formulaDraftStore.applyManualWeight(rowId, grams);
   }, []);
   const saveDraft = useCallback(() => formulaDraftStore.saveDraft(), []);
+  const markFinalized = useCallback(() => formulaDraftStore.markFinalized(), []);
   const loadDraft = useCallback((draftId?: string) => formulaDraftStore.loadDraft(draftId), []);
   const getHistoryForClient = useCallback((clientProfileId?: string) => {
     return formulaDraftStore.getHistoryForClient(clientProfileId);
@@ -51,6 +52,7 @@ export function useFormulaDraft() {
     [],
   );
   const toSavePayload = useCallback(() => formulaDraftStore.toSavePayload(), []);
+  const toFinalSavePayload = useCallback(() => formulaDraftStore.toFinalSavePayload(), []);
 
   return {
     draft,
@@ -61,11 +63,13 @@ export function useFormulaDraft() {
     applyBleWeight,
     applyManualWeight,
     saveDraft,
+    markFinalized,
     loadDraft,
     getHistoryForClient,
     getLatestFormulaForClient,
     duplicateFormula,
     startFromAppointmentContext,
     toSavePayload,
+    toFinalSavePayload,
   };
 }

@@ -11,6 +11,7 @@ import type {
 import { CurrentUser } from '../auth/current-user.decorator';
 import { RequireRoles, RolesGuard } from '../auth/roles.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
+import { LabSessionService } from '../lab-session/lab-session.service';
 import {
   AdjustInventoryStockDto,
   InitializeInventoryStockDto,
@@ -96,5 +97,22 @@ export class InventoryController {
   @Get('low-stock')
   listLowStock(@CurrentUser() actor: AuthUser, @Query('locationId') locationId?: string): Promise<ListInventoryLowStockResponse> {
     return this.inventory.listLowStock(actor, locationId);
+  }
+}
+
+@Controller('lab/inventory/session')
+export class LabSessionInventoryController {
+  constructor(
+    private readonly inventory: InventoryService,
+    private readonly labSessionService: LabSessionService,
+  ) {}
+
+  @Get(':sessionId/products')
+  async listProducts(
+    @Param('sessionId') sessionId: string,
+    @Query() query: InventoryQueryDto,
+  ): Promise<ListInventoryProductsResponse> {
+    const session = await this.labSessionService.assertActiveSession(sessionId);
+    return this.inventory.listProductsForLabSession(session, query);
   }
 }

@@ -9,7 +9,7 @@ import type {
   FormulaVisitContext,
   SavedFormulaRecord,
 } from './formulaDraftTypes';
-import { toLabCoreFormulaItems, toFormulaSavePayload } from './formulaDraftTypes';
+import { toLabCoreFormulaItems, toFormulaFinalSavePayload, toFormulaSavePayload } from './formulaDraftTypes';
 
 type FormulaDraftListener = (draft: FormulaDraftSession) => void;
 
@@ -120,6 +120,23 @@ export const formulaDraftStore = {
 
     return savedDraft;
   },
+  markFinalized(): FormulaDraftSession {
+    const finalizedAt = new Date().toISOString();
+    const finalizedDraft = recalculateDraft({
+      ...currentDraft,
+      status: 'saved',
+      savedAt: finalizedAt,
+      finalizedAt,
+      updatedAt: finalizedAt,
+    });
+
+    currentDraft = finalizedDraft;
+    persistedDrafts.set(finalizedDraft.id, finalizedDraft);
+    saveHistoryRecord(finalizedDraft, finalizedAt);
+    emit();
+
+    return finalizedDraft;
+  },
   loadDraft(draftId = currentDraft.id): FormulaDraftSession | undefined {
     const draft = persistedDrafts.get(draftId);
     if (!draft) return undefined;
@@ -176,6 +193,9 @@ export const formulaDraftStore = {
   toSavePayload() {
     return toFormulaSavePayload(currentDraft);
   },
+  toFinalSavePayload() {
+    return toFormulaFinalSavePayload(currentDraft);
+  },
 };
 
 function createInitialDraft(): FormulaDraftSession {
@@ -216,6 +236,7 @@ function createEmptyIngredientRow(productName = ''): FormulaIngredientRow {
 
   return {
     id: `ingredient-${rowSequence}`,
+    identityMode: 'catalogue_product',
     productName,
     costBasis: {
       source: 'missing',

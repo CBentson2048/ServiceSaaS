@@ -55,6 +55,7 @@ export interface LabRuntimeSession {
   locationId: string;
   sharedDeviceId: string;
   userProfileId: string;
+  staffProfileId?: string;
   role: Extract<UserRole, 'owner' | 'manager' | 'stylist'>;
 }
 
@@ -238,8 +239,26 @@ export class LabSessionService {
       locationId: data.location_id,
       sharedDeviceId: data.shared_device_id,
       userProfileId: data.user_profile_id,
+      staffProfileId: await this.fetchStaffProfileId(data),
       role: data.role,
     };
+  }
+
+  private async fetchStaffProfileId(session: FormulaSessionRow): Promise<string | undefined> {
+    const { data, error } = await this.admin
+      .schema('core')
+      .from('staff_profiles')
+      .select('id')
+      .eq('business_id', session.business_id)
+      .eq('primary_location_id', session.location_id)
+      .eq('user_profile_id', session.user_profile_id)
+      .maybeSingle<{ id: string }>();
+
+    if (error) {
+      this.logger.error(`fetchStaffProfileId failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to resolve stylist profile');
+    }
+    return data?.id;
   }
 
   private async fetchActiveSharedDevice(deviceId: string, locationId: string): Promise<SharedDeviceRow> {

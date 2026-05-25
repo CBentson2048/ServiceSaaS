@@ -28,6 +28,19 @@ export async function getActiveLabSession() {
   return session;
 }
 
+export async function refreshActiveLabSession() {
+  const session = await getActiveLabSession();
+  if (!session) return undefined;
+
+  try {
+    await sheerApiClient.labSessions.heartbeat(session.sessionId);
+    return session;
+  } catch {
+    await clearLabSession();
+    return undefined;
+  }
+}
+
 export async function logoutLabSession(sessionId: string): Promise<void> {
   await sheerApiClient.labSessions.logout(sessionId);
   await clearLabSession();

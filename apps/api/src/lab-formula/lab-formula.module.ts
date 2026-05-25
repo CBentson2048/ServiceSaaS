@@ -1,11 +1,12 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
-import { LabFormulaController } from './lab-formula.controller';
+import { LabSessionModule } from '../lab-session/lab-session.module';
+import { LabFormulaController, LabSessionFormulaController } from './lab-formula.controller';
 import { LabFormulaService } from './lab-formula.service';
 
 @Module({
-  imports: [AuthModule],
-  controllers: [LabFormulaController],
+  imports: [AuthModule, LabSessionModule],
+  controllers: [LabFormulaController, LabSessionFormulaController],
   providers: [LabFormulaService],
 })
 export class LabFormulaModule {}

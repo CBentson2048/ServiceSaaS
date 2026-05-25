@@ -1,5 +1,6 @@
 import type { FormulaSavePayload } from '@sheer/lab-core';
 
+import { appConfig } from '../../config/appConfig';
 import { sheerApiClient } from '../../lib/api/client';
 
 export async function startFormula(input: {
@@ -12,6 +13,25 @@ export async function startFormula(input: {
 
 export async function saveFormula(payload: FormulaSavePayload) {
   return sheerApiClient.labFormulas.save(payload);
+}
+
+export async function finalizeFormulaForLabSession(sessionId: string, payload: FormulaSavePayload) {
+  const response = await fetch(
+    `${appConfig.apiBaseUrl}/lab/formulas/session/${encodeURIComponent(sessionId)}/${encodeURIComponent(payload.formulaId)}/finalize`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(`Could not finalize formula (${response.status})`);
+  }
+
+  return response.json();
 }
 
 export async function getLatestFormulaForClient(clientProfileId: string) {
