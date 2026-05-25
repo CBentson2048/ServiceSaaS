@@ -37,6 +37,4 @@ RUN corepack enable
 
 COPY --from=build /app ./
 
-EXPOSE 3001
-
 CMD ["node", "apps/api/dist/main.js"]
