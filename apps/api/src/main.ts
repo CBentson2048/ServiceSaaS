@@ -27,8 +27,8 @@ async function bootstrap() {
   );
   app.setGlobalPrefix('api', { exclude: ['health', 'health/ready'] });
 
-  await app.listen(port);
-  Logger.log(`Sheer API listening on http://localhost:${port}`, 'Bootstrap');
+  await app.listen(port, '0.0.0.0');
+  Logger.log(`Sheer API listening on http://0.0.0.0:${port}`, 'Bootstrap');
 }
 
 bootstrap().catch((err) => {
