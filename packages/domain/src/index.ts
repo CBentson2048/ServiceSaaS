@@ -783,6 +783,155 @@ export interface SheerLabAnalyticsResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Owner / manager dashboard KPIs
+// ---------------------------------------------------------------------------
+
+export type DashboardDateRange = 'today' | 'week' | 'month';
+
+export interface DashboardLocationSummary {
+  id: string;
+  name: string;
+  code?: string;
+  addressLine1?: string;
+  city?: string;
+}
+
+export interface DashboardKpiSummary {
+  totalRevenueCents: number;
+  totalBookings: number;
+  completedBookings: number;
+  cancelledBookings: number;
+  noShowBookings: number;
+  newClients: number;
+  repeatClients: number;
+  completedPaidBookings: number;
+  averageBookingValueCents: number;
+  lowStockProducts: number;
+  currencyCode: string;
+}
+
+export interface DashboardLocationKpiSummary extends DashboardKpiSummary {
+  locationId: string;
+  locationName: string;
+}
+
+export interface DashboardKpisResponse {
+  rangeStart: string;
+  rangeEnd: string;
+  scope: 'owner' | 'manager';
+  selectedLocationId?: string;
+  locations: DashboardLocationSummary[];
+  summary: DashboardKpiSummary;
+  byLocation: DashboardLocationKpiSummary[];
+}
+
+export interface DashboardTopService {
+  serviceName: string;
+  bookingCount: number;
+  revenueCents: number;
+  currencyCode: string;
+}
+
+export interface DashboardTopServicesResponse {
+  rangeStart: string;
+  rangeEnd: string;
+  scope: 'owner' | 'manager';
+  selectedLocationId?: string;
+  services: DashboardTopService[];
+}
+
+export interface DashboardStylistPerformance {
+  staffProfileId?: string;
+  stylistName: string;
+  locationId: string;
+  locationName: string;
+  totalBookings: number;
+  completedBookings: number;
+  cancelledBookings: number;
+  noShowBookings: number;
+  revenueCents: number;
+  averageBookingValueCents: number;
+  currencyCode: string;
+}
+
+export interface DashboardStylistPerformanceResponse {
+  rangeStart: string;
+  rangeEnd: string;
+  scope: 'owner' | 'manager';
+  selectedLocationId?: string;
+  stylists: DashboardStylistPerformance[];
+}
+
+export interface DashboardInventoryAlert {
+  locationId: string;
+  locationName: string;
+  productId: string;
+  productName: string;
+  brand?: string;
+  quantityOnHandGrams: number;
+  thresholdGrams: number;
+}
+
+export interface DashboardInventoryAlertsResponse {
+  scope: 'owner' | 'manager';
+  selectedLocationId?: string;
+  count: number;
+  alerts: DashboardInventoryAlert[];
+}
+
+// ---------------------------------------------------------------------------
+// Sheer mobile app dashboard
+// ---------------------------------------------------------------------------
+
+export interface MobileClientProfileSummary {
+  id: string;
+  displayName: string;
+  communicationPreference?: 'whatsapp' | 'sms' | 'email';
+}
+
+export interface MobileClientDashboardResponse {
+  role: 'client';
+  profile: MobileClientProfileSummary;
+  nextAppointment?: StaffBookingSummary;
+  upcomingAppointments: StaffBookingSummary[];
+  visitHistory: CrmVisitSummary[];
+}
+
+export interface MobileStylistDashboardResponse {
+  role: 'stylist';
+  displayName: string;
+  today: {
+    rangeStart: string;
+    rangeEnd: string;
+    totalAppointments: number;
+    nextAppointment?: StaffBookingSummary;
+    appointments: StaffBookingSummary[];
+  };
+}
+
+export interface MobileManagerDashboardResponse {
+  role: 'manager';
+  location: AuthLocation;
+  today: {
+    rangeStart: string;
+    rangeEnd: string;
+    bookingsCount: number;
+    completedBookingsCount: number;
+    upcomingBookingsCount: number;
+    stylistsWorkingToday: number;
+    lowStockAlertCount: number;
+    recentAppointments: StaffBookingSummary[];
+  };
+}
+
+export interface MobileOwnerDashboardResponse {
+  role: 'owner';
+  displayName: string;
+  message: string;
+  locations: AuthLocation[];
+}
+
+// ---------------------------------------------------------------------------
 // Inventory management
 // ---------------------------------------------------------------------------
 
@@ -1003,10 +1152,14 @@ export interface PublicBookingStylistsResponse {
 export interface PublicBookingAvailabilitySlot {
   startAt: string;
   endAt: string;
+  startTime?: string;
+  endTime?: string;
   date: string;
   locationId: string;
   staffProfileId: string;
+  stylistId?: string;
   stylistName: string;
+  totalDurationMinutes?: number;
 }
 
 export interface PublicBookingAvailabilityResponse {
@@ -1034,6 +1187,7 @@ export interface CreatePublicBookingRequest {
   clientProfileId: string;
   bookedByUserProfileId: string;
   clientNote?: string;
+  source?: 'public_booking_flow' | 'mobile_app';
 }
 
 export interface StartPublicBookingCheckoutRequest {
@@ -1047,7 +1201,20 @@ export interface StartPublicBookingCheckoutRequest {
   clientProfileId: string;
   bookedByUserProfileId: string;
   clientNote?: string;
+  source?: 'public_booking_flow' | 'mobile_app';
 }
+
+export interface MobileBookingConfirmRequest {
+  locationId: string;
+  serviceIds: string[];
+  staffProfileId: string;
+  selectedStartAt: string;
+  staffRequestMode: 'specific_staff' | 'next_available';
+  communicationPreference: 'whatsapp' | 'sms' | 'email';
+  clientNote?: string;
+}
+
+export interface MobileBookingStartCheckoutRequest extends MobileBookingConfirmRequest {}
 
 export interface PublicBookingAppointmentSummary {
   id: string;

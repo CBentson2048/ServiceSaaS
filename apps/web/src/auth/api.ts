@@ -13,6 +13,10 @@ import type {
   CreateCrmClientRequest,
   CreateCrmPatchTestRequest,
   CreateCrmVisitPhotoRequest,
+  DashboardInventoryAlertsResponse,
+  DashboardKpisResponse,
+  DashboardStylistPerformanceResponse,
+  DashboardTopServicesResponse,
   CreateLocationRequest,
   LabDeviceRegistrationResponse,
   InventoryProductResponse,
@@ -247,6 +251,44 @@ export async function getSheerLabAnalytics(
   if (params.locationId) search.set('locationId', params.locationId);
   const query = search.toString();
   return request<SheerLabAnalyticsResponse>(`/lab/analytics/summary${query ? `?${query}` : ''}`, {
+    accessToken,
+  });
+}
+
+export async function getDashboardKpis(
+  accessToken: string,
+  params: { locationId?: string; from: string; to: string },
+): Promise<DashboardKpisResponse> {
+  const search = dashboardDateRangeSearch(params);
+  return request<DashboardKpisResponse>(`/dashboard/kpis?${search.toString()}`, { accessToken });
+}
+
+export async function getDashboardTopServices(
+  accessToken: string,
+  params: { locationId?: string; from: string; to: string },
+): Promise<DashboardTopServicesResponse> {
+  const search = dashboardDateRangeSearch(params);
+  return request<DashboardTopServicesResponse>(`/dashboard/top-services?${search.toString()}`, { accessToken });
+}
+
+export async function getDashboardStylistPerformance(
+  accessToken: string,
+  params: { locationId?: string; from: string; to: string },
+): Promise<DashboardStylistPerformanceResponse> {
+  const search = dashboardDateRangeSearch(params);
+  return request<DashboardStylistPerformanceResponse>(`/dashboard/stylist-performance?${search.toString()}`, {
+    accessToken,
+  });
+}
+
+export async function getDashboardInventoryAlerts(
+  accessToken: string,
+  params: { locationId?: string } = {},
+): Promise<DashboardInventoryAlertsResponse> {
+  const search = new URLSearchParams();
+  if (params.locationId) search.set('locationId', params.locationId);
+  const query = search.toString();
+  return request<DashboardInventoryAlertsResponse>(`/dashboard/inventory-alerts${query ? `?${query}` : ''}`, {
     accessToken,
   });
 }
@@ -1045,6 +1087,14 @@ export class ApiRequestError extends Error {
     this.status = status;
     this.details = details;
   }
+}
+
+function dashboardDateRangeSearch(params: { locationId?: string; from: string; to: string }): URLSearchParams {
+  const search = new URLSearchParams();
+  search.set('from', params.from);
+  search.set('to', params.to);
+  if (params.locationId) search.set('locationId', params.locationId);
+  return search;
 }
 
 async function request<T>(

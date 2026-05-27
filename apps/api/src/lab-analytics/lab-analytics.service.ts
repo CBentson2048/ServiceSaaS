@@ -70,10 +70,10 @@ interface LowStockAlertRow {
   threshold_quantity_grams: number | string;
   status: 'open' | 'acknowledged' | 'resolved';
   last_triggered_at: string;
-  inventory_products?: ProductRelation[] | ProductRelation | null;
 }
 
 interface ProductRelation {
+  id: string;
   name: string;
   brand: string | null;
 }
@@ -85,7 +85,8 @@ const VISIT_COLUMNS =
   'id,primary_staff_profile_id,service_summary,appointments(assigned_staff_profile_id,appointment_services(service_name_snapshot))';
 const STAFF_COLUMNS = 'id,display_name,user_profiles(full_name)';
 const LOW_STOCK_COLUMNS =
-  'id,location_id,product_id,remaining_quantity_grams,threshold_quantity_grams,status,last_triggered_at,inventory_products(name,brand)';
+  'id,location_id,product_id,remaining_quantity_grams,threshold_quantity_grams,status,last_triggered_at';
+const PRODUCT_COLUMNS = 'id,name,brand';
 
 @Injectable()
 export class LabAnalyticsService {
@@ -127,8 +128,10 @@ export class LabAnalyticsService {
     const byLocation = buildLocationMetrics(formulas, locationNames);
     const byStylist = buildStylistMetrics(formulas, visits, staffProfiles, locationNames);
     const serviceTypes = buildServiceTypeMetrics(formulas, visits);
-    const products = buildProductUsageMetrics(items, formulas);
+    const productMetrics = buildProductUsageMetrics(items, formulas);
     const summary = buildSummary(formulas, byLocation);
+
+    const productsById = await this.fetchProducts(lowStockAlerts.map((alert) => alert.product_id));
 
     return {
       range: normalizedRange,
@@ -139,9 +142,9 @@ export class LabAnalyticsService {
       byLocation,
       byStylist,
       averageFormulaCostByServiceType: serviceTypes,
-      mostUsedProductsByWeight: [...products].sort((a, b) => b.totalWeightGrams - a.totalWeightGrams).slice(0, 8),
-      mostUsedProductsByCost: [...products].sort((a, b) => b.totalCostCents - a.totalCostCents).slice(0, 8),
-      lowStockAlerts: lowStockAlerts.map((alert) => toLowStockAlert(alert, locationNames)),
+      mostUsedProductsByWeight: [...productMetrics].sort((a, b) => b.totalWeightGrams - a.totalWeightGrams).slice(0, 8),
+      mostUsedProductsByCost: [...productMetrics].sort((a, b) => b.totalCostCents - a.totalCostCents).slice(0, 8),
+      lowStockAlerts: lowStockAlerts.map((alert) => toLowStockAlert(alert, locationNames, productsById)),
     };
   }
 
@@ -249,6 +252,21 @@ export class LabAnalyticsService {
     if (error) this.throwQueryError('fetchLowStockAlerts', error.message);
 
     return data ?? [];
+  }
+
+  private async fetchProducts(productIds: string[]): Promise<Map<string, ProductRelation>> {
+    const uniqueProductIds = Array.from(new Set(productIds));
+    if (uniqueProductIds.length === 0) return new Map();
+
+    const { data, error } = await this.admin
+      .schema('inventory')
+      .from('products')
+      .select(PRODUCT_COLUMNS)
+      .in('id', uniqueProductIds)
+      .returns<ProductRelation[]>();
+    if (error) this.throwQueryError('fetchProducts', error.message);
+
+    return new Map((data ?? []).map((product) => [product.id, product]));
   }
 
   private throwQueryError(operation: string, message: string): never {
@@ -405,9 +423,12 @@ function buildProductUsageMetrics(
   }));
 }
 
-function toLowStockAlert(alert: LowStockAlertRow, locationNames: Map<string, string>): SheerLabLowStockAlert {
-  const product = firstRelation(alert.inventory_products);
-
+function toLowStockAlert(
+  alert: LowStockAlertRow,
+  locationNames: Map<string, string>,
+  productsById: Map<string, ProductRelation>,
+): SheerLabLowStockAlert {
+  const product = productsById.get(alert.product_id);
   return {
     id: alert.id,
     locationId: alert.location_id,

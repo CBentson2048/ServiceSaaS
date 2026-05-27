@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import type { RotaLeaveRequest, RotaShift, StylistMyWeekResponse } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
-import { AppButton, Card, EmptyState, Screen, SectionHeader } from '@sheer/ui-mobile';
+import { AppButton, EmptyState, Screen } from '@sheer/ui-mobile';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
@@ -114,29 +114,58 @@ export default function RotaScreen() {
   }
 
   return (
-    <ProtectedScreen allowedRoles={['stylist']}>
+    <ProtectedScreen allowedRoles={['manager', 'stylist']}>
       <Screen>
-        <SectionHeader
-          title="My Week"
-          subtitle="Your own shifts, breaks, leave, and absence markers."
-        />
+        <View style={styles.hero}>
+          <View style={styles.heroTopRow}>
+            <Text style={styles.eyebrow}>Rota management</Text>
+            <View style={styles.livePill}>
+              <Text style={styles.livePillText}>Live</Text>
+            </View>
+          </View>
+          <Text style={styles.heroTitle}>My week</Text>
+          <Text style={styles.heroBody}>Your shifts, breaks, leave, and absence markers in one clear weekly view.</Text>
+        </View>
 
         <View style={styles.weekNav}>
           <AppButton label="Previous" variant="secondary" onPress={() => shiftWeek(-7)} />
-          <Text style={styles.weekLabel}>{formatWeekLabel(weekDays)}</Text>
+          <View style={styles.weekLabelCard}>
+            <Text style={styles.eyebrow}>Week</Text>
+            <Text style={styles.weekLabel}>{formatWeekLabel(weekDays)}</Text>
+          </View>
           <AppButton label="Next" variant="secondary" onPress={() => shiftWeek(7)} />
         </View>
 
-        {message ? <Text style={styles.success}>{message}</Text> : null}
-        {error ? <Text style={styles.error}>{error}</Text> : null}
+        {message ? (
+          <View style={styles.successCard}>
+            <Text style={styles.success}>{message}</Text>
+          </View>
+        ) : null}
+        {error ? (
+          <View style={styles.alertCard}>
+            <Text style={styles.error}>{error}</Text>
+          </View>
+        ) : null}
 
         {loading ? (
-          <Card>
-            <ActivityIndicator color={palette.brand[300]} />
-            <Text style={styles.muted}>Loading your week...</Text>
-          </Card>
+          <View style={styles.panel}>
+            <View style={styles.loadingRow}>
+              <ActivityIndicator color={palette.brand[300]} />
+              <View style={styles.flex}>
+                <Text style={styles.cardTitle}>Preparing your rota</Text>
+                <Text style={styles.muted}>Loading your week...</Text>
+              </View>
+            </View>
+          </View>
         ) : (
           <>
+            <View style={styles.metricGrid}>
+              <MetricTile label="Shifts" value={String(week?.shifts.length ?? 0)} />
+              <MetricTile label="Leave days" value={String(countLeaveDays(week?.leave ?? [], weekDays))} />
+              <MetricTile label="Absences" value={String(week?.absences.length ?? 0)} tone={(week?.absences.length ?? 0) > 0 ? 'warning' : 'default'} />
+            </View>
+
+            <SectionTitle title="Weekly rota" subtitle="Published shift details by day." />
             <View style={styles.days}>
               {weekDays.map((day) => (
                 <DayCard
@@ -158,11 +187,10 @@ export default function RotaScreen() {
           </>
         )}
 
-        <Card>
-          <SectionHeader
-            title="Request leave"
-            subtitle={`Requests inside ${holidayNoticeDays} days may need manager override.`}
-          />
+        <View style={styles.panelAccent}>
+          <Text style={styles.eyebrow}>Leave request</Text>
+          <Text style={styles.panelTitle}>Request leave</Text>
+          <Text style={styles.muted}>Requests inside {holidayNoticeDays} days may need manager override.</Text>
           <TextInput
             placeholder="Start date (YYYY-MM-DD)"
             placeholderTextColor="rgba(255,255,255,0.45)"
@@ -192,20 +220,22 @@ export default function RotaScreen() {
             onPress={() => void submitLeaveRequest()}
             disabled={submitting}
           />
-        </Card>
+        </View>
 
-        <SectionHeader title="Leave requests" subtitle="Track manager approval status." />
+        <SectionTitle title="Leave requests" subtitle="Track manager approval status." />
         {leaveRequests.length === 0 ? (
           <EmptyState title="No leave requests" body="Submitted requests will appear here." />
         ) : (
-          leaveRequests.map((request) => (
-            <LeaveRequestCard
-              key={request.id}
-              request={request}
-              cancelling={cancellingRequestId === request.id}
-              onCancel={() => void cancelLeaveRequest(request.id)}
-            />
-          ))
+          <View style={styles.days}>
+            {leaveRequests.map((request) => (
+              <LeaveRequestCard
+                key={request.id}
+                request={request}
+                cancelling={cancellingRequestId === request.id}
+                onCancel={() => void cancelLeaveRequest(request.id)}
+              />
+            ))}
+          </View>
         )}
       </Screen>
     </ProtectedScreen>
@@ -229,21 +259,25 @@ function DayCard({
   const dayAbsences = absences.filter((item) => isSameLocalDay(item.startsAt, day));
 
   return (
-    <Card>
+    <View style={styles.dayCard}>
       <View style={styles.dayHeader}>
-        <Text style={styles.dayTitle}>{day.toLocaleDateString(undefined, { weekday: 'long' })}</Text>
-        <Text style={styles.muted}>{day.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}</Text>
+        <View style={styles.flex}>
+          <Text style={styles.dayTitle}>{day.toLocaleDateString(undefined, { weekday: 'long' })}</Text>
+          <Text style={styles.muted}>{day.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}</Text>
+        </View>
+        <View style={styles.countPill}>
+          <Text style={styles.countPillText}>
+            {dayShifts.length ? `${dayShifts.length} shift${dayShifts.length === 1 ? '' : 's'}` : 'Open'}
+          </Text>
+        </View>
       </View>
       {dayShifts.map((shift) => (
         <View key={shift.id} style={styles.shiftBlock}>
-          <Text style={styles.shiftTime}>
-            {formatTime(shift.scheduledStartAt)} - {formatTime(shift.scheduledEndAt)}
-          </Text>
-          <Text style={styles.muted}>
-            {shift.breaks.length
-              ? `${shift.breaks.length} break${shift.breaks.length === 1 ? '' : 's'}`
-              : 'No breaks'}
-          </Text>
+          <View style={styles.detailRow}>
+            <Detail label="Start" value={formatTime(shift.scheduledStartAt)} />
+            <Detail label="Finish" value={formatTime(shift.scheduledEndAt)} />
+            <Detail label="Breaks" value={shift.breaks.length ? String(shift.breaks.length) : 'None'} />
+          </View>
           {shift.breaks.map((breakItem) => (
             <Text key={breakItem.id} style={styles.breakText}>
               Break {formatTime(breakItem.startedAt)} - {formatTime(breakItem.endedAt)}
@@ -261,7 +295,7 @@ function DayCard({
       {dayShifts.length === 0 && dayLeave.length === 0 && dayAbsences.length === 0 ? (
         <Text style={styles.muted}>No rota entry.</Text>
       ) : null}
-    </Card>
+    </View>
   );
 }
 
@@ -275,12 +309,14 @@ function LeaveRequestCard({
   onCancel: () => void;
 }) {
   return (
-    <Card>
+    <View style={styles.dayCard}>
       <View style={styles.dayHeader}>
-        <Text style={styles.dayTitle}>{request.startDate} to {request.endDate}</Text>
+        <View style={styles.flex}>
+          <Text style={styles.dayTitle}>{formatDateRange(request.startDate, request.endDate)}</Text>
+          <Text style={styles.muted}>{request.reason || 'No note provided'}</Text>
+        </View>
         <StatusPill status={request.status} />
       </View>
-      {request.reason ? <Text style={styles.muted}>{request.reason}</Text> : null}
       {request.insideNoticeWindow ? (
         <Text style={styles.warningText}>Inside notice window</Text>
       ) : null}
@@ -298,7 +334,42 @@ function LeaveRequestCard({
           <Text style={styles.cancelButtonText}>{cancelling ? 'Cancelling...' : 'Cancel request'}</Text>
         </Pressable>
       ) : null}
-    </Card>
+    </View>
+  );
+}
+
+function SectionTitle({ title, subtitle }: { title: string; subtitle?: string }) {
+  return (
+    <View style={styles.sectionTitle}>
+      <Text style={styles.sectionTitleText}>{title}</Text>
+      {subtitle ? <Text style={styles.muted}>{subtitle}</Text> : null}
+    </View>
+  );
+}
+
+function MetricTile({
+  label,
+  value,
+  tone = 'default',
+}: {
+  label: string;
+  value: string;
+  tone?: 'default' | 'warning';
+}) {
+  return (
+    <View style={[styles.metricTile, tone === 'warning' && styles.metricTileWarning]}>
+      <Text style={[styles.metricValue, tone === 'warning' && styles.metricValueWarning]}>{value}</Text>
+      <Text style={styles.metricLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function Detail({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.detailBox}>
+      <Text style={styles.detailLabel}>{label}</Text>
+      <Text style={styles.detailValue}>{value}</Text>
+    </View>
   );
 }
 
@@ -367,49 +438,245 @@ function formatWeekLabel(days: Date[]): string {
   return `${start.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} - ${end.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`;
 }
 
+function formatDateRange(start: string, end: string): string {
+  return start === end ? start : `${start} to ${end}`;
+}
+
+function countLeaveDays(leave: StylistMyWeekResponse['leave'], weekDays: Date[]): number {
+  return weekDays.filter((day) => {
+    const dayIso = toIsoDate(day);
+    return leave.some((item) => item.startDate <= dayIso && dayIso <= item.endDate);
+  }).length;
+}
+
 const styles = StyleSheet.create({
+  flex: {
+    flex: 1,
+    gap: spacing.xs,
+  },
+  hero: {
+    gap: spacing.sm,
+    padding: spacing.xl,
+    borderRadius: radius.cardLg,
+    borderWidth: 1,
+    borderColor: 'rgba(196,160,245,0.28)',
+    backgroundColor: palette.ink[700],
+  },
+  heroTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+  },
+  eyebrow: {
+    color: palette.brand[300],
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
+  heroTitle: {
+    color: palette.white,
+    fontSize: 30,
+    fontWeight: '800',
+    letterSpacing: -0.5,
+  },
+  heroBody: {
+    color: 'rgba(255,255,255,0.72)',
+    fontSize: 14,
+    lineHeight: 21,
+  },
+  livePill: {
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    backgroundColor: 'rgba(74,222,128,0.16)',
+    borderWidth: 1,
+    borderColor: 'rgba(74,222,128,0.36)',
+  },
+  livePillText: {
+    color: palette.success[300],
+    fontSize: 12,
+    fontWeight: '800',
+  },
   weekNav: {
     gap: spacing.sm,
   },
+  weekLabelCard: {
+    alignItems: 'center',
+    gap: spacing.xs,
+    padding: spacing.base,
+    borderRadius: radius.cardLg,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: 'rgba(255,255,255,0.055)',
+  },
   weekLabel: {
     color: palette.white,
-    fontSize: 16,
-    fontWeight: '700',
+    fontSize: 17,
+    fontWeight: '800',
     textAlign: 'center',
+  },
+  panel: {
+    gap: spacing.sm,
+    padding: spacing.base,
+    borderRadius: radius.cardLg,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: 'rgba(255,255,255,0.055)',
+  },
+  panelAccent: {
+    gap: spacing.base,
+    padding: spacing.lg,
+    borderRadius: radius.cardLg,
+    borderWidth: 1,
+    borderColor: 'rgba(196,160,245,0.28)',
+    backgroundColor: 'rgba(166,124,245,0.12)',
+  },
+  panelTitle: {
+    color: palette.white,
+    fontSize: 22,
+    fontWeight: '800',
+  },
+  alertCard: {
+    gap: spacing.sm,
+    padding: spacing.base,
+    borderRadius: radius.cardLg,
+    borderWidth: 1,
+    borderColor: 'rgba(248,113,113,0.34)',
+    backgroundColor: 'rgba(248,113,113,0.09)',
+  },
+  successCard: {
+    gap: spacing.sm,
+    padding: spacing.base,
+    borderRadius: radius.cardLg,
+    borderWidth: 1,
+    borderColor: 'rgba(74,222,128,0.34)',
+    backgroundColor: 'rgba(74,222,128,0.09)',
+  },
+  loadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.base,
+  },
+  cardTitle: {
+    color: palette.white,
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  sectionTitle: {
+    gap: spacing.xs,
+    marginTop: spacing.sm,
+  },
+  sectionTitleText: {
+    color: palette.white,
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  metricGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  metricTile: {
+    minWidth: '31%',
+    flexGrow: 1,
+    gap: spacing.xs,
+    padding: spacing.base,
+    borderRadius: radius.cardLg,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: 'rgba(255,255,255,0.055)',
+  },
+  metricTileWarning: {
+    borderColor: 'rgba(245,158,11,0.38)',
+    backgroundColor: 'rgba(245,158,11,0.11)',
+  },
+  metricValue: {
+    color: palette.brand[300],
+    fontSize: 26,
+    fontWeight: '800',
+  },
+  metricValueWarning: {
+    color: palette.warning[300],
+  },
+  metricLabel: {
+    color: 'rgba(255,255,255,0.64)',
+    fontSize: 12,
+    fontWeight: '700',
   },
   days: {
     gap: spacing.base,
   },
   dayHeader: {
-    gap: spacing.xs,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
   },
   dayTitle: {
     color: palette.white,
-    fontSize: 16,
-    fontWeight: '700',
+    fontSize: 17,
+    fontWeight: '800',
   },
   muted: {
     color: 'rgba(255,255,255,0.68)',
     fontSize: 13,
   },
+  dayCard: {
+    gap: spacing.base,
+    padding: spacing.base,
+    borderRadius: radius.cardLg,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: 'rgba(255,255,255,0.055)',
+  },
+  countPill: {
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    backgroundColor: 'rgba(196,160,245,0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(196,160,245,0.32)',
+  },
+  countPillText: {
+    color: palette.white,
+    fontSize: 12,
+    fontWeight: '800',
+  },
   shiftBlock: {
+    gap: spacing.sm,
+  },
+  detailRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  detailBox: {
+    flex: 1,
     gap: spacing.xs,
     padding: spacing.sm,
-    borderRadius: radius.card,
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: radius.inputLg,
+    backgroundColor: 'rgba(24,20,31,0.58)',
   },
-  shiftTime: {
+  detailLabel: {
+    color: 'rgba(255,255,255,0.48)',
+    fontSize: 10,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  detailValue: {
     color: palette.white,
-    fontSize: 15,
+    fontSize: 12,
     fontWeight: '700',
   },
   breakText: {
     color: palette.brand[300],
     fontSize: 12,
+    fontWeight: '700',
   },
   input: {
     minHeight: 48,
-    borderRadius: radius.card,
+    borderRadius: radius.inputLg,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.16)',
     paddingHorizontal: spacing.base,
@@ -459,7 +726,7 @@ const styles = StyleSheet.create({
   statusText: {
     color: palette.white,
     fontSize: 11,
-    fontWeight: '700',
+    fontWeight: '800',
   },
   statusApproved: {
     backgroundColor: 'rgba(74,222,128,0.24)',

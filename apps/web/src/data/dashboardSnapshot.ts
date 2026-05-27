@@ -1,3 +1,12 @@
+import type {
+  DashboardInventoryAlertsResponse,
+  DashboardKpisResponse,
+  DashboardLocationKpiSummary,
+  DashboardStylistPerformance,
+  DashboardStylistPerformanceResponse,
+  DashboardTopServicesResponse,
+} from '@sheer/domain';
+
 /**
  * Domain shape for a single owner-dashboard snapshot.
  *
@@ -91,13 +100,73 @@ export interface DiagnosticSnapshot {
 
 export interface DashboardSnapshot {
   greeting: DashboardGreeting;
-  kpis: DashboardKpi[];
-  salons: SalonSnapshot[];
-  stylists: StylistSnapshot[];
+  kpis: DashboardKpisResponse;
+  topServices: DashboardTopServicesResponse;
+  inventoryAlerts: DashboardInventoryAlertsResponse;
+  salons: DashboardLocationKpiSummary[];
+  stylists: DashboardStylistPerformance[];
   diagnostics: DiagnosticSnapshot[];
 }
 
-export const dashboardSnapshotMock: DashboardSnapshot = {
+const EMPTY_KPIS: DashboardKpisResponse = {
+  rangeStart: '',
+  rangeEnd: '',
+  scope: 'owner',
+  locations: [],
+  summary: {
+    totalRevenueCents: 0,
+    totalBookings: 0,
+    completedBookings: 0,
+    cancelledBookings: 0,
+    noShowBookings: 0,
+    newClients: 0,
+    repeatClients: 0,
+    completedPaidBookings: 0,
+    averageBookingValueCents: 0,
+    lowStockProducts: 0,
+    currencyCode: 'GBP',
+  },
+  byLocation: [],
+};
+
+const EMPTY_TOP_SERVICES: DashboardTopServicesResponse = {
+  rangeStart: '',
+  rangeEnd: '',
+  scope: 'owner',
+  services: [],
+};
+
+const EMPTY_STYLISTS: DashboardStylistPerformanceResponse = {
+  rangeStart: '',
+  rangeEnd: '',
+  scope: 'owner',
+  stylists: [],
+};
+
+const EMPTY_INVENTORY_ALERTS: DashboardInventoryAlertsResponse = {
+  scope: 'owner',
+  count: 0,
+  alerts: [],
+};
+
+export function emptyDashboardSnapshot(): DashboardSnapshot {
+  return {
+    greeting: {
+      ownerName: '',
+      locationCount: 0,
+      stylistsOnToday: 0,
+      lastUpdatedLabel: 'just now',
+    },
+    kpis: EMPTY_KPIS,
+    topServices: EMPTY_TOP_SERVICES,
+    inventoryAlerts: EMPTY_INVENTORY_ALERTS,
+    salons: [],
+    stylists: EMPTY_STYLISTS.stylists,
+    diagnostics: [],
+  };
+}
+
+export const dashboardSnapshotMock = {
   greeting: {
     ownerName: 'Luke',
     locationCount: 4,

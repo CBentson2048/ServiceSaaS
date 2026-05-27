@@ -4,7 +4,20 @@ import type {
   LeaveRequestMutationResponse,
   ListStaffBookingsResponse,
   LoginResponse,
+  MobileClientDashboardResponse,
+  MobileBookingConfirmRequest,
+  MobileBookingStartCheckoutRequest,
+  MobileManagerDashboardResponse,
+  MobileOwnerDashboardResponse,
+  MobileStylistDashboardResponse,
   MyLeaveRequestsResponse,
+  PublicBookingAttemptResponse,
+  PublicBookingAvailabilityResponse,
+  PublicBookingLocationsResponse,
+  PublicBookingServiceSelectionResponse,
+  PublicBookingStylistsResponse,
+  CreatePublicBookingResponse,
+  StartPublicBookingCheckoutResponse,
   StaffBookingDetail,
   StylistMyWeekResponse,
 } from '@sheer/domain';
@@ -88,6 +101,98 @@ export async function getBookingDetail(
   });
 }
 
+export type MobileDashboardResponse =
+  | MobileClientDashboardResponse
+  | MobileStylistDashboardResponse
+  | MobileManagerDashboardResponse
+  | MobileOwnerDashboardResponse;
+
+export async function getMobileDashboard(
+  accessToken: string,
+  role: 'owner' | 'manager' | 'stylist' | 'client',
+): Promise<MobileDashboardResponse> {
+  return request<MobileDashboardResponse>(`/mobile-dashboard/${role}`, { accessToken });
+}
+
+export async function getMobileBookingLocations(accessToken: string): Promise<PublicBookingLocationsResponse> {
+  return request<PublicBookingLocationsResponse>('/mobile/booking/locations', { accessToken });
+}
+
+export async function getMobileBookingSelection(
+  accessToken: string,
+  params: { locationId: string },
+): Promise<PublicBookingServiceSelectionResponse> {
+  return request<PublicBookingServiceSelectionResponse>(
+    `/mobile/booking/selection?locationId=${encodeURIComponent(params.locationId)}`,
+    { accessToken },
+  );
+}
+
+export async function getMobileBookingStylists(
+  accessToken: string,
+  params: { locationId: string; serviceIds: string[] },
+): Promise<PublicBookingStylistsResponse> {
+  const search = new URLSearchParams();
+  search.set('locationId', params.locationId);
+  search.set('serviceIds', params.serviceIds.join(','));
+  return request<PublicBookingStylistsResponse>(`/mobile/booking/stylists?${search.toString()}`, { accessToken });
+}
+
+export async function getMobileBookingAvailability(
+  accessToken: string,
+  params: {
+    locationId: string;
+    serviceIds: string[];
+    stylistId?: string;
+    nextAvailable?: boolean;
+    dateFrom: string;
+    dateTo: string;
+  },
+): Promise<PublicBookingAvailabilityResponse> {
+  const search = new URLSearchParams();
+  search.set('locationId', params.locationId);
+  search.set('serviceIds', params.serviceIds.join(','));
+  if (params.stylistId) search.set('stylistId', params.stylistId);
+  if (params.nextAvailable) search.set('nextAvailable', 'true');
+  search.set('dateFrom', params.dateFrom);
+  search.set('dateTo', params.dateTo);
+  return request<PublicBookingAvailabilityResponse>(`/mobile/booking/availability?${search.toString()}`, {
+    accessToken,
+  });
+}
+
+export async function confirmMobileBooking(
+  accessToken: string,
+  payload: MobileBookingConfirmRequest,
+): Promise<CreatePublicBookingResponse> {
+  return request<CreatePublicBookingResponse>('/mobile/booking/confirm', {
+    method: 'POST',
+    body: payload,
+    accessToken,
+  });
+}
+
+export async function startMobileBookingCheckout(
+  accessToken: string,
+  payload: MobileBookingStartCheckoutRequest,
+): Promise<StartPublicBookingCheckoutResponse> {
+  return request<StartPublicBookingCheckoutResponse>('/mobile/booking/start-checkout', {
+    method: 'POST',
+    body: payload,
+    accessToken,
+  });
+}
+
+export async function getMobileBookingAttempt(
+  accessToken: string,
+  bookingAttemptId: string,
+): Promise<PublicBookingAttemptResponse> {
+  return request<PublicBookingAttemptResponse>(
+    `/mobile/booking/attempts/${encodeURIComponent(bookingAttemptId)}`,
+    { accessToken },
+  );
+}
+
 async function request<T>(
   path: string,
   init: { method?: string; body?: unknown; accessToken?: string } = {},
@@ -96,6 +201,7 @@ async function request<T>(
     method: init.method ?? 'GET',
     headers: {
       'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache',
       ...(init.accessToken ? { Authorization: `Bearer ${init.accessToken}` } : {}),
     },
     body: init.body ? JSON.stringify(init.body) : undefined,

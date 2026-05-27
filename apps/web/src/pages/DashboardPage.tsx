@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import type { DashboardInventoryAlertsResponse, DashboardTopServicesResponse } from '@sheer/domain';
 import { AppText } from '../design';
 import { DiagnosticCard } from '../components/dashboard/DiagnosticCard';
 import { KpiStrip } from '../components/dashboard/KpiStrip';
@@ -9,23 +10,16 @@ import { StylistsTable } from '../components/dashboard/StylistsTable';
 import { useAuth } from '../auth/AuthProvider';
 import { useDashboardSnapshot } from '../hooks/useDashboardSnapshot';
 import { useSheerLabAnalytics } from '../hooks/useSheerLabAnalytics';
-import { toKpiItem, toLocationCardProps, toStylistRow } from './dashboardMappers';
+import { toKpiItems, toLocationCardProps, toStylistRow } from './dashboardMappers';
 
 export function DashboardPage() {
   const { user } = useAuth();
   const [range, setRange] = useState<DashboardRange>('today');
-  const { data } = useDashboardSnapshot(range);
+  const { data, isLoading, error, locationId, setLocationId } = useDashboardSnapshot(range);
   const { data: labAnalytics, isLoading: labAnalyticsLoading } = useSheerLabAnalytics(range);
-  const { greeting, kpis, salons, stylists, diagnostics } = data;
-  const scopedLocationNames = new Set(user?.locations.map((location) => location.name.toLowerCase()) ?? []);
-  const scopedSalons =
-    user?.role === 'manager'
-      ? salons.filter((salon) => scopedLocationNames.has(salon.name.toLowerCase()))
-      : salons;
-  const scopedStylists =
-    user?.role === 'manager'
-      ? stylists.filter((stylist) => scopedLocationNames.has(stylist.location.toLowerCase()))
-      : stylists;
+  const { greeting, kpis, salons, stylists, diagnostics, topServices, inventoryAlerts } = data;
+  const hasDashboardData =
+    kpis.summary.totalBookings > 0 || kpis.summary.totalRevenueCents > 0 || kpis.summary.lowStockProducts > 0;
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-6 lg:px-8">
@@ -41,12 +35,44 @@ export function DashboardPage() {
               {greeting.stylistsOnToday} stylists on today · Last updated {greeting.lastUpdatedLabel}
             </AppText>
           </div>
-          <RangeTabs value={range} onChange={setRange} />
+          <div className="flex flex-col gap-2 sm:items-end">
+            <RangeTabs value={range} onChange={setRange} />
+            {user?.role === 'owner' && kpis.locations.length > 1 ? (
+              <select
+                value={locationId}
+                onChange={(event) => setLocationId(event.target.value)}
+                className="h-9 rounded-input-lg border border-border-strong bg-surface px-3 text-[13px] outline-none focus:border-primary"
+              >
+                <option value="all">All locations</option>
+                {kpis.locations.map((location) => (
+                  <option key={location.id} value={location.id}>
+                    {location.name}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+          </div>
         </div>
 
-        <KpiStrip items={kpis.map(toKpiItem)} />
+        <KpiStrip items={toKpiItems(kpis.summary)} />
 
         <div className="px-6 py-5">
+          {isLoading ? (
+            <div className="mb-4 rounded-input-lg border border-border bg-surface-alt px-4 py-3 text-[13px] text-text-secondary">
+              Loading dashboard KPIs...
+            </div>
+          ) : null}
+          {error ? (
+            <div className="mb-4 rounded-input-lg border border-danger-border bg-danger-soft px-4 py-3 text-[13px] text-danger">
+              {error.message}
+            </div>
+          ) : null}
+          {!isLoading && !error && !hasDashboardData ? (
+            <div className="mb-4 rounded-input-lg border border-border bg-surface-alt px-4 py-3 text-[13px] text-text-secondary">
+              No KPI data for this date range yet.
+            </div>
+          ) : null}
+
           <div className="mb-5 rounded-card border border-primary/20 bg-primary-soft px-4 py-3">
             <AppText as="div" variant="caption" weight="medium">
               {user?.role === 'owner'
@@ -62,18 +88,34 @@ export function DashboardPage() {
 
           <SectionLabel>Salons at a glance</SectionLabel>
           <div className="mb-6 grid gap-3.5 md:grid-cols-2">
-            {scopedSalons.map((salon) => (
-              <LocationCard key={salon.id} {...toLocationCardProps(salon)} />
+            {salons.map((salon) => (
+              <LocationCard key={salon.locationId} {...toLocationCardProps(salon)} />
             ))}
           </div>
 
           <SectionLabel>All stylists today</SectionLabel>
           <div className="mb-6">
-            <StylistsTable rows={scopedStylists.map(toStylistRow)} />
+            <StylistsTable rows={stylists.map(toStylistRow)} />
           </div>
 
           <SectionLabel>Diagnostics</SectionLabel>
           <div className="grid gap-3.5 lg:grid-cols-3">
+            <DiagnosticCard
+              title="Top Services"
+              subtitle="Most booked services in selected range"
+              rows={toTopServiceRows(topServices)}
+              footerLabel="Services"
+              footerValue={topServices.services.length}
+              footerTone="purple"
+            />
+            <DiagnosticCard
+              title="Inventory Alerts"
+              subtitle="Products at or below threshold"
+              rows={toInventoryAlertRows(inventoryAlerts)}
+              footerLabel="Low stock"
+              footerValue={inventoryAlerts.count}
+              footerTone={inventoryAlerts.count > 0 ? 'warn' : 'good'}
+            />
             <DiagnosticCard
               title="Sheer Lab"
               subtitle={labAnalyticsLoading ? 'Loading formula analytics' : 'Colour formulas, waste, and stock'}
@@ -88,7 +130,7 @@ export function DashboardPage() {
                     : 'good'
               }
             />
-            {diagnostics.map((d) => (
+            {diagnostics.slice(0, 1).map((d) => (
               <DiagnosticCard
                 key={d.id}
                 title={d.title}
@@ -149,6 +191,32 @@ function toSheerLabDiagnosticRows(
       caption: `${analytics.lowStockAlerts.length} low-stock alerts`,
     },
   ];
+}
+
+function toTopServiceRows(topServices: DashboardTopServicesResponse) {
+  if (topServices.services.length === 0) {
+    return [{ label: 'No services booked', value: '0', valueTone: 'ink' as const }];
+  }
+
+  return topServices.services.slice(0, 5).map((service) => ({
+    label: service.serviceName,
+    value: service.bookingCount.toString(),
+    valueTone: service.revenueCents > 0 ? ('purple' as const) : ('ink' as const),
+    caption: formatMoney(service.revenueCents, service.currencyCode),
+  }));
+}
+
+function toInventoryAlertRows(inventoryAlerts: DashboardInventoryAlertsResponse) {
+  if (inventoryAlerts.alerts.length === 0) {
+    return [{ label: 'No low stock products', value: '0', valueTone: 'good' as const }];
+  }
+
+  return inventoryAlerts.alerts.slice(0, 5).map((alert) => ({
+    label: alert.brand ? `${alert.brand} ${alert.productName}` : alert.productName,
+    value: `${Math.round(alert.quantityOnHandGrams)}g`,
+    valueTone: 'warn' as const,
+    caption: `${alert.locationName} · threshold ${Math.round(alert.thresholdGrams)}g`,
+  }));
 }
 
 function formatMoney(cents: number, currencyCode: string): string {

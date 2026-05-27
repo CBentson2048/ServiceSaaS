@@ -22,7 +22,8 @@
       "output": "single"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "@stripe/stripe-react-native"
     ],
     "experiments": {
       "typedRoutes": false

@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module';
 import { RequestResponseLoggingMiddleware } from './common/request-response-logging.middleware';
 import { CrmModule } from './crm/crm.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 import { HealthModule } from './health/health.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { LabAppointmentsModule } from './lab-appointments/lab-appointments.module';
@@ -12,6 +13,7 @@ import { LabFormulaModule } from './lab-formula/lab-formula.module';
 import { LabPinModule } from './lab-pin/lab-pin.module';
 import { LabSessionModule } from './lab-session/lab-session.module';
 import { LocationsModule } from './locations/locations.module';
+import { MobileDashboardModule } from './mobile-dashboard/mobile-dashboard.module';
 import { OwnerBookingSettingsModule } from './owner-booking-settings/owner-booking-settings.module';
 import { OwnerOnboardingModule } from './owner-onboarding/owner-onboarding.module';
 import { PublicBookingModule } from './public-booking/public-booking.module';
@@ -34,9 +36,11 @@ import { validateEnv } from './config/env.validation';
     OwnerBookingSettingsModule,
     PublicBookingModule,
     CrmModule,
+    DashboardModule,
     RotaModule,
     InventoryModule,
     HealthModule,
+    MobileDashboardModule,
     LabDeviceModule,
     LabSessionModule,
     LabPinModule,

@@ -49,7 +49,7 @@ export default function BookingsScreen() {
   }
 
   return (
-    <ProtectedScreen allowedRoles={['stylist']}>
+    <ProtectedScreen allowedRoles={['manager', 'stylist']}>
       <Screen>
         <SectionHeader title="Today's Bookings" subtitle="Your assigned appointments for today." />
 

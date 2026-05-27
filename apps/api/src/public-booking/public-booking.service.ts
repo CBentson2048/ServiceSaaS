@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -10,8 +11,11 @@ import { ConfigService } from '@nestjs/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type {
   AppointmentStatus,
+  AuthUser,
   CreatePublicBookingRequest,
   CreatePublicBookingResponse,
+  MobileBookingConfirmRequest,
+  MobileBookingStartCheckoutRequest,
   PublicBookingAppointmentSummary,
   PublicBookingAttemptResponse,
   PublicBookingAttemptStatus,
@@ -355,10 +359,14 @@ export class PublicBookingService {
           return {
             startAt,
             endAt,
+            startTime: startAt,
+            endTime: endAt,
             date: toIsoDate(new Date(startAt)),
             locationId: location.id,
             staffProfileId,
+            stylistId: staffProfileId,
             stylistName: stylist.display_name,
+            totalDurationMinutes,
           };
         });
       })
@@ -369,6 +377,64 @@ export class PublicBookingService {
 
   async createAppointment(_input: CreatePublicBookingRequest): Promise<CreatePublicBookingResponse> {
     throw new BadRequestException('Use /public/booking/start-checkout to create payment-backed bookings');
+  }
+
+  async createMobileAppointment(
+    actor: AuthUser,
+    input: MobileBookingConfirmRequest,
+  ): Promise<CreatePublicBookingResponse> {
+    const request = await this.toAuthenticatedBookingRequest(actor, input);
+    const context = await this.resolveBookingContext(request);
+    const depositAmount = calculateDepositAmount(context.services);
+    if (depositAmount > 0) {
+      throw new BadRequestException('This booking requires a deposit before it can be confirmed');
+    }
+
+    const client = await this.resolveAuthenticatedClient(
+      context.location.businessId,
+      context.location.id,
+      request.clientProfileId,
+      request.bookedByUserProfileId,
+      request.client,
+      request.communicationPreference,
+    );
+    await this.syncUserProfilePhone(request.bookedByUserProfileId, request.client.phone);
+
+    const appointment = await this.insertMobileAppointment(request, client, context);
+    await this.insertMobileAppointmentServices(appointment.id, context);
+
+    return {
+      appointment: toAppointmentSummary({
+        appointment,
+        location: context.location,
+        attemptServices: toAttemptServices(context.services),
+        stylist: context.stylist,
+        client,
+        communicationPreference: request.communicationPreference,
+        depositAmount: 0,
+      }),
+      depositRequired: false,
+      depositPlaceholder: false,
+    };
+  }
+
+  async startMobileCheckout(
+    actor: AuthUser,
+    input: MobileBookingStartCheckoutRequest,
+  ): Promise<StartPublicBookingCheckoutResponse> {
+    return this.startCheckout(await this.toAuthenticatedBookingRequest(actor, input));
+  }
+
+  async getMobileBookingAttempt(actor: AuthUser, id: string): Promise<PublicBookingAttemptResponse> {
+    this.assertClientActor(actor);
+    const response = await this.getBookingAttempt(id);
+    if (response.bookingAttempt.clientDisplayName !== actor.profile.fullName) {
+      const attempt = await this.fetchBookingAttemptById(id);
+      if (attempt.client_profile_id !== actor.clientProfileId || attempt.user_profile_id !== actor.id) {
+        throw new ForbiddenException('Booking attempt is outside your account scope');
+      }
+    }
+    return response;
   }
 
   async startCheckout(
@@ -931,6 +997,33 @@ export class PublicBookingService {
     };
   }
 
+  private async toAuthenticatedBookingRequest(
+    actor: AuthUser,
+    input: MobileBookingConfirmRequest,
+  ): Promise<CreatePublicBookingRequest> {
+    this.assertClientActor(actor);
+    const client = await this.fetchClientById(actor.businessId, actor.clientProfileId);
+    return {
+      ...input,
+      client: {
+        firstName: client.first_name,
+        lastName: client.last_name,
+        email: client.email ?? undefined,
+        phone: client.phone ?? actor.profile.phone,
+      },
+      communicationPreference: input.communicationPreference ?? client.communication_preference ?? 'email',
+      clientProfileId: actor.clientProfileId,
+      bookedByUserProfileId: actor.id,
+      source: 'mobile_app',
+    };
+  }
+
+  private assertClientActor(actor: AuthUser): asserts actor is AuthUser & { clientProfileId: string } {
+    if (actor.role !== 'client' || !actor.clientProfileId) {
+      throw new ForbiddenException('Mobile booking requires a signed-in client account');
+    }
+  }
+
   private async resolveBookingContext(
     input: StartPublicBookingCheckoutRequest,
     excludeBookingAttemptId?: string,
@@ -1037,11 +1130,13 @@ export class PublicBookingService {
         status: 'pending_payment',
         expires_at: expiresAt,
         metadata: {
-          source: 'public_booking_flow',
+          source: input.input.source ?? 'public_booking_flow',
           service_ids: input.services.map((service) => service.id),
           service_names: input.services.map((service) => service.name),
           stylist_name: input.stylist.display_name,
           client_display_name: `${input.client.first_name} ${input.client.last_name}`.trim(),
+          total_duration_minutes: totalDuration(input.services),
+          total_price_amount: totalPrice(input.services),
         },
       })
       .select(BOOKING_ATTEMPT_COLUMNS)
@@ -1066,6 +1161,102 @@ export class PublicBookingService {
     });
 
     return data;
+  }
+
+  private async insertMobileAppointment(
+    input: CreatePublicBookingRequest,
+    client: ClientProfileRow,
+    context: {
+      location: PublicBookingLocationSummary;
+      services: PublicBookingServiceSummary[];
+      stylist: StaffRow;
+      selectedStart: Date;
+      selectedEnd: Date;
+    },
+  ): Promise<AppointmentInsertRow> {
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('appointments')
+      .insert({
+        business_id: context.location.businessId,
+        location_id: context.location.id,
+        client_profile_id: client.id,
+        booked_by_user_profile_id: input.bookedByUserProfileId,
+        assigned_staff_profile_id: context.stylist.id,
+        requested_staff_profile_id: input.staffRequestMode === 'specific_staff' ? context.stylist.id : null,
+        staff_request_mode: input.staffRequestMode,
+        status: 'confirmed',
+        booking_channel: 'client_app',
+        scheduled_start_at: context.selectedStart.toISOString(),
+        scheduled_end_at: context.selectedEnd.toISOString(),
+        communication_preference: input.communicationPreference,
+        client_note: input.clientNote?.trim() || null,
+        metadata: {
+          source: 'mobile_app',
+          service_ids: context.services.map((service) => service.id),
+          service_names: context.services.map((service) => service.name),
+          stylist_name: context.stylist.display_name,
+          client_display_name: `${client.first_name} ${client.last_name}`.trim(),
+          total_duration_minutes: totalDuration(context.services),
+          total_price_amount: totalPrice(context.services),
+          payment_status: 'not_required',
+        },
+      })
+      .select('id,status,scheduled_start_at,scheduled_end_at')
+      .single<AppointmentInsertRow>();
+
+    if (error || !data) {
+      const message = error?.message ?? 'no appointment row';
+      if (message.toLowerCase().includes('booking_appointments_staff_no_overlap')) {
+        throw new BadRequestException('Selected slot is no longer available');
+      }
+      this.logger.error(`insertMobileAppointment failed: ${message}`);
+      throw new InternalServerErrorException('Unable to create appointment');
+    }
+    return data;
+  }
+
+  private async insertMobileAppointmentServices(
+    appointmentId: string,
+    context: {
+      location: PublicBookingLocationSummary;
+      services: PublicBookingServiceSummary[];
+      stylist: StaffRow;
+      selectedStart: Date;
+    },
+  ): Promise<void> {
+    let cursor = context.selectedStart;
+    const rows = context.services.map((service, index) => {
+      const start = cursor;
+      const end = new Date(start.getTime() + service.estimatedDurationMinutes * 60_000);
+      cursor = end;
+      return {
+        business_id: context.location.businessId,
+        location_id: context.location.id,
+        appointment_id: appointmentId,
+        service_id: service.id,
+        assigned_staff_profile_id: context.stylist.id,
+        sequence_no: index + 1,
+        service_name_snapshot: service.name,
+        duration_minutes: service.estimatedDurationMinutes,
+        price_amount: service.startingPriceAmount,
+        deposit_required_amount: service.depositRequiredAmount,
+        status: 'scheduled',
+        scheduled_start_at: start.toISOString(),
+        scheduled_end_at: end.toISOString(),
+      };
+    });
+    const { error } = await this.admin.schema('booking').from('appointment_services').insert(rows);
+    if (error) {
+      this.logger.error(`insertMobileAppointmentServices failed: ${error.message}`);
+      await this.admin
+        .schema('booking')
+        .from('appointments')
+        .delete()
+        .eq('id', appointmentId)
+        .eq('business_id', context.location.businessId);
+      throw new InternalServerErrorException('Unable to create appointment services');
+    }
   }
 
   private async attachPaymentIntentToAttempt(
@@ -1689,6 +1880,17 @@ function calculateServiceDeposit(row: ServiceRow): number {
   if (row.deposit_type === 'fixed_amount') return Math.max(0, value);
   if (row.deposit_type === 'percentage') return Math.max(0, Math.round((price * value) / 100));
   return 0;
+}
+
+function toAttemptServices(services: PublicBookingServiceSummary[]): BookingAttemptServiceRow[] {
+  return services.map((service, index) => ({
+    service_id: service.id,
+    sequence_no: index + 1,
+    service_name_snapshot: service.name,
+    duration_minutes: service.estimatedDurationMinutes,
+    price_amount: service.startingPriceAmount,
+    deposit_required_amount: service.depositRequiredAmount,
+  }));
 }
 
 function toAppointmentSummary(input: {

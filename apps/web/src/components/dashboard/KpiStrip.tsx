@@ -24,7 +24,7 @@ export interface KpiStripProps {
  */
 export function KpiStrip({ items }: KpiStripProps) {
   return (
-    <div className="grid gap-4 bg-surface-ink px-6 py-5 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="grid gap-4 bg-surface-ink px-6 py-5 sm:grid-cols-2 lg:grid-cols-3">
       {items.map((item) => (
         <div key={item.label} className="text-center">
           <AppText

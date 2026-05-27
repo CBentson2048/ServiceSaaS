@@ -636,8 +636,14 @@ export class AuthService {
       throw new ForbiddenException('Web dashboard access is limited to owners and managers');
     }
 
-    if (surface === 'sheer_app' && user.role !== 'stylist' && user.role !== 'client') {
-      throw new ForbiddenException('Sheer App access is limited to stylist and client accounts');
+    if (
+      surface === 'sheer_app' &&
+      user.role !== 'owner' &&
+      user.role !== 'manager' &&
+      user.role !== 'stylist' &&
+      user.role !== 'client'
+    ) {
+      throw new ForbiddenException('Sheer App access is limited to active Sheer accounts');
     }
 
     if (

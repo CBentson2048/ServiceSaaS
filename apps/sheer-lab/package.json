@@ -49,6 +49,7 @@
     "eslint-plugin-import": "^2.31.0",
     "eslint-plugin-react": "^7.37.2",
     "eslint-plugin-react-hooks": "^4.6.2",
+    "react-native-dotenv": "^3.4.11",
     "typescript": "~5.9.3"
   }
 }

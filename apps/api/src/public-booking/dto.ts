@@ -20,6 +20,10 @@ export class PublicBookingSelectionQueryDto {
 
   @IsOptional()
   @IsString()
+  _?: string;
+
+  @IsOptional()
+  @IsString()
   businessSlug?: string;
 
   @IsOptional()
@@ -108,6 +112,35 @@ export class CreatePublicBookingDto {
 }
 
 export class StartPublicBookingCheckoutDto extends CreatePublicBookingDto {}
+
+export class MobileBookingConfirmDto {
+  @IsUUID()
+  locationId!: string;
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsUUID(undefined, { each: true })
+  serviceIds!: string[];
+
+  @IsUUID()
+  staffProfileId!: string;
+
+  @IsISO8601()
+  selectedStartAt!: string;
+
+  @IsIn(['specific_staff', 'next_available'])
+  staffRequestMode!: 'specific_staff' | 'next_available';
+
+  @IsIn(['whatsapp', 'sms', 'email'])
+  communicationPreference!: 'whatsapp' | 'sms' | 'email';
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  clientNote?: string;
+}
+
+export class MobileBookingStartCheckoutDto extends MobileBookingConfirmDto {}
 
 export class PublicBookingAttemptParamDto {
   @IsUUID()
