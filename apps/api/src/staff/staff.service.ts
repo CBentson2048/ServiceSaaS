@@ -91,6 +91,11 @@ interface StaffProfileRow {
   primary_location_id: string;
   display_name: string;
   employment_status: 'active' | 'on_leave' | 'notice' | 'terminated';
+  hourly_rate: number | string;
+  contracted_hours: number | string;
+  average_bill_benchmark: number | string;
+  sheer_lab_pin_enabled: boolean;
+  leave_notes: string | null;
   is_bookable: boolean;
   color_hex: string | null;
   bio: string | null;
@@ -533,6 +538,8 @@ export class StaffService {
       throw this.translateUpdateError(error.message);
     }
 
+    await this.updateStaffBusinessFields(actor.businessId, targetUserId, input);
+
     const updated = await this.findStaffMember(actor.businessId, targetUserId);
     if (!updated) throw new NotFoundException('Staff member not found after update');
 
@@ -551,6 +558,31 @@ export class StaffService {
   // -------------------------------------------------------------------------
   // Helpers
   // -------------------------------------------------------------------------
+
+  private async updateStaffBusinessFields(
+    businessId: string,
+    userProfileId: string,
+    input: UpdateStaffMemberRequest,
+  ): Promise<void> {
+    const patch: Record<string, unknown> = {};
+    if (input.hourlyRate !== undefined) patch.hourly_rate = input.hourlyRate;
+    if (input.contractedHours !== undefined) patch.contracted_hours = input.contractedHours;
+    if (input.averageBillBenchmark !== undefined) patch.average_bill_benchmark = input.averageBillBenchmark;
+    if (input.leaveNotes !== undefined) patch.leave_notes = input.leaveNotes?.trim() || null;
+    if (Object.keys(patch).length === 0) return;
+
+    const { error } = await this.admin
+      .schema('core')
+      .from('staff_profiles')
+      .update({ ...patch, updated_at: new Date().toISOString() })
+      .eq('business_id', businessId)
+      .eq('user_profile_id', userProfileId);
+
+    if (error) {
+      this.logger.error(`updateStaffBusinessFields failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to update staff business fields');
+    }
+  }
 
   private assertOwner(actor: AuthUser): void {
     if (actor.role !== 'owner') {
@@ -705,7 +737,7 @@ export class StaffService {
       .schema('core')
       .from('staff_profiles')
       .select(
-        'id,business_id,user_profile_id,primary_location_id,display_name,employment_status,is_bookable,color_hex,bio',
+        'id,business_id,user_profile_id,primary_location_id,display_name,employment_status,hourly_rate,contracted_hours,average_bill_benchmark,sheer_lab_pin_enabled,leave_notes,is_bookable,color_hex,bio',
       )
       .eq('business_id', businessId)
       .in('user_profile_id', ids)
@@ -780,6 +812,11 @@ export class StaffService {
             displayName: staffProfile.display_name,
             employmentStatus: staffProfile.employment_status,
             isBookable: staffProfile.is_bookable,
+            hourlyRate: Number(staffProfile.hourly_rate),
+            contractedHours: Number(staffProfile.contracted_hours),
+            averageBillBenchmark: Number(staffProfile.average_bill_benchmark),
+            sheerLabPinEnabled: staffProfile.sheer_lab_pin_enabled,
+            leaveNotes: staffProfile.leave_notes ?? undefined,
             colorHex: staffProfile.color_hex ?? undefined,
             bio: staffProfile.bio ?? undefined,
           }

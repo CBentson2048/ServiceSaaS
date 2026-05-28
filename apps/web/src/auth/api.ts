@@ -2,6 +2,9 @@ import type {
   AbsenceMutationResponse,
   AcceptStaffInvitationRequest,
   AcceptStaffInvitationResponse,
+  AppointmentCompletionResponse,
+  AppointmentPaymentConfirmationRequest,
+  AppointmentPaymentConfirmationResponse,
   ApproveLeaveRequestRequest,
   BreakMutationResponse,
   BusinessSlugAvailabilityResponse,
@@ -13,17 +16,23 @@ import type {
   CreateCrmClientRequest,
   CreateCrmPatchTestRequest,
   CreateCrmVisitPhotoRequest,
+  DashboardInventoryAlertsResponse,
+  DashboardKpisResponse,
+  DashboardStylistPerformanceResponse,
+  DashboardTopServicesResponse,
   CreateLocationRequest,
   LabDeviceRegistrationResponse,
   InventoryProductResponse,
   InventoryStockMutationResponse,
   CreateShiftRequest,
   CreateStaffInvitationRequest,
+  CreateStylistRebookingRequest,
   CrmClientDetailResponse,
   CurrentUserResponse,
   InvitationLookupResponse,
   InvitationStatus,
   LeaveRequestMutationResponse,
+  LinkStylistRebookingRequest,
   LeaveRequestStatus,
   LabPinMutationResponse,
   ListInventoryLowStockResponse,
@@ -81,6 +90,11 @@ import type {
   UpsertServiceRequirementRuleRequest,
   UpsertServiceUpgradeSuggestionRequest,
   WeeklyRotaResponse,
+  AdminUpdateProfileRequest,
+  ListProfilesResponse,
+  UpdateCurrentProfileRequest,
+  UpdateProfileResponse,
+  UserProfileResponse,
 } from '@sheer/domain';
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL ?? 'http://localhost:3001').replace(/\/$/, '');
@@ -124,6 +138,47 @@ export async function logout(accessToken?: string, refreshToken?: string): Promi
     method: 'POST',
     accessToken,
     body: { refreshToken },
+  });
+}
+
+// -------------------- User profiles --------------------
+
+export async function getMyProfile(accessToken: string): Promise<UserProfileResponse> {
+  return request<UserProfileResponse>('/profiles/me', { accessToken });
+}
+
+export async function updateMyProfile(
+  accessToken: string,
+  payload: UpdateCurrentProfileRequest,
+): Promise<UpdateProfileResponse> {
+  return request<UpdateProfileResponse>('/profiles/me', {
+    method: 'PATCH',
+    accessToken,
+    body: payload,
+  });
+}
+
+export async function listProfiles(
+  accessToken: string,
+  params: { locationId?: string; kind?: 'staff' | 'client'; q?: string } = {},
+): Promise<ListProfilesResponse> {
+  const search = new URLSearchParams();
+  if (params.locationId) search.set('locationId', params.locationId);
+  if (params.kind) search.set('kind', params.kind);
+  if (params.q) search.set('q', params.q);
+  const query = search.toString();
+  return request<ListProfilesResponse>(`/profiles${query ? `?${query}` : ''}`, { accessToken });
+}
+
+export async function updateProfile(
+  accessToken: string,
+  userProfileId: string,
+  payload: AdminUpdateProfileRequest,
+): Promise<UpdateProfileResponse> {
+  return request<UpdateProfileResponse>(`/profiles/${encodeURIComponent(userProfileId)}`, {
+    method: 'PATCH',
+    accessToken,
+    body: payload,
   });
 }
 
@@ -238,6 +293,64 @@ export async function listBookings(
   });
 }
 
+export async function completeBooking(
+  accessToken: string,
+  bookingId: string,
+): Promise<AppointmentCompletionResponse> {
+  return request<AppointmentCompletionResponse>(
+    `/lab/appointments/${encodeURIComponent(bookingId)}/complete`,
+    {
+      method: 'POST',
+      accessToken,
+    },
+  );
+}
+
+export async function confirmBookingPayment(
+  accessToken: string,
+  bookingId: string,
+  payload: AppointmentPaymentConfirmationRequest,
+): Promise<AppointmentPaymentConfirmationResponse> {
+  return request<AppointmentPaymentConfirmationResponse>(
+    `/lab/appointments/${encodeURIComponent(bookingId)}/confirm-payment`,
+    {
+      method: 'POST',
+      accessToken,
+      body: payload,
+    },
+  );
+}
+
+export async function linkStylistRebooking(
+  accessToken: string,
+  bookingId: string,
+  payload: LinkStylistRebookingRequest,
+): Promise<AppointmentCompletionResponse> {
+  return request<AppointmentCompletionResponse>(
+    `/lab/appointments/${encodeURIComponent(bookingId)}/rebooking/link`,
+    {
+      method: 'POST',
+      accessToken,
+      body: payload,
+    },
+  );
+}
+
+export async function createStylistRebooking(
+  accessToken: string,
+  bookingId: string,
+  payload: CreateStylistRebookingRequest,
+): Promise<AppointmentCompletionResponse> {
+  return request<AppointmentCompletionResponse>(
+    `/lab/appointments/${encodeURIComponent(bookingId)}/rebooking`,
+    {
+      method: 'POST',
+      accessToken,
+      body: payload,
+    },
+  );
+}
+
 export async function getSheerLabAnalytics(
   accessToken: string,
   params: { range?: SheerLabAnalyticsRange; locationId?: string } = {},
@@ -247,6 +360,44 @@ export async function getSheerLabAnalytics(
   if (params.locationId) search.set('locationId', params.locationId);
   const query = search.toString();
   return request<SheerLabAnalyticsResponse>(`/lab/analytics/summary${query ? `?${query}` : ''}`, {
+    accessToken,
+  });
+}
+
+export async function getDashboardKpis(
+  accessToken: string,
+  params: { locationId?: string; from: string; to: string },
+): Promise<DashboardKpisResponse> {
+  const search = dashboardDateRangeSearch(params);
+  return request<DashboardKpisResponse>(`/dashboard/kpis?${search.toString()}`, { accessToken });
+}
+
+export async function getDashboardTopServices(
+  accessToken: string,
+  params: { locationId?: string; from: string; to: string },
+): Promise<DashboardTopServicesResponse> {
+  const search = dashboardDateRangeSearch(params);
+  return request<DashboardTopServicesResponse>(`/dashboard/top-services?${search.toString()}`, { accessToken });
+}
+
+export async function getDashboardStylistPerformance(
+  accessToken: string,
+  params: { locationId?: string; from: string; to: string },
+): Promise<DashboardStylistPerformanceResponse> {
+  const search = dashboardDateRangeSearch(params);
+  return request<DashboardStylistPerformanceResponse>(`/dashboard/stylist-performance?${search.toString()}`, {
+    accessToken,
+  });
+}
+
+export async function getDashboardInventoryAlerts(
+  accessToken: string,
+  params: { locationId?: string } = {},
+): Promise<DashboardInventoryAlertsResponse> {
+  const search = new URLSearchParams();
+  if (params.locationId) search.set('locationId', params.locationId);
+  const query = search.toString();
+  return request<DashboardInventoryAlertsResponse>(`/dashboard/inventory-alerts${query ? `?${query}` : ''}`, {
     accessToken,
   });
 }
@@ -1045,6 +1196,14 @@ export class ApiRequestError extends Error {
     this.status = status;
     this.details = details;
   }
+}
+
+function dashboardDateRangeSearch(params: { locationId?: string; from: string; to: string }): URLSearchParams {
+  const search = new URLSearchParams();
+  search.set('from', params.from);
+  search.set('to', params.to);
+  if (params.locationId) search.set('locationId', params.locationId);
+  return search;
 }
 
 async function request<T>(

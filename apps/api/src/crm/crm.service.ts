@@ -47,6 +47,7 @@ interface ClientProfileRow {
   phone: string | null;
   date_of_birth: string | null;
   communication_preference: string | null;
+  notes: string | null;
   marketing_opt_in: boolean;
   source: string | null;
   tags: string[];
@@ -85,6 +86,14 @@ interface VisitRow {
   client_visible_summary: string | null;
   created_at: string;
   appointments?: AppointmentVisitRow | AppointmentVisitRow[] | null;
+  rebooking_outcomes?: RebookingOutcomeRelation | RebookingOutcomeRelation[] | null;
+}
+
+interface RebookingOutcomeRelation {
+  id: string;
+  rebooked_appointment_id: string;
+  rebook_source: 'stylist' | 'client';
+  rebooked_at: string;
 }
 
 interface AppointmentHistoryRow {
@@ -184,7 +193,7 @@ interface GdprRequestRow {
 }
 
 const CLIENT_COLUMNS =
-  'id,business_id,client_code,user_profile_id,primary_location_id,first_name,last_name,email,phone,date_of_birth,communication_preference,marketing_opt_in,source,tags,metadata,created_at,updated_at';
+  'id,business_id,client_code,user_profile_id,primary_location_id,first_name,last_name,email,phone,date_of_birth,communication_preference,notes,marketing_opt_in,source,tags,metadata,created_at,updated_at';
 
 type CrmStaffScope = 'owner' | 'manager' | 'stylist';
 
@@ -351,6 +360,7 @@ export class CrmService {
     if (input.marketingOptIn !== undefined) patch.marketing_opt_in = input.marketingOptIn;
     if (input.tags !== undefined) patch.tags = input.tags.map((tag) => tag.trim()).filter(Boolean);
     if (input.notesSummary !== undefined) {
+      patch.notes = cleanOptional(input.notesSummary);
       patch.metadata = {
         ...(existing.metadata ?? {}),
         notesSummary: cleanOptional(input.notesSummary),
@@ -617,7 +627,7 @@ export class CrmService {
         .schema('booking')
         .from('visits')
         .select(
-          'id,business_id,location_id,appointment_id,client_profile_id,primary_staff_profile_id,status,checked_in_at,started_at,completed_at,service_summary,client_visible_summary,created_at,appointments(id,scheduled_start_at,scheduled_end_at,status,assigned_staff_profile_id,appointment_services(service_name_snapshot,price_amount))',
+          'id,business_id,location_id,appointment_id,client_profile_id,primary_staff_profile_id,status,checked_in_at,started_at,completed_at,service_summary,client_visible_summary,created_at,appointments(id,scheduled_start_at,scheduled_end_at,status,assigned_staff_profile_id,appointment_services(service_name_snapshot,price_amount)),rebooking_outcomes(id,rebooked_appointment_id,rebook_source,rebooked_at)',
         )
         .eq('business_id', businessId)
         .eq('client_profile_id', clientId)
@@ -968,6 +978,7 @@ function toClientSummary(
     email: row.email ?? undefined,
     phone: row.phone ?? undefined,
     communicationPreference: row.communication_preference ?? undefined,
+    notes: row.notes ?? undefined,
     marketingOptIn: row.marketing_opt_in,
     tags: row.tags ?? [],
     source: row.source ?? undefined,
@@ -994,8 +1005,7 @@ function toClientProfile(
   return {
     ...toClientSummary(row, extras),
     dateOfBirth: row.date_of_birth ?? undefined,
-    notesSummary:
-      typeof row.metadata?.notesSummary === 'string' ? row.metadata.notesSummary : undefined,
+    notesSummary: row.notes ?? (typeof row.metadata?.notesSummary === 'string' ? row.metadata.notesSummary : undefined),
     gdpr: {
       exportReady: true,
       pendingRequests: pendingRequests.length,
@@ -1010,6 +1020,7 @@ function toVisitSummary(row: VisitRow, staffNames: Map<string, string> = new Map
   const priceAmount = services.reduce((sum, service) => sum + Number(service.price_amount ?? 0), 0);
   const serviceNames = services.map((service) => service.service_name_snapshot).filter(Boolean);
   const staffProfileId = row.primary_staff_profile_id ?? appointment?.assigned_staff_profile_id ?? undefined;
+  const rebooking = first(row.rebooking_outcomes);
   return {
     id: row.id,
     businessId: row.business_id,
@@ -1026,6 +1037,10 @@ function toVisitSummary(row: VisitRow, staffNames: Map<string, string> = new Map
       (row.client_visible_summary ?? row.service_summary ?? serviceNames.join(', ')) || undefined,
     priceAmount: priceAmount > 0 ? priceAmount : undefined,
     currencyCode: 'GBP',
+    rebooked: Boolean(rebooking),
+    rebookSource: rebooking?.rebook_source,
+    rebookedAppointmentId: rebooking?.rebooked_appointment_id,
+    rebookedAt: rebooking?.rebooked_at,
   };
 }
 

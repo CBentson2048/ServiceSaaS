@@ -20,6 +20,7 @@
     "@sheer/design-tokens": "workspace:*",
     "@sheer/domain": "workspace:*",
     "@sheer/ui-mobile": "workspace:*",
+    "@stripe/stripe-react-native": "^0.66.0",
     "expo": "~55.0.18",
     "expo-constants": "~55.0.15",
     "expo-linking": "~55.0.14",

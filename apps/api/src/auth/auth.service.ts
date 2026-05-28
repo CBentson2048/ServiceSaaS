@@ -35,9 +35,13 @@ type RuntimeSurface = Extract<AppSurface, 'api' | 'web_dashboard' | 'sheer_app' 
 interface ProfileRow {
   id: string;
   email: string;
+  first_name?: string | null;
+  last_name?: string | null;
   full_name: string;
+  display_name?: string | null;
   phone: string | null;
   avatar_url: string | null;
+  is_active?: boolean | null;
 }
 
 interface MembershipRow {
@@ -397,9 +401,13 @@ export class AuthService {
       profile: {
         id: profile.id,
         email: profile.email,
+        firstName: profile.first_name ?? undefined,
+        lastName: profile.last_name ?? undefined,
         fullName: profile.full_name,
+        displayName: profile.display_name ?? profile.full_name,
         phone: profile.phone ?? undefined,
         avatarUrl: profile.avatar_url ?? undefined,
+        isActive: profile.is_active ?? true,
       },
       staffProfileId: staffProfile?.id,
       clientProfileId: clientProfile?.id,
@@ -636,8 +644,14 @@ export class AuthService {
       throw new ForbiddenException('Web dashboard access is limited to owners and managers');
     }
 
-    if (surface === 'sheer_app' && user.role !== 'stylist' && user.role !== 'client') {
-      throw new ForbiddenException('Sheer App access is limited to stylist and client accounts');
+    if (
+      surface === 'sheer_app' &&
+      user.role !== 'owner' &&
+      user.role !== 'manager' &&
+      user.role !== 'stylist' &&
+      user.role !== 'client'
+    ) {
+      throw new ForbiddenException('Sheer App access is limited to active Sheer accounts');
     }
 
     if (
@@ -672,7 +686,7 @@ export class AuthService {
     const { data, error } = await this.admin
       .schema('core')
       .from('user_profiles')
-      .select('id,email,full_name,phone,avatar_url')
+      .select('id,email,first_name,last_name,full_name,display_name,phone,avatar_url,is_active')
       .eq('id', userId)
       .single<ProfileRow>();
 
@@ -687,7 +701,7 @@ export class AuthService {
     const { data, error } = await this.admin
       .schema('core')
       .from('user_profiles')
-      .select('id,email,full_name,phone,avatar_url')
+      .select('id,email,first_name,last_name,full_name,display_name,phone,avatar_url,is_active')
       .eq('email', email)
       .maybeSingle<ProfileRow>();
 
@@ -731,7 +745,10 @@ export class AuthService {
     const { error } = await this.admin.schema('core').from('user_profiles').insert({
       id: userId,
       email,
+      first_name: firstNameFromFullName(fullName),
+      last_name: lastNameFromFullName(fullName),
       full_name: fullName,
+      display_name: fullName,
       phone: phone?.trim() || null,
     });
 

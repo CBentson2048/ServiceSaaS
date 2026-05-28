@@ -12,7 +12,7 @@ export default function LoginScreen() {
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  if (auth.user?.role === 'stylist') {
+  if (auth.user) {
     return <Redirect href="/dashboard" />;
   }
 
@@ -24,7 +24,7 @@ export default function LoginScreen() {
       await auth.signIn(email, password);
       router.replace('/dashboard');
     } catch {
-      setError('Sign in failed. Use an active stylist account for this app.');
+      setError('Sign in failed. Use an active Sheer account for this app.');
     } finally {
       setIsSubmitting(false);
     }
@@ -34,12 +34,12 @@ export default function LoginScreen() {
     <Screen>
       <SectionHeader
         title="SHEER"
-        subtitle="Personal stylist app"
+        subtitle="Personal Sheer app"
       />
       <Card>
         <SectionHeader
           title="Welcome back"
-          subtitle="Sign in with your personal stylist credentials. Sheer Lab shared-device PIN auth is intentionally separate and will be implemented later."
+          subtitle="Sign in with your personal Sheer credentials. Sheer Lab shared-device PIN auth remains separate."
         />
         <View style={styles.form}>
           <TextInput
@@ -68,8 +68,6 @@ export default function LoginScreen() {
           disabled={isSubmitting}
           onPress={onSubmit}
         />
-        <Text>{process.env.EXPO_PUBLIC_API_URL}</Text>
-        <Text>{password + " " + email}</Text>
       </Card>
     </Screen>
   );

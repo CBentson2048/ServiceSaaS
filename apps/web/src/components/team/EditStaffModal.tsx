@@ -27,6 +27,10 @@ interface EditForm {
   colorHex: string;
   bio: string;
   isBookable: boolean;
+  hourlyRate: string;
+  contractedHours: string;
+  averageBillBenchmark: string;
+  leaveNotes: string;
 }
 
 export function EditStaffModal({
@@ -60,6 +64,14 @@ export function EditStaffModal({
       colorHex: staff.staffProfile?.colorHex ?? '',
       bio: staff.staffProfile?.bio ?? '',
       isBookable: staff.staffProfile?.isBookable ?? true,
+      hourlyRate: staff.staffProfile?.hourlyRate !== undefined ? String(staff.staffProfile.hourlyRate) : '0',
+      contractedHours:
+        staff.staffProfile?.contractedHours !== undefined ? String(staff.staffProfile.contractedHours) : '0',
+      averageBillBenchmark:
+        staff.staffProfile?.averageBillBenchmark !== undefined
+          ? String(staff.staffProfile.averageBillBenchmark)
+          : '0',
+      leaveNotes: staff.staffProfile?.leaveNotes ?? '',
     });
     setErrors({});
     setSubmitError(null);
@@ -87,6 +99,12 @@ export function EditStaffModal({
     if (!values.locationId) next.locationId = 'Pick a location';
     if (values.colorHex && !/^#[0-9A-Fa-f]{6}$/.test(values.colorHex.trim()))
       next.colorHex = 'Use a #RRGGBB hex colour';
+    if (Number.isNaN(Number(values.hourlyRate)) || Number(values.hourlyRate) < 0)
+      next.hourlyRate = 'Use a non-negative number';
+    if (Number.isNaN(Number(values.contractedHours)) || Number(values.contractedHours) < 0 || Number(values.contractedHours) > 168)
+      next.contractedHours = 'Use 0-168 hours';
+    if (Number.isNaN(Number(values.averageBillBenchmark)) || Number(values.averageBillBenchmark) < 0)
+      next.averageBillBenchmark = 'Use a non-negative number';
     return next;
   }
 
@@ -107,6 +125,10 @@ export function EditStaffModal({
       colorHex: form.role === 'stylist' ? form.colorHex.trim() || undefined : undefined,
       bio: form.role === 'stylist' ? form.bio.trim() || undefined : undefined,
       isBookable: form.role === 'stylist' ? form.isBookable : undefined,
+      hourlyRate: form.role === 'stylist' ? Number(form.hourlyRate) : undefined,
+      contractedHours: form.role === 'stylist' ? Number(form.contractedHours) : undefined,
+      averageBillBenchmark: form.role === 'stylist' ? Number(form.averageBillBenchmark) : undefined,
+      leaveNotes: form.role === 'stylist' ? form.leaveNotes.trim() || null : undefined,
     };
     try {
       const result = await updateStaffMember(accessToken, staff.userProfileId, payload);
@@ -204,6 +226,30 @@ export function EditStaffModal({
               onValueChange={(v) => setForm({ ...form, bio: v })}
               optional
               className="sm:col-span-2"
+            />
+            <TextField
+              label="Hourly rate"
+              value={form.hourlyRate}
+              onValueChange={(v) => setForm({ ...form, hourlyRate: v })}
+              error={errors.hourlyRate}
+            />
+            <TextField
+              label="Contracted hours"
+              value={form.contractedHours}
+              onValueChange={(v) => setForm({ ...form, contractedHours: v })}
+              error={errors.contractedHours}
+            />
+            <TextField
+              label="Average bill benchmark"
+              value={form.averageBillBenchmark}
+              onValueChange={(v) => setForm({ ...form, averageBillBenchmark: v })}
+              error={errors.averageBillBenchmark}
+            />
+            <TextField
+              label="Leave / absence context"
+              value={form.leaveNotes}
+              onValueChange={(v) => setForm({ ...form, leaveNotes: v })}
+              optional
             />
             <label className="flex items-center gap-2 sm:col-span-2 text-[13px] text-text-secondary">
               <input

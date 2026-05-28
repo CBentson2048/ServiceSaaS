@@ -4,6 +4,7 @@ import {
   IsHexColor,
   IsIn,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
@@ -137,4 +138,27 @@ export class UpdateStaffMemberDto {
   @IsOptional()
   @IsBoolean()
   isBookable?: boolean;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(1000)
+  hourlyRate?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(168)
+  contractedHours?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100000)
+  averageBillBenchmark?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  leaveNotes?: string | null;
 }

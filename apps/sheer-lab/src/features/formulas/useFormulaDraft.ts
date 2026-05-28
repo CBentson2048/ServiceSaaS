@@ -18,6 +18,7 @@ export function useFormulaDraft() {
   const addRow = useCallback(() => formulaDraftStore.addRow(), []);
   const removeRow = useCallback((rowId: string) => formulaDraftStore.removeRow(rowId), []);
   const selectActiveRow = useCallback((rowId: string) => formulaDraftStore.selectActiveRow(rowId), []);
+  const startRowReweigh = useCallback((rowId: string) => formulaDraftStore.startRowReweigh(rowId), []);
   const updateRowMetadata = useCallback(
     (rowId: string, metadata: FormulaRowMetadataUpdate) =>
       formulaDraftStore.updateRowMetadata(rowId, metadata),
@@ -59,6 +60,7 @@ export function useFormulaDraft() {
     addRow,
     removeRow,
     selectActiveRow,
+    startRowReweigh,
     updateRowMetadata,
     applyBleWeight,
     applyManualWeight,

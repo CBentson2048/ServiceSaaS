@@ -17,9 +17,13 @@ export interface AuthLocation {
 export interface AuthProfileSummary {
   id: string;
   email: string;
+  firstName?: string;
+  lastName?: string;
   fullName: string;
+  displayName?: string;
   phone?: string;
   avatarUrl?: string;
+  isActive?: boolean;
 }
 
 export interface AuthUser {
@@ -507,6 +511,11 @@ export interface StaffMember {
     displayName: string;
     employmentStatus: 'active' | 'on_leave' | 'notice' | 'terminated';
     isBookable: boolean;
+    hourlyRate: number;
+    contractedHours: number;
+    averageBillBenchmark: number;
+    sheerLabPinEnabled: boolean;
+    leaveNotes?: string;
     colorHex?: string;
     bio?: string;
   };
@@ -530,6 +539,10 @@ export interface UpdateStaffMemberRequest {
   colorHex?: string;
   bio?: string;
   isBookable?: boolean;
+  hourlyRate?: number;
+  contractedHours?: number;
+  averageBillBenchmark?: number;
+  leaveNotes?: string | null;
 }
 
 export interface UpdateStaffMemberResponse {
@@ -549,6 +562,108 @@ export interface CurrentUserResponse {
   user: AuthUser;
 }
 
+export type CommunicationPreference = 'whatsapp' | 'sms' | 'email';
+
+export interface UserProfileIdentity {
+  userProfileId: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  fullName: string;
+  displayName: string;
+  phone?: string;
+  avatarUrl?: string;
+  role: UserRole;
+  isActive: boolean;
+}
+
+export interface ClientProfileDetails {
+  id: string;
+  businessId: string;
+  userProfileId?: string;
+  primaryLocationId?: string;
+  clientCode: string;
+  firstName: string;
+  lastName: string;
+  displayName: string;
+  email?: string;
+  phone?: string;
+  communicationPreference?: CommunicationPreference;
+  notes?: string;
+  source?: string;
+  tags: string[];
+  lastVisitAt?: string;
+  visitCount: number;
+  activeAllergies: number;
+  expiredPatchTests: number;
+}
+
+export interface StaffProfileDetails {
+  id: string;
+  businessId: string;
+  userProfileId: string;
+  assignedLocationId: string;
+  displayName: string;
+  employmentStatus: 'active' | 'on_leave' | 'notice' | 'terminated';
+  isBookable: boolean;
+  colorHex?: string;
+  bio?: string;
+  hourlyRate: number;
+  contractedHours: number;
+  averageBillBenchmark: number;
+  sheerLabPinEnabled: boolean;
+  leaveNotes?: string;
+  pendingLeaveRequests: number;
+  openAbsences: number;
+}
+
+export interface LocationProfileScope {
+  kind: AllowedLocationScope['kind'];
+  locationIds: string[];
+}
+
+export interface UserProfileResponse {
+  identity: UserProfileIdentity;
+  clientProfile?: ClientProfileDetails;
+  staffProfile?: StaffProfileDetails;
+  locations: AuthLocation[];
+  scope: LocationProfileScope;
+  editableFields: string[];
+}
+
+export interface ListProfilesResponse {
+  profiles: UserProfileResponse[];
+  scope: 'owner' | 'manager';
+}
+
+export interface UpdateCurrentProfileRequest {
+  firstName?: string;
+  lastName?: string;
+  phone?: string | null;
+  avatarUrl?: string | null;
+  communicationPreference?: CommunicationPreference;
+}
+
+export interface AdminUpdateProfileRequest {
+  firstName?: string;
+  lastName?: string;
+  phone?: string | null;
+  avatarUrl?: string | null;
+  communicationPreference?: CommunicationPreference | null;
+  clientNotes?: string | null;
+  assignedLocationId?: string;
+  staffDisplayName?: string;
+  hourlyRate?: number;
+  contractedHours?: number;
+  averageBillBenchmark?: number;
+  leaveNotes?: string | null;
+  isBookable?: boolean;
+}
+
+export interface UpdateProfileResponse {
+  profile: UserProfileResponse;
+}
+
 export interface StaffBookingSummary {
   id: string;
   businessId: string;
@@ -566,11 +681,80 @@ export interface StaffBookingSummary {
   depositStatus?: string;
   clientNote?: string;
   patchTest?: StaffBookingPatchTestSummary;
+  completedAt?: string;
+  completedByUserProfileId?: string;
+  completedByStaffProfileId?: string;
 }
 
 export interface StaffBookingDetail extends StaffBookingSummary {
   communicationPreference?: string;
   internalNote?: string;
+}
+
+export interface AppointmentCompletionLineItem {
+  lineType: 'service' | 'formula_colour' | string;
+  description: string;
+  amountCents: number;
+  currencyCode: string;
+}
+
+export interface AppointmentCompletionCheckout {
+  status: 'awaiting_payment' | 'paid' | 'not_ready' | 'voided';
+  readyAt?: string;
+  route?: string;
+  message: string;
+}
+
+export interface AppointmentCompletionResponse {
+  appointment: StaffBookingDetail;
+  visit: CrmVisitSummary;
+  checkout: AppointmentCompletionCheckout;
+  billing: {
+    lineItems: AppointmentCompletionLineItem[];
+    serviceTotalCents: number;
+    formulaColourTotalCents: number;
+    depositPaidCents: number;
+    totalCents: number;
+    balanceDueCents: number;
+    currencyCode: string;
+  };
+  alreadyCompleted: boolean;
+}
+
+export interface AppointmentPaymentConfirmationRequest {
+  paymentMethod: 'cash' | 'card_reader';
+  amountCents: number;
+  notes?: string;
+}
+
+export interface AppointmentPaymentRecord {
+  id: string;
+  appointmentId: string;
+  visitId: string;
+  paymentMethod: 'cash' | 'card_reader';
+  amountCents: number;
+  currencyCode: string;
+  paidAt: string;
+  confirmedByUserProfileId?: string;
+  confirmedByStaffProfileId?: string;
+  notes?: string;
+}
+
+export interface AppointmentPaymentConfirmationResponse extends AppointmentCompletionResponse {
+  payment: AppointmentPaymentRecord;
+  alreadyPaid: boolean;
+}
+
+export interface LinkStylistRebookingRequest {
+  sourceVisitId?: string;
+  rebookedAppointmentId: string;
+}
+
+export interface CreateStylistRebookingRequest {
+  sourceVisitId?: string;
+  selectedStartAt: string;
+  staffProfileId?: string;
+  clientNote?: string;
 }
 
 export interface StaffBookingPatchTestSummary {
@@ -598,6 +782,8 @@ export type AppointmentStatus =
   | 'checked_in'
   | 'in_progress'
   | 'in_service'
+  | 'awaiting_payment'
+  | 'paid'
   | 'completed'
   | 'cancelled'
   | 'no_show';
@@ -729,6 +915,9 @@ export interface SheerLabStylistMetric {
   stylistName: string;
   locationId: string;
   locationName: string;
+  hourlyRate?: number;
+  contractedHours?: number;
+  averageBillBenchmark?: number;
   colourRevenueCents: number;
   formulaCostCents: number;
   grossMarginCents: number;
@@ -780,6 +969,164 @@ export interface SheerLabAnalyticsResponse {
   mostUsedProductsByWeight: SheerLabProductUsageMetric[];
   mostUsedProductsByCost: SheerLabProductUsageMetric[];
   lowStockAlerts: SheerLabLowStockAlert[];
+}
+
+// ---------------------------------------------------------------------------
+// Owner / manager dashboard KPIs
+// ---------------------------------------------------------------------------
+
+export type DashboardDateRange = 'today' | 'week' | 'month';
+
+export interface DashboardLocationSummary {
+  id: string;
+  name: string;
+  code?: string;
+  addressLine1?: string;
+  city?: string;
+}
+
+export interface DashboardKpiSummary {
+  totalRevenueCents: number;
+  totalBookings: number;
+  completedBookings: number;
+  cancelledBookings: number;
+  noShowBookings: number;
+  newClients: number;
+  repeatClients: number;
+  rebookedVisits: number;
+  rebookingRatePercent: number;
+  stylistRebookedVisits: number;
+  clientRebookedVisits: number;
+  completedPaidBookings: number;
+  averageBookingValueCents: number;
+  lowStockProducts: number;
+  currencyCode: string;
+}
+
+export interface DashboardLocationKpiSummary extends DashboardKpiSummary {
+  locationId: string;
+  locationName: string;
+}
+
+export interface DashboardKpisResponse {
+  rangeStart: string;
+  rangeEnd: string;
+  scope: 'owner' | 'manager';
+  selectedLocationId?: string;
+  locations: DashboardLocationSummary[];
+  summary: DashboardKpiSummary;
+  byLocation: DashboardLocationKpiSummary[];
+}
+
+export interface DashboardTopService {
+  serviceName: string;
+  bookingCount: number;
+  revenueCents: number;
+  currencyCode: string;
+}
+
+export interface DashboardTopServicesResponse {
+  rangeStart: string;
+  rangeEnd: string;
+  scope: 'owner' | 'manager';
+  selectedLocationId?: string;
+  services: DashboardTopService[];
+}
+
+export interface DashboardStylistPerformance {
+  staffProfileId?: string;
+  stylistName: string;
+  locationId: string;
+  locationName: string;
+  hourlyRate?: number;
+  contractedHours?: number;
+  averageBillBenchmark?: number;
+  totalBookings: number;
+  completedBookings: number;
+  cancelledBookings: number;
+  noShowBookings: number;
+  rebookedVisits: number;
+  rebookingRatePercent: number;
+  revenueCents: number;
+  averageBookingValueCents: number;
+  currencyCode: string;
+}
+
+export interface DashboardStylistPerformanceResponse {
+  rangeStart: string;
+  rangeEnd: string;
+  scope: 'owner' | 'manager';
+  selectedLocationId?: string;
+  stylists: DashboardStylistPerformance[];
+}
+
+export interface DashboardInventoryAlert {
+  locationId: string;
+  locationName: string;
+  productId: string;
+  productName: string;
+  brand?: string;
+  quantityOnHandGrams: number;
+  thresholdGrams: number;
+}
+
+export interface DashboardInventoryAlertsResponse {
+  scope: 'owner' | 'manager';
+  selectedLocationId?: string;
+  count: number;
+  alerts: DashboardInventoryAlert[];
+}
+
+// ---------------------------------------------------------------------------
+// Sheer mobile app dashboard
+// ---------------------------------------------------------------------------
+
+export interface MobileClientProfileSummary {
+  id: string;
+  displayName: string;
+  communicationPreference?: 'whatsapp' | 'sms' | 'email';
+}
+
+export interface MobileClientDashboardResponse {
+  role: 'client';
+  profile: MobileClientProfileSummary;
+  nextAppointment?: StaffBookingSummary;
+  upcomingAppointments: StaffBookingSummary[];
+  visitHistory: CrmVisitSummary[];
+}
+
+export interface MobileStylistDashboardResponse {
+  role: 'stylist';
+  displayName: string;
+  today: {
+    rangeStart: string;
+    rangeEnd: string;
+    totalAppointments: number;
+    nextAppointment?: StaffBookingSummary;
+    appointments: StaffBookingSummary[];
+  };
+}
+
+export interface MobileManagerDashboardResponse {
+  role: 'manager';
+  location: AuthLocation;
+  today: {
+    rangeStart: string;
+    rangeEnd: string;
+    bookingsCount: number;
+    completedBookingsCount: number;
+    upcomingBookingsCount: number;
+    stylistsWorkingToday: number;
+    lowStockAlertCount: number;
+    recentAppointments: StaffBookingSummary[];
+  };
+}
+
+export interface MobileOwnerDashboardResponse {
+  role: 'owner';
+  displayName: string;
+  message: string;
+  locations: AuthLocation[];
 }
 
 // ---------------------------------------------------------------------------
@@ -1003,10 +1350,14 @@ export interface PublicBookingStylistsResponse {
 export interface PublicBookingAvailabilitySlot {
   startAt: string;
   endAt: string;
+  startTime?: string;
+  endTime?: string;
   date: string;
   locationId: string;
   staffProfileId: string;
+  stylistId?: string;
   stylistName: string;
+  totalDurationMinutes?: number;
 }
 
 export interface PublicBookingAvailabilityResponse {
@@ -1034,6 +1385,7 @@ export interface CreatePublicBookingRequest {
   clientProfileId: string;
   bookedByUserProfileId: string;
   clientNote?: string;
+  source?: 'public_booking_flow' | 'mobile_app';
 }
 
 export interface StartPublicBookingCheckoutRequest {
@@ -1047,7 +1399,20 @@ export interface StartPublicBookingCheckoutRequest {
   clientProfileId: string;
   bookedByUserProfileId: string;
   clientNote?: string;
+  source?: 'public_booking_flow' | 'mobile_app';
 }
+
+export interface MobileBookingConfirmRequest {
+  locationId: string;
+  serviceIds: string[];
+  staffProfileId: string;
+  selectedStartAt: string;
+  staffRequestMode: 'specific_staff' | 'next_available';
+  communicationPreference: 'whatsapp' | 'sms' | 'email';
+  clientNote?: string;
+}
+
+export interface MobileBookingStartCheckoutRequest extends MobileBookingConfirmRequest {}
 
 export interface PublicBookingAppointmentSummary {
   id: string;
@@ -1165,6 +1530,7 @@ export interface CrmClientSummary {
   email?: string;
   phone?: string;
   communicationPreference?: 'whatsapp' | 'sms' | 'email' | string;
+  notes?: string;
   marketingOptIn: boolean;
   tags: string[];
   source?: string;
@@ -1240,6 +1606,10 @@ export interface CrmVisitSummary {
   clientVisibleSummary?: string;
   priceAmount?: number;
   currencyCode?: string;
+  rebooked?: boolean;
+  rebookSource?: 'stylist' | 'client';
+  rebookedAppointmentId?: string;
+  rebookedAt?: string;
 }
 
 export interface CrmMessageLog {
@@ -1419,6 +1789,7 @@ export interface RotaStaffSummary {
   email: string;
   colorHex?: string;
   isBookable: boolean;
+  contractedHours: number;
   /** Default break length in minutes (per-stylist config). */
   defaultBreakMinutes: number;
   /** Whether the default break is paid (per-stylist config). */

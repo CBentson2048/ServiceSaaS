@@ -32,6 +32,7 @@ export function FormulaScreen({ route }: FormulaScreenProps): React.JSX.Element 
     addRow,
     removeRow,
     selectActiveRow,
+    startRowReweigh,
     updateRowMetadata,
     applyBleWeight,
     applyManualWeight,
@@ -57,6 +58,7 @@ export function FormulaScreen({ route }: FormulaScreenProps): React.JSX.Element 
 
   const activeRow = draft.rows.find((row) => row.id === draft.activeIngredientId);
   const activeWeightLabel = activeRow?.capturedGrams != null ? activeRow.capturedGrams.toFixed(1) : '--.-';
+  const activeCaptureStatus = activeRow?.captureStatus ?? 'waiting';
   const labCoreDraft = useMemo(() => toLabCoreFormulaDraft(draft), [draft]);
   const entryContext = route.params?.entryContext;
   const pickerRow = draft.rows.find((row) => row.id === productPickerRowId);
@@ -140,7 +142,6 @@ export function FormulaScreen({ route }: FormulaScreenProps): React.JSX.Element 
   }
 
   function openProductPicker(rowId: string): void {
-    selectActiveRow(rowId);
     setProductPickerRowId(rowId);
     setProductSearch('');
     void loadProducts('');
@@ -283,7 +284,8 @@ export function FormulaScreen({ route }: FormulaScreenProps): React.JSX.Element 
         </Text>
         <Text style={styles.weight}>{activeWeightLabel} g</Text>
         <Text style={styles.meta}>
-          Source: {activeRow?.weightSource ?? 'waiting'} · Draft items: {labCoreDraft.items.length}
+          Source: {activeRow?.weightSource ?? 'waiting'} · {formatCaptureStatus(activeCaptureStatus)} · Draft items:{' '}
+          {labCoreDraft.items.length}
         </Text>
       </View>
       {previousFormula ? (
@@ -300,7 +302,12 @@ export function FormulaScreen({ route }: FormulaScreenProps): React.JSX.Element 
           active={row.id === draft.activeIngredientId}
           manualValue={manualInputs[row.id] ?? ''}
           canRemove={draft.rows.length > 1}
-          onSelect={() => selectActiveRow(row.id)}
+          onSelect={() => {
+            if (row.id === draft.activeIngredientId || row.captureStatus !== 'captured') {
+              selectActiveRow(row.id);
+            }
+          }}
+          onReweigh={() => startRowReweigh(row.id)}
           onRemove={() => removeRow(row.id)}
           onMetadataChange={(metadata) => updateRowMetadata(row.id, metadata)}
           onOpenProductPicker={() => openProductPicker(row.id)}
@@ -357,6 +364,7 @@ interface IngredientRowProps {
   manualValue: string;
   canRemove: boolean;
   onSelect: () => void;
+  onReweigh: () => void;
   onRemove: () => void;
   onMetadataChange: (metadata: FormulaRowMetadataUpdate) => void;
   onOpenProductPicker: () => void;
@@ -371,6 +379,7 @@ function IngredientRow({
   manualValue,
   canRemove,
   onSelect,
+  onReweigh,
   onRemove,
   onMetadataChange,
   onOpenProductPicker,
@@ -381,6 +390,15 @@ function IngredientRow({
   const manualDisabled = manualValue.trim().length === 0 || Number.isNaN(Number(manualValue));
   const weightLabel = row.capturedGrams != null ? `${row.capturedGrams.toFixed(1)} g` : 'No weight yet';
   const sourceLabel = row.weightSource === 'ble' ? 'BLE scale' : row.weightSource === 'manual' ? 'Manual' : 'Waiting';
+  const captureLabel = active ? formatCaptureStatus(row.captureStatus) : formatInactiveCaptureStatus(row);
+  const rowActionLabel = active
+    ? row.captureStatus === 'captured'
+      ? 'Selected'
+      : 'Active capture'
+    : row.captureStatus === 'captured'
+      ? 'Saved weight'
+      : 'Tap to resume';
+  const reweighLabel = active && row.captureStatus !== 'captured' ? 'Capturing' : 'Reweigh';
   const costLabel =
     row.costCents != null
       ? formatMoney(row.costCents, row.costBasis.currencyCode)
@@ -402,7 +420,8 @@ function IngredientRow({
     >
       <View style={styles.rowHeader}>
         <View style={styles.rowTitleBlock}>
-          <Text style={styles.activePill}>{active ? 'Active capture' : 'Tap to capture'}</Text>
+          <Text style={styles.activePill}>{rowActionLabel}</Text>
+          <Text style={styles.meta}>{captureLabel}</Text>
           {isManualIdentity ? (
             <TextInput
               onChangeText={(productName) => onMetadataChange({ ...row, productName })}
@@ -527,6 +546,12 @@ function IngredientRow({
           variant="secondary"
         />
       </View>
+      <LabButton
+        label={reweighLabel}
+        onPress={onReweigh}
+        disabled={active && row.captureStatus !== 'captured'}
+        variant="secondary"
+      />
       <TextInput
         onChangeText={(notes) => onMetadataChange({ ...row, notes })}
         placeholder="Notes"
@@ -676,6 +701,18 @@ function formatProductDisplayName(product: InventoryProduct): string {
 
 function formatRowDisplayName(row: FormulaIngredientRow): string {
   return row.displayName ?? (row.productName || 'Untitled ingredient');
+}
+
+function formatCaptureStatus(status: FormulaIngredientRow['captureStatus']): string {
+  if (status === 'live') return 'Live capture';
+  if (status === 'captured') return 'Captured';
+  return 'Waiting for weight';
+}
+
+function formatInactiveCaptureStatus(row: FormulaIngredientRow): string {
+  if (row.captureStatus === 'captured') return 'Captured';
+  if (row.capturedGrams != null) return 'Captured';
+  return 'Waiting';
 }
 
 const styles = StyleSheet.create({

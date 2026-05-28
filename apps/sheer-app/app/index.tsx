@@ -15,7 +15,7 @@ export default function EntryRoute() {
     );
   }
 
-  return <Redirect href={auth.user?.role === 'stylist' ? '/dashboard' : '/login'} />;
+  return <Redirect href={auth.user ? '/dashboard' : '/login'} />;
 }
 
 const styles = StyleSheet.create({

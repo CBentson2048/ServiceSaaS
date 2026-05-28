@@ -104,6 +104,7 @@ interface StaffProfileRow {
   user_profile_id: string;
   primary_location_id: string;
   display_name: string;
+  contracted_hours: number | string;
   is_bookable: boolean;
   color_hex: string | null;
   employment_status: 'active' | 'on_leave' | 'notice' | 'terminated';
@@ -1714,7 +1715,7 @@ export class RotaService {
     const { data: staffRows, error: staffError } = await this.admin
       .schema('core')
       .from('staff_profiles')
-      .select('id,business_id,user_profile_id,primary_location_id,display_name,is_bookable,color_hex,employment_status')
+      .select('id,business_id,user_profile_id,primary_location_id,display_name,contracted_hours,is_bookable,color_hex,employment_status')
       .eq('business_id', businessId)
       .eq('primary_location_id', locationId)
       .returns<StaffProfileRow[]>();
@@ -1746,6 +1747,7 @@ export class RotaService {
           email: profile?.email ?? '',
           colorHex: row.color_hex ?? undefined,
           isBookable: row.is_bookable,
+          contractedHours: Number(row.contracted_hours),
           defaultBreakMinutes: defaults?.break_minutes ?? DEFAULT_BREAK_MINUTES,
           defaultBreakIsPaid: defaults?.is_paid ?? false,
           defaultBreakNotes: defaults?.notes ?? undefined,

@@ -1,12 +1,33 @@
 import type {
   CreateMyLeaveRequest,
+  CreateStylistRebookingRequest,
   CurrentUserResponse,
+  AppointmentCompletionResponse,
+  AppointmentPaymentConfirmationRequest,
+  AppointmentPaymentConfirmationResponse,
   LeaveRequestMutationResponse,
+  LinkStylistRebookingRequest,
   ListStaffBookingsResponse,
   LoginResponse,
+  MobileClientDashboardResponse,
+  MobileBookingConfirmRequest,
+  MobileBookingStartCheckoutRequest,
+  MobileManagerDashboardResponse,
+  MobileOwnerDashboardResponse,
+  MobileStylistDashboardResponse,
   MyLeaveRequestsResponse,
+  PublicBookingAttemptResponse,
+  PublicBookingAvailabilityResponse,
+  PublicBookingLocationsResponse,
+  PublicBookingServiceSelectionResponse,
+  PublicBookingStylistsResponse,
+  CreatePublicBookingResponse,
+  StartPublicBookingCheckoutResponse,
   StaffBookingDetail,
   StylistMyWeekResponse,
+  UpdateCurrentProfileRequest,
+  UpdateProfileResponse,
+  UserProfileResponse,
 } from '@sheer/domain';
 
 const API_BASE_URL = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3001').replace(/\/$/, '');
@@ -34,6 +55,21 @@ export async function logout(accessToken?: string, refreshToken?: string): Promi
     method: 'POST',
     accessToken,
     body: { refreshToken },
+  });
+}
+
+export async function getMyProfile(accessToken: string): Promise<UserProfileResponse> {
+  return request<UserProfileResponse>('/profiles/me', { accessToken });
+}
+
+export async function updateMyProfile(
+  accessToken: string,
+  payload: UpdateCurrentProfileRequest,
+): Promise<UpdateProfileResponse> {
+  return request<UpdateProfileResponse>('/profiles/me', {
+    method: 'PATCH',
+    body: payload,
+    accessToken,
   });
 }
 
@@ -88,6 +124,156 @@ export async function getBookingDetail(
   });
 }
 
+export async function completeBooking(
+  accessToken: string,
+  bookingId: string,
+): Promise<AppointmentCompletionResponse> {
+  return request<AppointmentCompletionResponse>(
+    `/lab/appointments/${encodeURIComponent(bookingId)}/complete`,
+    {
+      method: 'POST',
+      accessToken,
+    },
+  );
+}
+
+export async function confirmBookingPayment(
+  accessToken: string,
+  bookingId: string,
+  payload: AppointmentPaymentConfirmationRequest,
+): Promise<AppointmentPaymentConfirmationResponse> {
+  return request<AppointmentPaymentConfirmationResponse>(
+    `/lab/appointments/${encodeURIComponent(bookingId)}/confirm-payment`,
+    {
+      method: 'POST',
+      body: payload,
+      accessToken,
+    },
+  );
+}
+
+export async function linkStylistRebooking(
+  accessToken: string,
+  bookingId: string,
+  payload: LinkStylistRebookingRequest,
+): Promise<AppointmentCompletionResponse> {
+  return request<AppointmentCompletionResponse>(
+    `/lab/appointments/${encodeURIComponent(bookingId)}/rebooking/link`,
+    {
+      method: 'POST',
+      body: payload,
+      accessToken,
+    },
+  );
+}
+
+export async function createStylistRebooking(
+  accessToken: string,
+  bookingId: string,
+  payload: CreateStylistRebookingRequest,
+): Promise<AppointmentCompletionResponse> {
+  return request<AppointmentCompletionResponse>(
+    `/lab/appointments/${encodeURIComponent(bookingId)}/rebooking`,
+    {
+      method: 'POST',
+      body: payload,
+      accessToken,
+    },
+  );
+}
+
+export type MobileDashboardResponse =
+  | MobileClientDashboardResponse
+  | MobileStylistDashboardResponse
+  | MobileManagerDashboardResponse
+  | MobileOwnerDashboardResponse;
+
+export async function getMobileDashboard(
+  accessToken: string,
+  role: 'owner' | 'manager' | 'stylist' | 'client',
+): Promise<MobileDashboardResponse> {
+  return request<MobileDashboardResponse>(`/mobile-dashboard/${role}`, { accessToken });
+}
+
+export async function getMobileBookingLocations(accessToken: string): Promise<PublicBookingLocationsResponse> {
+  return request<PublicBookingLocationsResponse>('/mobile/booking/locations', { accessToken });
+}
+
+export async function getMobileBookingSelection(
+  accessToken: string,
+  params: { locationId: string },
+): Promise<PublicBookingServiceSelectionResponse> {
+  return request<PublicBookingServiceSelectionResponse>(
+    `/mobile/booking/selection?locationId=${encodeURIComponent(params.locationId)}`,
+    { accessToken },
+  );
+}
+
+export async function getMobileBookingStylists(
+  accessToken: string,
+  params: { locationId: string; serviceIds: string[] },
+): Promise<PublicBookingStylistsResponse> {
+  const search = new URLSearchParams();
+  search.set('locationId', params.locationId);
+  search.set('serviceIds', params.serviceIds.join(','));
+  return request<PublicBookingStylistsResponse>(`/mobile/booking/stylists?${search.toString()}`, { accessToken });
+}
+
+export async function getMobileBookingAvailability(
+  accessToken: string,
+  params: {
+    locationId: string;
+    serviceIds: string[];
+    stylistId?: string;
+    nextAvailable?: boolean;
+    dateFrom: string;
+    dateTo: string;
+  },
+): Promise<PublicBookingAvailabilityResponse> {
+  const search = new URLSearchParams();
+  search.set('locationId', params.locationId);
+  search.set('serviceIds', params.serviceIds.join(','));
+  if (params.stylistId) search.set('stylistId', params.stylistId);
+  if (params.nextAvailable) search.set('nextAvailable', 'true');
+  search.set('dateFrom', params.dateFrom);
+  search.set('dateTo', params.dateTo);
+  return request<PublicBookingAvailabilityResponse>(`/mobile/booking/availability?${search.toString()}`, {
+    accessToken,
+  });
+}
+
+export async function confirmMobileBooking(
+  accessToken: string,
+  payload: MobileBookingConfirmRequest,
+): Promise<CreatePublicBookingResponse> {
+  return request<CreatePublicBookingResponse>('/mobile/booking/confirm', {
+    method: 'POST',
+    body: payload,
+    accessToken,
+  });
+}
+
+export async function startMobileBookingCheckout(
+  accessToken: string,
+  payload: MobileBookingStartCheckoutRequest,
+): Promise<StartPublicBookingCheckoutResponse> {
+  return request<StartPublicBookingCheckoutResponse>('/mobile/booking/start-checkout', {
+    method: 'POST',
+    body: payload,
+    accessToken,
+  });
+}
+
+export async function getMobileBookingAttempt(
+  accessToken: string,
+  bookingAttemptId: string,
+): Promise<PublicBookingAttemptResponse> {
+  return request<PublicBookingAttemptResponse>(
+    `/mobile/booking/attempts/${encodeURIComponent(bookingAttemptId)}`,
+    { accessToken },
+  );
+}
+
 async function request<T>(
   path: string,
   init: { method?: string; body?: unknown; accessToken?: string } = {},
@@ -96,6 +282,7 @@ async function request<T>(
     method: init.method ?? 'GET',
     headers: {
       'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache',
       ...(init.accessToken ? { Authorization: `Bearer ${init.accessToken}` } : {}),
     },
     body: init.body ? JSON.stringify(init.body) : undefined,
