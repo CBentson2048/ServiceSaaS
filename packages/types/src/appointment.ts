@@ -3,6 +3,8 @@ export type AppointmentStatus =
   | 'confirmed'
   | 'checked_in'
   | 'in_progress'
+  | 'awaiting_payment'
+  | 'paid'
   | 'completed'
   | 'cancelled'
   | 'no_show';

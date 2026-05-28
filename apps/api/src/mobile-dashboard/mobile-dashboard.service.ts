@@ -165,7 +165,9 @@ export class MobileDashboardService {
         rangeStart,
         rangeEnd,
         bookingsCount: appointments.length,
-        completedBookingsCount: appointments.filter((appointment) => appointment.status === 'completed').length,
+        completedBookingsCount: appointments.filter(
+          (appointment) => appointment.status === 'awaiting_payment' || appointment.status === 'paid',
+        ).length,
         upcomingBookingsCount: appointments.filter((appointment) => new Date(appointment.startsAt).getTime() >= nowMs)
           .length,
         stylistsWorkingToday,

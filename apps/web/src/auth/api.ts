@@ -2,6 +2,9 @@ import type {
   AbsenceMutationResponse,
   AcceptStaffInvitationRequest,
   AcceptStaffInvitationResponse,
+  AppointmentCompletionResponse,
+  AppointmentPaymentConfirmationRequest,
+  AppointmentPaymentConfirmationResponse,
   ApproveLeaveRequestRequest,
   BreakMutationResponse,
   BusinessSlugAvailabilityResponse,
@@ -23,11 +26,13 @@ import type {
   InventoryStockMutationResponse,
   CreateShiftRequest,
   CreateStaffInvitationRequest,
+  CreateStylistRebookingRequest,
   CrmClientDetailResponse,
   CurrentUserResponse,
   InvitationLookupResponse,
   InvitationStatus,
   LeaveRequestMutationResponse,
+  LinkStylistRebookingRequest,
   LeaveRequestStatus,
   LabPinMutationResponse,
   ListInventoryLowStockResponse,
@@ -85,6 +90,11 @@ import type {
   UpsertServiceRequirementRuleRequest,
   UpsertServiceUpgradeSuggestionRequest,
   WeeklyRotaResponse,
+  AdminUpdateProfileRequest,
+  ListProfilesResponse,
+  UpdateCurrentProfileRequest,
+  UpdateProfileResponse,
+  UserProfileResponse,
 } from '@sheer/domain';
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL ?? 'http://localhost:3001').replace(/\/$/, '');
@@ -128,6 +138,47 @@ export async function logout(accessToken?: string, refreshToken?: string): Promi
     method: 'POST',
     accessToken,
     body: { refreshToken },
+  });
+}
+
+// -------------------- User profiles --------------------
+
+export async function getMyProfile(accessToken: string): Promise<UserProfileResponse> {
+  return request<UserProfileResponse>('/profiles/me', { accessToken });
+}
+
+export async function updateMyProfile(
+  accessToken: string,
+  payload: UpdateCurrentProfileRequest,
+): Promise<UpdateProfileResponse> {
+  return request<UpdateProfileResponse>('/profiles/me', {
+    method: 'PATCH',
+    accessToken,
+    body: payload,
+  });
+}
+
+export async function listProfiles(
+  accessToken: string,
+  params: { locationId?: string; kind?: 'staff' | 'client'; q?: string } = {},
+): Promise<ListProfilesResponse> {
+  const search = new URLSearchParams();
+  if (params.locationId) search.set('locationId', params.locationId);
+  if (params.kind) search.set('kind', params.kind);
+  if (params.q) search.set('q', params.q);
+  const query = search.toString();
+  return request<ListProfilesResponse>(`/profiles${query ? `?${query}` : ''}`, { accessToken });
+}
+
+export async function updateProfile(
+  accessToken: string,
+  userProfileId: string,
+  payload: AdminUpdateProfileRequest,
+): Promise<UpdateProfileResponse> {
+  return request<UpdateProfileResponse>(`/profiles/${encodeURIComponent(userProfileId)}`, {
+    method: 'PATCH',
+    accessToken,
+    body: payload,
   });
 }
 
@@ -240,6 +291,64 @@ export async function listBookings(
   return request<ListStaffBookingsResponse>(`/lab/appointments${query ? `?${query}` : ''}`, {
     accessToken,
   });
+}
+
+export async function completeBooking(
+  accessToken: string,
+  bookingId: string,
+): Promise<AppointmentCompletionResponse> {
+  return request<AppointmentCompletionResponse>(
+    `/lab/appointments/${encodeURIComponent(bookingId)}/complete`,
+    {
+      method: 'POST',
+      accessToken,
+    },
+  );
+}
+
+export async function confirmBookingPayment(
+  accessToken: string,
+  bookingId: string,
+  payload: AppointmentPaymentConfirmationRequest,
+): Promise<AppointmentPaymentConfirmationResponse> {
+  return request<AppointmentPaymentConfirmationResponse>(
+    `/lab/appointments/${encodeURIComponent(bookingId)}/confirm-payment`,
+    {
+      method: 'POST',
+      accessToken,
+      body: payload,
+    },
+  );
+}
+
+export async function linkStylistRebooking(
+  accessToken: string,
+  bookingId: string,
+  payload: LinkStylistRebookingRequest,
+): Promise<AppointmentCompletionResponse> {
+  return request<AppointmentCompletionResponse>(
+    `/lab/appointments/${encodeURIComponent(bookingId)}/rebooking/link`,
+    {
+      method: 'POST',
+      accessToken,
+      body: payload,
+    },
+  );
+}
+
+export async function createStylistRebooking(
+  accessToken: string,
+  bookingId: string,
+  payload: CreateStylistRebookingRequest,
+): Promise<AppointmentCompletionResponse> {
+  return request<AppointmentCompletionResponse>(
+    `/lab/appointments/${encodeURIComponent(bookingId)}/rebooking`,
+    {
+      method: 'POST',
+      accessToken,
+      body: payload,
+    },
+  );
 }
 
 export async function getSheerLabAnalytics(

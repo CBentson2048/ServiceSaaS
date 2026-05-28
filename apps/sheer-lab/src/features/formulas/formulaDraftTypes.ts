@@ -5,6 +5,7 @@ import type { BleWeightReading } from '../ble/types';
 export type FormulaWeightSource = 'ble' | 'manual';
 export type FormulaDraftStatus = 'draft' | 'mixing' | 'saved';
 export type FormulaIngredientIdentityMode = 'catalogue_product' | 'custom_manual';
+export type FormulaRowCaptureStatus = 'waiting' | 'live' | 'captured';
 
 export interface FormulaPatchTestContext {
   status: 'unknown' | 'pending' | 'passed' | 'failed' | 'expired';
@@ -48,6 +49,7 @@ export interface FormulaIngredientRow {
   capturedGrams?: number;
   wasteGrams?: number;
   weightSource?: FormulaWeightSource;
+  captureStatus: FormulaRowCaptureStatus;
   capturedAt?: string;
   costBasis: FormulaCostBasis;
   costCents?: number;

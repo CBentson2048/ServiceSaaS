@@ -63,7 +63,7 @@ export interface CurrentUserResponse {
 }
 export type LabSessionStatus = 'unlocking' | 'active' | 'locked' | 'expired' | 'logged_out';
 export type DevicePairingStatus = 'unpaired' | 'pairing' | 'paired' | 'disconnected' | 'revoked';
-export type AppointmentStatus = 'draft' | 'booked' | 'confirmed' | 'checked_in' | 'in_service' | 'completed' | 'cancelled' | 'no_show';
+export type AppointmentStatus = 'draft' | 'booked' | 'confirmed' | 'checked_in' | 'in_service' | 'awaiting_payment' | 'paid' | 'completed' | 'cancelled' | 'no_show';
 export type FormulaStatus = 'draft' | 'mixing' | 'ready_for_review' | 'saved' | 'voided';
 export type StylistPinCredentialStatus = 'active' | 'inactive' | 'locked' | 'rotation_required';
 export interface PinUnlockRequest {

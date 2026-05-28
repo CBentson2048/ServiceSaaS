@@ -59,6 +59,9 @@ interface AppointmentServiceRelation {
 interface StaffProfileRow {
   id: string;
   display_name: string | null;
+  hourly_rate: number | string;
+  contracted_hours: number | string;
+  average_bill_benchmark: number | string;
   user_profiles?: { full_name: string | null }[] | { full_name: string | null } | null;
 }
 
@@ -83,7 +86,7 @@ const FORMULA_COLUMNS =
 const FORMULA_ITEM_COLUMNS = 'formula_id,product_id,product_name,brand,captured_grams,cost_cents';
 const VISIT_COLUMNS =
   'id,primary_staff_profile_id,service_summary,appointments(assigned_staff_profile_id,appointment_services(service_name_snapshot))';
-const STAFF_COLUMNS = 'id,display_name,user_profiles(full_name)';
+const STAFF_COLUMNS = 'id,display_name,hourly_rate,contracted_hours,average_bill_benchmark,user_profiles(full_name)';
 const LOW_STOCK_COLUMNS =
   'id,location_id,product_id,remaining_quantity_grams,threshold_quantity_grams,status,last_triggered_at';
 const PRODUCT_COLUMNS = 'id,name,brand';
@@ -374,6 +377,9 @@ function buildStylistMetrics(
         stylistName: staff ? staffDisplayName(staff) : 'Unassigned stylist',
         locationId: rows[0]?.location_id ?? '',
         locationName: locationNames.get(rows[0]?.location_id ?? '') ?? 'Unknown location',
+        hourlyRate: staff ? Number(staff.hourly_rate) : undefined,
+        contractedHours: staff ? Number(staff.contracted_hours) : undefined,
+        averageBillBenchmark: staff ? Number(staff.average_bill_benchmark) : undefined,
         colourRevenueCents,
         formulaCostCents,
         grossMarginCents,

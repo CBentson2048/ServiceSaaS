@@ -33,6 +33,7 @@ import type {
   StartPublicBookingCheckoutRequest,
   StartPublicBookingCheckoutResponse,
 } from '@sheer/domain';
+import { RebookingService } from '../rebooking/rebooking.service';
 import { StripeService, type StripePaymentIntent } from '../stripe/stripe.service';
 import type {
   PublicBookingAvailabilityQueryDto,
@@ -227,6 +228,7 @@ export class PublicBookingService {
   constructor(
     config: ConfigService,
     private readonly stripe: StripeService,
+    private readonly rebooking: RebookingService,
   ) {
     const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
@@ -402,6 +404,13 @@ export class PublicBookingService {
 
     const appointment = await this.insertMobileAppointment(request, client, context);
     await this.insertMobileAppointmentServices(appointment.id, context);
+    await this.linkClientRebookingOutcome({
+      businessId: context.location.businessId,
+      clientProfileId: client.id,
+      appointmentId: appointment.id,
+      bookedByUserProfileId: request.bookedByUserProfileId,
+      bookingSource: request.source ?? 'mobile_app',
+    });
 
     return {
       appointment: toAppointmentSummary({
@@ -507,12 +516,14 @@ export class PublicBookingService {
     );
     if (attempt.status === 'confirmed' && attempt.appointment_id) {
       await this.markDepositPaid(attempt, paymentIntent);
+      await this.linkClientRebookingOutcomeForAttempt(attempt, attempt.appointment_id);
       return;
     }
     if (attempt.status !== 'pending_payment') return;
 
     const appointment = await this.finalizePaidBookingAttempt(attempt, paymentIntent);
     await this.markDepositPaid({ ...attempt, appointment_id: appointment.id }, paymentIntent);
+    await this.linkClientRebookingOutcomeForAttempt(attempt, appointment.id);
   }
 
   async handlePaymentIntentFailed(paymentIntent: StripePaymentIntent): Promise<void> {
@@ -1607,6 +1618,42 @@ export class PublicBookingService {
       throw new InternalServerErrorException('Unable to load appointment');
     }
     return data;
+  }
+
+  private async linkClientRebookingOutcome(input: {
+    businessId: string;
+    clientProfileId: string;
+    appointmentId: string;
+    bookedByUserProfileId?: string | null;
+    bookingSource: string;
+    bookingAttemptId?: string;
+  }): Promise<void> {
+    await this.rebooking.linkLatestEligibleClientVisit({
+      businessId: input.businessId,
+      clientProfileId: input.clientProfileId,
+      rebookedAppointmentId: input.appointmentId,
+      rebookedByUserProfileId: input.bookedByUserProfileId,
+      source: 'client',
+      metadata: {
+        booking_source: input.bookingSource,
+        booking_attempt_id: input.bookingAttemptId,
+      },
+    });
+  }
+
+  private async linkClientRebookingOutcomeForAttempt(
+    attempt: BookingAttemptRow,
+    appointmentId: string,
+  ): Promise<void> {
+    await this.linkClientRebookingOutcome({
+      businessId: attempt.business_id,
+      clientProfileId: attempt.client_profile_id,
+      appointmentId,
+      bookedByUserProfileId: attempt.user_profile_id,
+      bookingSource:
+        typeof attempt.metadata?.source === 'string' ? attempt.metadata.source : 'public_booking_flow',
+      bookingAttemptId: attempt.id,
+    });
   }
 
   private async clientDetailsForAttempt(attempt: BookingAttemptRow): Promise<CreatePublicBookingRequest['client']> {

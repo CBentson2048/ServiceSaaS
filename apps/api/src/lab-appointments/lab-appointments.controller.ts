@@ -1,9 +1,17 @@
-import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
-import type { AuthUser, ListStaffBookingsResponse, StaffBookingDetail } from '@sheer/domain';
+import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import type {
+  AppointmentCompletionResponse,
+  AppointmentPaymentConfirmationRequest,
+  AppointmentPaymentConfirmationResponse,
+  AuthUser,
+  ListStaffBookingsResponse,
+  StaffBookingDetail,
+} from '@sheer/domain';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { RequireRoles, RolesGuard } from '../auth/roles.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { LabSessionService } from '../lab-session/lab-session.service';
+import { CreateStylistRebookingDto, LinkStylistRebookingDto } from './dto';
 import { LabAppointmentsService } from './lab-appointments.service';
 
 @Controller('lab/appointments')
@@ -37,6 +45,41 @@ export class LabAppointmentsController {
     @Param('id') id: string,
   ): Promise<StaffBookingDetail> {
     return this.labAppointmentsService.detail(actor, id);
+  }
+
+  @Post(':id/complete')
+  complete(
+    @CurrentUser() actor: AuthUser,
+    @Param('id') id: string,
+  ): Promise<AppointmentCompletionResponse> {
+    return this.labAppointmentsService.complete(actor, id);
+  }
+
+  @Post(':id/confirm-payment')
+  confirmPayment(
+    @CurrentUser() actor: AuthUser,
+    @Param('id') id: string,
+    @Body() body: AppointmentPaymentConfirmationRequest,
+  ): Promise<AppointmentPaymentConfirmationResponse> {
+    return this.labAppointmentsService.confirmPayment(actor, id, body);
+  }
+
+  @Post(':id/rebooking')
+  createRebooking(
+    @CurrentUser() actor: AuthUser,
+    @Param('id') id: string,
+    @Body() body: CreateStylistRebookingDto,
+  ): Promise<AppointmentCompletionResponse> {
+    return this.labAppointmentsService.createStylistRebooking(actor, id, body);
+  }
+
+  @Post(':id/rebooking/link')
+  linkRebooking(
+    @CurrentUser() actor: AuthUser,
+    @Param('id') id: string,
+    @Body() body: LinkStylistRebookingDto,
+  ): Promise<AppointmentCompletionResponse> {
+    return this.labAppointmentsService.linkStylistRebooking(actor, id, body);
   }
 }
 

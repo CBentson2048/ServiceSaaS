@@ -1,7 +1,12 @@
 import type {
   CreateMyLeaveRequest,
+  CreateStylistRebookingRequest,
   CurrentUserResponse,
+  AppointmentCompletionResponse,
+  AppointmentPaymentConfirmationRequest,
+  AppointmentPaymentConfirmationResponse,
   LeaveRequestMutationResponse,
+  LinkStylistRebookingRequest,
   ListStaffBookingsResponse,
   LoginResponse,
   MobileClientDashboardResponse,
@@ -20,6 +25,9 @@ import type {
   StartPublicBookingCheckoutResponse,
   StaffBookingDetail,
   StylistMyWeekResponse,
+  UpdateCurrentProfileRequest,
+  UpdateProfileResponse,
+  UserProfileResponse,
 } from '@sheer/domain';
 
 const API_BASE_URL = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3001').replace(/\/$/, '');
@@ -47,6 +55,21 @@ export async function logout(accessToken?: string, refreshToken?: string): Promi
     method: 'POST',
     accessToken,
     body: { refreshToken },
+  });
+}
+
+export async function getMyProfile(accessToken: string): Promise<UserProfileResponse> {
+  return request<UserProfileResponse>('/profiles/me', { accessToken });
+}
+
+export async function updateMyProfile(
+  accessToken: string,
+  payload: UpdateCurrentProfileRequest,
+): Promise<UpdateProfileResponse> {
+  return request<UpdateProfileResponse>('/profiles/me', {
+    method: 'PATCH',
+    body: payload,
+    accessToken,
   });
 }
 
@@ -99,6 +122,64 @@ export async function getBookingDetail(
   return request<StaffBookingDetail>(`/lab/appointments/${encodeURIComponent(bookingId)}`, {
     accessToken,
   });
+}
+
+export async function completeBooking(
+  accessToken: string,
+  bookingId: string,
+): Promise<AppointmentCompletionResponse> {
+  return request<AppointmentCompletionResponse>(
+    `/lab/appointments/${encodeURIComponent(bookingId)}/complete`,
+    {
+      method: 'POST',
+      accessToken,
+    },
+  );
+}
+
+export async function confirmBookingPayment(
+  accessToken: string,
+  bookingId: string,
+  payload: AppointmentPaymentConfirmationRequest,
+): Promise<AppointmentPaymentConfirmationResponse> {
+  return request<AppointmentPaymentConfirmationResponse>(
+    `/lab/appointments/${encodeURIComponent(bookingId)}/confirm-payment`,
+    {
+      method: 'POST',
+      body: payload,
+      accessToken,
+    },
+  );
+}
+
+export async function linkStylistRebooking(
+  accessToken: string,
+  bookingId: string,
+  payload: LinkStylistRebookingRequest,
+): Promise<AppointmentCompletionResponse> {
+  return request<AppointmentCompletionResponse>(
+    `/lab/appointments/${encodeURIComponent(bookingId)}/rebooking/link`,
+    {
+      method: 'POST',
+      body: payload,
+      accessToken,
+    },
+  );
+}
+
+export async function createStylistRebooking(
+  accessToken: string,
+  bookingId: string,
+  payload: CreateStylistRebookingRequest,
+): Promise<AppointmentCompletionResponse> {
+  return request<AppointmentCompletionResponse>(
+    `/lab/appointments/${encodeURIComponent(bookingId)}/rebooking`,
+    {
+      method: 'POST',
+      body: payload,
+      accessToken,
+    },
+  );
 }
 
 export type MobileDashboardResponse =

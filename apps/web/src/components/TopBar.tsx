@@ -1,4 +1,5 @@
 import { formatDate } from '@sheer/utils';
+import { Link } from 'react-router-dom';
 import { AppText } from '../design';
 import { useAuth } from '../auth/AuthProvider';
 
@@ -41,11 +42,11 @@ export function TopBar() {
           {formatDate(new Date(), { dateStyle: 'medium' })}
         </AppText>
 
-        <div className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-primary bg-primary-deepest">
+        <Link to="/profile" className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-primary bg-primary-deepest">
           <AppText variant="micro" weight="medium" className="!text-primary">
             {initials}
           </AppText>
-        </div>
+        </Link>
         <button
           className="rounded-input border border-white/15 px-3 py-1.5 text-xs font-semibold text-white/75 transition hover:bg-white/10 hover:text-white"
           type="button"

@@ -50,7 +50,7 @@ export const formulaDraftStore = {
     const row = createEmptyIngredientRow();
 
     updateDraft({
-      rows: [...currentDraft.rows, row],
+      rows: [...freezeActiveRowCapture(currentDraft.rows), row],
       activeIngredientId: row.id,
       status: 'mixing',
     });
@@ -69,12 +69,31 @@ export const formulaDraftStore = {
 
     updateDraft({ activeIngredientId: rowId, status: 'mixing' });
   },
+  startRowReweigh(rowId: string): void {
+    if (!currentDraft.rows.some((row) => row.id === rowId)) return;
+
+    const preparedRows = freezeActiveRowCapture(currentDraft.rows);
+    updateDraft({
+      rows: preparedRows.map((row) =>
+        row.id === rowId
+          ? {
+              ...row,
+              captureStatus: 'waiting',
+            }
+          : row,
+      ),
+      activeIngredientId: rowId,
+      status: 'mixing',
+    });
+  },
   updateRowMetadata(rowId: string, metadata: FormulaRowMetadataUpdate): void {
     updateRows((row) => (row.id === rowId ? { ...row, ...metadata } : row));
   },
   applyBleWeight(reading: BleWeightReading): void {
     const activeIngredientId = currentDraft.activeIngredientId;
     if (!activeIngredientId || reading.source !== 'ble') return;
+    const activeRow = currentDraft.rows.find((row) => row.id === activeIngredientId);
+    if (!activeRow || activeRow.captureStatus === 'captured') return;
 
     updateRows(
       (row) =>
@@ -83,6 +102,7 @@ export const formulaDraftStore = {
               ...row,
               capturedGrams: reading.grams,
               weightSource: 'ble',
+              captureStatus: 'live',
               capturedAt: reading.capturedAt,
             }
           : row,
@@ -99,9 +119,15 @@ export const formulaDraftStore = {
               ...row,
               capturedGrams: grams,
               weightSource: 'manual',
+              captureStatus: 'captured',
               capturedAt,
             }
-          : row,
+          : row.id === currentDraft.activeIngredientId && row.capturedGrams != null
+            ? {
+                ...row,
+                captureStatus: 'captured',
+              }
+            : row,
       { activeIngredientId: rowId, status: 'mixing' },
     );
   },
@@ -109,6 +135,7 @@ export const formulaDraftStore = {
     const savedAt = new Date().toISOString();
     const savedDraft = recalculateDraft({
       ...currentDraft,
+      rows: freezeActiveRowCapture(currentDraft.rows),
       savedAt,
       updatedAt: savedAt,
     });
@@ -124,6 +151,7 @@ export const formulaDraftStore = {
     const finalizedAt = new Date().toISOString();
     const finalizedDraft = recalculateDraft({
       ...currentDraft,
+      rows: freezeActiveRowCapture(currentDraft.rows),
       status: 'saved',
       savedAt: finalizedAt,
       finalizedAt,
@@ -238,6 +266,7 @@ function createEmptyIngredientRow(productName = ''): FormulaIngredientRow {
     id: `ingredient-${rowSequence}`,
     identityMode: 'catalogue_product',
     productName,
+    captureStatus: 'waiting',
     costBasis: {
       source: 'missing',
       currencyCode: 'GBP',
@@ -251,9 +280,24 @@ function createDuplicatedIngredientRow(source: FormulaIngredientRow): FormulaIng
   return {
     ...source,
     id: `ingredient-${rowSequence}`,
+    captureStatus: source.capturedGrams == null ? 'waiting' : 'captured',
     capturedAt: undefined,
     weightSource: undefined,
   };
+}
+
+function freezeActiveRowCapture(rows: FormulaIngredientRow[]): FormulaIngredientRow[] {
+  const activeIngredientId = currentDraft.activeIngredientId;
+  if (!activeIngredientId) return rows;
+
+  return rows.map((row) =>
+    row.id === activeIngredientId && row.capturedGrams != null
+      ? {
+          ...row,
+          captureStatus: 'captured',
+        }
+      : row,
+  );
 }
 
 function updateRows(
@@ -276,7 +320,7 @@ function updateDraft(update: Partial<FormulaDraftSession>): void {
 }
 
 function recalculateDraft(draft: FormulaDraftSession): FormulaDraftSession {
-  const costSummary = calculateFormulaCosts(draft.rows);
+  const costSummary = calculateFormulaCosts(draft.rows.map(normalizeRowCaptureStatus));
 
   return {
     ...draft,
@@ -285,6 +329,15 @@ function recalculateDraft(draft: FormulaDraftSession): FormulaDraftSession {
     totalWasteCostCents: costSummary.totalWasteCostCents,
     billableChargeCents: costSummary.totalCostCents,
     hasMissingCost: costSummary.hasMissingCost,
+  };
+}
+
+function normalizeRowCaptureStatus(row: FormulaIngredientRow): FormulaIngredientRow {
+  if (row.captureStatus) return row;
+
+  return {
+    ...row,
+    captureStatus: row.capturedGrams == null ? 'waiting' : 'captured',
   };
 }
 

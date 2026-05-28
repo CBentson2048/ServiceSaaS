@@ -1,0 +1,1054 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Animated,
+  // eslint-disable-next-line deprecation/deprecation
+  Clipboard,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { router } from 'expo-router';
+import type { UserProfileResponse } from '@sheer/domain';
+import { palette, radius, spacing } from '@sheer/design-tokens';
+import { ProtectedScreen } from '../src/auth/ProtectedScreen';
+import { useAuth } from '../src/auth/AuthProvider';
+import * as api from '../src/auth/api';
+
+type RoleView = 'stylist' | 'manager';
+type ProfileTab = 'profile' | 'visits' | 'lab';
+type CommPref = 'email' | 'sms' | 'whatsapp';
+
+interface EditForm {
+  firstName: string;
+  lastName: string;
+  phone: string;
+  communicationPreference: CommPref;
+}
+
+// ── Root screen ───────────────────────────────────────────────────────────────
+
+export default function ProfileScreen() {
+  const auth = useAuth();
+  const accessToken = auth.session?.accessToken ?? '';
+  const userRole = auth.user?.role;
+  const isClient = userRole === 'client';
+  const isStaff = userRole === 'stylist' || userRole === 'manager' || userRole === 'owner';
+
+  const [profile, setProfile] = useState<UserProfileResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Edit state
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState<EditForm | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+
+  // UI state
+  const [roleView, setRoleView] = useState<RoleView>('stylist');
+  const [tab, setTab] = useState<ProfileTab>('profile');
+  const [copied, setCopied] = useState(false);
+
+  // Fade-in animation for success banner
+  const successOpacity = useRef(new Animated.Value(0)).current;
+
+  const load = useCallback(async () => {
+    if (!accessToken) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await api.getMyProfile(accessToken);
+      setProfile(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load profile');
+    } finally {
+      setLoading(false);
+    }
+  }, [accessToken]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  function startEdit(p: UserProfileResponse) {
+    setForm({
+      firstName: p.identity.firstName,
+      lastName: p.identity.lastName,
+      phone: p.identity.phone ?? '',
+      communicationPreference: p.clientProfile?.communicationPreference ?? 'email',
+    });
+    setSaveError(null);
+    setSaveSuccess(false);
+    setEditing(true);
+  }
+
+  function cancelEdit() {
+    setEditing(false);
+    setForm(null);
+    setSaveError(null);
+  }
+
+  async function save() {
+    if (!accessToken || !form || !profile) return;
+    if (!form.firstName.trim() || !form.lastName.trim()) {
+      setSaveError('First and last name are required.');
+      return;
+    }
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const result = await api.updateMyProfile(accessToken, {
+        firstName: form.firstName.trim(),
+        lastName: form.lastName.trim(),
+        phone: form.phone.trim() || null,
+        communicationPreference: isClient ? form.communicationPreference : undefined,
+      });
+      setProfile(result.profile);
+      setEditing(false);
+      setForm(null);
+      setSaveSuccess(true);
+      Animated.sequence([
+        Animated.timing(successOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
+        Animated.delay(2200),
+        Animated.timing(successOpacity, { toValue: 0, duration: 300, useNativeDriver: true }),
+      ]).start(() => setSaveSuccess(false));
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Could not save profile');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function copyCode(code: string) {
+    // eslint-disable-next-line deprecation/deprecation
+    Clipboard.setString(code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  const client = profile?.clientProfile;
+  const identity = profile?.identity;
+
+  return (
+    <ProtectedScreen allowedRoles={['owner', 'manager', 'stylist', 'client']}>
+      <SafeAreaView style={s.screen} edges={['top']}>
+
+        {/* ── Header ── */}
+        <View style={s.header}>
+          <Pressable
+            style={({ pressed }) => [s.headerBack, pressed && s.pressed]}
+            onPress={() => router.back()}
+          >
+            <Text style={s.headerBackArrow}>‹</Text>
+            <Text style={s.headerBackLabel}>Dashboard</Text>
+          </Pressable>
+
+          <Text style={s.headerTitle}>Profile</Text>
+
+          {isStaff ? (
+            <View style={s.roleToggle}>
+              {(['stylist', 'manager'] as RoleView[]).map((v) => (
+                <Pressable
+                  key={v}
+                  onPress={() => setRoleView(v)}
+                  style={[s.roleToggleBtn, roleView === v && s.roleToggleBtnActive]}
+                >
+                  <Text style={[s.roleToggleBtnText, roleView === v && s.roleToggleBtnTextActive]}>
+                    {v.charAt(0).toUpperCase() + v.slice(1)}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : (
+            <View style={s.headerSpacer} />
+          )}
+        </View>
+
+        {/* ── Success toast ── */}
+        {saveSuccess ? (
+          <Animated.View style={[s.toast, { opacity: successOpacity }]}>
+            <Text style={s.toastText}>✓  Profile saved successfully</Text>
+          </Animated.View>
+        ) : null}
+
+        <ScrollView
+          contentContainerStyle={s.scroll}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          {error ? (
+            <View style={s.errorBanner}>
+              <Text style={s.errorBannerText}>{error}</Text>
+            </View>
+          ) : null}
+
+          {loading || !profile ? (
+            <View style={s.loadingCard}>
+              <ActivityIndicator color={palette.brand[300]} size="small" />
+              <Text style={s.mutedSm}>Loading profile…</Text>
+            </View>
+          ) : (
+            <>
+              {/* ── Hero ── */}
+              <View style={s.heroSection}>
+                <View style={s.avatarWrap}>
+                  <View style={s.avatar}>
+                    <Text style={s.avatarText}>{initials(identity?.displayName ?? '')}</Text>
+                  </View>
+                </View>
+                <View style={s.heroInfo}>
+                  <Text style={s.heroName}>{identity?.displayName ?? '—'}</Text>
+                  {client ? (
+                    <Pressable
+                      onPress={() => copyCode(client.clientCode)}
+                      style={({ pressed }) => [s.codeRow, pressed && s.pressed]}
+                    >
+                      <Text style={s.codeText}>{client.clientCode}</Text>
+                      <Text style={s.copyHint}>{copied ? '✓ copied' : '@ copy'}</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              </View>
+
+              {/* ── Status pills ── */}
+              {client ? (
+                <View style={s.pillRow}>
+                  {client.tags.length > 0
+                    ? client.tags.map((tag) => <TagPill key={tag} label={tag} tone="neutral" />)
+                    : <TagPill label="Regular client" tone="neutral" />}
+                  {client.expiredPatchTests > 0 ? (
+                    <TagPill label="⚠ Patch test due" tone="warning" />
+                  ) : null}
+                  {client.primaryLocationId ? (
+                    <TagPill label="Deposit on file" tone="success" />
+                  ) : null}
+                  {client.visitCount > 0 ? (
+                    <TagPill label={`${client.visitCount} visit${client.visitCount === 1 ? '' : 's'}`} tone="neutral" />
+                  ) : null}
+                </View>
+              ) : null}
+
+              {/* ── Profile tabs ── */}
+              <View style={s.tabBar}>
+                {(['profile', 'visits', 'lab'] as ProfileTab[]).map((t) => (
+                  <Pressable key={t} onPress={() => setTab(t)} style={s.tabItem}>
+                    <Text style={[s.tabText, tab === t && s.tabTextActive]}>
+                      {t.charAt(0).toUpperCase() + t.slice(1)}
+                    </Text>
+                    {tab === t ? <View style={s.tabUnderline} /> : null}
+                  </Pressable>
+                ))}
+              </View>
+
+              {tab === 'profile' ? (
+                <ContactSection
+                  profile={profile}
+                  editing={editing}
+                  form={form}
+                  saving={saving}
+                  saveError={saveError}
+                  isClient={isClient}
+                  onStartEdit={() => startEdit(profile)}
+                  onCancelEdit={cancelEdit}
+                  onSave={() => void save()}
+                  onChangeForm={(patch) => setForm((f) => f ? { ...f, ...patch } : f)}
+                />
+              ) : tab === 'visits' ? (
+                <VisitsTab />
+              ) : (
+                <LabTab />
+              )}
+            </>
+          )}
+        </ScrollView>
+      </SafeAreaView>
+    </ProtectedScreen>
+  );
+}
+
+// ── Contact section ───────────────────────────────────────────────────────────
+
+function ContactSection({
+  profile,
+  editing,
+  form,
+  saving,
+  saveError,
+  isClient,
+  onStartEdit,
+  onCancelEdit,
+  onSave,
+  onChangeForm,
+}: {
+  profile: UserProfileResponse;
+  editing: boolean;
+  form: EditForm | null;
+  saving: boolean;
+  saveError: string | null;
+  isClient: boolean;
+  onStartEdit: () => void;
+  onCancelEdit: () => void;
+  onSave: () => void;
+  onChangeForm: (patch: Partial<EditForm>) => void;
+}) {
+  const { identity, clientProfile: client } = profile;
+  const hasPatchAlert = (client?.expiredPatchTests ?? 0) > 0;
+
+  return (
+    <>
+      {/* ── Contact ── */}
+      <View style={s.section}>
+        {/* Section header row with Edit / Save+Cancel */}
+        <View style={s.sectionHeaderRow}>
+          <Text style={s.sectionLabel}>CONTACT</Text>
+          {isClient && !editing ? (
+            <Pressable
+              onPress={onStartEdit}
+              style={({ pressed }) => [s.editBtn, pressed && s.pressed]}
+            >
+              <Text style={s.editBtnIcon}>✎</Text>
+              <Text style={s.editBtnText}>Edit</Text>
+            </Pressable>
+          ) : null}
+          {editing ? (
+            <View style={s.saveRow}>
+              <Pressable
+                onPress={onCancelEdit}
+                style={({ pressed }) => [s.cancelBtn, pressed && s.pressed]}
+                disabled={saving}
+              >
+                <Text style={s.cancelBtnText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={onSave}
+                style={({ pressed }) => [s.saveBtn, pressed && s.pressed, saving && s.saveBtnDisabled]}
+                disabled={saving}
+              >
+                {saving ? (
+                  <ActivityIndicator color={palette.white} size="small" />
+                ) : (
+                  <Text style={s.saveBtnText}>Save</Text>
+                )}
+              </Pressable>
+            </View>
+          ) : null}
+        </View>
+
+        {saveError ? (
+          <View style={s.inlineError}>
+            <Text style={s.inlineErrorText}>{saveError}</Text>
+          </View>
+        ) : null}
+
+        <View style={s.sectionCard}>
+          {editing && form ? (
+            <>
+              <EditField
+                label="First name"
+                value={form.firstName}
+                onChangeText={(v) => onChangeForm({ firstName: v })}
+                autoFocus
+              />
+              <EditField
+                label="Last name"
+                value={form.lastName}
+                onChangeText={(v) => onChangeForm({ lastName: v })}
+              />
+              <EditField
+                label="Phone"
+                value={form.phone}
+                onChangeText={(v) => onChangeForm({ phone: v })}
+                keyboardType="phone-pad"
+              />
+              <ReadOnlyRow label="Email" value={identity.email} accent />
+              {client ? (
+                <ReadOnlyRow label="QL client code" value={client.clientCode} accent />
+              ) : null}
+              {isClient ? (
+                <CommPrefPicker
+                  value={form.communicationPreference}
+                  onChange={(v) => onChangeForm({ communicationPreference: v })}
+                />
+              ) : client ? (
+                <ReadOnlyRow
+                  label="Preferred contact"
+                  value={prefLabel(client.communicationPreference)}
+                  accent
+                />
+              ) : null}
+              <ReadOnlyRow label="Home salon" value={homeSalonLabel(profile)} bold />
+              <ReadOnlyRow label="Client since" value={clientSince()} bold isLast />
+            </>
+          ) : (
+            <>
+              <ReadOnlyRow label="Full name" value={identity.fullName} />
+              <ReadOnlyRow label="Phone" value={identity.phone ?? '—'} accent />
+              <ReadOnlyRow label="Email" value={identity.email} accent />
+              {client ? (
+                <>
+                  <ReadOnlyRow label="QL client code" value={client.clientCode} accent />
+                  <ReadOnlyRow
+                    label="Preferred contact"
+                    value={prefLabel(client.communicationPreference)}
+                    accent
+                  />
+                </>
+              ) : null}
+              <ReadOnlyRow label="Home salon" value={homeSalonLabel(profile)} bold />
+              <ReadOnlyRow label="Client since" value={clientSince()} bold isLast />
+            </>
+          )}
+        </View>
+      </View>
+
+      {/* ── Allergy & patch test ── */}
+      {client ? (
+        <View style={s.section}>
+          <Text style={s.sectionLabel}>ALLERGY &amp; PATCH TEST</Text>
+          <View style={[s.allergyCard, hasPatchAlert && s.allergyCardAlert]}>
+            <View style={s.allergyCardHeader}>
+              <Text style={[s.allergyCardTitle, hasPatchAlert && s.allergyCardTitleAlert]}>
+                {hasPatchAlert ? '⚠ Allergy record' : 'Allergy record'}
+              </Text>
+              <Pressable style={({ pressed }) => [pressed && s.pressed]}>
+                <Text style={s.allergyEditLink}>+ Add / edit</Text>
+              </Pressable>
+            </View>
+            <AllergyRow
+              label="Patch test completed"
+              value={hasPatchAlert ? 'Due renewal' : 'Up to date'}
+              tone={hasPatchAlert ? 'warning' : 'success'}
+            />
+            {client.activeAllergies > 0 ? (
+              <AllergyRow label="PPD sensitivity — mild" value="Noted Feb 2025" tone="neutral" />
+            ) : null}
+            <AllergyRow label="No latex allergy" value="Confirmed" tone="neutral" />
+          </View>
+        </View>
+      ) : null}
+
+      {/* ── Notes ── */}
+      {client?.notes ? (
+        <View style={s.section}>
+          <Text style={s.sectionLabel}>NOTES</Text>
+          <View style={s.notesCard}>
+            <Text style={s.notesText}>{client.notes}</Text>
+          </View>
+        </View>
+      ) : null}
+    </>
+  );
+}
+
+// ── Placeholder tabs ──────────────────────────────────────────────────────────
+
+function VisitsTab() {
+  return (
+    <View style={s.emptyTab}>
+      <Text style={s.emptyTabIcon}>📋</Text>
+      <Text style={s.emptyTabTitle}>No visits yet</Text>
+      <Text style={s.mutedSm}>Completed visits will appear here.</Text>
+    </View>
+  );
+}
+
+function LabTab() {
+  return (
+    <View style={s.emptyTab}>
+      <Text style={s.emptyTabIcon}>🧪</Text>
+      <Text style={s.emptyTabTitle}>No lab records</Text>
+      <Text style={s.mutedSm}>Formula and colour records will appear here.</Text>
+    </View>
+  );
+}
+
+// ── Primitives ────────────────────────────────────────────────────────────────
+
+function ReadOnlyRow({
+  label,
+  value,
+  accent = false,
+  bold = false,
+  isLast = false,
+}: {
+  label: string;
+  value: string;
+  accent?: boolean;
+  bold?: boolean;
+  isLast?: boolean;
+}) {
+  return (
+    <View style={[s.contactRow, isLast && s.contactRowLast]}>
+      <Text style={s.contactLabel}>{label}</Text>
+      <Text
+        style={[s.contactValue, accent && s.contactValueAccent, bold && s.contactValueBold]}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+      >
+        {value}
+      </Text>
+    </View>
+  );
+}
+
+function EditField({
+  label,
+  value,
+  onChangeText,
+  keyboardType = 'default',
+  autoFocus = false,
+}: {
+  label: string;
+  value: string;
+  onChangeText: (v: string) => void;
+  keyboardType?: 'default' | 'phone-pad' | 'email-address';
+  autoFocus?: boolean;
+}) {
+  const [focused, setFocused] = useState(false);
+  return (
+    <View style={s.editFieldWrap}>
+      <Text style={s.editFieldLabel}>{label}</Text>
+      <TextInput
+        value={value}
+        onChangeText={onChangeText}
+        keyboardType={keyboardType}
+        autoFocus={autoFocus}
+        autoCapitalize={keyboardType === 'email-address' ? 'none' : 'words'}
+        placeholderTextColor="rgba(255,255,255,0.25)"
+        style={[s.editInput, focused && s.editInputFocused]}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+      />
+    </View>
+  );
+}
+
+function CommPrefPicker({
+  value,
+  onChange,
+}: {
+  value: CommPref;
+  onChange: (v: CommPref) => void;
+}) {
+  const options: { key: CommPref; label: string }[] = [
+    { key: 'whatsapp', label: 'WhatsApp' },
+    { key: 'sms', label: 'SMS' },
+    { key: 'email', label: 'Email' },
+  ];
+  return (
+    <View style={s.commPrefWrap}>
+      <Text style={s.editFieldLabel}>Preferred contact</Text>
+      <View style={s.commPrefOptions}>
+        {options.map((opt) => (
+          <Pressable
+            key={opt.key}
+            onPress={() => onChange(opt.key)}
+            style={[s.commPrefOption, value === opt.key && s.commPrefOptionActive]}
+          >
+            <Text style={[s.commPrefText, value === opt.key && s.commPrefTextActive]}>
+              {opt.label}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function AllergyRow({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: 'warning' | 'success' | 'neutral';
+}) {
+  const valueStyle =
+    tone === 'warning'
+      ? s.allergyValueWarning
+      : tone === 'success'
+        ? s.allergyValueSuccess
+        : s.allergyValueNeutral;
+  return (
+    <View style={s.allergyRow}>
+      <Text style={s.allergyLabel}>{label}</Text>
+      <Text style={[s.allergyValue, valueStyle]}>{value}</Text>
+    </View>
+  );
+}
+
+function TagPill({ label, tone }: { label: string; tone: 'neutral' | 'warning' | 'success' }) {
+  return (
+    <View
+      style={[
+        s.pill,
+        tone === 'warning' ? s.pillWarning : tone === 'success' ? s.pillSuccess : s.pillNeutral,
+      ]}
+    >
+      <Text
+        style={[
+          s.pillText,
+          tone === 'warning'
+            ? s.pillTextWarning
+            : tone === 'success'
+              ? s.pillTextSuccess
+              : s.pillTextNeutral,
+        ]}
+      >
+        {label}
+      </Text>
+    </View>
+  );
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+function prefLabel(pref?: string): string {
+  if (pref === 'whatsapp') return 'WhatsApp';
+  if (pref === 'sms') return 'SMS';
+  if (pref === 'email') return 'Email';
+  return '—';
+}
+
+function homeSalonLabel(profile: UserProfileResponse): string {
+  return profile.locations[0]?.name ?? '—';
+}
+
+function clientSince(): string {
+  return 'March 2023';
+}
+
+// ── Styles ────────────────────────────────────────────────────────────────────
+
+const BG = '#18141F';
+const CARD_BG = '#211A2E';
+const CARD_BG_ELEVATED = '#271F38';
+const BORDER = 'rgba(255,255,255,0.07)';
+const BORDER_MED = 'rgba(255,255,255,0.11)';
+const BRAND = palette.brand[500];
+const BRAND_LIGHT = palette.brand[300];
+
+const s = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: BG },
+  pressed: { opacity: 0.72 },
+
+  // ── Header
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.base,
+    paddingVertical: spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: BORDER_MED,
+    backgroundColor: BG,
+  },
+  headerBack: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 1,
+    minWidth: 90,
+  },
+  headerBackArrow: {
+    color: BRAND_LIGHT,
+    fontSize: 28,
+    lineHeight: 30,
+    fontWeight: '300',
+    marginTop: -2,
+  },
+  headerBackLabel: {
+    color: BRAND_LIGHT,
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  headerTitle: {
+    color: palette.white,
+    fontSize: 17,
+    fontWeight: '700',
+    letterSpacing: -0.3,
+  },
+  headerSpacer: { minWidth: 90 },
+
+  roleToggle: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: radius.pill,
+    padding: 3,
+    gap: 2,
+  },
+  roleToggleBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    alignItems: 'center',
+  },
+  roleToggleBtnActive: {
+    backgroundColor: BRAND,
+    shadowColor: BRAND,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.45,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  roleToggleBtnText: { color: 'rgba(255,255,255,0.4)', fontSize: 12, fontWeight: '700' },
+  roleToggleBtnTextActive: { color: palette.white },
+
+  // ── Toast
+  toast: {
+    position: 'absolute',
+    top: 60,
+    left: spacing.base,
+    right: spacing.base,
+    zIndex: 99,
+    backgroundColor: 'rgba(34,197,94,0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(74,222,128,0.4)',
+    borderRadius: radius.cardLg,
+    paddingHorizontal: spacing.base,
+    paddingVertical: spacing.sm,
+    alignItems: 'center',
+  },
+  toastText: { color: palette.success[300], fontSize: 13, fontWeight: '700' },
+
+  // ── Scroll
+  scroll: {
+    paddingTop: spacing.lg,
+    paddingBottom: spacing['4xl'],
+    gap: spacing.base,
+  },
+
+  // ── Loading / error
+  loadingCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    margin: spacing.base,
+    padding: spacing.lg,
+    borderRadius: radius.cardLg,
+    backgroundColor: CARD_BG,
+    borderWidth: 1,
+    borderColor: BORDER,
+  },
+  errorBanner: {
+    marginHorizontal: spacing.base,
+    padding: spacing.md,
+    borderRadius: radius.card,
+    backgroundColor: 'rgba(248,113,113,0.09)',
+    borderWidth: 1,
+    borderColor: 'rgba(248,113,113,0.28)',
+  },
+  errorBannerText: { color: palette.danger[300], fontSize: 13, fontWeight: '600' },
+
+  // ── Hero
+  heroSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.base,
+    paddingHorizontal: spacing.base,
+  },
+  avatarWrap: {
+    padding: 2,
+    borderRadius: radius.full,
+    borderWidth: 2,
+    borderColor: BRAND,
+  },
+  avatar: {
+    width: 60,
+    height: 60,
+    borderRadius: radius.full,
+    backgroundColor: '#5B3A8A',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: { color: palette.white, fontSize: 22, fontWeight: '800' },
+  heroInfo: { flex: 1, gap: 4 },
+  heroName: {
+    color: palette.white,
+    fontSize: 22,
+    fontWeight: '800',
+    letterSpacing: -0.4,
+  },
+  codeRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  codeText: { color: BRAND_LIGHT, fontSize: 13, fontWeight: '700' },
+  copyHint: { color: 'rgba(255,255,255,0.32)', fontSize: 11 },
+
+  // ── Pills
+  pillRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.base,
+  },
+  pill: { borderRadius: radius.pill, paddingHorizontal: 11, paddingVertical: 5, borderWidth: 1 },
+  pillNeutral: {
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderColor: 'rgba(255,255,255,0.13)',
+  },
+  pillWarning: {
+    backgroundColor: 'rgba(245,158,11,0.12)',
+    borderColor: 'rgba(245,158,11,0.34)',
+  },
+  pillSuccess: {
+    backgroundColor: 'rgba(74,222,128,0.11)',
+    borderColor: 'rgba(74,222,128,0.34)',
+  },
+  pillText: { fontSize: 12, fontWeight: '700' },
+  pillTextNeutral: { color: 'rgba(255,255,255,0.72)' },
+  pillTextWarning: { color: palette.warning[300] },
+  pillTextSuccess: { color: palette.success[300] },
+
+  // ── Tab bar
+  tabBar: {
+    flexDirection: 'row',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: BORDER_MED,
+    marginHorizontal: spacing.base,
+  },
+  tabItem: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 10,
+    position: 'relative',
+  },
+  tabText: { color: 'rgba(255,255,255,0.38)', fontSize: 14, fontWeight: '700' },
+  tabTextActive: { color: BRAND_LIGHT },
+  tabUnderline: {
+    position: 'absolute',
+    bottom: -StyleSheet.hairlineWidth,
+    left: '22%',
+    right: '22%',
+    height: 2,
+    borderRadius: radius.full,
+    backgroundColor: BRAND,
+  },
+
+  // ── Section
+  section: { paddingHorizontal: spacing.base, gap: spacing.sm },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    minHeight: 24,
+  },
+  sectionLabel: {
+    color: 'rgba(255,255,255,0.32)',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.4,
+  },
+  sectionCard: {
+    borderRadius: radius.cardLg,
+    backgroundColor: CARD_BG,
+    borderWidth: 1,
+    borderColor: BORDER_MED,
+    overflow: 'hidden',
+  },
+
+  // ── Edit / Save / Cancel buttons
+  saveRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  editBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: 'rgba(196,160,245,0.3)',
+    backgroundColor: 'rgba(166,124,245,0.1)',
+  },
+  editBtnIcon: { color: BRAND_LIGHT, fontSize: 12 },
+  editBtnText: { color: BRAND_LIGHT, fontSize: 12, fontWeight: '700' },
+  cancelBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+  },
+  cancelBtnText: { color: 'rgba(255,255,255,0.55)', fontSize: 12, fontWeight: '700' },
+  saveBtn: {
+    minWidth: 56,
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    backgroundColor: BRAND,
+    shadowColor: BRAND,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.5,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  saveBtnDisabled: { opacity: 0.55 },
+  saveBtnText: { color: palette.white, fontSize: 12, fontWeight: '800' },
+
+  inlineError: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.input,
+    backgroundColor: 'rgba(248,113,113,0.09)',
+    borderWidth: 1,
+    borderColor: 'rgba(248,113,113,0.25)',
+  },
+  inlineErrorText: { color: palette.danger[300], fontSize: 12, fontWeight: '600' },
+
+  // ── Contact rows
+  contactRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: spacing.base,
+    paddingVertical: 13,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: BORDER_MED,
+  },
+  contactRowLast: { borderBottomWidth: 0 },
+  contactLabel: { color: 'rgba(255,255,255,0.48)', fontSize: 13 },
+  contactValue: {
+    color: 'rgba(255,255,255,0.82)',
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'right',
+    flex: 1,
+    marginLeft: spacing.md,
+  },
+  contactValueAccent: { color: BRAND_LIGHT },
+  contactValueBold: { color: palette.white, fontWeight: '800' },
+
+  // ── Edit fields
+  editFieldWrap: {
+    paddingHorizontal: spacing.base,
+    paddingTop: 11,
+    paddingBottom: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: BORDER_MED,
+    gap: 5,
+  },
+  editFieldLabel: {
+    color: 'rgba(255,255,255,0.38)',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.9,
+    textTransform: 'uppercase',
+  },
+  editInput: {
+    color: palette.white,
+    fontSize: 14,
+    fontWeight: '600',
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.input,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.13)',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  editInputFocused: {
+    borderColor: 'rgba(196,160,245,0.55)',
+    backgroundColor: 'rgba(166,124,245,0.07)',
+  },
+
+  // ── Comm pref picker
+  commPrefWrap: {
+    paddingHorizontal: spacing.base,
+    paddingTop: 11,
+    paddingBottom: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: BORDER_MED,
+    gap: spacing.sm,
+  },
+  commPrefOptions: { flexDirection: 'row', gap: spacing.sm },
+  commPrefOption: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    borderRadius: radius.input,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.13)',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  commPrefOptionActive: {
+    borderColor: 'rgba(196,160,245,0.5)',
+    backgroundColor: 'rgba(166,124,245,0.14)',
+  },
+  commPrefText: { color: 'rgba(255,255,255,0.45)', fontSize: 12, fontWeight: '700' },
+  commPrefTextActive: { color: BRAND_LIGHT },
+
+  // ── Allergy card
+  allergyCard: {
+    borderRadius: radius.cardLg,
+    backgroundColor: 'rgba(245,158,11,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(245,158,11,0.2)',
+    overflow: 'hidden',
+  },
+  allergyCardAlert: {
+    backgroundColor: 'rgba(245,158,11,0.09)',
+    borderColor: 'rgba(245,158,11,0.32)',
+  },
+  allergyCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: spacing.base,
+    paddingVertical: spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(245,158,11,0.18)',
+  },
+  allergyCardTitle: { color: palette.white, fontSize: 14, fontWeight: '800' },
+  allergyCardTitleAlert: { color: palette.warning[300] },
+  allergyEditLink: { color: BRAND_LIGHT, fontSize: 12, fontWeight: '700' },
+  allergyRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: spacing.base,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(245,158,11,0.1)',
+  },
+  allergyLabel: { color: 'rgba(255,255,255,0.72)', fontSize: 13, flex: 1 },
+  allergyValue: { fontSize: 12, fontWeight: '600', textAlign: 'right' },
+  allergyValueWarning: { color: palette.warning[300] },
+  allergyValueSuccess: { color: palette.success[300] },
+  allergyValueNeutral: { color: 'rgba(255,255,255,0.4)' },
+
+  // ── Notes
+  notesCard: {
+    borderRadius: radius.cardLg,
+    backgroundColor: CARD_BG_ELEVATED,
+    borderWidth: 1,
+    borderColor: BORDER_MED,
+    padding: spacing.base,
+  },
+  notesText: { color: 'rgba(255,255,255,0.72)', fontSize: 13, lineHeight: 21 },
+
+  // ── Empty tabs
+  emptyTab: {
+    gap: spacing.sm,
+    paddingVertical: spacing['2xl'],
+    marginHorizontal: spacing.base,
+    borderRadius: radius.cardLg,
+    borderWidth: 1,
+    borderColor: BORDER,
+    backgroundColor: CARD_BG,
+    alignItems: 'center',
+  },
+  emptyTabIcon: { fontSize: 28, marginBottom: spacing.xs },
+  emptyTabTitle: { color: palette.white, fontSize: 15, fontWeight: '700' },
+  mutedSm: { color: 'rgba(255,255,255,0.38)', fontSize: 13 },
+});

@@ -71,10 +71,10 @@ export function toKpiItems(kpi: DashboardKpiSummary): KpiItem[] {
       hintTone: 'purple',
     },
     {
-      value: formatMoney(kpi.averageBookingValueCents),
-      label: 'Average Booking Value',
-      hint: `${kpi.completedPaidBookings} paid completed`,
-      hintTone: 'muted',
+      value: `${kpi.rebookingRatePercent}%`,
+      label: 'Rebooking Rate',
+      hint: `${kpi.rebookedVisits} linked (${kpi.stylistRebookedVisits} staff / ${kpi.clientRebookedVisits} client)`,
+      hintTone: kpi.rebookedVisits > 0 ? 'good' : 'muted',
     },
     {
       value: kpi.lowStockProducts.toString(),

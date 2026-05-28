@@ -16,6 +16,7 @@ import { LocationsModule } from './locations/locations.module';
 import { MobileDashboardModule } from './mobile-dashboard/mobile-dashboard.module';
 import { OwnerBookingSettingsModule } from './owner-booking-settings/owner-booking-settings.module';
 import { OwnerOnboardingModule } from './owner-onboarding/owner-onboarding.module';
+import { ProfileModule } from './profile/profile.module';
 import { PublicBookingModule } from './public-booking/public-booking.module';
 import { RotaModule } from './rota/rota.module';
 import { StaffModule } from './staff/staff.module';
@@ -31,6 +32,7 @@ import { validateEnv } from './config/env.validation';
     }),
     AuthModule,
     OwnerOnboardingModule,
+    ProfileModule,
     StaffModule,
     LocationsModule,
     OwnerBookingSettingsModule,

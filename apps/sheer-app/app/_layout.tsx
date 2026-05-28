@@ -20,7 +20,9 @@ export default function RootLayout() {
           >
             <Stack.Screen name="index" options={{ title: 'Sheer App' }} />
             <Stack.Screen name="login" options={{ title: 'Sign in' }} />
-            <Stack.Screen name="dashboard" options={{ title: 'Dashboard' }} />
+            <Stack.Screen name="dashboard" options={{ headerShown: false }} />
+            <Stack.Screen name="client/visits" options={{ headerShown: false }} />
+            <Stack.Screen name="profile" options={{ headerShown: false }} />
             <Stack.Screen name="bookings" options={{ title: 'Bookings' }} />
             <Stack.Screen name="rota" options={{ title: 'Rota' }} />
             <Stack.Screen name="performance" options={{ title: 'Performance' }} />

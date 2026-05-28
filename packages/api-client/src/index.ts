@@ -32,11 +32,21 @@ import type {
   UpdateStaffMemberRequest,
   UpdateStaffMemberResponse,
   ListStaffBookingsResponse,
+  AppointmentCompletionResponse,
+  AppointmentPaymentConfirmationRequest,
+  AppointmentPaymentConfirmationResponse,
+  CreateStylistRebookingRequest,
+  LinkStylistRebookingRequest,
   StaffBookingDetail,
   LabPinMutationResponse,
   ListLabPinStatusesResponse,
   ResetLabPinRequest,
   SetLabPinRequest,
+  AdminUpdateProfileRequest,
+  ListProfilesResponse,
+  UpdateCurrentProfileRequest,
+  UpdateProfileResponse,
+  UserProfileResponse,
 } from '@sheer/domain';
 import type {
   FormulaDraft,
@@ -53,6 +63,7 @@ export interface ApiClientOptions {
 
 export interface ApiClient {
   auth: AuthClient;
+  profiles: ProfileClient;
   ownerOnboarding: OwnerOnboardingClient;
   ownerStaff: OwnerStaffClient;
   staffInvitations: PublicStaffInvitationClient;
@@ -72,6 +83,15 @@ export interface AuthClient {
   logout: (payload?: LogoutRequest) => Promise<void>;
   me: () => Promise<CurrentUserResponse>;
   refresh: (payload: RefreshSessionRequest) => Promise<LoginResponse>;
+}
+
+export interface ProfileClient {
+  me: () => Promise<UserProfileResponse>;
+  updateMe: (payload: UpdateCurrentProfileRequest) => Promise<UpdateProfileResponse>;
+  list: (params?: { locationId?: string; kind?: 'staff' | 'client'; q?: string }) => Promise<ListProfilesResponse>;
+  update: (userProfileId: string, payload: AdminUpdateProfileRequest) => Promise<UpdateProfileResponse>;
+  client: (clientProfileId: string) => Promise<UserProfileResponse>;
+  staff: (staffProfileId: string) => Promise<UserProfileResponse>;
 }
 
 export interface OwnerOnboardingClient {
@@ -139,6 +159,19 @@ export interface LabAppointmentClient {
   todayForSession: (sessionId: string) => Promise<ListStaffBookingsResponse>;
   detail: (appointmentId: string) => Promise<StaffBookingDetail>;
   detailForSession: (sessionId: string, appointmentId: string) => Promise<StaffBookingDetail>;
+  complete: (appointmentId: string) => Promise<AppointmentCompletionResponse>;
+  confirmPayment: (
+    appointmentId: string,
+    payload: AppointmentPaymentConfirmationRequest,
+  ) => Promise<AppointmentPaymentConfirmationResponse>;
+  linkRebooking: (
+    appointmentId: string,
+    payload: LinkStylistRebookingRequest,
+  ) => Promise<AppointmentCompletionResponse>;
+  createRebooking: (
+    appointmentId: string,
+    payload: CreateStylistRebookingRequest,
+  ) => Promise<AppointmentCompletionResponse>;
 }
 
 export interface LabFormulaClient {
@@ -187,6 +220,15 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       logout: (payload = {}) => request('/auth/logout', { method: 'POST', body: payload }),
       me: () => request('/auth/me'),
       refresh: (payload) => request('/auth/refresh', { method: 'POST', body: payload }),
+    },
+    profiles: {
+      me: () => request('/profiles/me'),
+      updateMe: (payload) => request('/profiles/me', { method: 'PATCH', body: payload }),
+      list: (params = {}) => request(`/profiles${toQueryString(params)}`),
+      update: (userProfileId, payload) =>
+        request(`/profiles/${encodeURIComponent(userProfileId)}`, { method: 'PATCH', body: payload }),
+      client: (clientProfileId) => request(`/profiles/clients/${encodeURIComponent(clientProfileId)}`),
+      staff: (staffProfileId) => request(`/profiles/staff/${encodeURIComponent(staffProfileId)}`),
     },
     ownerOnboarding: {
       bootstrap: () => request('/owner/onboarding/bootstrap'),
@@ -270,6 +312,23 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         request(
           `/lab/appointments/session/${encodeURIComponent(sessionId)}/${encodeURIComponent(appointmentId)}`,
         ),
+      complete: (appointmentId) =>
+        request(`/lab/appointments/${encodeURIComponent(appointmentId)}/complete`, { method: 'POST' }),
+      confirmPayment: (appointmentId, payload) =>
+        request(`/lab/appointments/${encodeURIComponent(appointmentId)}/confirm-payment`, {
+          method: 'POST',
+          body: payload,
+        }),
+      linkRebooking: (appointmentId, payload) =>
+        request(`/lab/appointments/${encodeURIComponent(appointmentId)}/rebooking/link`, {
+          method: 'POST',
+          body: payload,
+        }),
+      createRebooking: (appointmentId, payload) =>
+        request(`/lab/appointments/${encodeURIComponent(appointmentId)}/rebooking`, {
+          method: 'POST',
+          body: payload,
+        }),
     },
     labFormulas: {
       start: (payload) => request('/lab/formulas/start', { method: 'POST', body: payload }),
