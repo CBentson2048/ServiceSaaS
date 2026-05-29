@@ -3,13 +3,22 @@ import {
   Injectable,
   InternalServerErrorException,
   Logger,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { createHash, randomBytes } from 'node:crypto';
-import type { AuthUser, LabDeviceRegistrationResponse, LabDeviceResolveResponse, SharedDevice } from '@sheer/domain';
-import type { PairScaleDto, RegisterLabDeviceDto } from './dto';
+import type {
+  AuthUser,
+  LabDeviceMutationResponse,
+  LabDeviceRegistrationResponse,
+  LabDeviceResolveResponse,
+  ListLabDevicesResponse,
+  SharedDevice,
+  SharedDeviceSummary,
+} from '@sheer/domain';
+import type { PairScaleDto, RegisterLabDeviceDto, RevokeLabDeviceDto } from './dto';
 
 interface SharedDeviceRow {
   id: string;
@@ -22,6 +31,10 @@ interface SharedDeviceRow {
   status: 'registered' | 'active' | 'inactive' | 'revoked';
   registered_at: string;
   last_seen_at: string | null;
+}
+
+interface SharedDeviceWithLocationRow extends SharedDeviceRow {
+  locations: { name: string } | { name: string }[] | null;
 }
 
 interface LocationRow {
@@ -78,6 +91,77 @@ export class LabDeviceService {
       device: toSharedDevice(data),
       deviceSessionToken: token,
     };
+  }
+
+  async list(actor: AuthUser): Promise<ListLabDevicesResponse> {
+    this.assertCanManage(actor);
+
+    let query = this.admin
+      .schema('core')
+      .from('shared_devices')
+      .select(SHARED_DEVICE_WITH_LOCATION_COLUMNS)
+      .eq('business_id', actor.businessId)
+      .eq('app_mode', 'sheer_lab')
+      .order('registered_at', { ascending: false });
+
+    if (actor.role === 'manager') {
+      query = query.in('location_id', actor.allowedLocationIds.length > 0 ? actor.allowedLocationIds : ['']);
+    }
+
+    const { data, error } = await query.returns<SharedDeviceWithLocationRow[]>();
+    if (error) {
+      this.logger.error(`list failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load Sheer Lab devices');
+    }
+
+    return {
+      devices: (data ?? []).map(toSharedDeviceSummary),
+      scope: actor.role === 'owner' ? 'owner' : 'manager',
+    };
+  }
+
+  async revoke(actor: AuthUser, dto: RevokeLabDeviceDto): Promise<LabDeviceMutationResponse> {
+    this.assertCanManage(actor);
+
+    const { data: existing, error: lookupError } = await this.admin
+      .schema('core')
+      .from('shared_devices')
+      .select(SHARED_DEVICE_COLUMNS)
+      .eq('id', dto.deviceId)
+      .eq('business_id', actor.businessId)
+      .eq('app_mode', 'sheer_lab')
+      .maybeSingle<SharedDeviceRow>();
+
+    if (lookupError) {
+      this.logger.error(`revoke lookup failed: ${lookupError.message}`);
+      throw new InternalServerErrorException('Unable to revoke Sheer Lab device');
+    }
+    if (!existing) throw new NotFoundException('Sheer Lab device not found');
+    if (actor.role === 'manager' && !actor.allowedLocationIds.includes(existing.location_id)) {
+      throw new ForbiddenException('Cannot revoke a device outside your location scope');
+    }
+    if (existing.status === 'revoked') {
+      const location = await this.fetchLocation(existing.business_id, existing.location_id);
+      return { device: { ...toSharedDevice(existing), locationName: location.name } };
+    }
+
+    const { data, error } = await this.admin
+      .schema('core')
+      .from('shared_devices')
+      .update({ status: 'revoked', device_session_token_hash: null })
+      .eq('id', dto.deviceId)
+      .eq('business_id', actor.businessId)
+      .select(SHARED_DEVICE_WITH_LOCATION_COLUMNS)
+      .single<SharedDeviceWithLocationRow>();
+
+    if (error || !data) {
+      this.logger.error(`revoke failed: ${error?.message ?? 'no row'}`);
+      throw new InternalServerErrorException('Unable to revoke Sheer Lab device');
+    }
+
+    await this.writeAuditEvent(data, 'device_revoked', { revokedBy: actor.id });
+
+    return { device: toSharedDeviceSummary(data) };
   }
 
   async resolve(deviceSessionToken: string | undefined): Promise<LabDeviceResolveResponse> {
@@ -140,6 +224,12 @@ export class LabDeviceService {
     return { pairingStatus: 'unpaired' };
   }
 
+  private assertCanManage(actor: AuthUser): void {
+    if (actor.role !== 'owner' && actor.role !== 'manager') {
+      throw new ForbiddenException('Role is not allowed to manage Sheer Lab devices');
+    }
+  }
+
   private assertCanManageDevice(actor: AuthUser, businessId: string, locationId: string): void {
     if (actor.role !== 'owner' && actor.role !== 'manager') {
       throw new ForbiddenException('Role is not allowed to register Sheer Lab devices');
@@ -198,6 +288,8 @@ export class LabDeviceService {
 const SHARED_DEVICE_COLUMNS =
   'id,business_id,location_id,device_name,device_type,station_label,app_mode,status,registered_at,last_seen_at';
 
+const SHARED_DEVICE_WITH_LOCATION_COLUMNS = `${SHARED_DEVICE_COLUMNS},locations(name)`;
+
 function generateDeviceToken(): string {
   return `sld_${randomBytes(32).toString('base64url')}`;
 }
@@ -214,5 +306,13 @@ function toSharedDevice(row: SharedDeviceRow): SharedDevice {
     status: row.status,
     registeredAt: row.registered_at,
     lastSeenAt: row.last_seen_at ?? undefined,
+  };
+}
+
+function toSharedDeviceSummary(row: SharedDeviceWithLocationRow): SharedDeviceSummary {
+  const location = Array.isArray(row.locations) ? row.locations[0] : row.locations;
+  return {
+    ...toSharedDevice(row),
+    locationName: location?.name ?? 'Unknown location',
   };
 }

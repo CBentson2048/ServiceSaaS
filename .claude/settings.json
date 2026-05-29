@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm --filter @sheer/domain build)",
+      "Bash(pnpm --filter @sheer/api typecheck)",
+      "Bash(pnpm --filter @sheer/sheer-app typecheck)",
+      "Bash(pnpm --filter @sheer/sheer-app lint)",
+      "Bash(npx eslint *)",
+      "Bash(echo \"exit:$?\")",
+      "Bash(pnpm typecheck *)",
+      "Bash(echo \"lint-exit:$?\")",
+      "Bash(pnpm lint *)",
+      "Bash(echo \"exit: $?\")"
+    ]
+  }
+}

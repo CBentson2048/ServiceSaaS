@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   // eslint-disable-next-line deprecation/deprecation
   Clipboard,
@@ -12,6 +13,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import type { UserProfileResponse } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
@@ -38,6 +40,8 @@ export default function ProfileScreen() {
   const userRole = auth.user?.role;
   const isClient = userRole === 'client';
   const isStaff = userRole === 'stylist' || userRole === 'manager' || userRole === 'owner';
+
+  const [signingOut, setSigningOut] = useState(false);
 
   const [profile, setProfile] = useState<UserProfileResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -130,6 +134,24 @@ export default function ProfileScreen() {
     Clipboard.setString(code);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  }
+
+  async function performSignOut() {
+    setSigningOut(true);
+    try {
+      await auth.signOut();
+      // ProtectedScreen redirects to login once the session is cleared.
+    } finally {
+      setSigningOut(false);
+    }
+  }
+
+  function confirmSignOut() {
+    if (signingOut) return;
+    Alert.alert('Sign out', 'Are you sure you want to sign out of your account?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Sign out', style: 'destructive', onPress: () => void performSignOut() },
+    ]);
   }
 
   const client = profile?.clientProfile;
@@ -264,6 +286,25 @@ export default function ProfileScreen() {
               ) : (
                 <LabTab />
               )}
+
+              {/* ── Account actions ── */}
+              <View style={s.accountSection}>
+                <Text style={s.sectionLabel}>ACCOUNT</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Sign out"
+                  onPress={confirmSignOut}
+                  disabled={signingOut}
+                  style={({ pressed }) => [s.signOutBtn, pressed && s.pressed, signingOut && s.signOutBtnDisabled]}
+                >
+                  {signingOut ? (
+                    <ActivityIndicator color={palette.danger[300]} size="small" />
+                  ) : (
+                    <Ionicons name="log-out-outline" size={18} color={palette.danger[300]} />
+                  )}
+                  <Text style={s.signOutBtnText}>{signingOut ? 'Signing out…' : 'Sign out'}</Text>
+                </Pressable>
+              </View>
             </>
           )}
         </ScrollView>
@@ -1051,4 +1092,24 @@ const s = StyleSheet.create({
   emptyTabIcon: { fontSize: 28, marginBottom: spacing.xs },
   emptyTabTitle: { color: palette.white, fontSize: 15, fontWeight: '700' },
   mutedSm: { color: 'rgba(255,255,255,0.38)', fontSize: 13 },
+
+  // ── Account actions
+  accountSection: {
+    paddingHorizontal: spacing.base,
+    paddingTop: spacing.sm,
+    gap: spacing.sm,
+  },
+  signOutBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    paddingVertical: 14,
+    borderRadius: radius.cardLg,
+    borderWidth: 1,
+    borderColor: 'rgba(248,113,113,0.32)',
+    backgroundColor: 'rgba(248,113,113,0.09)',
+  },
+  signOutBtnDisabled: { opacity: 0.6 },
+  signOutBtnText: { color: palette.danger[300], fontSize: 15, fontWeight: '700' },
 });

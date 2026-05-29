@@ -5,7 +5,15 @@
       "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\(JSON.stringify\\({scripts:p.scripts, jest:p.jest},null,2\\)\\)\")",
       "Bash(xargs ls -la)",
       "Bash(ls design/components)",
-      "Bash(ls design *)"
+      "Bash(ls design *)",
+      "Bash(xargs -n1 basename)",
+      "Bash(node -e \"console.log\\(require.resolve\\('@expo/vector-icons', {paths:['apps/sheer-app']}\\)\\)\")",
+      "Bash(pnpm install *)",
+      "Bash(pnpm run *)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(pnpm exec *)",
+      "Bash(echo \"TC_EXIT:$?\")",
+      "Bash(echo \"LINT_EXIT:$?\")"
     ]
   }
 }

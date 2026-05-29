@@ -15,6 +15,11 @@ export class RegisterLabDeviceDto {
   stationLabel?: string;
 }
 
+export class RevokeLabDeviceDto {
+  @IsUUID()
+  deviceId!: string;
+}
+
 export class PairScaleDto {
   @IsString()
   bleDeviceIdentifier!: string;
