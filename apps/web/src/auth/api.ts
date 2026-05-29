@@ -21,7 +21,9 @@ import type {
   DashboardStylistPerformanceResponse,
   DashboardTopServicesResponse,
   CreateLocationRequest,
+  LabDeviceMutationResponse,
   LabDeviceRegistrationResponse,
+  ListLabDevicesResponse,
   InventoryProductResponse,
   InventoryStockMutationResponse,
   CreateShiftRequest,
@@ -441,6 +443,21 @@ export async function registerLabDevice(
   payload: { businessId: string; locationId: string; deviceName: string; stationLabel?: string },
 ): Promise<LabDeviceRegistrationResponse> {
   return request<LabDeviceRegistrationResponse>('/lab/device/register', {
+    method: 'POST',
+    accessToken,
+    body: payload,
+  });
+}
+
+export async function listLabDevices(accessToken: string): Promise<ListLabDevicesResponse> {
+  return request<ListLabDevicesResponse>('/lab/device/list', { accessToken });
+}
+
+export async function revokeLabDevice(
+  accessToken: string,
+  payload: { deviceId: string },
+): Promise<LabDeviceMutationResponse> {
+  return request<LabDeviceMutationResponse>('/lab/device/revoke', {
     method: 'POST',
     accessToken,
     body: payload,

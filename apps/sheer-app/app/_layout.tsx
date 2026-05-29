@@ -26,11 +26,9 @@ export default function RootLayout() {
             <Stack.Screen name="bookings" options={{ title: 'Bookings' }} />
             <Stack.Screen name="rota" options={{ title: 'Rota' }} />
             <Stack.Screen name="performance" options={{ title: 'Performance' }} />
-            <Stack.Screen name="booking/location" options={{ title: 'Book appointment' }} />
-            <Stack.Screen name="booking/services" options={{ title: 'Choose services' }} />
-            <Stack.Screen name="booking/upgrades" options={{ title: 'Upgrades' }} />
-            <Stack.Screen name="booking/stylist" options={{ title: 'Choose stylist' }} />
-            <Stack.Screen name="booking/date-time" options={{ title: 'Choose time' }} />
+            <Stack.Screen name="booking/location" options={{ headerShown: false }} />
+            <Stack.Screen name="booking/services" options={{ headerShown: false }} />
+            <Stack.Screen name="booking/date-time" options={{ headerShown: false }} />
             <Stack.Screen name="booking/review" options={{ title: 'Review booking' }} />
             <Stack.Screen name="booking/success" options={{ title: 'Booking confirmed' }} />
           </Stack>

@@ -884,6 +884,23 @@ export interface LabDeviceResolveResponse {
   location: BusinessLocationSummary;
 }
 
+export interface SharedDeviceSummary extends SharedDevice {
+  locationName: string;
+}
+
+export interface ListLabDevicesResponse {
+  devices: SharedDeviceSummary[];
+  scope: 'owner' | 'manager';
+}
+
+export interface RevokeLabDeviceRequest {
+  deviceId: string;
+}
+
+export interface LabDeviceMutationResponse {
+  device: SharedDeviceSummary;
+}
+
 export type SheerLabAnalyticsRange = 'today' | 'week' | 'month';
 
 export interface SheerLabAnalyticsSummary {
@@ -1287,6 +1304,13 @@ export interface PublicBookingLocationSummary {
   appointmentSlotMinutes: number;
   allowNextAvailable: boolean;
   cancellationNoticeHours?: number;
+  addressLine1?: string;
+  addressLine2?: string;
+  city?: string;
+  region?: string;
+  postalCode?: string;
+  countryCode?: string;
+  phone?: string;
 }
 
 export interface PublicBookingServiceSummary {

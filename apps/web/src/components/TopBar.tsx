@@ -1,17 +1,45 @@
-import { formatDate } from '@sheer/utils';
-import { Link } from 'react-router-dom';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { formatDate, cn } from '@sheer/utils';
+import { useNavigate } from 'react-router-dom';
 import { AppText } from '../design';
 import { useAuth } from '../auth/AuthProvider';
 
 export function TopBar() {
   const { signOut, user } = useAuth();
+  const navigate = useNavigate();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const fullName = user?.profile.fullName ?? 'Sheer user';
+  const avatarUrl = user?.profile.avatarUrl;
   const initials =
-    user?.profile.fullName
+    fullName
       .split(' ')
       .map((part) => part[0])
+      .filter(Boolean)
       .join('')
       .slice(0, 2)
       .toUpperCase() || 'SH';
+  const roleLabel = user?.role === 'owner' ? 'Full business access' : 'Location scoped';
+
+  // Close the dropdown on outside click or Escape.
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onPointerDown(event: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setMenuOpen(false);
+    }
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [menuOpen]);
 
   return (
     <header className="flex h-14 shrink-0 items-center justify-between bg-surface-ink px-6 text-text-on-primary">
@@ -30,31 +58,143 @@ export function TopBar() {
       </AppText>
 
       <div className="flex items-center gap-4">
-        <div className="hidden text-right md:block">
-          <AppText as="div" variant="micro" uppercase className="!text-white/45">
-            {user?.role === 'owner' ? 'Full business access' : 'Location scoped'}
-          </AppText>
-          <AppText as="div" variant="caption" className="!text-white/80">
-            {user?.profile.fullName}
-          </AppText>
-        </div>
         <AppText as="div" variant="caption" className="!text-white/55 md:hidden">
           {formatDate(new Date(), { dateStyle: 'medium' })}
         </AppText>
 
-        <Link to="/profile" className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-primary bg-primary-deepest">
-          <AppText variant="micro" weight="medium" className="!text-primary">
-            {initials}
-          </AppText>
-        </Link>
-        <button
-          className="rounded-input border border-white/15 px-3 py-1.5 text-xs font-semibold text-white/75 transition hover:bg-white/10 hover:text-white"
-          type="button"
-          onClick={() => void signOut()}
-        >
-          Logout
-        </button>
+        <div ref={menuRef} className="relative">
+          <button
+            type="button"
+            onClick={() => setMenuOpen((open) => !open)}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            aria-label="Open account menu"
+            className={cn(
+              'flex items-center gap-2.5 rounded-pill border border-white/10 py-1 pl-1 pr-2.5 transition-colors',
+              menuOpen ? 'bg-white/10' : 'hover:bg-white/[0.07]',
+            )}
+          >
+            {/* Avatar: shows the user's image when available, otherwise initials. */}
+            {avatarUrl ? (
+              <img
+                src={avatarUrl}
+                alt={fullName}
+                className="h-8 w-8 rounded-full border-2 border-primary object-cover"
+              />
+            ) : (
+              <span className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-primary bg-primary-deepest">
+                <AppText variant="micro" weight="medium" className="!text-primary">
+                  {initials}
+                </AppText>
+              </span>
+            )}
+            <span className="hidden text-left leading-tight md:block">
+              <AppText as="span" variant="caption" weight="medium" className="block !text-white/90">
+                {fullName}
+              </AppText>
+              <AppText as="span" variant="micro" uppercase className="block !text-white/45">
+                {roleLabel}
+              </AppText>
+            </span>
+            <svg
+              viewBox="0 0 12 12"
+              aria-hidden="true"
+              className={cn(
+                'hidden h-3 w-3 text-white/50 transition-transform md:block',
+                menuOpen && 'rotate-180',
+              )}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="m3 4.5 3 3 3-3" />
+            </svg>
+          </button>
+
+          {menuOpen ? (
+            <div
+              role="menu"
+              className="absolute right-0 z-50 mt-2 w-60 overflow-hidden rounded-card-lg border border-border bg-surface shadow-modal"
+            >
+              <div className="border-b border-border-divider px-4 py-3">
+                <AppText as="div" variant="caption" weight="medium" tone="primary" className="truncate">
+                  {fullName}
+                </AppText>
+                <AppText as="div" variant="micro" tone="secondary" className="truncate">
+                  {user?.profile.email}
+                </AppText>
+              </div>
+              <div className="p-1.5">
+                <MenuItem
+                  onClick={() => {
+                    setMenuOpen(false);
+                    navigate('/profile');
+                  }}
+                  icon={
+                    <path d="M10 10a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm0 1.5c-3.04 0-5.5 1.79-5.5 4v.5a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-.5c0-2.21-2.46-4-5.5-4Z" />
+                  }
+                >
+                  Profile
+                </MenuItem>
+                <MenuItem
+                  tone="danger"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    void signOut();
+                  }}
+                  icon={
+                    <path d="M7.5 4.5v-.75A1.25 1.25 0 0 1 8.75 2.5h5A1.25 1.25 0 0 1 15 3.75v12.5a1.25 1.25 0 0 1-1.25 1.25h-5a1.25 1.25 0 0 1-1.25-1.25V15.5M3 10h8.5m0 0L9 7.5m2.5 2.5L9 12.5" />
+                  }
+                >
+                  Logout
+                </MenuItem>
+              </div>
+            </div>
+          ) : null}
+        </div>
       </div>
     </header>
+  );
+}
+
+function MenuItem({
+  children,
+  onClick,
+  icon,
+  tone = 'default',
+}: {
+  children: ReactNode;
+  onClick: () => void;
+  icon: ReactNode;
+  tone?: 'default' | 'danger';
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onClick}
+      className={cn(
+        'flex w-full items-center gap-2.5 rounded-input px-3 py-2 text-left text-[14px] font-medium transition-colors',
+        tone === 'danger'
+          ? 'text-danger hover:bg-danger-soft'
+          : 'text-text-primary hover:bg-surface-alt',
+      )}
+    >
+      <svg
+        viewBox="0 0 20 20"
+        aria-hidden="true"
+        className="h-[18px] w-[18px] shrink-0"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        {icon}
+      </svg>
+      {children}
+    </button>
   );
 }

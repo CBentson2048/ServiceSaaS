@@ -48,6 +48,13 @@ interface LocationRow {
   slug: string;
   timezone: string;
   is_active: boolean;
+  address_line_1: string | null;
+  address_line_2: string | null;
+  city: string | null;
+  region: string | null;
+  postal_code: string | null;
+  country_code: string | null;
+  phone: string | null;
   businesses: { slug: string; default_currency_code: string } | { slug: string; default_currency_code: string }[] | null;
   location_settings: {
     online_booking_enabled: boolean;
@@ -199,7 +206,7 @@ interface DepositRow {
 }
 
 const LOCATION_COLUMNS =
-  'id,business_id,name,slug,timezone,is_active,businesses!inner(slug,default_currency_code),location_settings(online_booking_enabled,allow_next_available,appointment_slot_minutes,same_day_booking_cutoff_minutes,cancellation_notice_hours,currency_code)';
+  'id,business_id,name,slug,timezone,is_active,address_line_1,address_line_2,city,region,postal_code,country_code,phone,businesses!inner(slug,default_currency_code),location_settings(online_booking_enabled,allow_next_available,appointment_slot_minutes,same_day_booking_cutoff_minutes,cancellation_notice_hours,currency_code)';
 const SERVICE_COLUMNS =
   'id,business_id,location_id,name,description,category,estimated_duration_minutes,base_price,deposit_type,deposit_value,is_active,sort_order';
 const STAFF_COLUMNS = 'id,display_name,color_hex,bio';
@@ -1846,6 +1853,13 @@ function toLocationSummary(row: LocationRow): PublicBookingLocationSummary {
     appointmentSlotMinutes: settings?.appointment_slot_minutes ?? 15,
     allowNextAvailable: settings?.allow_next_available ?? true,
     cancellationNoticeHours: settings?.cancellation_notice_hours,
+    addressLine1: row.address_line_1 ?? undefined,
+    addressLine2: row.address_line_2 ?? undefined,
+    city: row.city ?? undefined,
+    region: row.region ?? undefined,
+    postalCode: row.postal_code ?? undefined,
+    countryCode: row.country_code ?? undefined,
+    phone: row.phone ?? undefined,
   };
 }
 

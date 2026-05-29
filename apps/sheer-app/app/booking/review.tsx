@@ -1,8 +1,11 @@
 import { useState } from 'react';
-import { Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Redirect, router } from 'expo-router';
 import { useStripe } from '@stripe/stripe-react-native';
-import { AppButton, Card, Screen, SectionHeader } from '@sheer/ui-mobile';
+import type { PublicBookingServiceSummary } from '@sheer/domain';
+import { palette, spacing } from '@sheer/design-tokens';
+import { AppButton } from '@sheer/ui-mobile';
 import { ProtectedScreen } from '../../src/auth/ProtectedScreen';
 import { useAuth } from '../../src/auth/AuthProvider';
 import * as api from '../../src/auth/api';
@@ -31,6 +34,8 @@ export default function BookingReviewScreen() {
   if (!slot) return <Redirect href="/booking/date-time" />;
 
   const deposit = totalDeposit(draft.services);
+  const price = totalPrice(draft.services);
+  const duration = totalDuration(draft.services);
 
   async function confirm() {
     if (!accessToken || !slot) return;
@@ -91,64 +96,171 @@ export default function BookingReviewScreen() {
     }
   }
 
+  const preference = formatPreference(auth.user?.clientCommunicationPreference ?? 'email');
+
   return (
     <ProtectedScreen allowedRoles={['client']}>
-      <Screen>
-        <View style={styles.hero}>
-          <Text style={styles.eyebrow}>Step 6 of 6</Text>
-          <Text style={styles.heroTitle}>Review and confirm</Text>
-          <Text style={styles.heroBody}>
-            We’ll re-check the slot before confirming. Deposit payments are handled securely by Stripe.
-          </Text>
+      <SafeAreaView style={s.screen} edges={['top']}>
+        {/* ── Header (matches services / date-time pages) ── */}
+        <View style={s.header}>
+          <Pressable style={({ pressed }) => [s.headerBack, pressed && s.pressed]} onPress={() => router.back()}>
+            <Text style={s.headerBackArrow}>‹</Text>
+            <Text style={s.headerBackLabel}>Back</Text>
+          </Pressable>
+          <Text style={s.headerTitle}>Complete your booking</Text>
+          <View style={s.headerStep}>
+            <Text style={s.headerStepText}>Step 4 of 5</Text>
+          </View>
         </View>
-        {error ? (
-          <Card>
-            <Text style={styles.title}>Action needed</Text>
-            <Text style={styles.error}>{error}</Text>
-          </Card>
-        ) : null}
-        <View style={styles.panel}>
-          <Summary label="Location" value={location.name} />
-          <Summary label="Services" value={draft.services.map((service) => service.name).join(', ')} />
-          <Summary label="Stylist" value={slot.stylistName} />
-          <Summary label="When" value={formatDateTime(slot.startAt)} />
-          <Summary label="Duration" value={formatDuration(totalDuration(draft.services))} />
-          <Summary label="Estimated total" value={formatMoney(totalPrice(draft.services), location.currencyCode)} />
-          <Summary
-            label="Deposit"
-            value={deposit > 0 ? formatMoney(deposit, location.currencyCode) : 'No deposit required'}
+        {/* Progress underline (step 4 of 5 = 80%) */}
+        <View style={s.progressTrack}>
+          <View style={s.progressFill} />
+        </View>
+
+        <ScrollView
+          contentContainerStyle={s.scroll}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* ── Action-needed / deposit notice ── */}
+          {error ? (
+            <View style={[styles.noticeBanner, styles.noticeBannerDanger]}>
+              <Text style={styles.noticeGlyph}>⚠️</Text>
+              <View style={styles.noticeTextWrap}>
+                <Text style={styles.noticeTitle}>Action needed</Text>
+                <Text style={styles.noticeBody}>{error}</Text>
+              </View>
+            </View>
+          ) : deposit > 0 ? (
+            <View style={styles.noticeBanner}>
+              <Text style={styles.noticeGlyph}>🔒</Text>
+              <View style={styles.noticeTextWrap}>
+                <Text style={styles.noticeTitle}>Deposit required</Text>
+                <Text style={styles.noticeBody}>
+                  A {formatMoney(deposit, location.currencyCode)} deposit secures this slot. Your appointment is
+                  created only after the payment succeeds, handled securely by Stripe.
+                </Text>
+              </View>
+            </View>
+          ) : null}
+
+          {/* ── Your selection ── */}
+          <View style={s.sectionGap}>
+            <Text style={styles.groupLabel}>Your selection</Text>
+            <View style={styles.selectionCard}>
+              {draft.services.map((service, index) => (
+                <View key={service.id}>
+                  {index > 0 ? <View style={styles.divider} /> : null}
+                  <ServiceLine service={service} />
+                </View>
+              ))}
+            </View>
+          </View>
+
+          {/* ── Appointment details ── */}
+          <View style={s.sectionGap}>
+            <Text style={styles.groupLabel}>Appointment details</Text>
+            <View style={styles.selectionCard}>
+              <DetailRow glyph="📍" label="Location" value={location.name} divider={false} />
+              <DetailRow glyph="✂️" label="Stylist" value={slot.stylistName} />
+              <DetailRow glyph="🗓" label="When" value={formatDateTime(slot.startAt)} />
+              <DetailRow glyph="🔔" label="Confirmations" value={preference} />
+            </View>
+          </View>
+
+          {/* ── Optional note ── */}
+          <View style={s.sectionGap}>
+            <Text style={styles.groupLabel}>Note for the salon</Text>
+            <TextInput
+              placeholder="Anything your stylist should know? (optional)"
+              placeholderTextColor="rgba(255,255,255,0.4)"
+              value={draft.clientNote ?? ''}
+              onChangeText={(clientNote) => updateDraft({ clientNote })}
+              multiline
+              style={styles.input}
+            />
+          </View>
+        </ScrollView>
+
+        {/* ── Pinned footer: total estimate + confirm ── */}
+        <SafeAreaView edges={['bottom']} style={s.footer}>
+          <View style={styles.totalBar}>
+            <View style={styles.flex}>
+              <Text style={styles.totalBarLabel}>{deposit > 0 ? 'Due today' : 'Total estimate'}</Text>
+              <Text style={styles.totalBarValue}>
+                {deposit > 0
+                  ? formatMoney(deposit, location.currencyCode)
+                  : formatMoney(price, location.currencyCode)}
+              </Text>
+              {deposit > 0 ? (
+                <Text style={styles.totalBarDuration}>
+                  {formatMoney(price, location.currencyCode)} total · {formatDuration(duration)}
+                </Text>
+              ) : (
+                <Text style={styles.totalBarDuration}>Est. duration · {formatDuration(duration)}</Text>
+              )}
+            </View>
+          </View>
+          <AppButton
+            label={
+              submitting
+                ? 'Confirming...'
+                : deposit > 0
+                  ? 'Pay deposit & confirm  →'
+                  : 'Confirm booking  →'
+            }
+            disabled={submitting}
+            onPress={() => void confirm()}
           />
-          <Summary
-            label="Preference"
-            value={formatPreference(auth.user?.clientCommunicationPreference ?? 'email')}
-          />
-        </View>
-        <TextInput
-          placeholder="Optional note for the salon"
-          placeholderTextColor="rgba(255,255,255,0.45)"
-          value={draft.clientNote ?? ''}
-          onChangeText={(clientNote) => updateDraft({ clientNote })}
-          multiline
-          style={styles.input}
-        />
-        <View style={styles.totalCard}>
-          <Text style={styles.eyebrow}>{deposit > 0 ? 'Secure deposit' : 'Confirmation'}</Text>
-          <Text style={styles.totalValue}>
-            {deposit > 0 ? formatMoney(deposit, location.currencyCode) : 'No payment due today'}
-          </Text>
-          <Text style={styles.subtitle}>
-            {deposit > 0
-              ? 'Your appointment is created only after the payment succeeds.'
-              : 'We will confirm this appointment after a final availability check.'}
-          </Text>
-        </View>
-        <AppButton
-          label={submitting ? 'Confirming...' : deposit > 0 ? 'Pay deposit and confirm' : 'Confirm booking'}
-          disabled={submitting}
-          onPress={() => void confirm()}
-        />
-      </Screen>
+        </SafeAreaView>
+      </SafeAreaView>
     </ProtectedScreen>
+  );
+}
+
+// ── Selected-service line ─────────────────────────────────────────────────────────
+
+function ServiceLine({ service }: { service: PublicBookingServiceSummary }) {
+  return (
+    <View style={styles.selectionRow}>
+      <View style={styles.selectionIcon}>
+        <Text style={styles.selectionEmoji}>{serviceEmoji(service)}</Text>
+      </View>
+      <View style={styles.flex}>
+        <Text style={styles.selectionName} numberOfLines={2}>
+          {service.name}
+        </Text>
+        <Text style={styles.selectionMeta}>{formatDuration(service.estimatedDurationMinutes)}</Text>
+      </View>
+      <Text style={styles.selectionPrice}>{formatMoney(service.startingPriceAmount, service.currencyCode)}</Text>
+    </View>
+  );
+}
+
+// ── Appointment detail row ──────────────────────────────────────────────────────
+
+function DetailRow({
+  glyph,
+  label,
+  value,
+  divider = true,
+}: {
+  glyph: string;
+  label: string;
+  value: string;
+  divider?: boolean;
+}) {
+  return (
+    <View>
+      {divider ? <View style={styles.divider} /> : null}
+      <View style={styles.reviewDetailRow}>
+        <Text style={styles.reviewDetailGlyph}>{glyph}</Text>
+        <View style={styles.flex}>
+          <Text style={styles.reviewDetailLabel}>{label}</Text>
+          <Text style={styles.reviewDetailValue}>{value}</Text>
+        </View>
+      </View>
+    </View>
   );
 }
 
@@ -173,18 +285,81 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function Summary({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={styles.summaryRow}>
-      <Text style={styles.summaryLabel}>{label}</Text>
-      <Text style={styles.summaryValue}>{value}</Text>
-    </View>
-  );
-}
-
 function formatPreference(value: string): string {
   return value
     .split('_')
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ');
 }
+
+// ── Service emoji (mirrors the services page) ──────────────────────────────────────
+
+const SERVICE_EMOJI: { keywords: string[]; emoji: string }[] = [
+  { keywords: ['colour', 'color', 'tint', 'highlight', 'balayage', 'toner'], emoji: '🎨' },
+  { keywords: ['cut', 'style', 'trim', 'fringe'], emoji: '✂️' },
+  { keywords: ['blow', 'dry', 'wave', 'curl'], emoji: '💨' },
+  { keywords: ['treatment', 'condition', 'mask', 'keratin', 'olaplex'], emoji: '✨' },
+  { keywords: ['wash', 'shampoo'], emoji: '🧴' },
+  { keywords: ['perm', 'relax', 'smooth'], emoji: '🌀' },
+  { keywords: ['braid', 'updo', 'extension'], emoji: '💇' },
+  { keywords: ['beard', 'shave', 'barber'], emoji: '🪒' },
+  { keywords: ['nail', 'manicure', 'pedicure'], emoji: '💅' },
+];
+
+function serviceEmoji(service: PublicBookingServiceSummary): string {
+  const haystack = `${service.name} ${service.category ?? ''}`.toLowerCase();
+  for (const entry of SERVICE_EMOJI) {
+    if (entry.keywords.some((keyword) => haystack.includes(keyword))) return entry.emoji;
+  }
+  return '💇';
+}
+
+// ── Screen styles ──────────────────────────────────────────────────────────────
+
+const BG = '#18141F';
+const BORDER_MED = 'rgba(255,255,255,0.11)';
+const BRAND = palette.brand[500];
+const BRAND_LIGHT = palette.brand[300];
+
+const s = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: BG },
+  pressed: { opacity: 0.72 },
+
+  // ── Header
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.base,
+    paddingVertical: spacing.md,
+    backgroundColor: BG,
+  },
+  headerBack: { flexDirection: 'row', alignItems: 'center', gap: 1, minWidth: 84 },
+  headerBackArrow: { color: BRAND_LIGHT, fontSize: 28, lineHeight: 30, fontWeight: '300', marginTop: -2 },
+  headerBackLabel: { color: BRAND_LIGHT, fontSize: 15, fontWeight: '600' },
+  headerTitle: { color: palette.white, fontSize: 17, fontWeight: '700', letterSpacing: -0.3 },
+  headerStep: { minWidth: 84, alignItems: 'flex-end' },
+  headerStepText: { color: 'rgba(255,255,255,0.4)', fontSize: 13, fontWeight: '700' },
+
+  // ── Progress underline (step 4 of 5 = 80%)
+  progressTrack: { height: 3, backgroundColor: BORDER_MED },
+  progressFill: { width: '80%', height: 3, backgroundColor: BRAND },
+
+  // ── Scroll body
+  scroll: {
+    gap: spacing.lg,
+    padding: spacing.lg,
+    paddingBottom: spacing.xl,
+  },
+  sectionGap: { gap: spacing.md },
+
+  // ── Pinned footer
+  footer: {
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: BORDER_MED,
+    backgroundColor: BG,
+  },
+});

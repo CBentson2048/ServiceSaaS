@@ -19,7 +19,6 @@ const NAV: NavEntry[] = [
   { to: '/inventory', label: 'Inventory', allowedRoles: ['owner', 'manager'] },
   { to: '/sheer-lab', label: 'Sheer Lab' },
   { to: '/commission', label: 'Commission' },
-  { to: '/profile', label: 'Profile' },
   { to: '/team', label: 'Team', allowedRoles: ['owner'] },
   { to: '/locations', label: 'Locations', allowedRoles: ['owner', 'manager'] },
   { to: '/settings/booking', label: 'Booking settings', allowedRoles: ['owner'] },

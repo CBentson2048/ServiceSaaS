@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@expo/metro-runtime": "~55.0.10",
+    "@expo/vector-icons": "^15.1.1",
     "@sheer/design-tokens": "workspace:*",
     "@sheer/domain": "workspace:*",
     "@sheer/ui-mobile": "workspace:*",
