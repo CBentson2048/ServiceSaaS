@@ -311,6 +311,16 @@ function createService(client: MockSupabaseClient): LabAppointmentsService {
     {
       linkPersistedAppointment: jest.fn(),
     } as never,
+    {
+      resolveLocationTaxSettings: jest.fn().mockResolvedValue({
+        locationId: 'loc',
+        taxEnabled: false,
+        taxLabel: null,
+        taxRatePercent: 0,
+        appliesTo: 'both',
+        displayMode: 'ex_tax',
+      }),
+    } as never,
   );
 }
 

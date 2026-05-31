@@ -77,6 +77,12 @@ export class LabSessionFormulaController {
     private readonly labSessionService: LabSessionService,
   ) {}
 
+  @Get(':sessionId/product-billing')
+  async productBilling(@Param('sessionId') sessionId: string) {
+    const session = await this.labSessionService.assertActiveSession(sessionId);
+    return { settings: await this.labFormulaService.getProductBillingSettingsForLabSession(session) };
+  }
+
   @Post(':sessionId/:id/finalize')
   async finalize(
     @Param('sessionId') sessionId: string,

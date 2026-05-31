@@ -93,8 +93,14 @@ import type {
   UpsertServiceUpgradeSuggestionRequest,
   WeeklyRotaResponse,
   AdminUpdateProfileRequest,
+  GetLocationProductBillingSettingsResponse,
+  GetLocationTaxSettingsResponse,
   ListProfilesResponse,
   UpdateCurrentProfileRequest,
+  UpdateLocationProductBillingSettingsRequest,
+  UpdateLocationProductBillingSettingsResponse,
+  UpdateLocationTaxSettingsRequest,
+  UpdateLocationTaxSettingsResponse,
   UpdateProfileResponse,
   UserProfileResponse,
 } from '@sheer/domain';
@@ -1017,6 +1023,51 @@ export async function deleteServiceUpgradeSuggestion(
     `/owner/booking-settings/upgrade-suggestions/${encodeURIComponent(suggestionId)}`,
     { method: 'DELETE', accessToken },
   );
+}
+
+// -------------------- Product auto-billing settings --------------------
+
+export async function getLocationProductBillingSettings(
+  accessToken: string,
+  locationId: string,
+): Promise<GetLocationProductBillingSettingsResponse> {
+  return request<GetLocationProductBillingSettingsResponse>(
+    `/owner/billing-settings/product?locationId=${encodeURIComponent(locationId)}`,
+    { accessToken },
+  );
+}
+
+export async function updateLocationProductBillingSettings(
+  accessToken: string,
+  payload: UpdateLocationProductBillingSettingsRequest,
+): Promise<UpdateLocationProductBillingSettingsResponse> {
+  return request<UpdateLocationProductBillingSettingsResponse>(
+    '/owner/billing-settings/product',
+    { method: 'PATCH', body: payload, accessToken },
+  );
+}
+
+// -------------------- Tax configuration settings --------------------
+
+export async function getLocationTaxSettings(
+  accessToken: string,
+  locationId: string,
+): Promise<GetLocationTaxSettingsResponse> {
+  return request<GetLocationTaxSettingsResponse>(
+    `/owner/tax-settings?locationId=${encodeURIComponent(locationId)}`,
+    { accessToken },
+  );
+}
+
+export async function updateLocationTaxSettings(
+  accessToken: string,
+  payload: UpdateLocationTaxSettingsRequest,
+): Promise<UpdateLocationTaxSettingsResponse> {
+  return request<UpdateLocationTaxSettingsResponse>('/owner/tax-settings', {
+    method: 'PATCH',
+    body: payload,
+    accessToken,
+  });
 }
 
 // -------------------- Rota (manager + owner) --------------------

@@ -1,3 +1,4 @@
+import type { LocationProductBillingSettings } from '@sheer/domain';
 import { useCallback, useEffect, useState } from 'react';
 
 import type { BleWeightReading } from '../ble/types';
@@ -29,6 +30,9 @@ export function useFormulaDraft() {
   }, []);
   const applyManualWeight = useCallback((rowId: string, grams: number) => {
     formulaDraftStore.applyManualWeight(rowId, grams);
+  }, []);
+  const setProductBilling = useCallback((settings: LocationProductBillingSettings | null) => {
+    formulaDraftStore.setProductBilling(settings);
   }, []);
   const saveDraft = useCallback(() => formulaDraftStore.saveDraft(), []);
   const markFinalized = useCallback(() => formulaDraftStore.markFinalized(), []);
@@ -64,6 +68,7 @@ export function useFormulaDraft() {
     updateRowMetadata,
     applyBleWeight,
     applyManualWeight,
+    setProductBilling,
     saveDraft,
     markFinalized,
     loadDraft,

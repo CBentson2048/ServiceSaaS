@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type SVGProps } from 'react';
 import type {
+  AppointmentBillingTax,
   AppointmentCompletionResponse,
   CreateStylistRebookingRequest,
   StaffBookingSummary,
@@ -704,11 +705,15 @@ function CheckoutPanel({
 
       <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
         <BillMetric label="Services" value={formatMoney(summary.billing.serviceTotalCents, summary.billing.currencyCode)} />
-        <BillMetric label="Colour/formula" value={formatMoney(summary.billing.formulaColourTotalCents, summary.billing.currencyCode)} />
+        <BillMetric label="Product usage" value={formatMoney(summary.billing.productUsageTotalCents, summary.billing.currencyCode)} />
         <BillMetric label="Gross total" value={formatMoney(summary.billing.totalCents, summary.billing.currencyCode)} />
         <BillMetric label="Deposit paid" value={formatMoney(summary.billing.depositPaidCents, summary.billing.currencyCode)} />
         <BillMetric label="Balance due" value={formatMoney(summary.billing.balanceDueCents, summary.billing.currencyCode)} strong />
       </div>
+
+      {summary.billing.tax?.enabled ? (
+        <TaxSummaryLine tax={summary.billing.tax} currencyCode={summary.billing.currencyCode} />
+      ) : null}
 
       <RebookingPanel
         summary={summary}
@@ -834,6 +839,32 @@ function BillMetric({ label, value, strong = false }: { label: string; value: st
     <div className="rounded-input-lg border border-border bg-surface-alt px-3 py-2">
       <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-text-secondary">{label}</div>
       <div className={`mt-1 ${strong ? 'text-[16px] font-semibold text-text-primary' : 'text-text-secondary'}`}>{value}</div>
+    </div>
+  );
+}
+
+// Renders the bill's tax rollup according to the location's configured display
+// mode (inc-tax / ex-tax / both), using the API-provided AppointmentBillingTax.
+function TaxSummaryLine({ tax, currencyCode }: { tax: AppointmentBillingTax; currencyCode: string }) {
+  const label = tax.label?.trim() || 'Tax';
+  const rate = `${tax.ratePercent}%`;
+  const net = formatMoney(tax.netCents, currencyCode);
+  const taxAmt = formatMoney(tax.taxCents, currencyCode);
+  const gross = formatMoney(tax.grossCents, currencyCode);
+
+  let detail: string;
+  if (tax.displayMode === 'inc_tax') {
+    detail = `Tax-inclusive — includes ${taxAmt} ${label} (net ${net})`;
+  } else if (tax.displayMode === 'ex_tax') {
+    detail = `Tax-exclusive — ${taxAmt} ${label} added → ${gross} inc. tax`;
+  } else {
+    detail = `Net ${net} · ${taxAmt} ${label} · ${gross} inc. tax`;
+  }
+
+  return (
+    <div className="mt-2 flex items-center justify-between gap-3 rounded-input-lg border border-border bg-surface-alt/40 px-4 py-2.5 text-[12px]">
+      <span className="font-medium text-text-primary">{label} ({rate})</span>
+      <span className="text-text-secondary">{detail}</span>
     </div>
   );
 }

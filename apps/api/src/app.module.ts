@@ -14,7 +14,9 @@ import { LabPinModule } from './lab-pin/lab-pin.module';
 import { LabSessionModule } from './lab-session/lab-session.module';
 import { LocationsModule } from './locations/locations.module';
 import { MobileDashboardModule } from './mobile-dashboard/mobile-dashboard.module';
+import { OwnerBillingSettingsModule } from './owner-billing-settings/owner-billing-settings.module';
 import { OwnerBookingSettingsModule } from './owner-booking-settings/owner-booking-settings.module';
+import { OwnerTaxSettingsModule } from './owner-tax-settings/owner-tax-settings.module';
 import { OwnerOnboardingModule } from './owner-onboarding/owner-onboarding.module';
 import { ProfileModule } from './profile/profile.module';
 import { PublicBookingModule } from './public-booking/public-booking.module';
@@ -36,6 +38,8 @@ import { validateEnv } from './config/env.validation';
     StaffModule,
     LocationsModule,
     OwnerBookingSettingsModule,
+    OwnerBillingSettingsModule,
+    OwnerTaxSettingsModule,
     PublicBookingModule,
     CrmModule,
     DashboardModule,

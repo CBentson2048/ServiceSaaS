@@ -1,3 +1,4 @@
+import type { LocationProductBillingSettings } from '@sheer/domain';
 import type { FormulaSavePayload } from '@sheer/lab-core';
 
 import { appConfig } from '../../config/appConfig';
@@ -32,6 +33,21 @@ export async function finalizeFormulaForLabSession(sessionId: string, payload: F
   }
 
   return response.json();
+}
+
+export async function getLabProductBillingSettings(
+  sessionId: string,
+): Promise<LocationProductBillingSettings> {
+  const response = await fetch(
+    `${appConfig.apiBaseUrl}/lab/formulas/session/${encodeURIComponent(sessionId)}/product-billing`,
+  );
+
+  if (!response.ok) {
+    throw new Error(`Could not load product billing settings (${response.status})`);
+  }
+
+  const data = (await response.json()) as { settings: LocationProductBillingSettings };
+  return data.settings;
 }
 
 export async function getLatestFormulaForClient(clientProfileId: string) {

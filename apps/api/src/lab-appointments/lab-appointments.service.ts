@@ -19,11 +19,15 @@ import type {
   CreateStylistRebookingRequest,
   CrmVisitSummary,
   ListStaffBookingsResponse,
+  ProductBillingRule,
   StaffBookingPatchTestSummary,
   StaffBookingDetail,
   StaffBookingSummary,
 } from '@sheer/domain';
+import { calculateAppointmentBillingTax, type LocationTaxSettings } from '@sheer/domain';
+import { buildProductBillingSnapshot } from '../common/product-billing.helper';
 import type { LabRuntimeSession } from '../lab-session/lab-session.service';
+import { OwnerTaxSettingsService } from '../owner-tax-settings/owner-tax-settings.service';
 import { RebookingService } from '../rebooking/rebooking.service';
 
 interface AppointmentServiceRow {
@@ -120,6 +124,13 @@ interface FormulaBillingRow {
   saved_at: string | null;
 }
 
+interface ProductBillingRulesRow {
+  product_billing_enabled: boolean;
+  product_billing_rule: string;
+  product_markup_percent: number | null;
+  product_fixed_uplift_amount: number | null;
+}
+
 interface SalonPaymentRow {
   id: string;
   appointment_id: string;
@@ -173,6 +184,7 @@ export class LabAppointmentsService {
   constructor(
     config: ConfigService,
     private readonly rebooking: RebookingService,
+    private readonly taxSettings: OwnerTaxSettingsService,
   ) {
     const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
@@ -380,12 +392,16 @@ export class LabAppointmentsService {
     await this.markAppointmentServicesCompleted(completedAppointment.id, completedAppointment.business_id);
     const visit = await this.ensureAwaitingPaymentVisit(completedAppointment, actor, completedAt, completedByStaffProfileId);
     await this.reconcileServiceLineItem(completedAppointment, visit.id);
-    await this.reconcileFormulaLineItem(completedAppointment, visit.id);
-    const [lineItems, clientMap] = await Promise.all([
+    await this.reconcileProductUsageLineItem(completedAppointment, visit.id);
+    const [lineItems, clientMap, taxSettings] = await Promise.all([
       this.fetchVisitLineItems(visit.id),
       this.fetchClientProfiles(actor.businessId, [completedAppointment.client_profile_id]),
+      this.taxSettings.resolveLocationTaxSettings(
+        completedAppointment.business_id,
+        completedAppointment.location_id,
+      ),
     ]);
-    const billing = buildBillingSummary(completedAppointment, lineItems);
+    const billing = buildBillingSummary(completedAppointment, lineItems, taxSettings);
 
     return {
       appointment: toBookingDetail(completedAppointment, clientMap.get(completedAppointment.client_profile_id)),
@@ -417,8 +433,11 @@ export class LabAppointmentsService {
     const visit = await this.fetchVisitForAppointment(appointment.id);
     if (!visit) throw new ConflictException('Complete the appointment before confirming payment');
 
-    const lineItems = await this.fetchVisitLineItems(visit.id);
-    const billing = buildBillingSummary(appointment, lineItems);
+    const [lineItems, taxSettings] = await Promise.all([
+      this.fetchVisitLineItems(visit.id),
+      this.taxSettings.resolveLocationTaxSettings(appointment.business_id, appointment.location_id),
+    ]);
+    const billing = buildBillingSummary(appointment, lineItems, taxSettings);
     if (input.amountCents !== billing.balanceDueCents) {
       throw new ConflictException('Payment amount must match the remaining balance due');
     }
@@ -489,11 +508,12 @@ export class LabAppointmentsService {
     const appointment = await this.fetchAppointmentForActor(actor, id);
     const visit = await this.fetchVisitForAppointment(appointment.id, true);
     if (!visit) throw new ConflictException('Rebooking was linked, but source visit could not be reloaded');
-    const [lineItems, clientMap] = await Promise.all([
+    const [lineItems, clientMap, taxSettings] = await Promise.all([
       this.fetchVisitLineItems(visit.id),
       this.fetchClientProfiles(actor.businessId, [appointment.client_profile_id]),
+      this.taxSettings.resolveLocationTaxSettings(appointment.business_id, appointment.location_id),
     ]);
-    const billing = buildBillingSummary(appointment, lineItems);
+    const billing = buildBillingSummary(appointment, lineItems, taxSettings);
 
     return {
       appointment: toBookingDetail(appointment, clientMap.get(appointment.client_profile_id)),
@@ -975,35 +995,67 @@ export class LabAppointmentsService {
     }
   }
 
-  private async reconcileFormulaLineItem(appointment: AppointmentRow, visitId: string): Promise<void> {
+  private async reconcileProductUsageLineItem(appointment: AppointmentRow, visitId: string): Promise<void> {
     const formulas = await this.fetchSavedFormulasForAppointment(appointment.id);
     if (formulas.length === 0) return;
-    const amountCents = formulas.reduce((sum, formula) => sum + Number(formula.billable_charge_cents ?? 0), 0);
+
+    const rules = await this.fetchProductBillingRules(appointment.business_id, appointment.location_id);
+    if (!rules || !rules.product_billing_enabled) return;
+
+    // Aggregate the actual product cost across every saved formula on the visit
+    // before applying the rule, so multi-formula visits bill the full cost.
+    const costAmountCents = formulas.reduce((sum, formula) => sum + Number(formula.actual_cost_cents ?? 0), 0);
+    if (costAmountCents <= 0) return;
     const currencyCode = formulas[0]?.currency_code ?? 'GBP';
+
+    const snapshot = buildProductBillingSnapshot(
+      costAmountCents,
+      rules.product_billing_rule as ProductBillingRule,
+      rules.product_markup_percent,
+      rules.product_fixed_uplift_amount,
+    );
+
     const { error } = await this.admin.schema('billing').from('visit_line_items').upsert(
       {
         business_id: appointment.business_id,
         location_id: appointment.location_id,
         visit_id: visitId,
-        line_type: 'formula_colour',
-        description: 'Colour formula charge',
-        amount_cents: amountCents,
+        line_type: 'product_usage',
+        description: 'Product usage',
+        amount_cents: snapshot.billableAmountCents,
         currency_code: currencyCode,
-        formula_breakdown: formulas.map((formula) => ({
-          formulaId: formula.external_formula_id,
-          actualCostCents: formula.actual_cost_cents,
-          billableChargeCents: formula.billable_charge_cents,
-          currencyCode: formula.currency_code,
-          savedAt: formula.saved_at,
-        })),
+        cost_amount_cents: snapshot.costAmountCents,
+        billable_amount_cents: snapshot.billableAmountCents,
+        billing_rule_snapshot: snapshot.billingRuleSnapshot,
+        markup_percent_snapshot: snapshot.markupPercentSnapshot,
+        fixed_uplift_amount_snapshot: snapshot.fixedUpliftAmountSnapshot,
         metadata: { source: 'appointment_completion', appointment_id: appointment.id },
       },
       { onConflict: 'visit_id,line_type' },
     );
     if (error) {
-      this.logger.error(`reconcileFormulaLineItem failed: ${error.message}`);
-      throw new InternalServerErrorException('Unable to reconcile formula billing');
+      this.logger.error(`reconcileProductUsageLineItem failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to reconcile product usage billing');
     }
+  }
+
+  private async fetchProductBillingRules(
+    businessId: string,
+    locationId: string,
+  ): Promise<ProductBillingRulesRow | null> {
+    const { data, error } = await this.admin
+      .schema('billing')
+      .from('billing_rules')
+      .select('product_billing_enabled,product_billing_rule,product_markup_percent,product_fixed_uplift_amount')
+      .eq('business_id', businessId)
+      .eq('location_id', locationId)
+      .maybeSingle<ProductBillingRulesRow>();
+
+    if (error) {
+      this.logger.warn(`fetchProductBillingRules failed: ${error.message} — skipping product billing`);
+      return null;
+    }
+    return data;
   }
 
   private async fetchSavedFormulasForAppointment(appointmentId: string): Promise<FormulaBillingRow[]> {
@@ -1338,26 +1390,39 @@ function toPaymentRecord(row: SalonPaymentRow): AppointmentPaymentRecord {
 function buildBillingSummary(
   appointment: AppointmentRow,
   lineItems: AppointmentCompletionLineItem[],
+  taxSettings: LocationTaxSettings,
 ): AppointmentCompletionResponse['billing'] {
   const currencyCode = lineItems[0]?.currencyCode ?? first(arrayOf(appointment.deposits))?.currency_code ?? 'GBP';
   const serviceTotalCents = lineItems
     .filter((item) => item.lineType === 'service')
     .reduce((sum, item) => sum + item.amountCents, 0);
-  const formulaColourTotalCents = lineItems
-    .filter((item) => item.lineType === 'formula_colour')
+  const productUsageTotalCents = lineItems
+    .filter((item) => item.lineType === 'product_usage')
     .reduce((sum, item) => sum + item.amountCents, 0);
-  const totalCents = lineItems.reduce((sum, item) => sum + item.amountCents, 0);
+  // Gross total is the sum of the billable components shown in the breakdown
+  // (services + product usage), not a blanket sum of every visit line item, so
+  // stray/legacy rows (e.g. retired formula_colour) can never inflate the total.
+  const totalCents = serviceTotalCents + productUsageTotalCents;
   const depositPaidCents = arrayOf(appointment.deposits)
     .filter((deposit) => deposit.status === 'paid')
     .reduce((sum, deposit) => sum + toCents(deposit.amount), 0);
+  // Tax rollup via the single shared tax layer. serviceTotalCents/productUsageTotalCents
+  // are gated by the location's appliesTo rule (services / retail / both). Existing
+  // totals stay tax-exclusive for backward compatibility; clients read `tax` to render
+  // inc/ex figures per the configured display mode.
+  const tax = calculateAppointmentBillingTax(
+    { serviceTotalCents, productUsageTotalCents },
+    taxSettings,
+  );
   return {
     lineItems,
     serviceTotalCents,
-    formulaColourTotalCents,
+    productUsageTotalCents,
     depositPaidCents,
     totalCents,
     balanceDueCents: Math.max(0, totalCents - depositPaidCents),
     currencyCode,
+    tax,
   };
 }
 

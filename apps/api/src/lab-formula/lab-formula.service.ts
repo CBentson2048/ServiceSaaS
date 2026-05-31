@@ -7,7 +7,8 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import type { AuthUser } from '@sheer/domain';
+import type { AuthUser, LocationProductBillingSettings, ProductBillingRule } from '@sheer/domain';
+import { buildProductBillingSnapshot } from '../common/product-billing.helper';
 import {
   calculateFormulaBillableChargeCents,
   createFormulaDraft,
@@ -81,6 +82,13 @@ interface FormulaVisitLineItemRow {
   currency_code: string;
   formula_breakdown: unknown;
   updated_at: string;
+}
+
+interface ProductBillingRulesRow {
+  product_billing_enabled: boolean;
+  product_billing_rule: string;
+  product_markup_percent: number | null;
+  product_fixed_uplift_amount: number | null;
 }
 
 @Injectable()
@@ -208,6 +216,17 @@ export class LabFormulaService {
 
     const result = await this.buildFormulaSaveResult(formula, data, context.locationId);
     this.formulas.set(formula.id, result);
+
+    if (result.visitId && totalCostCents > 0) {
+      await this.applyProductBillingLineItem(
+        context.businessId,
+        context.locationId,
+        result.visitId,
+        totalCostCents,
+        formula.currencyCode,
+      );
+    }
+
     this.logger.log(
       JSON.stringify({
         event: 'formula_finalized',
@@ -250,6 +269,35 @@ export class LabFormulaService {
   recalculate(id: string) {
     // TODO: recalculate charge preview from product usage and location billing rules.
     return { formulaId: id, chargePreviewCents: 4250, currencyCode: 'GBP' };
+  }
+
+  /**
+   * Exposes the location's product billing rule to the Sheer Lab app so the
+   * formula colour-charge preview can mirror the markup/uplift that will be
+   * applied at finalize time. Falls back to a disabled cost-only rule when the
+   * location has no billing rules row yet.
+   */
+  async getProductBillingSettingsForLabSession(
+    session: LabRuntimeSession,
+  ): Promise<LocationProductBillingSettings> {
+    const rules = await this.fetchProductBillingRules(session.businessId, session.locationId);
+    if (!rules) {
+      return {
+        locationId: session.locationId,
+        productBillingEnabled: false,
+        productBillingRule: 'cost_only',
+        productMarkupPercent: null,
+        productFixedUpliftAmount: null,
+      };
+    }
+
+    return {
+      locationId: session.locationId,
+      productBillingEnabled: rules.product_billing_enabled,
+      productBillingRule: rules.product_billing_rule as ProductBillingRule,
+      productMarkupPercent: rules.product_markup_percent,
+      productFixedUpliftAmount: rules.product_fixed_uplift_amount,
+    };
   }
 
   latestForClient(actor: AuthUser, clientProfileId: string): FormulaHistoryRecord | null {
@@ -484,7 +532,7 @@ export class LabFormulaService {
         locationId,
         formula.items.map((item) => item.productId).filter((id): id is string => Boolean(id)),
       ),
-      visitId && result.billingApplied ? this.fetchFormulaBillingLineItem(visitId) : Promise.resolve(undefined),
+      visitId ? this.fetchProductUsageLineItem(visitId) : Promise.resolve(undefined),
     ]);
 
     return {
@@ -552,7 +600,7 @@ export class LabFormulaService {
     }));
   }
 
-  private async fetchFormulaBillingLineItem(
+  private async fetchProductUsageLineItem(
     visitId: string,
   ): Promise<FormulaSaveResult['billingLineItem'] | undefined> {
     const { data, error } = await this.admin
@@ -560,12 +608,12 @@ export class LabFormulaService {
       .from('visit_line_items')
       .select('visit_id,amount_cents,currency_code,formula_breakdown,updated_at')
       .eq('visit_id', visitId)
-      .eq('line_type', 'formula_colour')
+      .eq('line_type', 'product_usage')
       .maybeSingle<FormulaVisitLineItemRow>();
 
     if (error) {
-      this.logger.error(`fetchFormulaBillingLineItem failed: ${error.message}`);
-      throw new InternalServerErrorException('Unable to load formula billing line item');
+      this.logger.error(`fetchProductUsageLineItem failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load product usage line item');
     }
     if (!data) return undefined;
 
@@ -590,6 +638,69 @@ export class LabFormulaService {
     if (actor.role === 'owner') return true;
     if (actor.role === 'client') return formula.clientProfileId === actor.clientProfileId;
     return Boolean(formula.locationId && actor.allowedLocationIds.includes(formula.locationId));
+  }
+
+  private async fetchProductBillingRules(
+    businessId: string,
+    locationId: string,
+  ): Promise<ProductBillingRulesRow | null> {
+    const { data, error } = await this.admin
+      .schema('billing')
+      .from('billing_rules')
+      .select('product_billing_enabled,product_billing_rule,product_markup_percent,product_fixed_uplift_amount')
+      .eq('business_id', businessId)
+      .eq('location_id', locationId)
+      .maybeSingle<ProductBillingRulesRow>();
+
+    if (error) {
+      this.logger.warn(`fetchProductBillingRules failed: ${error.message} — skipping product billing`);
+      return null;
+    }
+    return data;
+  }
+
+  private async applyProductBillingLineItem(
+    businessId: string,
+    locationId: string,
+    visitId: string,
+    productCostAmountCents: number,
+    currencyCode: string,
+  ): Promise<void> {
+    const rules = await this.fetchProductBillingRules(businessId, locationId);
+    if (!rules || !rules.product_billing_enabled) return;
+
+    const rule = rules.product_billing_rule as ProductBillingRule;
+    const snapshot = buildProductBillingSnapshot(
+      productCostAmountCents,
+      rule,
+      rules.product_markup_percent,
+      rules.product_fixed_uplift_amount,
+    );
+
+    const { error } = await this.admin
+      .schema('billing')
+      .from('visit_line_items')
+      .upsert(
+        {
+          business_id: businessId,
+          location_id: locationId,
+          visit_id: visitId,
+          line_type: 'product_usage',
+          description: 'Product usage',
+          amount_cents: snapshot.billableAmountCents,
+          currency_code: currencyCode,
+          cost_amount_cents: snapshot.costAmountCents,
+          billable_amount_cents: snapshot.billableAmountCents,
+          billing_rule_snapshot: snapshot.billingRuleSnapshot,
+          markup_percent_snapshot: snapshot.markupPercentSnapshot,
+          fixed_uplift_amount_snapshot: snapshot.fixedUpliftAmountSnapshot,
+        },
+        { onConflict: 'visit_id,line_type' },
+      );
+
+    if (error) {
+      this.logger.error(`applyProductBillingLineItem failed: ${error.message}`);
+    }
   }
 }
 

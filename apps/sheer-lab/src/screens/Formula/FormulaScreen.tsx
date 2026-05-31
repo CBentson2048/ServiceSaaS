@@ -8,12 +8,16 @@ import type { RootStackParamList } from '../../app/navigation/routes';
 import { ConnectionStatusBar } from '../../features/ble/components/ConnectionStatusBar';
 import { useBleScale } from '../../features/ble/hooks/useBleScale';
 import { formatMoney } from '../../features/formulas/formulaCosting';
-import { finalizeFormulaForLabSession } from '../../features/formulas/formulasApi';
+import {
+  finalizeFormulaForLabSession,
+  getLabProductBillingSettings,
+} from '../../features/formulas/formulasApi';
 import type {
   FormulaIngredientRow,
   FormulaRowMetadataUpdate,
   SavedFormulaRecord,
 } from '../../features/formulas/formulaDraftTypes';
+import type { FormulaDraftSession } from '../../features/formulas/formulaDraftTypes';
 import { toLabCoreFormulaDraft } from '../../features/formulas/formulaDraftTypes';
 import { useFormulaDraft } from '../../features/formulas/useFormulaDraft';
 import { listLabInventoryProducts } from '../../features/inventory/productsApi';
@@ -36,6 +40,7 @@ export function FormulaScreen({ route }: FormulaScreenProps): React.JSX.Element 
     updateRowMetadata,
     applyBleWeight,
     applyManualWeight,
+    setProductBilling,
     saveDraft,
     markFinalized,
     loadDraft,
@@ -91,6 +96,28 @@ export function FormulaScreen({ route }: FormulaScreenProps): React.JSX.Element 
     lastAppliedBleReading.current = readingKey;
     applyBleWeight(reading);
   }, [applyBleWeight, ble.liveWeight]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      const activeSession = entryContext?.labSessionId
+        ? { sessionId: entryContext.labSessionId }
+        : await getActiveLabSession();
+      if (!activeSession) return;
+
+      try {
+        const settings = await getLabProductBillingSettings(activeSession.sessionId);
+        if (!cancelled) setProductBilling(settings);
+      } catch {
+        // Leave the colour-charge preview at cost-only if the rule can't be loaded.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [entryContext?.labSessionId, setProductBilling]);
 
   const loadProducts = useCallback(
     async (search = productSearch): Promise<void> => {
@@ -331,21 +358,7 @@ export function FormulaScreen({ route }: FormulaScreenProps): React.JSX.Element 
           selectProductForRow(pickerRow.id, product);
         }}
       />
-      <View style={styles.chargeCard}>
-        <Text style={styles.sectionTitle}>Colour charge</Text>
-        <Text style={styles.chargeTotal}>{formatMoney(draft.billableChargeCents, draft.currencyCode)}</Text>
-        <Text style={styles.meta}>
-          Actual cost {formatMoney(draft.totalCostCents, draft.currencyCode)} · Waste{' '}
-          {formatMoney(draft.totalWasteCostCents, draft.currencyCode)}
-        </Text>
-        <Text style={styles.meta}>
-          {draft.status === 'saved'
-            ? `Finalized ${formatTime(draft.finalizedAt)}. Billing and inventory have been reconciled.`
-            : draft.hasMissingCost
-              ? 'Some weighted rows are missing cost per gram.'
-              : 'Save Final applies billing, inventory usage, waste, and low-stock reconciliation.'}
-        </Text>
-      </View>
+      <ChargeBreakdownCard draft={draft} />
       <LabButton label={savingDraft ? 'Saving...' : 'Save draft'} onPress={() => void handleSaveDraft()} disabled={savingDraft} />
       <LabButton
         label={savingFinal ? 'Finalizing...' : 'Save Final'}
@@ -357,6 +370,186 @@ export function FormulaScreen({ route }: FormulaScreenProps): React.JSX.Element 
     </LabScreen>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Charge breakdown card — shows colour charge + product billing info
+// ---------------------------------------------------------------------------
+
+interface ChargeBreakdownCardProps {
+  draft: FormulaDraftSession;
+}
+
+function ChargeBreakdownCard({ draft }: ChargeBreakdownCardProps): React.JSX.Element {
+  const isFinalized = draft.status === 'saved';
+
+  return (
+    <View style={chargeStyles.card}>
+      {/* Header row */}
+      <View style={chargeStyles.headerRow}>
+        <Text style={chargeStyles.cardLabel}>Colour charge</Text>
+        {isFinalized ? (
+          <View style={chargeStyles.statusPill}>
+            <Text style={chargeStyles.statusPillText}>Reconciled</Text>
+          </View>
+        ) : (
+          <View style={[chargeStyles.statusPill, chargeStyles.statusPillPending]}>
+            <Text style={[chargeStyles.statusPillText, chargeStyles.statusPillTextPending]}>Preview</Text>
+          </View>
+        )}
+      </View>
+
+      {/* Billable total */}
+      <Text style={chargeStyles.chargeTotal}>
+        {formatMoney(draft.billableChargeCents, draft.currencyCode)}
+      </Text>
+
+      {/* Cost breakdown rows */}
+      <View style={chargeStyles.breakdownTable}>
+        <ChargeRow
+          label="Actual product cost"
+          value={formatMoney(draft.totalCostCents, draft.currencyCode)}
+        />
+        {draft.totalWasteCostCents > 0 ? (
+          <ChargeRow
+            label="Waste cost"
+            value={formatMoney(draft.totalWasteCostCents, draft.currencyCode)}
+            tone="warning"
+          />
+        ) : null}
+        {draft.billableChargeCents !== draft.totalCostCents ? (
+          <ChargeRow
+            label="Markup / uplift applied"
+            value={`+${formatMoney(
+              draft.billableChargeCents - draft.totalCostCents,
+              draft.currencyCode,
+            )}`}
+            tone="brand"
+          />
+        ) : null}
+      </View>
+
+      {/* Status line */}
+      <Text style={chargeStyles.statusLine}>
+        {isFinalized
+          ? `Finalized ${formatTime(draft.finalizedAt)}. Billing and inventory reconciled.`
+          : draft.hasMissingCost
+            ? 'Some ingredients are missing a cost per gram — update them before saving final.'
+            : 'Save Final to apply billing, inventory usage, waste, and low-stock reconciliation.'}
+      </Text>
+    </View>
+  );
+}
+
+function ChargeRow({
+  label,
+  value,
+  tone = 'muted',
+}: {
+  label: string;
+  value: string;
+  tone?: 'muted' | 'warning' | 'brand';
+}): React.JSX.Element {
+  const valueStyle =
+    tone === 'warning'
+      ? chargeStyles.valueWarning
+      : tone === 'brand'
+        ? chargeStyles.valueBrand
+        : chargeStyles.valueMuted;
+  return (
+    <View style={chargeStyles.breakdownRow}>
+      <Text style={chargeStyles.breakdownLabel}>{label}</Text>
+      <Text style={[chargeStyles.breakdownValue, valueStyle]}>{value}</Text>
+    </View>
+  );
+}
+
+const chargeStyles = StyleSheet.create({
+  card: {
+    gap: labTheme.spacing.sm,
+    padding: labTheme.spacing.md,
+    borderWidth: 1,
+    borderColor: labTheme.colors.border,
+    borderRadius: labTheme.radius.card,
+    backgroundColor: labTheme.colors.card,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: labTheme.spacing.sm,
+  },
+  cardLabel: {
+    color: labTheme.colors.textMuted,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  statusPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: labTheme.radius.pill,
+    backgroundColor: labTheme.colors.success.bg,
+    borderWidth: 1,
+    borderColor: labTheme.colors.success.border,
+  },
+  statusPillPending: {
+    backgroundColor: 'rgba(166,124,245,0.14)',
+    borderColor: 'rgba(196,160,245,0.32)',
+  },
+  statusPillText: {
+    color: labTheme.colors.success.text,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  statusPillTextPending: {
+    color: labTheme.colors.primary,
+  },
+  chargeTotal: {
+    color: labTheme.colors.textPrimary,
+    fontSize: 34,
+    fontWeight: '900',
+    letterSpacing: -1,
+  },
+  breakdownTable: {
+    gap: 4,
+    paddingTop: labTheme.spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: labTheme.colors.border,
+  },
+  breakdownRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 2,
+  },
+  breakdownLabel: {
+    color: labTheme.colors.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  breakdownValue: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  valueMuted: {
+    color: labTheme.colors.textSecondary,
+  },
+  valueWarning: {
+    color: labTheme.colors.warning.text,
+  },
+  valueBrand: {
+    color: labTheme.colors.primary,
+  },
+  statusLine: {
+    color: labTheme.colors.textMuted,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+});
+
+// ---------------------------------------------------------------------------
 
 interface IngredientRowProps {
   row: FormulaIngredientRow;

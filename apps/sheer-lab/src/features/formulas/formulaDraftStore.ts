@@ -1,5 +1,7 @@
+import type { LocationProductBillingSettings } from '@sheer/domain';
+
 import type { BleWeightReading } from '../ble/types';
-import { calculateFormulaCosts } from './formulaCosting';
+import { calculateBillableChargeCents, calculateFormulaCosts } from './formulaCosting';
 import type {
   FormulaClientContext,
   FormulaDraftSession,
@@ -22,6 +24,7 @@ let draftSequence = 0;
 const persistedDrafts = new Map<string, FormulaDraftSession>();
 const savedFormulaHistory = new Map<string, SavedFormulaRecord[]>();
 let currentDraft = createInitialDraft();
+let productBilling: LocationProductBillingSettings | null = null;
 const listeners = new Set<FormulaDraftListener>();
 
 export const formulaDraftStore = {
@@ -45,6 +48,11 @@ export const formulaDraftStore = {
     return () => {
       listeners.delete(listener);
     };
+  },
+  setProductBilling(settings: LocationProductBillingSettings | null): void {
+    productBilling = settings;
+    currentDraft = recalculateDraft(currentDraft);
+    emit();
   },
   addRow(): FormulaIngredientRow {
     const row = createEmptyIngredientRow();
@@ -321,13 +329,19 @@ function updateDraft(update: Partial<FormulaDraftSession>): void {
 
 function recalculateDraft(draft: FormulaDraftSession): FormulaDraftSession {
   const costSummary = calculateFormulaCosts(draft.rows.map(normalizeRowCaptureStatus));
+  // Mirror the API's applyProductBillingLineItem guard: the location billing
+  // rule only marks up an actual product cost, so a £0 mix stays at £0.
+  const billableChargeCents =
+    costSummary.totalCostCents > 0
+      ? calculateBillableChargeCents(costSummary.totalCostCents, productBilling)
+      : costSummary.totalCostCents;
 
   return {
     ...draft,
     rows: costSummary.rows,
     totalCostCents: costSummary.totalCostCents,
     totalWasteCostCents: costSummary.totalWasteCostCents,
-    billableChargeCents: costSummary.totalCostCents,
+    billableChargeCents,
     hasMissingCost: costSummary.hasMissingCost,
   };
 }

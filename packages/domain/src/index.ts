@@ -1,3 +1,7 @@
+// Tax configuration contracts + the single trusted tax logic layer.
+export * from './tax';
+import type { AppointmentBillingTax } from './tax';
+
 export type UserRole = 'owner' | 'manager' | 'stylist' | 'client';
 
 export type AppSurface = 'sheer_app' | 'sheer_lab' | 'web_dashboard' | 'api';
@@ -393,6 +397,46 @@ export interface ServiceUpgradeSuggestionResponse {
   suggestion: OwnerServiceUpgradeSuggestion;
 }
 
+// ---------------------------------------------------------------------------
+// Product auto-billing (per-location configuration)
+// ---------------------------------------------------------------------------
+
+export type ProductBillingRule = 'cost_only' | 'cost_plus_markup_percent' | 'fixed_uplift';
+
+export interface LocationProductBillingSettings {
+  locationId: string;
+  productBillingEnabled: boolean;
+  productBillingRule: ProductBillingRule;
+  /** Required when productBillingRule = 'cost_plus_markup_percent'. >= 0 */
+  productMarkupPercent: number | null;
+  /** Required when productBillingRule = 'fixed_uplift'. >= 0, decimal (e.g. 4.00 = £4) */
+  productFixedUpliftAmount: number | null;
+}
+
+export interface GetLocationProductBillingSettingsResponse {
+  settings: LocationProductBillingSettings;
+}
+
+export interface UpdateLocationProductBillingSettingsRequest {
+  locationId: string;
+  productBillingEnabled?: boolean;
+  productBillingRule?: ProductBillingRule;
+  productMarkupPercent?: number | null;
+  productFixedUpliftAmount?: number | null;
+}
+
+export interface UpdateLocationProductBillingSettingsResponse {
+  settings: LocationProductBillingSettings;
+}
+
+export interface ProductBillingSnapshot {
+  costAmountCents: number;
+  billableAmountCents: number;
+  billingRuleSnapshot: ProductBillingRule;
+  markupPercentSnapshot: number | null;
+  fixedUpliftAmountSnapshot: number | null;
+}
+
 export interface StaffInvitation {
   id: string;
   businessId: string;
@@ -692,7 +736,7 @@ export interface StaffBookingDetail extends StaffBookingSummary {
 }
 
 export interface AppointmentCompletionLineItem {
-  lineType: 'service' | 'formula_colour' | string;
+  lineType: 'service' | 'product_usage' | string;
   description: string;
   amountCents: number;
   currencyCode: string;
@@ -712,11 +756,18 @@ export interface AppointmentCompletionResponse {
   billing: {
     lineItems: AppointmentCompletionLineItem[];
     serviceTotalCents: number;
-    formulaColourTotalCents: number;
+    productUsageTotalCents: number;
     depositPaidCents: number;
     totalCents: number;
     balanceDueCents: number;
     currencyCode: string;
+    /**
+     * Location tax rollup for this bill. Always present; `enabled: false` when the
+     * location has no active tax configuration. `totalCents`/`balanceDueCents`
+     * above remain the tax-exclusive figures for backward compatibility — consume
+     * `tax` to render inc/ex-tax figures per the configured display mode.
+     */
+    tax: AppointmentBillingTax;
   };
   alreadyCompleted: boolean;
 }
