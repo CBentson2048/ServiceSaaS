@@ -1,4 +1,4 @@
-import type { SVGProps } from 'react';
+import { useEffect, useState, type SVGProps } from 'react';
 import type {
   RotaAbsenceIndicator,
   RotaLeaveIndicator,
@@ -17,12 +17,13 @@ function CalendarEmptyIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-const HOUR_PX = 64;
-const MIN_BLOCK_PX = 28;
+const HOUR_PX = 44;
+const MIN_BLOCK_PX = 22;
 const DEFAULT_START_HOUR = 9;
 const DEFAULT_END_HOUR = 18;
 const COLUMN_WIDTH = 200;
-const HEADER_HEIGHT = 'h-14';
+const HEADER_HEIGHT = 'h-12';
+const HEADER_HEIGHT_PX = 48; // keep in sync with HEADER_HEIGHT (h-12)
 
 type StatusTone = 'success' | 'warning' | 'danger' | 'neutral';
 
@@ -47,6 +48,10 @@ interface DayCalendarBoardProps {
   bookings: StaffBookingSummary[];
   selectedBookingId?: string | null;
   onSelectBooking: (booking: StaffBookingSummary) => void;
+  /** When false, stylists with no appointments on this day are hidden. */
+  showAllTeamMembers?: boolean;
+  /** When true, a red "now" line is drawn at the current time (today only). */
+  showTimeline?: boolean;
 }
 
 /**
@@ -72,7 +77,17 @@ export function DayCalendarBoard({
   bookings,
   selectedBookingId,
   onSelectBooking,
+  showAllTeamMembers = true,
+  showTimeline = true,
 }: DayCalendarBoardProps) {
+  // A live clock so the "now" line tracks the current time. Updates once a
+  // minute — fine for a calendar that snaps to half-hour gridlines.
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+
   const dayIso = toIsoDate(day);
   const dayStart = new Date(day.getFullYear(), day.getMonth(), day.getDate());
   const dayEnd = new Date(dayStart.getTime() + 86_400_000);
@@ -87,7 +102,7 @@ export function DayCalendarBoard({
       .map((entry) => entry.staffProfileId),
   );
 
-  const columns = buildColumns({
+  const allColumns = buildColumns({
     staff,
     bookings,
     shiftsForDay,
@@ -95,9 +110,21 @@ export function DayCalendarBoard({
     leaveStaffOnDay,
   });
 
+  // "Show all team members" off → drop columns with nothing booked. The
+  // Unassigned / off-roster columns always carry bookings, so they survive.
+  const columns = showAllTeamMembers
+    ? allColumns
+    : allColumns.filter((column) => column.bookings.length > 0);
+
   const { startHour, endHour } = resolveWindow(columns, day);
   const hours = range(startHour, endHour);
   const totalHeight = (endHour - startHour) * HOUR_PX;
+
+  // Position of the current-time line within the visible window.
+  const isToday = isSameDayLocal(now, day);
+  const nowMinutes = now.getHours() * 60 + now.getMinutes() - startHour * 60;
+  const nowOffset = (nowMinutes / 60) * HOUR_PX;
+  const showNowLine = showTimeline && isToday && nowMinutes >= 0 && nowMinutes <= (endHour - startHour) * 60;
 
   if (columns.length === 0) {
     return (
@@ -105,9 +132,13 @@ export function DayCalendarBoard({
         <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-surface-alt text-text-muted">
           <CalendarEmptyIcon className="h-5 w-5" />
         </div>
-        <div className="text-[14px] font-semibold text-text-primary">Nothing on the book for this day</div>
+        <div className="text-[14px] font-semibold text-text-primary">
+          {showAllTeamMembers ? 'Nothing on the book for this day' : 'No appointments scheduled'}
+        </div>
         <div className="mt-1 text-[13px] text-text-secondary">
-          No stylists are rostered and there are no appointments at this location on {formatDayLabel(day)}.
+          {showAllTeamMembers
+            ? `No stylists are rostered and there are no appointments at this location on ${formatDayLabel(day)}.`
+            : `No team member has an appointment on ${formatDayLabel(day)}. Turn on “Show all team members” to see everyone rostered.`}
         </div>
       </div>
     );
@@ -117,7 +148,7 @@ export function DayCalendarBoard({
 
   return (
     <div className="overflow-x-auto rounded-2xl border border-border bg-surface shadow-sm">
-      <div className="flex" style={{ minWidth: minBoardWidth }}>
+      <div className="relative flex" style={{ minWidth: minBoardWidth }}>
         {/* Time axis */}
         <div className="sticky left-0 z-30 w-16 shrink-0 border-r border-border/60 bg-surface">
           <div className={`${HEADER_HEIGHT} border-b border-border/60`} />
@@ -268,6 +299,26 @@ export function DayCalendarBoard({
             </div>
           </div>
         ))}
+
+        {/* Current-time line. Spans every column; the label sits over the time
+            axis. Offset by the header height so it lands inside the grid. */}
+        {showNowLine ? (
+          <div
+            className="pointer-events-none absolute inset-x-0 z-40"
+            style={{ top: HEADER_HEIGHT_PX + nowOffset }}
+            aria-hidden
+          >
+            <div className="flex items-center">
+              <span className="w-16 shrink-0 pr-2 text-right text-[10px] font-bold leading-none text-danger">
+                {formatTime(now.toISOString())}
+              </span>
+              <span className="relative flex-1">
+                <span className="absolute -left-1 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-danger" />
+                <span className="block h-0.5 w-full bg-danger" />
+              </span>
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -418,6 +469,10 @@ function minutesFromWindowStart(iso: string, startHour: number): number {
 function offsetPx(iso: string, startHour: number, totalHeight: number): number {
   const minutes = minutesFromWindowStart(iso, startHour);
   return clamp((minutes / 60) * HOUR_PX, 0, totalHeight);
+}
+
+function isSameDayLocal(a: Date, b: Date): boolean {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
 function intersectsDay(startsAt: string, endsAt: string | undefined, dayStart: Date, dayEnd: Date): boolean {

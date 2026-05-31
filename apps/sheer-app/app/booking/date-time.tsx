@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Redirect, router } from 'expo-router';
 import type { PublicBookingAvailabilitySlot } from '@sheer/domain';
@@ -18,10 +18,29 @@ export default function BookingDateTimeScreen() {
   const [slots, setSlots] = useState<PublicBookingAvailabilitySlot[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // The day whose time slots are shown in the list below the strip.
   const [activeDay, setActiveDay] = useState<string | null>(null);
+  // Anchors the Mon–Sun week strip (and drives the month/year label). Never null.
+  const [weekAnchor, setWeekAnchor] = useState<string>(() => toIsoDate(new Date()));
+  // The full-calendar modal and the month it is browsing (independent of the strip).
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const [calMonth, setCalMonth] = useState<MonthRef>(() => monthRefOf(new Date()));
 
   const location = draft.location;
-  const dateRange = useMemo(() => nextFourWeeks(), []);
+  const today = useMemo(() => startOfToday(), []);
+  const currentMonthIndex = monthIndex(today.getFullYear(), today.getMonth());
+
+  const anchorDate = useMemo(() => parseIsoDate(weekAnchor), [weekAnchor]);
+  // While the calendar is open we fetch the month it is browsing; otherwise the
+  // month the week strip is sitting in. Keeping a single fetch driver keeps the
+  // availability dots in sync with whatever the client is looking at.
+  const fetchMonth: MonthRef = calendarOpen
+    ? calMonth
+    : { year: anchorDate.getFullYear(), month: anchorDate.getMonth() };
+  const dateRange = useMemo(
+    () => monthFetchRange(fetchMonth.year, fetchMonth.month),
+    [fetchMonth.year, fetchMonth.month],
+  );
 
   const load = useCallback(async () => {
     if (!accessToken || !location || draft.services.length === 0) return;
@@ -53,29 +72,71 @@ export default function BookingDateTimeScreen() {
   // Group available slots by calendar day so we can drive the date strip and
   // only show the times for the day the client is looking at.
   const days = useMemo(() => groupByDay(slots), [slots]);
-
-  // Default the active day to the first day that actually has availability, and
-  // re-sync if the loaded availability no longer contains the active day.
-  useEffect(() => {
-    if (days.length === 0) {
-      setActiveDay(null);
-      return;
-    }
-    setActiveDay((current) =>
-      current && days.some((day) => day.key === current) ? current : days[0].key,
-    );
+  const availableByDay = useMemo(() => {
+    const map = new Map<string, DayGroup>();
+    for (const day of days) map.set(day.key, day);
+    return map;
   }, [days]);
+
+  // Keep the active day in sync with the loaded month: if nothing is selected (or
+  // the selection no longer exists, e.g. after a month change) snap to the soonest
+  // available day *within the viewed month* and pull the strip onto its week. We
+  // ignore the adjacent-month days the fetch pads in (so pressing › can't bounce
+  // the view back a month). Skipped while the full calendar is open so navigating
+  // months there does not move the strip.
+  useEffect(() => {
+    if (calendarOpen) return;
+    if (activeDay && availableByDay.has(activeDay)) return;
+    const year = anchorDate.getFullYear();
+    const month = anchorDate.getMonth();
+    const firstInMonth = days.find((day) => {
+      const date = parseIsoDate(day.key);
+      return date.getFullYear() === year && date.getMonth() === month;
+    });
+    if (firstInMonth) {
+      setActiveDay(firstInMonth.key);
+      setWeekAnchor(firstInMonth.key);
+    } else {
+      setActiveDay(null);
+    }
+  }, [days, availableByDay, activeDay, calendarOpen, anchorDate]);
+
+  const weekDays = useMemo(() => buildWeek(weekAnchor), [weekAnchor]);
+  const monthLabel = monthYearLabel(anchorDate);
+  const canGoPrevMonth = monthIndex(anchorDate.getFullYear(), anchorDate.getMonth()) > currentMonthIndex;
 
   const activeSlots = useMemo(
     () => days.find((day) => day.key === activeDay)?.slots ?? [],
     [days, activeDay],
   );
 
+  const goPrevMonth = useCallback(() => {
+    setWeekAnchor(toIsoDate(addMonths(anchorDate, -1)));
+  }, [anchorDate]);
+  const goNextMonth = useCallback(() => {
+    setWeekAnchor(toIsoDate(addMonths(anchorDate, 1)));
+  }, [anchorDate]);
+  const selectDay = useCallback((key: string) => {
+    setActiveDay(key);
+    setWeekAnchor(key);
+  }, []);
+  const openCalendar = useCallback(() => {
+    setCalMonth({ year: anchorDate.getFullYear(), month: anchorDate.getMonth() });
+    setCalendarOpen(true);
+  }, [anchorDate]);
+  const pickCalendarDay = useCallback((key: string) => {
+    setActiveDay(key);
+    setWeekAnchor(key);
+    setCalendarOpen(false);
+  }, []);
+
   if (!location) return <Redirect href="/booking/location" />;
   if (draft.services.length === 0) return <Redirect href="/booking/services" />;
 
   const selected = draft.selectedSlot;
-  const monthLabel = monthHeading(days, activeDay);
+  // Only show the full-screen loading card on the very first load, so month
+  // navigation keeps the nav arrows / strip on screen while it refreshes.
+  const firstLoad = loading && days.length === 0;
 
   return (
     <ProtectedScreen allowedRoles={['client']}>
@@ -99,7 +160,7 @@ export default function BookingDateTimeScreen() {
         <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
           {error ? <ErrorCard message={error} onRetry={() => void load()} /> : null}
 
-          {loading ? (
+          {firstLoad ? (
             <Card>
               <View style={styles.loadingRow}>
                 <ActivityIndicator color={palette.brand[300]} />
@@ -109,30 +170,63 @@ export default function BookingDateTimeScreen() {
                 </View>
               </View>
             </Card>
-          ) : days.length === 0 ? (
-            <EmptyState title="No available times" body="Try a different stylist or service selection." />
           ) : (
             <>
               {/* ── Date selector ── */}
               <View>
-                <View style={styles.sectionRow}>
-                  <Text style={styles.monthLabel}>{monthLabel}</Text>
-                  <Text style={styles.zoneLabel}>{timezoneLabel()}</Text>
+                {/* Month / year with prev–next month navigation; tap the label for a full calendar. */}
+                <View style={styles.calNav}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Previous month"
+                    disabled={!canGoPrevMonth}
+                    onPress={goPrevMonth}
+                    style={({ pressed }) => [
+                      styles.calNavBtn,
+                      !canGoPrevMonth && styles.calNavBtnDisabled,
+                      pressed && canGoPrevMonth && s.pressed,
+                    ]}
+                  >
+                    <Text style={styles.calNavArrow}>‹</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Open calendar"
+                    onPress={openCalendar}
+                    style={({ pressed }) => [styles.calMonthBtn, pressed && s.pressed]}
+                  >
+                    <Text style={styles.monthLabel}>{monthLabel}</Text>
+                    <Text style={styles.calMonthCaret}>▾</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Next month"
+                    onPress={goNextMonth}
+                    style={({ pressed }) => [styles.calNavBtn, pressed && s.pressed]}
+                  >
+                    <Text style={styles.calNavArrow}>›</Text>
+                  </Pressable>
                 </View>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.dateStrip}
-                >
-                  {days.map((day) => (
-                    <DateCell
-                      key={day.key}
-                      day={day}
-                      selected={day.key === activeDay}
-                      onPress={() => setActiveDay(day.key)}
-                    />
-                  ))}
-                </ScrollView>
+
+                {/* Mon–Sun week containing the selected date. */}
+                <View style={styles.weekStrip}>
+                  {weekDays.map((date) => {
+                    const key = toIsoDate(date);
+                    const available = availableByDay.has(key);
+                    const past = date < today;
+                    return (
+                      <DateCell
+                        key={key}
+                        date={date}
+                        available={available}
+                        disabled={past || !available}
+                        selected={key === activeDay}
+                        onPress={() => selectDay(key)}
+                      />
+                    );
+                  })}
+                </View>
+                <Text style={styles.zoneLabel}>{timezoneLabel()}</Text>
               </View>
 
               {/* ── Available slots ── */}
@@ -143,18 +237,32 @@ export default function BookingDateTimeScreen() {
                     {activeSlots.length} time{activeSlots.length === 1 ? '' : 's'}
                   </Text>
                 </View>
-                <View style={s.slotList}>
-                  {activeSlots.map((slot) => (
-                    <SlotRow
-                      key={`${slot.staffProfileId}:${slot.startAt}`}
-                      slot={slot}
-                      selected={
-                        selected?.startAt === slot.startAt && selected.staffProfileId === slot.staffProfileId
-                      }
-                      onPress={() => updateDraft({ selectedSlot: slot })}
-                    />
-                  ))}
-                </View>
+                {loading ? (
+                  <View style={styles.updatingRow}>
+                    <ActivityIndicator color={palette.brand[300]} />
+                    <Text style={styles.updatingText}>Updating availability…</Text>
+                  </View>
+                ) : days.length === 0 ? (
+                  <EmptyState
+                    title="No availability this month"
+                    body="Try another month, or a different stylist or service selection."
+                  />
+                ) : activeSlots.length === 0 ? (
+                  <Text style={styles.calEmptyNote}>No times left on this day. Pick another day above.</Text>
+                ) : (
+                  <View style={s.slotList}>
+                    {activeSlots.map((slot) => (
+                      <SlotRow
+                        key={`${slot.staffProfileId}:${slot.startAt}`}
+                        slot={slot}
+                        selected={
+                          selected?.startAt === slot.startAt && selected.staffProfileId === slot.staffProfileId
+                        }
+                        onPress={() => updateDraft({ selectedSlot: slot })}
+                      />
+                    ))}
+                  </View>
+                )}
               </View>
             </>
           )}
@@ -182,35 +290,187 @@ export default function BookingDateTimeScreen() {
             onPress={() => router.push('/booking/review')}
           />
         </SafeAreaView>
+
+        {/* ── Full calendar (tap the month/year label to open) ── */}
+        <CalendarModal
+          visible={calendarOpen}
+          month={calMonth}
+          activeDay={activeDay}
+          today={today}
+          loading={loading}
+          availableByDay={availableByDay}
+          canGoPrev={monthIndex(calMonth.year, calMonth.month) > currentMonthIndex}
+          onPrev={() => setCalMonth((m) => shiftMonth(m, -1))}
+          onNext={() => setCalMonth((m) => shiftMonth(m, 1))}
+          onSelect={pickCalendarDay}
+          onClose={() => setCalendarOpen(false)}
+        />
       </SafeAreaView>
     </ProtectedScreen>
   );
 }
 
-// ── Date strip cell ─────────────────────────────────────────────────────────────
+// ── Week strip cell ──────────────────────────────────────────────────────────────
 
 function DateCell({
-  day,
+  date,
+  available,
+  disabled,
   selected,
   onPress,
 }: {
-  day: DayGroup;
+  date: Date;
+  available: boolean;
+  disabled: boolean;
   selected: boolean;
   onPress: () => void;
 }) {
-  const date = new Date(day.key);
   return (
     <Pressable
       accessibilityRole="button"
+      disabled={disabled}
       onPress={onPress}
-      style={({ pressed }) => [styles.dateCell, selected && styles.dateCellSelected, pressed && s.pressed]}
+      style={({ pressed }) => [
+        styles.weekCell,
+        selected && styles.dateCellSelected,
+        disabled && styles.dateCellDisabled,
+        pressed && !disabled && s.pressed,
+      ]}
     >
       <Text style={[styles.dateDow, selected && styles.dateDowSelected]}>
         {date.toLocaleDateString(undefined, { weekday: 'short' })}
       </Text>
       <Text style={styles.dateDay}>{date.getDate()}</Text>
-      <View style={[styles.dateDot, selected && styles.dateDotSelected]} />
+      <View style={[styles.dateDot, !available && styles.dateDotEmpty, selected && styles.dateDotSelected]} />
     </Pressable>
+  );
+}
+
+// ── Full calendar modal ──────────────────────────────────────────────────────────
+
+const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+function CalendarModal({
+  visible,
+  month,
+  activeDay,
+  today,
+  loading,
+  availableByDay,
+  canGoPrev,
+  onPrev,
+  onNext,
+  onSelect,
+  onClose,
+}: {
+  visible: boolean;
+  month: MonthRef;
+  activeDay: string | null;
+  today: Date;
+  loading: boolean;
+  availableByDay: Map<string, DayGroup>;
+  canGoPrev: boolean;
+  onPrev: () => void;
+  onNext: () => void;
+  onSelect: (key: string) => void;
+  onClose: () => void;
+}) {
+  const weeks = useMemo(() => monthMatrix(month.year, month.month), [month.year, month.month]);
+  const title = new Date(month.year, month.month, 1).toLocaleDateString(undefined, {
+    month: 'long',
+    year: 'numeric',
+  });
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.calBackdrop} onPress={onClose}>
+        {/* Inner press is swallowed so taps inside the sheet don't dismiss it. */}
+        <Pressable style={styles.calSheet} onPress={() => {}}>
+          <View style={styles.calSheetHeader}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Previous month"
+              disabled={!canGoPrev}
+              onPress={onPrev}
+              style={({ pressed }) => [
+                styles.calNavBtn,
+                !canGoPrev && styles.calNavBtnDisabled,
+                pressed && canGoPrev && styles.pressed,
+              ]}
+            >
+              <Text style={styles.calNavArrow}>‹</Text>
+            </Pressable>
+            <Text style={styles.calSheetTitle}>{title}</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Next month"
+              onPress={onNext}
+              style={({ pressed }) => [styles.calNavBtn, pressed && styles.pressed]}
+            >
+              <Text style={styles.calNavArrow}>›</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.calWeekHead}>
+            {WEEKDAY_LABELS.map((label) => (
+              <Text key={label} style={styles.calWeekHeadCell}>
+                {label}
+              </Text>
+            ))}
+          </View>
+
+          <View style={styles.calGrid}>
+            {weeks.map((week) => (
+              <View key={toIsoDate(week[0])} style={styles.calRow}>
+                {week.map((date) => {
+                  const key = toIsoDate(date);
+                  const inMonth = date.getMonth() === month.month;
+                  const available = availableByDay.has(key);
+                  const past = date < today;
+                  const disabled = past || !available;
+                  const selected = key === activeDay;
+                  return (
+                    <Pressable
+                      key={key}
+                      accessibilityRole="button"
+                      disabled={disabled}
+                      onPress={() => onSelect(key)}
+                      style={({ pressed }) => [
+                        styles.calCell,
+                        selected && styles.calCellSelected,
+                        pressed && !disabled && styles.pressed,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.calCellText,
+                          (!inMonth || disabled) && styles.calCellMuted,
+                          selected && styles.calCellSelectedText,
+                        ]}
+                      >
+                        {date.getDate()}
+                      </Text>
+                      <View
+                        style={[styles.calDot, !available && styles.dateDotEmpty, selected && styles.dateDotSelected]}
+                      />
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ))}
+          </View>
+
+          {loading ? (
+            <View style={styles.updatingRow}>
+              <ActivityIndicator color={palette.brand[300]} />
+              <Text style={styles.updatingText}>Updating availability…</Text>
+            </View>
+          ) : null}
+
+          <AppButton label="Close" variant="secondary" onPress={onClose} />
+        </Pressable>
+      </Pressable>
+    </Modal>
   );
 }
 
@@ -276,6 +536,11 @@ interface DayGroup {
   slots: PublicBookingAvailabilitySlot[];
 }
 
+interface MonthRef {
+  year: number;
+  month: number; // 0-indexed
+}
+
 /** Group slots into calendar days, preserving the server's chronological order. */
 function groupByDay(slots: PublicBookingAvailabilitySlot[]): DayGroup[] {
   const order: string[] = [];
@@ -295,14 +560,7 @@ function groupByDay(slots: PublicBookingAvailabilitySlot[]): DayGroup[] {
 
 function dayKey(slot: PublicBookingAvailabilitySlot): string {
   if (slot.date) return slot.date.slice(0, 10);
-  const date = new Date(slot.startAt);
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-
-function monthHeading(days: DayGroup[], activeDay: string | null): string {
-  const key = activeDay ?? days[0]?.key;
-  if (!key) return '';
-  return new Date(key).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  return toIsoDate(new Date(slot.startAt));
 }
 
 function slotMinutes(slot: PublicBookingAvailabilitySlot): number {
@@ -314,12 +572,86 @@ function selectedSummary(slot: PublicBookingAvailabilitySlot): string {
   return `${date}, ${formatTime(slot.startAt)}`;
 }
 
-function nextFourWeeks(): { from: string; to: string } {
-  const from = new Date();
-  from.setHours(0, 0, 0, 0);
-  const to = new Date(from);
-  to.setDate(to.getDate() + 28);
+/** Availability fetch window for a month, padded out to the Mon–Sun weeks that the
+ *  strip and calendar can show (so days spilling in from the adjacent month still
+ *  light up). Never reaches into the past. */
+function monthFetchRange(year: number, month: number): { from: string; to: string } {
+  const today = startOfToday();
+  let from = startOfWeekMonday(new Date(year, month, 1));
+  if (from < today) from = today;
+  const lastSunday = addDays(startOfWeekMonday(new Date(year, month + 1, 0)), 6);
+  const to = new Date(lastSunday.getFullYear(), lastSunday.getMonth(), lastSunday.getDate(), 23, 59, 59, 999);
   return { from: from.toISOString(), to: to.toISOString() };
+}
+
+/** The seven Mon–Sun dates of the week containing the anchor day. */
+function buildWeek(anchorIso: string): Date[] {
+  const monday = startOfWeekMonday(parseIsoDate(anchorIso));
+  return Array.from({ length: 7 }, (_, i) => addDays(monday, i));
+}
+
+/** Weeks (Mon–Sun rows) covering a whole month for the full-calendar grid. */
+function monthMatrix(year: number, month: number): Date[][] {
+  const lastDay = new Date(year, month + 1, 0);
+  const weeks: Date[][] = [];
+  let cursor = startOfWeekMonday(new Date(year, month, 1));
+  while (cursor <= lastDay) {
+    const start = cursor;
+    weeks.push(Array.from({ length: 7 }, (_, i) => addDays(start, i)));
+    cursor = addDays(cursor, 7);
+  }
+  return weeks;
+}
+
+function monthYearLabel(date: Date): string {
+  return date.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+}
+
+function startOfToday(): Date {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+}
+
+/** Monday of the ISO week containing `date` (local midnight). */
+function startOfWeekMonday(date: Date): Date {
+  const local = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const offset = (local.getDay() + 6) % 7; // 0 = Mon … 6 = Sun
+  local.setDate(local.getDate() - offset);
+  return local;
+}
+
+function addDays(date: Date, count: number): Date {
+  const next = new Date(date);
+  next.setDate(next.getDate() + count);
+  return next;
+}
+
+/** First day of the month `count` months away from `date`. */
+function addMonths(date: Date, count: number): Date {
+  return new Date(date.getFullYear(), date.getMonth() + count, 1);
+}
+
+function shiftMonth(ref: MonthRef, count: number): MonthRef {
+  const date = addMonths(new Date(ref.year, ref.month, 1), count);
+  return { year: date.getFullYear(), month: date.getMonth() };
+}
+
+function monthRefOf(date: Date): MonthRef {
+  return { year: date.getFullYear(), month: date.getMonth() };
+}
+
+function monthIndex(year: number, month: number): number {
+  return year * 12 + month;
+}
+
+function toIsoDate(date: Date): string {
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/** Parse a YYYY-MM-DD key as a *local* date (avoids the UTC shift of `new Date(iso)`). */
+function parseIsoDate(iso: string): Date {
+  const [year, month, day] = iso.slice(0, 10).split('-').map(Number);
+  return new Date(year, (month ?? 1) - 1, day ?? 1);
 }
 
 function formatTime(iso: string): string {

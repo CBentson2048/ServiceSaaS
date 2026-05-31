@@ -17,7 +17,9 @@ import {
 } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
 import { DayCalendarBoard } from '../components/bookings/DayCalendarBoard';
-import { addDays, isSameLocalDay, snapToMonday, toIsoDate } from '../components/rota/dateUtils';
+import { WeekStrip } from '../components/bookings/WeekStrip';
+import type { CalendarToolbarKey, CalendarToolbarState } from '../components/bookings/CalendarToolbar';
+import { isSameLocalDay, snapToMonday, toIsoDate } from '../components/rota/dateUtils';
 
 type StatusFilter = 'all' | StaffBookingSummary['status'];
 type StatusTone = 'success' | 'warning' | 'danger' | 'neutral';
@@ -61,6 +63,15 @@ export function BookingsPage() {
   const [rotaLoading, setRotaLoading] = useState(false);
   const [rotaError, setRotaError] = useState<string | null>(null);
   const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null);
+  const [toolbar, setToolbar] = useState<CalendarToolbarState>(loadToolbarState);
+
+  const toggleToolbar = useCallback((key: CalendarToolbarKey) => {
+    setToolbar((current) => {
+      const next = { ...current, [key]: !current[key] };
+      saveToolbarState(next);
+      return next;
+    });
+  }, []);
 
   const reload = useCallback(async () => {
     if (!accessToken) return;
@@ -318,53 +329,37 @@ export function BookingsPage() {
 
       {view === 'calendar' ? (
         <>
-          <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                aria-label="Previous day"
-                onClick={() => setDay((current) => addDays(current, -1))}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-border bg-surface text-text-secondary shadow-sm transition hover:bg-surface-alt hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
-              >
-                <ChevronLeftIcon className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setDay(new Date())}
-                className="h-8 rounded-full border border-border bg-surface px-3 text-[12px] font-medium text-text-secondary shadow-sm transition hover:bg-surface-alt hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
-              >
-                Today
-              </button>
-              <button
-                type="button"
-                aria-label="Next day"
-                onClick={() => setDay((current) => addDays(current, 1))}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-border bg-surface text-text-secondary shadow-sm transition hover:bg-surface-alt hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
-              >
-                <ChevronRightIcon className="h-4 w-4" />
-              </button>
-              <span className="ml-2 text-[15px] font-semibold text-text-primary">{formatDayHeading(day)}</span>
+          <div className="mb-4 flex flex-col gap-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <span className="text-[15px] font-semibold text-text-primary">{formatDayHeading(day)}</span>
+              {locations.length > 1 ? (
+                <label className="flex items-center gap-2 text-[12px] text-text-muted">
+                  <span className="font-medium uppercase tracking-[0.08em]">Location</span>
+                  <select
+                    value={selectedLocationId}
+                    onChange={(event) => setSelectedLocationId(event.target.value)}
+                    className="h-8 rounded-full border border-border bg-surface px-3 text-[12px] font-medium text-text-primary shadow-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  >
+                    {locations.map((location) => (
+                      <option key={location.id} value={location.id}>
+                        {location.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : locations[0] ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-3.5 py-1.5 text-[12px] font-medium text-text-secondary shadow-sm">
+                  {locations[0].name}
+                </span>
+              ) : null}
             </div>
-            {locations.length > 1 ? (
-              <label className="flex items-center gap-2 text-[12px] text-text-muted">
-                <span className="font-medium uppercase tracking-[0.08em]">Location</span>
-                <select
-                  value={selectedLocationId}
-                  onChange={(event) => setSelectedLocationId(event.target.value)}
-                  className="h-8 rounded-full border border-border bg-surface px-3 text-[12px] font-medium text-text-primary shadow-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
-                >
-                  {locations.map((location) => (
-                    <option key={location.id} value={location.id}>
-                      {location.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : locations[0] ? (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-3.5 py-1.5 text-[12px] font-medium text-text-secondary shadow-sm">
-                {locations[0].name}
-              </span>
-            ) : null}
+
+            <WeekStrip
+              day={day}
+              onSelectDay={setDay}
+              toolbar={toolbar}
+              onToggleToolbar={toggleToolbar}
+            />
           </div>
 
           {showSelectedStrip && selectedBooking ? (
@@ -398,6 +393,8 @@ export function BookingsPage() {
               bookings={calendarBookings}
               selectedBookingId={selectedBookingId}
               onSelectBooking={(booking) => setSelectedBookingId(booking.id)}
+              showAllTeamMembers={toolbar.showAllTeamMembers}
+              showTimeline={toolbar.showTimeline}
             />
           )}
         </>
@@ -905,28 +902,47 @@ function RefreshIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-function ChevronLeftIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden {...props}>
-      <path d="M12 5 7 10l5 5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function ChevronRightIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden {...props}>
-      <path d="m8 5 5 5-5 5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
 function CloseIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.6} aria-hidden {...props}>
       <path d="m5 5 10 10M15 5 5 15" strokeLinecap="round" />
     </svg>
   );
+}
+
+const TOOLBAR_STORAGE_KEY = 'sheer.web.bookings.calendarToolbar';
+
+const DEFAULT_TOOLBAR_STATE: CalendarToolbarState = {
+  showAllTeamMembers: true,
+  showTimeline: true,
+  autoHideCalendar: false,
+};
+
+// The view toggles are a per-user preference, so persist them across sessions.
+// Reads defensively — a corrupt / partial blob falls back to the defaults.
+function loadToolbarState(): CalendarToolbarState {
+  if (typeof window === 'undefined') return DEFAULT_TOOLBAR_STATE;
+  try {
+    const raw = window.localStorage.getItem(TOOLBAR_STORAGE_KEY);
+    if (!raw) return DEFAULT_TOOLBAR_STATE;
+    const parsed = JSON.parse(raw) as Partial<CalendarToolbarState>;
+    return {
+      showAllTeamMembers: parsed.showAllTeamMembers ?? DEFAULT_TOOLBAR_STATE.showAllTeamMembers,
+      showTimeline: parsed.showTimeline ?? DEFAULT_TOOLBAR_STATE.showTimeline,
+      autoHideCalendar: parsed.autoHideCalendar ?? DEFAULT_TOOLBAR_STATE.autoHideCalendar,
+    };
+  } catch {
+    return DEFAULT_TOOLBAR_STATE;
+  }
+}
+
+function saveToolbarState(state: CalendarToolbarState): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(TOOLBAR_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // Best-effort — ignore storage failures (private mode, quota, etc.).
+  }
 }
 
 function formatDate(iso: string): string {

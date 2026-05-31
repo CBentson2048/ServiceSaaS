@@ -373,19 +373,63 @@ export const bookingStyles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.6,
     textTransform: 'uppercase',
+    marginTop: spacing.xs,
   },
 
-  // Horizontal day strip
-  dateStrip: {
-    gap: spacing.sm,
+  // Month nav row: ‹  Month Year ▾  ›
+  calNav: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.xs,
+  },
+  calNavBtn: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.full,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  calNavBtnDisabled: {
+    opacity: 0.3,
+  },
+  calNavArrow: {
+    color: palette.white,
+    fontSize: 24,
+    lineHeight: 26,
+    fontWeight: '700',
+    marginTop: -2,
+  },
+  calMonthBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.pill,
+  },
+  calMonthCaret: {
+    color: palette.brand[300],
+    fontSize: 12,
+    fontWeight: '800',
+    marginTop: 2,
+  },
+
+  // Mon–Sun week strip
+  weekStrip: {
+    flexDirection: 'row',
+    gap: spacing.xs,
     paddingVertical: spacing.xs,
   },
-  dateCell: {
-    width: 60,
+  weekCell: {
+    flex: 1,
     paddingVertical: spacing.md,
     alignItems: 'center',
     gap: spacing.xs,
-    borderRadius: radius.cardLg,
+    borderRadius: radius.card,
     borderWidth: 1.5,
     borderColor: 'rgba(255,255,255,0.1)',
     backgroundColor: 'rgba(255,255,255,0.04)',
@@ -396,6 +440,102 @@ export const bookingStyles = StyleSheet.create({
   },
   dateCellDisabled: {
     opacity: 0.32,
+  },
+
+  // Full-calendar modal
+  calBackdrop: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
+  calSheet: {
+    gap: spacing.md,
+    padding: spacing.lg,
+    paddingBottom: spacing.xl,
+    borderTopLeftRadius: radius.cardLg,
+    borderTopRightRadius: radius.cardLg,
+    borderTopWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: palette.ink[900],
+  },
+  calSheetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  calSheetTitle: {
+    color: palette.white,
+    fontSize: 17,
+    fontWeight: '800',
+    letterSpacing: -0.2,
+  },
+  calWeekHead: {
+    flexDirection: 'row',
+  },
+  calWeekHeadCell: {
+    flex: 1,
+    textAlign: 'center',
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+  },
+  calGrid: {
+    gap: spacing.xs,
+  },
+  calRow: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+  },
+  calCell: {
+    flex: 1,
+    aspectRatio: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
+    borderRadius: radius.card,
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  calCellSelected: {
+    borderColor: palette.brand[300],
+    backgroundColor: palette.brand[500],
+  },
+  calCellText: {
+    color: palette.white,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  calCellMuted: {
+    color: 'rgba(255,255,255,0.28)',
+  },
+  calCellSelectedText: {
+    color: palette.white,
+  },
+  calDot: {
+    width: 5,
+    height: 5,
+    borderRadius: radius.full,
+    backgroundColor: palette.success[300],
+  },
+  calEmptyNote: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
+    paddingVertical: spacing.md,
+  },
+  updatingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+  },
+  updatingText: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 13,
+    fontWeight: '600',
   },
   dateDow: {
     color: 'rgba(255,255,255,0.5)',

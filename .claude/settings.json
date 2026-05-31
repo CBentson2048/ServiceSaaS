@@ -47,7 +47,11 @@
       "Bash(echo \"EXIT: $?\")",
       "Bash(node -e \"console.log\\(Object.keys\\(require\\('./apps/api/package.json'\\).scripts\\)\\)\")",
       "Bash(node -e \"console.log\\(Object.keys\\(require\\('./apps/web/package.json'\\).scripts\\)\\)\")",
-      "Bash(pnpm --filter @sheer/api test)"
+      "Bash(pnpm --filter @sheer/api test)",
+      "Bash(grep -r \"DatePicker\\\\|DateSelector\\\\|calendar\\\\|Calendar\\\\|DateStrip\\\\|dateStrip\" /Users/shiny/Documents/Sheer/sheer-platform --include=\"*.tsx\" --include=\"*.ts\" --include=\"*.jsx\" --include=\"*.js\" ! -path \"*/node_modules/*\" ! -path \"*/.git/*\")",
+      "Bash(grep -r \"getDaysInMonth\\\\|daysInMonth\\\\|daysInMonth\\\\|getMonthName\\\\|monthName\\\\|yearMonth\\\\|month.*year\\\\|Day.*of.*Month\" /Users/shiny/Documents/Sheer/sheer-platform --include=\"*.tsx\" --include=\"*.ts\" ! -path \"*/node_modules/*\" ! -path \"*/.git/*\")",
+      "Bash(echo \"eslint exit: $?\")",
+      "Bash(echo \"tsc exit: $?\")"
     ]
   }
 }
