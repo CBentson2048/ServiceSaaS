@@ -51,7 +51,28 @@
       "Bash(grep -r \"DatePicker\\\\|DateSelector\\\\|calendar\\\\|Calendar\\\\|DateStrip\\\\|dateStrip\" /Users/shiny/Documents/Sheer/sheer-platform --include=\"*.tsx\" --include=\"*.ts\" --include=\"*.jsx\" --include=\"*.js\" ! -path \"*/node_modules/*\" ! -path \"*/.git/*\")",
       "Bash(grep -r \"getDaysInMonth\\\\|daysInMonth\\\\|daysInMonth\\\\|getMonthName\\\\|monthName\\\\|yearMonth\\\\|month.*year\\\\|Day.*of.*Month\" /Users/shiny/Documents/Sheer/sheer-platform --include=\"*.tsx\" --include=\"*.ts\" ! -path \"*/node_modules/*\" ! -path \"*/.git/*\")",
       "Bash(echo \"eslint exit: $?\")",
-      "Bash(echo \"tsc exit: $?\")"
+      "Bash(echo \"tsc exit: $?\")",
+      "Bash(sed -n '/create table.*rota.shifts/,/^\\);/p' supabase/migrations/0005_rota_foundation.sql)",
+      "Bash(sed -n '/create table.*shift_breaks/,/^\\);/p' supabase/migrations/0005_rota_foundation.sql)",
+      "Bash(sed -n '/create table.*leave_requests/,/^\\);/p' supabase/migrations/0005_rota_foundation.sql supabase/migrations/0014_rota_management.sql)",
+      "Bash(sed -n '/create table.*absence_events/,/^\\);/p' supabase/migrations/0005_rota_foundation.sql supabase/migrations/0014_rota_management.sql)",
+      "Bash(python3 -c \"import json;d=json.load\\(open\\('apps/api/package.json'\\)\\);print\\(json.dumps\\(d.get\\('jest','NO_INLINE_JEST_KEY'\\),indent=2\\)\\)\")",
+      "Bash(python3 -c \"import json;print\\(json.load\\(open\\('package.json'\\)\\).get\\('scripts'\\)\\)\")",
+      "Bash(cd /Users/shiny/Documents/Sheer/sheer-platform/apps/web/src *)",
+      "Bash(sed -n '1,60p' components/dashboard/StylistsTable.tsx)",
+      "Bash(sed -n '1,38p' App.tsx)",
+      "Bash(ls -la src/components/kpi/)",
+      "Bash(wc -l src/components/kpi/*.tsx src/pages/PerformancePage.tsx)",
+      "Bash(sed -n '1,40p' apps/web/src/components/dashboard/RangeTabs.tsx)",
+      "Bash(sed -n '1,60p' apps/web/src/design/components/AppText.tsx)",
+      "Bash(sed -n '1,33p' apps/sheer-app/src/auth/api.ts)",
+      "Bash(sed -n '76,100p;277,300p' apps/sheer-app/src/auth/api.ts)",
+      "Bash(npx supabase *)",
+      "Bash(lsof -nP -iTCP -sTCP:LISTEN)",
+      "Bash(grep -rEn 'create table \\(if not exists \\)?[a-z]+\\\\.__TRACKED_VAR__\\\\b' supabase/migrations/)"
+    ],
+    "additionalDirectories": [
+      "/Users/shiny/Documents/Sheer/sheer-platform/apps/web/src/auth"
     ]
   }
 }

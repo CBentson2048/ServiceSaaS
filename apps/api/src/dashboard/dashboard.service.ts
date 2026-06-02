@@ -39,6 +39,7 @@ interface AppointmentServiceRow {
 }
 
 interface VisitLineItemRow {
+  visit_id: string;
   amount_cents: number | string | null;
 }
 
@@ -48,6 +49,7 @@ interface DepositRow {
 }
 
 interface SalonPaymentRow {
+  appointment_id: string;
   amount_cents: number | string | null;
 }
 
@@ -64,10 +66,12 @@ interface AppointmentRow {
   salon_payments?: SalonPaymentRow[] | SalonPaymentRow | null;
   visits?:
     | {
+        id: string;
         billing_visit_line_items?: VisitLineItemRow[] | VisitLineItemRow | null;
         rebooking_outcomes?: RebookingOutcomeRow[] | RebookingOutcomeRow | null;
       }
     | Array<{
+        id: string;
         billing_visit_line_items?: VisitLineItemRow[] | VisitLineItemRow | null;
         rebooking_outcomes?: RebookingOutcomeRow[] | RebookingOutcomeRow | null;
       }>
@@ -143,8 +147,13 @@ interface KpiAccumulator extends DashboardKpiSummary {
   currencyCode: string;
 }
 
+// `salon_payments` and `visit_line_items` live in the `billing` schema and cannot be
+// embedded through booking relations — PostgREST only resolves embeds within the
+// request's schema. They are fetched separately from `billing` and stitched back (see
+// fetchSalonPayments / fetchVisitLineItems); the visit `id` is selected so line items
+// can be matched to their visit.
 const APPOINTMENT_COLUMNS =
-  'id,business_id,location_id,client_profile_id,assigned_staff_profile_id,status,scheduled_start_at,appointment_services(service_name_snapshot,price_amount),deposits(status,amount),salon_payments(amount_cents),visits(billing_visit_line_items:visit_line_items(amount_cents),rebooking_outcomes(id,rebooked_appointment_id,rebook_source,source_staff_profile_id))';
+  'id,business_id,location_id,client_profile_id,assigned_staff_profile_id,status,scheduled_start_at,appointment_services(service_name_snapshot,price_amount),deposits(status,amount),visits(id,rebooking_outcomes(id,rebooked_appointment_id,rebook_source,source_staff_profile_id))';
 const LOCATION_COLUMNS = 'id,name,code,address_line_1,city';
 const STAFF_COLUMNS = 'id,display_name,hourly_rate,contracted_hours,average_bill_benchmark,user_profiles(full_name)';
 const STOCK_COLUMNS =
@@ -336,7 +345,73 @@ export class DashboardService {
       .returns<AppointmentRow[]>();
     if (error) this.throwQueryError('fetchAppointments', error.message);
 
-    return data ?? [];
+    const appointments = data ?? [];
+
+    // salon_payments and visit_line_items live in the `billing` schema, so they can't be
+    // embedded through booking relations. Fetch them separately and stitch back by id.
+    const visits = appointments.flatMap((appointment) => arrayOf(appointment.visits));
+    const [lineItemsByVisit, paymentsByAppointment] = await Promise.all([
+      this.fetchVisitLineItems(businessId, unique(visits.map((visit) => visit.id).filter(Boolean))),
+      this.fetchSalonPayments(businessId, appointments.map((appointment) => appointment.id)),
+    ]);
+    for (const visit of visits) {
+      visit.billing_visit_line_items = lineItemsByVisit.get(visit.id) ?? [];
+    }
+    for (const appointment of appointments) {
+      appointment.salon_payments = paymentsByAppointment.get(appointment.id) ?? [];
+    }
+
+    return appointments;
+  }
+
+  /** Visit line items live in `billing`; fetch them by visit id and group for stitching. */
+  private async fetchVisitLineItems(
+    businessId: string,
+    visitIds: string[],
+  ): Promise<Map<string, VisitLineItemRow[]>> {
+    const grouped = new Map<string, VisitLineItemRow[]>();
+    if (visitIds.length === 0) return grouped;
+
+    const { data, error } = await this.admin
+      .schema('billing')
+      .from('visit_line_items')
+      .select('visit_id,amount_cents')
+      .eq('business_id', businessId)
+      .in('visit_id', visitIds)
+      .returns<VisitLineItemRow[]>();
+    if (error) this.throwQueryError('fetchVisitLineItems', error.message);
+
+    for (const item of data ?? []) {
+      const list = grouped.get(item.visit_id);
+      if (list) list.push(item);
+      else grouped.set(item.visit_id, [item]);
+    }
+    return grouped;
+  }
+
+  /** Salon payments live in `billing`; fetch them by appointment id and group for stitching. */
+  private async fetchSalonPayments(
+    businessId: string,
+    appointmentIds: string[],
+  ): Promise<Map<string, SalonPaymentRow[]>> {
+    const grouped = new Map<string, SalonPaymentRow[]>();
+    if (appointmentIds.length === 0) return grouped;
+
+    const { data, error } = await this.admin
+      .schema('billing')
+      .from('salon_payments')
+      .select('appointment_id,amount_cents')
+      .eq('business_id', businessId)
+      .in('appointment_id', appointmentIds)
+      .returns<SalonPaymentRow[]>();
+    if (error) this.throwQueryError('fetchSalonPayments', error.message);
+
+    for (const payment of data ?? []) {
+      const list = grouped.get(payment.appointment_id);
+      if (list) list.push(payment);
+      else grouped.set(payment.appointment_id, [payment]);
+    }
+    return grouped;
   }
 
   private async fetchClientFirstAppointments(

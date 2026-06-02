@@ -25,6 +25,7 @@ import { LocationsPage } from './pages/LocationsPage';
 import { LoginPage } from './pages/LoginPage';
 import { OwnerOnboardingPage } from './pages/OwnerOnboardingPage';
 import { PasswordResetCompletePage } from './pages/PasswordResetCompletePage';
+import { PerformancePage } from './pages/PerformancePage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { ResetPasswordPage } from './pages/ResetPasswordPage';
@@ -77,6 +78,7 @@ export function App() {
           <Route path="/rota/new-week" element={<NewWeekRotaPage />} />
           <Route path="/inventory" element={<InventoryPage />} />
           <Route path="/sheer-lab" element={<SheerLabPage />} />
+          <Route path="/performance" element={<PerformancePage />} />
           <Route path="/commission" element={<PlaceholderPage title="Commission" />} />
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="/locations" element={<LocationsPage />} />

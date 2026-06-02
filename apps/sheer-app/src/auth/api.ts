@@ -5,6 +5,7 @@ import type {
   AppointmentCompletionResponse,
   AppointmentPaymentConfirmationRequest,
   AppointmentPaymentConfirmationResponse,
+  KpiPeriod,
   LeaveRequestMutationResponse,
   LinkStylistRebookingRequest,
   ListStaffBookingsResponse,
@@ -24,6 +25,7 @@ import type {
   CreatePublicBookingResponse,
   StartPublicBookingCheckoutResponse,
   StaffBookingDetail,
+  StylistKpiResponse,
   StylistMyWeekResponse,
   UpdateCurrentProfileRequest,
   UpdateProfileResponse,
@@ -85,6 +87,16 @@ export async function getMyWeek(
 
 export async function getMyLeaveRequests(accessToken: string): Promise<MyLeaveRequestsResponse> {
   return request<MyLeaveRequestsResponse>('/rota/my-leave-requests', { accessToken });
+}
+
+// The caller's own KPI snapshot (service/retail targets, rebooking, average
+// bill, and the commission unlock gate) for the given period. Real values from
+// the backend KPI engine — never computed on the client.
+export async function getMyKpi(
+  accessToken: string,
+  period: KpiPeriod,
+): Promise<StylistKpiResponse> {
+  return request<StylistKpiResponse>(`/kpi/me?period=${encodeURIComponent(period)}`, { accessToken });
 }
 
 export async function createMyLeaveRequest(

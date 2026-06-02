@@ -1146,6 +1146,120 @@ export interface DashboardInventoryAlertsResponse {
 }
 
 // ---------------------------------------------------------------------------
+// KPI engine
+//
+// Trusted, per-stylist KPI outputs computed entirely from persisted business
+// data (rota hours, billing visits + line items, rebooking outcomes, retail
+// stock movements). These are the authoritative inputs the commission engine
+// will consume — `allKpisMet` is the commission lock/unlock gate.
+//
+// Money is expressed in integer minor units (cents) everywhere for parity
+// with the billing tables. Percentages are integers (e.g. 50 == 50%).
+// ---------------------------------------------------------------------------
+
+/** Named reporting windows the dashboards already use. */
+export type KpiPeriod = 'today' | 'week' | 'month';
+
+/**
+ * Data-quality markers attached to a stylist result so dashboards never
+ * present a misleading number as if it were authoritative.
+ */
+export type KpiDataNote =
+  | 'no_hours_worked' // no rostered hours in the window → no service/retail target
+  | 'no_completed_visits' // rebooking / average-bill denominators are zero
+  | 'missing_benchmark' // stylist has no owner-defined average-bill benchmark
+  | 'retail_attribution_approximate'; // retail derived from inventory movements (see notes)
+
+/** Rebooking KPI — rate of completed source visits that led to a real follow-up. */
+export interface RebookingKpiResult {
+  completedVisits: number;
+  rebookedVisits: number;
+  /** Of the rebooked visits, the split by who initiated it (both count equally). */
+  stylistRebookedVisits: number;
+  clientRebookedVisits: number;
+  rebookingRatePercent: number;
+  thresholdPercent: number; // 50
+  met: boolean;
+}
+
+/** Retail KPI — actual retail sales vs the retail target (10% of service target). */
+export interface RetailKpiResult {
+  retailTargetCents: number;
+  actualRetailSalesCents: number;
+  /** actual − target: positive is a surplus, negative is a shortfall. */
+  varianceCents: number;
+  met: boolean;
+}
+
+/** Average-bill KPI — stylist's realised average bill vs their owner-set benchmark. */
+export interface AverageBillKpiResult {
+  benchmarkCents: number; // 0 when unset
+  hasBenchmark: boolean;
+  paidVisits: number;
+  actualAverageBillCents: number;
+  /** actual − benchmark. */
+  varianceCents: number;
+  met: boolean;
+}
+
+/** The full KPI snapshot for one stylist over one period. */
+export interface StylistKpiResult {
+  staffProfileId: string;
+  stylistName: string;
+  locationId: string;
+  locationName: string;
+  currencyCode: string;
+
+  // Target engine outputs
+  hoursWorked: number; // net of breaks, approved leave and absence
+  hourlyRateCents: number;
+  serviceTargetCents: number; // hourlyRate × 3 × hoursWorked
+  retailTargetCents: number; // 10% of service target
+
+  // Realised actuals (from paid visits + retail movements)
+  actualServiceRevenueCents: number;
+  actualRetailRevenueCents: number;
+  serviceTargetProgressPercent: number;
+  retailTargetProgressPercent: number;
+
+  // KPI categories
+  rebooking: RebookingKpiResult;
+  retail: RetailKpiResult;
+  averageBill: AverageBillKpiResult;
+
+  // Convenience mirrors of the per-category outcomes
+  rebookingKpiMet: boolean;
+  retailKpiMet: boolean;
+  averageBillKpiMet: boolean;
+
+  /** Commission lock/unlock gate: true only when all three KPIs are met. */
+  allKpisMet: boolean;
+
+  notes: KpiDataNote[];
+}
+
+export interface StylistKpiResponse {
+  periodStart: string; // ISO
+  periodEnd: string; // ISO (exclusive)
+  period?: KpiPeriod;
+  scope: 'owner' | 'manager' | 'stylist';
+  selectedLocationId?: string;
+  stylist: StylistKpiResult;
+}
+
+export interface StylistKpiListResponse {
+  periodStart: string; // ISO
+  periodEnd: string; // ISO (exclusive)
+  period?: KpiPeriod;
+  scope: 'owner' | 'manager';
+  selectedLocationId?: string;
+  locations: DashboardLocationSummary[];
+  stylists: StylistKpiResult[];
+  /** Stylists whose every KPI is met — i.e. eligible for commission unlock. */
+  commissionReadyCount: number;
+}
+
+// ---------------------------------------------------------------------------
 // Sheer mobile app dashboard
 // ---------------------------------------------------------------------------
 

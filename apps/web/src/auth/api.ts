@@ -20,6 +20,9 @@ import type {
   DashboardKpisResponse,
   DashboardStylistPerformanceResponse,
   DashboardTopServicesResponse,
+  KpiPeriod,
+  StylistKpiListResponse,
+  StylistKpiResponse,
   CreateLocationRequest,
   LabDeviceMutationResponse,
   LabDeviceRegistrationResponse,
@@ -408,6 +411,33 @@ export async function getDashboardInventoryAlerts(
   return request<DashboardInventoryAlertsResponse>(`/dashboard/inventory-alerts${query ? `?${query}` : ''}`, {
     accessToken,
   });
+}
+
+function kpiSearch(params: { locationId?: string; period?: KpiPeriod; from?: string; to?: string }): string {
+  const search = new URLSearchParams();
+  if (params.locationId) search.set('locationId', params.locationId);
+  if (params.period) search.set('period', params.period);
+  if (params.from) search.set('from', params.from);
+  if (params.to) search.set('to', params.to);
+  const query = search.toString();
+  return query ? `?${query}` : '';
+}
+
+// Owner/manager: per-stylist KPI status (targets, rebooking, retail, average
+// bill, and the commission unlock gate) for the selected period + location.
+export async function getStylistKpis(
+  accessToken: string,
+  params: { locationId?: string; period?: KpiPeriod; from?: string; to?: string },
+): Promise<StylistKpiListResponse> {
+  return request<StylistKpiListResponse>(`/kpi/stylists${kpiSearch(params)}`, { accessToken });
+}
+
+// Stylist-facing: the caller's own KPI progress and unlock state.
+export async function getMyKpi(
+  accessToken: string,
+  params: { period?: KpiPeriod; from?: string; to?: string } = {},
+): Promise<StylistKpiResponse> {
+  return request<StylistKpiResponse>(`/kpi/me${kpiSearch(params)}`, { accessToken });
 }
 
 export async function listLabPinStatuses(

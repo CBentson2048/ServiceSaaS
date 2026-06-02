@@ -12,6 +12,7 @@ import { LabDeviceModule } from './lab-device/lab-device.module';
 import { LabFormulaModule } from './lab-formula/lab-formula.module';
 import { LabPinModule } from './lab-pin/lab-pin.module';
 import { LabSessionModule } from './lab-session/lab-session.module';
+import { KpiModule } from './kpi/kpi.module';
 import { LocationsModule } from './locations/locations.module';
 import { MobileDashboardModule } from './mobile-dashboard/mobile-dashboard.module';
 import { OwnerBillingSettingsModule } from './owner-billing-settings/owner-billing-settings.module';
@@ -43,6 +44,7 @@ import { validateEnv } from './config/env.validation';
     PublicBookingModule,
     CrmModule,
     DashboardModule,
+    KpiModule,
     RotaModule,
     InventoryModule,
     HealthModule,

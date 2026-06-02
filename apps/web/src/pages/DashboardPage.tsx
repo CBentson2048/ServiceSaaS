@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { DashboardInventoryAlertsResponse, DashboardTopServicesResponse } from '@sheer/domain';
 import { AppText } from '../design';
+import { CommissionReadinessCard } from '../components/dashboard/CommissionReadinessCard';
 import { DiagnosticCard } from '../components/dashboard/DiagnosticCard';
 import { KpiStrip } from '../components/dashboard/KpiStrip';
 import { LocationCard } from '../components/dashboard/LocationCard';
@@ -96,6 +97,11 @@ export function DashboardPage() {
           <SectionLabel>All stylists today</SectionLabel>
           <div className="mb-6">
             <StylistsTable rows={stylists.map(toStylistRow)} />
+          </div>
+
+          <SectionLabel>KPI &amp; commission readiness</SectionLabel>
+          <div className="mb-6">
+            <CommissionReadinessCard range={range} locationId={locationId} />
           </div>
 
           <SectionLabel>Diagnostics</SectionLabel>
