@@ -1716,6 +1716,10 @@ export class RotaService {
       .schema('core')
       .from('staff_profiles')
       .select('id,business_id,user_profile_id,primary_location_id,display_name,contracted_hours,is_bookable,color_hex,employment_status')
+      // Only bookable staff belong on the rota roster / booking calendar. Managers
+      // converted from a stylist keep a residual (is_bookable = false) staff_profile,
+      // so without this filter they leak in. Mirrors public-booking's staff query.
+      .eq('is_bookable', true)
       .eq('business_id', businessId)
       .eq('primary_location_id', locationId)
       .returns<StaffProfileRow[]>();

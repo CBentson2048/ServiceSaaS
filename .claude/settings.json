@@ -69,7 +69,10 @@
       "Bash(sed -n '76,100p;277,300p' apps/sheer-app/src/auth/api.ts)",
       "Bash(npx supabase *)",
       "Bash(lsof -nP -iTCP -sTCP:LISTEN)",
-      "Bash(grep -rEn 'create table \\(if not exists \\)?[a-z]+\\\\.__TRACKED_VAR__\\\\b' supabase/migrations/)"
+      "Bash(grep -rEn 'create table \\(if not exists \\)?[a-z]+\\\\.__TRACKED_VAR__\\\\b' supabase/migrations/)",
+      "Bash(grep -n \"create or replace function core.update_staff_member\\\\|create function core.update_staff_member\\\\|insert into\\\\|update core\\\\.\\\\|^\\\\$\\\\$\\\\|language plpgsql\\\\|returns\\\\|on conflict\\\\|staff_profiles\\\\|business_memberships\" supabase/migrations/0012_staff_invitations_function_fix.sql)",
+      "Bash(python3 -m json.tool)",
+      "Bash(python3 -c ' *)"
     ],
     "additionalDirectories": [
       "/Users/shiny/Documents/Sheer/sheer-platform/apps/web/src/auth"
