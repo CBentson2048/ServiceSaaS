@@ -130,6 +130,9 @@ export class LabPinService {
       .select(STAFF_PIN_COLUMNS)
       .eq('business_id', actor.businessId)
       .eq('employment_status', 'active')
+      // Lab PINs are for bookable stylists; exclude residual (is_bookable = false)
+      // profiles left behind when a stylist is converted to a manager.
+      .eq('is_bookable', true)
       .order('display_name', { ascending: true });
     if (query.locationId) {
       staffQuery = staffQuery.eq('primary_location_id', query.locationId);

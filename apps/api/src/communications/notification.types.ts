@@ -1,0 +1,98 @@
+import type { CommunicationPreference, LocationCommunicationSettings } from '@sheer/domain';
+
+/**
+ * Stable identifiers written to `comms.notification_events.event_key` and mirrored
+ * into `comms.message_logs.message_type`. They participate in the partial unique
+ * index `notification_events_booking_event_unique_idx (appointment_id, event_key,
+ * channel) where status <> 'cancelled'`, so they must remain stable.
+ */
+export const NotificationEventKey = {
+  BookingConfirmation: 'booking_confirmation',
+  Reminder24h: 'appointment_reminder_24h',
+  Reminder48h: 'appointment_reminder_48h',
+  Reminder1w: 'appointment_reminder_1w',
+} as const;
+
+export type NotificationEventKey = (typeof NotificationEventKey)[keyof typeof NotificationEventKey];
+
+/** Reminder offsets, in hours before `scheduled_start_at`. 1 week === 168h. */
+export const REMINDER_OFFSET_HOURS = {
+  [NotificationEventKey.Reminder24h]: 24,
+  [NotificationEventKey.Reminder48h]: 48,
+  [NotificationEventKey.Reminder1w]: 168,
+} as const;
+
+/** The only channel this module physically delivers on today. */
+export const WHATSAPP_CHANNEL = 'whatsapp' as const;
+
+export const DEFAULT_COMMUNICATION_SETTINGS: Omit<LocationCommunicationSettings, 'locationId'> = {
+  enabled: false,
+  enabledChannels: ['whatsapp'],
+  sendBookingConfirmation: false,
+  reminder24hEnabled: false,
+  reminder48hEnabled: false,
+  reminder1wEnabled: false,
+};
+
+/**
+ * Raw JSON shape persisted under `core.location_settings.metadata.communication`.
+ * Matches the contract documented in migration 0020_client_communications.sql:
+ * `{ enabled, enabledChannels, reminderOffsetsHours, sendBookingConfirmation, ... }`.
+ */
+export interface CommunicationMetadata {
+  enabled?: boolean;
+  enabledChannels?: CommunicationPreference[];
+  sendBookingConfirmation?: boolean;
+  sendCancellationNotice?: boolean;
+  sendWaitlistNotifications?: boolean;
+  reminderOffsetsHours?: number[];
+}
+
+/** Map the persisted JSON metadata onto the typed, toggle-oriented settings DTO. */
+export function metadataToSettings(
+  locationId: string,
+  metadata: CommunicationMetadata | null | undefined,
+): LocationCommunicationSettings {
+  const offsets = new Set(Array.isArray(metadata?.reminderOffsetsHours) ? metadata!.reminderOffsetsHours : []);
+  return {
+    locationId,
+    enabled: metadata?.enabled ?? DEFAULT_COMMUNICATION_SETTINGS.enabled,
+    enabledChannels:
+      Array.isArray(metadata?.enabledChannels) && metadata!.enabledChannels.length > 0
+        ? metadata!.enabledChannels
+        : [...DEFAULT_COMMUNICATION_SETTINGS.enabledChannels],
+    sendBookingConfirmation:
+      metadata?.sendBookingConfirmation ?? DEFAULT_COMMUNICATION_SETTINGS.sendBookingConfirmation,
+    reminder24hEnabled: offsets.has(REMINDER_OFFSET_HOURS[NotificationEventKey.Reminder24h]),
+    reminder48hEnabled: offsets.has(REMINDER_OFFSET_HOURS[NotificationEventKey.Reminder48h]),
+    reminder1wEnabled: offsets.has(REMINDER_OFFSET_HOURS[NotificationEventKey.Reminder1w]),
+  };
+}
+
+/** Inverse of {@link metadataToSettings} — produce the JSON to persist (preserving unknown keys). */
+export function settingsToMetadata(
+  settings: LocationCommunicationSettings,
+  existing: CommunicationMetadata | null | undefined,
+): CommunicationMetadata {
+  const offsets: number[] = [];
+  if (settings.reminder1wEnabled) offsets.push(REMINDER_OFFSET_HOURS[NotificationEventKey.Reminder1w]);
+  if (settings.reminder48hEnabled) offsets.push(REMINDER_OFFSET_HOURS[NotificationEventKey.Reminder48h]);
+  if (settings.reminder24hEnabled) offsets.push(REMINDER_OFFSET_HOURS[NotificationEventKey.Reminder24h]);
+
+  return {
+    ...(existing ?? {}),
+    enabled: settings.enabled,
+    enabledChannels: settings.enabledChannels,
+    sendBookingConfirmation: settings.sendBookingConfirmation,
+    reminderOffsetsHours: offsets,
+  };
+}
+
+/** Enabled reminder event keys for the given settings, ordered earliest-first (1w → 24h). */
+export function enabledReminderKeys(settings: LocationCommunicationSettings): NotificationEventKey[] {
+  const keys: NotificationEventKey[] = [];
+  if (settings.reminder1wEnabled) keys.push(NotificationEventKey.Reminder1w);
+  if (settings.reminder48hEnabled) keys.push(NotificationEventKey.Reminder48h);
+  if (settings.reminder24hEnabled) keys.push(NotificationEventKey.Reminder24h);
+  return keys;
+}

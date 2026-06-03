@@ -21,6 +21,10 @@ export function DashboardPage() {
   const { greeting, kpis, salons, stylists, diagnostics, topServices, inventoryAlerts } = data;
   const hasDashboardData =
     kpis.summary.totalBookings > 0 || kpis.summary.totalRevenueCents > 0 || kpis.summary.lowStockProducts > 0;
+  // Owners compare multiple salons side-by-side; a manager only sees their own
+  // single location, which the KPI strip above already summarises — so the
+  // per-salon comparison grid is only meaningful when there is more than one.
+  const showSalonsAtAGlance = user?.role === 'owner' && salons.length > 1;
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-6 lg:px-8">
@@ -74,27 +78,23 @@ export function DashboardPage() {
             </div>
           ) : null}
 
-          <div className="mb-5 rounded-card border border-primary/20 bg-primary-soft px-4 py-3">
-            <AppText as="div" variant="caption" weight="medium">
-              {user?.role === 'owner'
-                ? 'Full business scope from backend auth'
-                : 'Manager location scope from backend auth'}
-            </AppText>
-            <AppText as="div" variant="caption" tone="muted" className="mt-1">
-              {user?.locations.length
-                ? user.locations.map((location) => location.name).join(' · ')
-                : 'No locations are assigned to this session.'}
-            </AppText>
-          </div>
+          {showSalonsAtAGlance ? (
+            <>
+              <SectionLabel>
+                Salons at a glance
+                <span className="ml-2 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary-soft px-1.5 text-[11px] font-medium normal-case tracking-normal text-primary">
+                  {salons.length}
+                </span>
+              </SectionLabel>
+              <div className="mb-6 grid gap-3.5 md:grid-cols-2 xl:grid-cols-3">
+                {salons.map((salon) => (
+                  <LocationCard key={salon.locationId} {...toLocationCardProps(salon)} />
+                ))}
+              </div>
+            </>
+          ) : null}
 
-          <SectionLabel>Salons at a glance</SectionLabel>
-          <div className="mb-6 grid gap-3.5 md:grid-cols-2">
-            {salons.map((salon) => (
-              <LocationCard key={salon.locationId} {...toLocationCardProps(salon)} />
-            ))}
-          </div>
-
-          <SectionLabel>All stylists today</SectionLabel>
+          <SectionLabel>{user?.role === 'owner' ? 'All stylists today' : 'Your team today'}</SectionLabel>
           <div className="mb-6">
             <StylistsTable rows={stylists.map(toStylistRow)} />
           </div>

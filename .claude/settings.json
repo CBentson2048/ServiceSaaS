@@ -72,7 +72,20 @@
       "Bash(grep -rEn 'create table \\(if not exists \\)?[a-z]+\\\\.__TRACKED_VAR__\\\\b' supabase/migrations/)",
       "Bash(grep -n \"create or replace function core.update_staff_member\\\\|create function core.update_staff_member\\\\|insert into\\\\|update core\\\\.\\\\|^\\\\$\\\\$\\\\|language plpgsql\\\\|returns\\\\|on conflict\\\\|staff_profiles\\\\|business_memberships\" supabase/migrations/0012_staff_invitations_function_fix.sql)",
       "Bash(python3 -m json.tool)",
-      "Bash(python3 -c ' *)"
+      "Bash(python3 -c ' *)",
+      "Bash(sed -n '215,235p' apps/api/src/crm/crm.service.ts)",
+      "Bash(sed -n '470,505p' apps/api/src/profile/profile.service.ts)",
+      "Bash(sed -n '980,995p' apps/api/src/auth/auth.service.ts)",
+      "Bash(sed -n '245,260p' apps/api/src/lab-session/lab-session.service.ts)",
+      "Bash(sed -n '1243,1258p' apps/api/src/lab-appointments/lab-appointments.service.ts)",
+      "Read(//Users/sheer/Documents/Sheer/sheer-platform/apps/api/src/crm/**)",
+      "Bash(cd /Users/shiny/Documents/Sheer/sheer-platform *)",
+      "Bash(grep -E \"\\\\.\\(tsx?|jsx?\\)$\")",
+      "Bash(grep -rl \"LocationCommunicationSettings\" packages/domain/dist)",
+      "Bash(grep -rn \"@sheer/domain\" tsconfig*.json apps/web/vite.config.*)",
+      "Bash(ls -la node_modules/@sheer/domain)",
+      "Bash(grep -n \"references\\\\|composite\" apps/web/tsconfig.json)",
+      "Bash(pnpm test *)"
     ],
     "additionalDirectories": [
       "/Users/shiny/Documents/Sheer/sheer-platform/apps/web/src/auth"

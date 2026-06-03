@@ -11,13 +11,16 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type {
   AuthUser,
   BusinessLocationSummary,
+  LocationCommunicationSettings,
   OwnerBookingService,
   OwnerBookingSettingsResponse,
   OwnerServiceRequirementRule,
   OwnerServiceUpgradeSuggestion,
+  UpdateLocationCommunicationSettingsRequest,
   UpsertServiceRequirementRuleRequest,
   UpsertServiceUpgradeSuggestionRequest,
 } from '@sheer/domain';
+import { CommunicationSettingsService } from '../communications/communication-settings.service';
 
 interface LocationRow {
   id: string;
@@ -92,7 +95,10 @@ export class OwnerBookingSettingsService {
   private readonly logger = new Logger(OwnerBookingSettingsService.name);
   private readonly admin: SupabaseClient;
 
-  constructor(config: ConfigService) {
+  constructor(
+    config: ConfigService,
+    private readonly communicationSettings: CommunicationSettingsService,
+  ) {
     const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
     this.admin = createClient(supabaseUrl, serviceRoleKey, {
@@ -104,20 +110,35 @@ export class OwnerBookingSettingsService {
     this.assertOwner(actor);
     if (locationId) await this.assertLocationBelongsToBusiness(actor.businessId, locationId);
 
-    const [locations, services, requirementRules, upgradeSuggestions, currencyCode] = await Promise.all([
-      this.fetchLocations(actor.businessId),
-      this.fetchServices(actor.businessId, locationId),
-      this.fetchRequirementRules(actor.businessId, locationId),
-      this.fetchUpgradeSuggestions(actor.businessId, locationId),
-      this.fetchBusinessCurrency(actor.businessId),
-    ]);
+    const [locations, services, requirementRules, upgradeSuggestions, currencyCode, communicationSettings] =
+      await Promise.all([
+        this.fetchLocations(actor.businessId),
+        this.fetchServices(actor.businessId, locationId),
+        this.fetchRequirementRules(actor.businessId, locationId),
+        this.fetchUpgradeSuggestions(actor.businessId, locationId),
+        this.fetchBusinessCurrency(actor.businessId),
+        // Communication / reminder rules are per-location — only resolved when scoped.
+        locationId
+          ? this.communicationSettings.getForLocation(actor.businessId, locationId)
+          : Promise.resolve(null),
+      ]);
 
     return {
       locations,
       services: services.map((service) => toOwnerService(service, currencyCode)),
       requirementRules,
       upgradeSuggestions,
+      communicationSettings,
     };
+  }
+
+  async updateCommunicationSettings(
+    actor: AuthUser,
+    input: UpdateLocationCommunicationSettingsRequest,
+  ): Promise<LocationCommunicationSettings> {
+    this.assertOwner(actor);
+    await this.assertLocationBelongsToBusiness(actor.businessId, input.locationId);
+    return this.communicationSettings.update(actor.businessId, input);
   }
 
   async createRequirementRule(

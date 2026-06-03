@@ -1,6 +1,7 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module';
+import { CommunicationsModule } from './communications/communications.module';
 import { RequestResponseLoggingMiddleware } from './common/request-response-logging.middleware';
 import { CrmModule } from './crm/crm.module';
 import { DashboardModule } from './dashboard/dashboard.module';
@@ -34,6 +35,7 @@ import { validateEnv } from './config/env.validation';
       envFilePath: ['.env.local', '.env'],
     }),
     AuthModule,
+    CommunicationsModule,
     OwnerOnboardingModule,
     ProfileModule,
     StaffModule,

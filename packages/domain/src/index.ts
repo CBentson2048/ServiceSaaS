@@ -368,6 +368,47 @@ export interface OwnerBookingSettingsResponse {
   services: OwnerBookingService[];
   requirementRules: OwnerServiceRequirementRule[];
   upgradeSuggestions: OwnerServiceUpgradeSuggestion[];
+  /**
+   * Communication / reminder settings for the location passed via `locationId`.
+   * `null` when the request was not scoped to a specific location (global view).
+   */
+  communicationSettings?: LocationCommunicationSettings | null;
+}
+
+// ---------------------------------------------------------------------------
+// WhatsApp booking notifications & reminder rules (per location)
+// ---------------------------------------------------------------------------
+
+/**
+ * Owner-configurable WhatsApp confirmation + reminder rules for a single
+ * location. Persisted under `core.location_settings.metadata.communication`.
+ * Reminder timings are stored canonically as `reminderOffsetsHours` but
+ * surfaced to owners as discrete toggles (24h / 48h / 1 week).
+ */
+export interface LocationCommunicationSettings {
+  locationId: string;
+  /** Master switch — when false no confirmations or reminders are scheduled. */
+  enabled: boolean;
+  /** Channels permitted for this location. Currently only WhatsApp is delivered. */
+  enabledChannels: CommunicationPreference[];
+  /** Send a WhatsApp confirmation immediately after a successful booking. */
+  sendBookingConfirmation: boolean;
+  reminder24hEnabled: boolean;
+  reminder48hEnabled: boolean;
+  reminder1wEnabled: boolean;
+}
+
+export interface UpdateLocationCommunicationSettingsRequest {
+  locationId: string;
+  enabled?: boolean;
+  sendBookingConfirmation?: boolean;
+  reminder24hEnabled?: boolean;
+  reminder48hEnabled?: boolean;
+  reminder1wEnabled?: boolean;
+}
+
+export interface LocationCommunicationSettingsResponse {
+  settings: LocationCommunicationSettings;
 }
 
 export interface UpsertServiceRequirementRuleRequest {

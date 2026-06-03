@@ -349,7 +349,11 @@ export class KpiService {
       .schema('core')
       .from('staff_profiles')
       .select(STAFF_COLUMNS)
-      .eq('business_id', businessId);
+      .eq('business_id', businessId)
+      // KPI / commission readiness is for bookable stylists only. Managers converted
+      // from a stylist keep a residual (is_bookable = false) staff_profile, so without
+      // this filter they leak into the dashboard stylist list.
+      .eq('is_bookable', true);
     if (staffProfileId) query = query.eq('id', staffProfileId);
     if (locationIds) query = query.in('primary_location_id', locationIds);
     const { data, error } = await query.returns<StaffProfileRow[]>();

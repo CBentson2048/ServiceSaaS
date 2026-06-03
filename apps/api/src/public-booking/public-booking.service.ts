@@ -33,6 +33,7 @@ import type {
   StartPublicBookingCheckoutRequest,
   StartPublicBookingCheckoutResponse,
 } from '@sheer/domain';
+import { BookingNotificationService } from '../communications/booking-notification.service';
 import { RebookingService } from '../rebooking/rebooking.service';
 import { StripeService, type StripePaymentIntent } from '../stripe/stripe.service';
 import type {
@@ -236,6 +237,7 @@ export class PublicBookingService {
     config: ConfigService,
     private readonly stripe: StripeService,
     private readonly rebooking: RebookingService,
+    private readonly bookingNotifications: BookingNotificationService,
   ) {
     const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
@@ -418,6 +420,10 @@ export class PublicBookingService {
       bookedByUserProfileId: request.bookedByUserProfileId,
       bookingSource: request.source ?? 'mobile_app',
     });
+
+    // Schedule WhatsApp confirmation + configured reminders for the new booking.
+    // Fail-soft: notification scheduling must never roll back a confirmed booking.
+    await this.bookingNotifications.syncBookingNotificationsSafe(appointment.id);
 
     return {
       appointment: toAppointmentSummary({
@@ -1471,6 +1477,11 @@ export class PublicBookingService {
     this.logger.log(
       `Finalized booking attempt ${confirmedAttempt.id} into appointment ${appointment.id} for PaymentIntent ${paymentIntent.id}`,
     );
+
+    // Schedule WhatsApp confirmation + configured reminders once the paid booking exists.
+    // Fail-soft and idempotent — safe even if a duplicate webhook replays finalization.
+    await this.bookingNotifications.syncBookingNotificationsSafe(appointment.id);
+
     return appointment;
   }
 

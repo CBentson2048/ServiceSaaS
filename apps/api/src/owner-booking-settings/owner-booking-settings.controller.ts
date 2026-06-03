@@ -8,11 +8,13 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   UseGuards,
 } from '@nestjs/common';
 import type {
   AuthUser,
+  LocationCommunicationSettingsResponse,
   OwnerBookingSettingsResponse,
   ServiceRequirementRuleResponse,
   ServiceUpgradeSuggestionResponse,
@@ -20,7 +22,11 @@ import type {
 import { CurrentUser } from '../auth/current-user.decorator';
 import { RequireRoles, RolesGuard } from '../auth/roles.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
-import { UpsertServiceRequirementRuleDto, UpsertServiceUpgradeSuggestionDto } from './dto';
+import {
+  UpdateLocationCommunicationSettingsDto,
+  UpsertServiceRequirementRuleDto,
+  UpsertServiceUpgradeSuggestionDto,
+} from './dto';
 import { OwnerBookingSettingsService } from './owner-booking-settings.service';
 
 @Controller('owner/booking-settings')
@@ -35,6 +41,14 @@ export class OwnerBookingSettingsController {
     @Query('locationId') locationId?: string,
   ): Promise<OwnerBookingSettingsResponse> {
     return this.settings.getSettings(actor, locationId);
+  }
+
+  @Put('communication')
+  async updateCommunicationSettings(
+    @CurrentUser() actor: AuthUser,
+    @Body() body: UpdateLocationCommunicationSettingsDto,
+  ): Promise<LocationCommunicationSettingsResponse> {
+    return { settings: await this.settings.updateCommunicationSettings(actor, body) };
   }
 
   @Post('requirement-rules')

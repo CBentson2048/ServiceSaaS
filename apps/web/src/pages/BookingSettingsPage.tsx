@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import type {
+  LocationCommunicationSettings,
   OwnerBookingService,
   OwnerBookingSettingsResponse,
   OwnerServiceRequirementRule,
@@ -15,6 +16,7 @@ import {
   deleteServiceRequirementRule,
   deleteServiceUpgradeSuggestion,
   getOwnerBookingSettings,
+  updateLocationCommunicationSettings,
   updateServiceRequirementRule,
   updateServiceUpgradeSuggestion,
 } from '../auth/api';
@@ -218,6 +220,24 @@ export function BookingSettingsPage() {
       {loading ? (
         <Panel><Empty title="Loading settings..." body="Fetching services, finishing rules, and upgrade prompts." /></Panel>
       ) : settings ? (
+        <>
+        <div className="mb-6">
+          {accessToken && locationFilter ? (
+            <NotificationsSection
+              key={locationFilter}
+              accessToken={accessToken}
+              locationId={locationFilter}
+              initial={settings.communicationSettings ?? null}
+            />
+          ) : (
+            <Panel title="WhatsApp Notifications">
+              <Empty
+                title="Select a location"
+                body="Reminder and confirmation rules are configured per location. Choose a location in the scope selector above to manage its WhatsApp notifications."
+              />
+            </Panel>
+          )}
+        </div>
         <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
           <div className="space-y-6">
             <Panel title="Service Catalogue">
@@ -263,8 +283,107 @@ export function BookingSettingsPage() {
             </Panel>
           </div>
         </div>
+        </>
       ) : null}
     </div>
+  );
+}
+
+function NotificationsSection({
+  accessToken,
+  locationId,
+  initial,
+}: {
+  accessToken: string;
+  locationId: string;
+  initial: LocationCommunicationSettings | null;
+}) {
+  const fallback: LocationCommunicationSettings = {
+    locationId,
+    enabled: false,
+    enabledChannels: ['whatsapp'],
+    sendBookingConfirmation: false,
+    reminder24hEnabled: false,
+    reminder48hEnabled: false,
+    reminder1wEnabled: false,
+  };
+  const [form, setForm] = useState<LocationCommunicationSettings>(initial ?? fallback);
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState<{ tone: 'success' | 'danger'; text: string } | null>(null);
+
+  function set<K extends keyof LocationCommunicationSettings>(key: K, value: LocationCommunicationSettings[K]) {
+    setForm((current) => ({ ...current, [key]: value }));
+    setNotice(null);
+  }
+
+  async function save(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true);
+    setNotice(null);
+    try {
+      const updated = await updateLocationCommunicationSettings(accessToken, {
+        locationId,
+        enabled: form.enabled,
+        sendBookingConfirmation: form.sendBookingConfirmation,
+        reminder24hEnabled: form.reminder24hEnabled,
+        reminder48hEnabled: form.reminder48hEnabled,
+        reminder1wEnabled: form.reminder1wEnabled,
+      });
+      setForm(updated);
+      setNotice({ tone: 'success', text: 'WhatsApp notification settings saved.' });
+    } catch (err) {
+      setNotice({ tone: 'danger', text: toErrorMessage(err, 'Could not save notification settings') });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const remindersDisabled = !form.enabled;
+
+  return (
+    <Panel title="WhatsApp Notifications">
+      <p className="mb-3 text-[13px] text-text-secondary">
+        Confirmations and reminders are sent over WhatsApp to clients whose communication preference is WhatsApp.
+        Reminder timings are calculated from the appointment time in the location timezone.
+      </p>
+      {notice ? <Notice tone={notice.tone} text={notice.text} /> : null}
+      <form onSubmit={save} className="space-y-4">
+        <Checkbox
+          label="Enable WhatsApp notifications for this location"
+          checked={form.enabled}
+          onChange={(value) => set('enabled', value)}
+        />
+        <div className={`space-y-3 rounded-input-lg border border-border bg-surface-alt/40 p-3 ${remindersDisabled ? 'opacity-55' : ''}`}>
+          <div className="text-[12px] font-medium text-text-secondary">Messages</div>
+          <Checkbox
+            label="Send a booking confirmation after booking"
+            checked={form.sendBookingConfirmation}
+            onChange={(value) => set('sendBookingConfirmation', value)}
+          />
+          <div className="text-[12px] font-medium text-text-secondary pt-1">Reminders before the appointment</div>
+          <Checkbox
+            label="1 week before"
+            checked={form.reminder1wEnabled}
+            onChange={(value) => set('reminder1wEnabled', value)}
+          />
+          <Checkbox
+            label="48 hours before"
+            checked={form.reminder48hEnabled}
+            onChange={(value) => set('reminder48hEnabled', value)}
+          />
+          <Checkbox
+            label="24 hours before"
+            checked={form.reminder24hEnabled}
+            onChange={(value) => set('reminder24hEnabled', value)}
+          />
+        </div>
+        <div className="flex justify-end">
+          <button disabled={saving} className="h-9 rounded-pill bg-primary px-4 text-[13px] font-semibold text-text-on-primary disabled:opacity-60">
+            {saving ? 'Saving...' : 'Save notifications'}
+          </button>
+        </div>
+      </form>
+    </Panel>
   );
 }
 

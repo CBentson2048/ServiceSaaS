@@ -56,10 +56,13 @@ import type {
   ListLeaveRequestsResponse,
   ListLocationsResponse,
   ListStaffResponse,
+  LocationCommunicationSettings,
+  LocationCommunicationSettingsResponse,
   LocationDetailResponse,
   LoginResponse,
   OwnerBookingSettingsResponse,
   OwnerOnboardingBootstrap,
+  UpdateLocationCommunicationSettingsRequest,
   OwnerOnboardingRequest,
   OwnerOnboardingResponse,
   PasswordResetCompleteResponse,
@@ -987,6 +990,18 @@ export async function getOwnerBookingSettings(
     `/owner/booking-settings${query ? `?${query}` : ''}`,
     { accessToken },
   );
+}
+
+export async function updateLocationCommunicationSettings(
+  accessToken: string,
+  payload: UpdateLocationCommunicationSettingsRequest,
+): Promise<LocationCommunicationSettings> {
+  const result = await request<LocationCommunicationSettingsResponse>('/owner/booking-settings/communication', {
+    method: 'PUT',
+    accessToken,
+    body: payload,
+  });
+  return result.settings;
 }
 
 export async function createServiceRequirementRule(

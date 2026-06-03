@@ -98,6 +98,44 @@ export class EnvConfig {
   @IsOptional()
   @IsString()
   SHEER_LAB_DEVICE_TOKEN_PEPPER?: string;
+
+  /**
+   * Twilio Account SID for WhatsApp booking notifications. Optional in dev — when any of the
+   * three Twilio vars is missing, WhatsAppService logs payloads instead of delivering.
+   */
+  @IsOptional()
+  @IsString()
+  TWILIO_ACCOUNT_SID?: string;
+
+  /** Twilio Auth Token paired with TWILIO_ACCOUNT_SID. */
+  @IsOptional()
+  @IsString()
+  TWILIO_AUTH_TOKEN?: string;
+
+  /** Twilio WhatsApp sender number, e.g. `+14155238886` (sandbox). The `whatsapp:` prefix is added. */
+  @IsOptional()
+  @IsString()
+  TWILIO_WHATSAPP_FROM?: string;
+
+  /** Set to `false` to disable the background notification dispatcher (e.g. in tests/CI). Defaults on. */
+  @IsOptional()
+  @IsString()
+  COMMS_DISPATCH_ENABLED?: string;
+
+  /** Dispatcher poll interval in ms (default 60000, clamped 5000–3600000). */
+  @IsOptional()
+  @IsString()
+  COMMS_DISPATCH_INTERVAL_MS?: string;
+
+  /** Max events processed per dispatcher tick (default 25). */
+  @IsOptional()
+  @IsString()
+  COMMS_DISPATCH_BATCH_SIZE?: string;
+
+  /** Max send attempts before a notification event is marked failed (default 3). */
+  @IsOptional()
+  @IsString()
+  COMMS_DISPATCH_MAX_ATTEMPTS?: string;
 }
 
 /**

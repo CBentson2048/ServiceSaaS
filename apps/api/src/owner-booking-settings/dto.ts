@@ -10,6 +10,31 @@ import {
   Min,
 } from 'class-validator';
 
+export class UpdateLocationCommunicationSettingsDto {
+  @IsUUID()
+  locationId!: string;
+
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  sendBookingConfirmation?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  reminder24hEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  reminder48hEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  reminder1wEnabled?: boolean;
+}
+
 export class UpsertServiceRequirementRuleDto {
   @IsOptional()
   @IsUUID()
