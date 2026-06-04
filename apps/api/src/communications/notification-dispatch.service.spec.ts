@@ -6,6 +6,7 @@ import type { CommunicationSettingsService } from './communication-settings.serv
 import type { SmsService } from './sms.service';
 import type { WhatsAppService } from './whatsapp.service';
 import type { WhatsAppTemplateConfig } from './whatsapp-template.config';
+import type { EmailService } from '../email/email.service';
 
 const DAY = 86_400_000;
 const FUTURE = new Date(Date.now() + 3 * DAY).toISOString();
@@ -13,7 +14,7 @@ const FUTURE = new Date(Date.now() + 3 * DAY).toISOString();
 interface State {
   appointment: Record<string, unknown> | null;
   location: { name: string; timezone: string };
-  client: { first_name: string; phone: string | null; communication_preference: string | null };
+  client: { first_name: string; phone: string | null; email: string | null; communication_preference: string | null };
   events: Array<{ op: string; row: Record<string, unknown> }>;
   logs: Array<{ op: string; row: Record<string, unknown> }>;
   fallbacks: Array<[string, string, string]>;
@@ -89,7 +90,12 @@ function baseState(over: Partial<State> = {}): State {
       metadata: { service_names: ['Cut'], stylist_name: 'Alex' },
     },
     location: { name: 'Sheer Soho', timezone: 'Europe/London' },
-    client: { first_name: 'Sam', phone: '+447700900123', communication_preference: 'whatsapp' },
+    client: {
+      first_name: 'Sam',
+      phone: '+447700900123',
+      email: 'sam@example.com',
+      communication_preference: 'whatsapp',
+    },
     events: [],
     logs: [],
     fallbacks: [],
@@ -101,7 +107,12 @@ function baseState(over: Partial<State> = {}): State {
 function makeDispatcher(
   state: State,
   set: LocationCommunicationSettings,
-  opts: { whatsappEnabled?: boolean; smsEnabled?: boolean; whatsappResult?: Record<string, unknown> } = {},
+  opts: {
+    whatsappEnabled?: boolean;
+    smsEnabled?: boolean;
+    emailEnabled?: boolean;
+    whatsappResult?: Record<string, unknown>;
+  } = {},
 ) {
   const config = { getOrThrow: () => 'https://example.supabase.co', get: () => undefined } as unknown as ConfigService;
   const whatsapp = {
@@ -114,6 +125,10 @@ function makeDispatcher(
     provider: 'twilio',
     send: jest.fn().mockResolvedValue({ accepted: true, providerMessageId: 'SMS1', providerStatus: 'queued' }),
   } as unknown as SmsService;
+  const email = {
+    isEnabled: opts.emailEnabled ?? true,
+    send: jest.fn().mockResolvedValue({ delivered: true, id: 'resend-1' }),
+  } as unknown as EmailService;
   const templates = { contentSidFor: () => 'HX1', statusCallbackUrl: 'https://cb' } as unknown as WhatsAppTemplateConfig;
   const settingsService = { getForLocation: jest.fn().mockResolvedValue(set) } as unknown as CommunicationSettingsService;
   const booking = {
@@ -122,9 +137,9 @@ function makeDispatcher(
     }),
   } as unknown as BookingNotificationService;
 
-  const d = new NotificationDispatchService(config, whatsapp, sms, templates, settingsService, booking);
+  const d = new NotificationDispatchService(config, whatsapp, sms, email, templates, settingsService, booking);
   (d as unknown as { admin: unknown }).admin = makeFakeClient(state);
-  return { d, whatsapp, sms, booking };
+  return { d, whatsapp, sms, email, booking };
 }
 
 function event(over: Record<string, unknown> = {}) {
@@ -190,7 +205,7 @@ describe('NotificationDispatchService channel + fallback behaviour', () => {
   it('falls back to SMS immediately when WhatsApp is ineligible (client prefers SMS) and SMS is allowed', async () => {
     const state = baseState({
       appointment: { ...baseState().appointment!, communication_preference: 'sms' },
-      client: { first_name: 'Sam', phone: '+447700900123', communication_preference: 'sms' },
+      client: { first_name: 'Sam', phone: '+447700900123', email: 'sam@example.com', communication_preference: 'sms' },
     });
     const { d, whatsapp } = makeDispatcher(state, settings());
     await run(d, event()); // whatsapp-channel event, but plan primary is now SMS
@@ -209,6 +224,35 @@ describe('NotificationDispatchService channel + fallback behaviour', () => {
 
     expect(sms.send).toHaveBeenCalledTimes(1);
     expect(state.events.some((e) => e.op === 'update' && e.row.status === 'sent')).toBe(true);
+  });
+
+  it('delivers via email (EmailService) when the client prefers email', async () => {
+    const state = baseState({
+      appointment: { ...baseState().appointment!, communication_preference: 'email' },
+      client: { first_name: 'Sam', phone: '+447700900123', email: 'sam@example.com', communication_preference: 'email' },
+    });
+    const { d, email, whatsapp, sms } = makeDispatcher(state, settings());
+    await run(d, event({ channel: 'email' }));
+
+    expect(email.send).toHaveBeenCalledTimes(1);
+    expect((email.send as jest.Mock).mock.calls[0][0].to).toBe('sam@example.com');
+    expect(whatsapp.send).not.toHaveBeenCalled();
+    expect(sms.send).not.toHaveBeenCalled();
+    expect(state.events.some((e) => e.op === 'update' && e.row.status === 'sent')).toBe(true);
+    expect(state.fallbacks).toHaveLength(0);
+  });
+
+  it('skips an email event truthfully when the client has no valid email', async () => {
+    const state = baseState({
+      appointment: { ...baseState().appointment!, communication_preference: 'email' },
+      client: { first_name: 'Sam', phone: '+447700900123', email: null, communication_preference: 'email' },
+    });
+    const { d, email } = makeDispatcher(state, settings());
+    await run(d, event({ channel: 'email' }));
+
+    expect(email.send).not.toHaveBeenCalled();
+    expect(state.logs.some((l) => l.op === 'insert' && l.row.delivery_status === 'skipped')).toBe(true);
+    expect(state.events.some((e) => e.op === 'update' && e.row.status === 'cancelled')).toBe(true);
   });
 
   it('cancels (does not send) when the appointment is cancelled', async () => {

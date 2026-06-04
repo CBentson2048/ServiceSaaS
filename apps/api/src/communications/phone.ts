@@ -18,3 +18,9 @@ export function toWhatsAppAddress(raw: string | undefined | null): string | unde
   const e164 = normalizeE164(raw);
   return e164 ? `whatsapp:${e164}` : undefined;
 }
+
+/** Loose RFC-ish check: enough to decide email-channel eligibility, not to validate deliverability. */
+export function isValidEmail(raw: string | undefined | null): boolean {
+  const trimmed = raw?.trim();
+  return Boolean(trimmed && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(trimmed));
+}

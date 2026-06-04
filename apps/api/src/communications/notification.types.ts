@@ -26,6 +26,8 @@ export const REMINDER_OFFSET_HOURS = {
 export const WHATSAPP_CHANNEL = 'whatsapp' as const;
 /** Fallback delivery channel. */
 export const SMS_CHANNEL = 'sms' as const;
+/** Delivery channel for clients whose communication preference is email. */
+export const EMAIL_CHANNEL = 'email' as const;
 
 /** Reminder event keys (everything except the booking confirmation). Shared scheduling/dispatch guard. */
 export const REMINDER_EVENT_KEYS = new Set<string>([

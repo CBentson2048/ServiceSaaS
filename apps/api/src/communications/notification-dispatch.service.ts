@@ -14,18 +14,28 @@ import {
 import { BookingNotificationService } from './booking-notification.service';
 import { resolveChannelPlan, smsAllowedByPlan, type ChannelPlan, type DeliveryChannel } from './channel-policy';
 import { CommunicationSettingsService } from './communication-settings.service';
-import { NotificationEventKey, REMINDER_EVENT_KEYS, SMS_CHANNEL, WHATSAPP_CHANNEL } from './notification.types';
+import {
+  EMAIL_CHANNEL,
+  NotificationEventKey,
+  REMINDER_EVENT_KEYS,
+  SMS_CHANNEL,
+  WHATSAPP_CHANNEL,
+} from './notification.types';
 import { isReminderStale } from './reminder-schedule';
 import {
   buildContentVariables,
+  renderEmail,
   renderNotification,
   type NotificationContext,
   type RenderedMessage,
 } from './notification.templates';
-import { normalizeE164, toWhatsAppAddress } from './phone';
+import { isValidEmail, normalizeE164, toWhatsAppAddress } from './phone';
+import { EmailService } from '../email/email.service';
 import { WhatsAppService } from './whatsapp.service';
 import { SmsService } from './sms.service';
 import { WhatsAppTemplateConfig } from './whatsapp-template.config';
+
+const EMAIL_PROVIDER = 'resend';
 
 interface DueEventRow {
   id: string;
@@ -82,6 +92,7 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
     config: ConfigService,
     private readonly whatsapp: WhatsAppService,
     private readonly sms: SmsService,
+    private readonly email: EmailService,
     private readonly templates: WhatsAppTemplateConfig,
     private readonly settingsService: CommunicationSettingsService,
     private readonly booking: BookingNotificationService,
@@ -116,7 +127,8 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
   /** Process one batch of due events. Public so it can be triggered/tested directly. */
   async tick(): Promise<void> {
     if (this.running) return; // prevent overlapping ticks
-    if (!this.whatsapp.isEnabled && !this.sms.isEnabled) return; // log-only mode — don't churn the queue
+    // log-only mode for every channel — don't churn the queue
+    if (!this.whatsapp.isEnabled && !this.sms.isEnabled && !this.email.isEnabled) return;
     this.running = true;
     try {
       const due = await this.fetchDueCandidates();
@@ -138,7 +150,7 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
       .from('notification_events')
       .select(NotificationDispatchService.EVENT_COLUMNS)
       .eq('status', 'queued')
-      .in('channel', [WHATSAPP_CHANNEL, SMS_CHANNEL])
+      .in('channel', [WHATSAPP_CHANNEL, SMS_CHANNEL, EMAIL_CHANNEL])
       .lte('scheduled_for', nowIso)
       .or(`locked_until.is.null,locked_until.lt.${nowIso}`)
       .order('scheduled_for', { ascending: true })
@@ -193,11 +205,14 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
     }
 
     const settings = await this.settingsService.getForLocation(event.business_id, event.location_id);
-    const phoneValid = Boolean(normalizeE164(context.clientPhone));
-    const plan = resolveChannelPlan(settings, context.communicationPreference, phoneValid);
+    const plan = resolveChannelPlan(settings, context.communicationPreference, {
+      phoneValid: Boolean(normalizeE164(context.clientPhone)),
+      emailValid: isValidEmail(context.clientEmail),
+    });
 
     if (event.channel === WHATSAPP_CHANNEL) return this.processWhatsApp(event, context, plan);
     if (event.channel === SMS_CHANNEL) return this.processSms(event, context, plan);
+    if (event.channel === EMAIL_CHANNEL) return this.processEmail(event, context, plan);
     await this.cancelEvent(event.id); // unknown channel
   }
 
@@ -290,6 +305,49 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
     }
   }
 
+  private async processEmail(
+    event: DueEventRow,
+    context: AppointmentNotificationContext,
+    plan: ChannelPlan,
+  ): Promise<void> {
+    const emailViable =
+      this.email.isEnabled && plan.deliverable && plan.primary === EMAIL_CHANNEL && isValidEmail(context.clientEmail);
+    if (!emailViable) {
+      const reason = !this.email.isEnabled
+        ? 'Email sender not configured'
+        : plan.deliverable
+          ? 'Email is not an eligible channel for this client'
+          : plan.skipReason;
+      await this.skipEvent(event, context, EMAIL_CHANNEL, reason);
+      return;
+    }
+
+    const eventKey = event.event_key as NotificationEventKey;
+    const renderCtx = this.renderContext(context);
+    const message = renderNotification(eventKey, renderCtx); // for content_preview parity
+    const email = renderEmail(eventKey, renderCtx);
+
+    const logId = await this.ensureMessageLog(event, context, EMAIL_CHANNEL, message, undefined, buildContentVariables(renderCtx));
+    const result = await this.email.send({
+      to: context.clientEmail!,
+      subject: email.subject,
+      html: email.html,
+      text: email.text,
+      tags: [{ name: 'type', value: eventKey }],
+    });
+
+    if (result.delivered) {
+      // Resend accepted the message → `sent`. There is no email delivery webhook wired today, so the
+      // log truthfully stays at `sent` (we never claim `delivered` without confirmation).
+      await this.markAccepted(event, logId, EMAIL_PROVIDER, result.id, undefined);
+    } else if (result.skipped) {
+      await this.skipEvent(event, context, EMAIL_CHANNEL, 'Email sender not configured');
+    } else {
+      // Email is a terminal channel — no further fallback.
+      await this.markFailed(event, logId, result.error ?? 'Email send failed');
+    }
+  }
+
   private whatsappUnavailableReason(plan: ChannelPlan): string {
     if (!this.whatsapp.isEnabled) return 'WhatsApp sender not configured';
     if (!plan.deliverable) return plan.skipReason;
@@ -307,9 +365,14 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
     };
   }
 
-  private recipientFor(channel: DeliveryChannel, phone: string | null | undefined): string | null {
-    if (channel === WHATSAPP_CHANNEL) return toWhatsAppAddress(phone) ?? phone ?? null;
-    return normalizeE164(phone) ?? phone ?? null;
+  private recipientFor(channel: DeliveryChannel, context: AppointmentNotificationContext): string | null {
+    if (channel === EMAIL_CHANNEL) return context.clientEmail ?? null;
+    if (channel === WHATSAPP_CHANNEL) return toWhatsAppAddress(context.clientPhone) ?? context.clientPhone ?? null;
+    return normalizeE164(context.clientPhone) ?? context.clientPhone ?? null;
+  }
+
+  private providerFor(channel: DeliveryChannel): string {
+    return channel === EMAIL_CHANNEL ? EMAIL_PROVIDER : this.whatsapp.provider;
   }
 
   /** Find the existing message log for retries, or create one in `queued` state. */
@@ -324,7 +387,6 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
     if (event.message_log_id) return event.message_log_id;
 
     const payload = event.payload_json ?? {};
-    const provider = channel === WHATSAPP_CHANNEL ? this.whatsapp.provider : this.sms.provider;
 
     const { data, error } = await this.admin
       .schema('comms')
@@ -337,12 +399,12 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
         appointment_id: event.appointment_id,
         channel,
         direction: 'outbound',
-        provider,
+        provider: this.providerFor(channel),
         delivery_status: 'queued',
         message_type: event.event_key,
         // Template reference: the approved Content SID when configured (WhatsApp), else the event key.
         template_key: contentSid ?? event.event_key,
-        recipient: this.recipientFor(channel, context.clientPhone),
+        recipient: this.recipientFor(channel, context),
         content_preview: message.preview,
         scheduled_for: event.scheduled_for,
         metadata: {
@@ -434,7 +496,6 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
     channel: DeliveryChannel,
     reason: string,
   ): Promise<void> {
-    const provider = channel === WHATSAPP_CHANNEL ? this.whatsapp.provider : this.sms.provider;
     const { error } = await this.admin
       .schema('comms')
       .from('message_logs')
@@ -446,11 +507,11 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
         appointment_id: event.appointment_id,
         channel,
         direction: 'outbound',
-        provider,
+        provider: this.providerFor(channel),
         delivery_status: 'skipped',
         message_type: event.event_key,
         template_key: event.event_key,
-        recipient: this.recipientFor(channel, context.clientPhone),
+        recipient: this.recipientFor(channel, context),
         content_preview: `Skipped (${channel}): ${reason}`,
         error_message: reason,
         scheduled_for: event.scheduled_for,

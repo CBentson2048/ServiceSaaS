@@ -19,6 +19,8 @@ export interface AppointmentNotificationContext {
   clientFirstName?: string | null;
   /** Recipient phone in raw form (normalised at send time). */
   clientPhone?: string | null;
+  /** Recipient email in raw form (used when the client's preference is email). */
+  clientEmail?: string | null;
   /** Effective channel preference: appointment override → client profile preference. */
   communicationPreference?: CommunicationPreference | null;
   serviceNames: string[];
@@ -61,9 +63,14 @@ export async function loadAppointmentContext(
       ? admin
           .schema('core')
           .from('client_profiles')
-          .select('first_name,phone,communication_preference')
+          .select('first_name,phone,email,communication_preference')
           .eq('id', appointment.client_profile_id)
-          .maybeSingle<{ first_name: string; phone: string | null; communication_preference: string | null }>()
+          .maybeSingle<{
+            first_name: string;
+            phone: string | null;
+            email: string | null;
+            communication_preference: string | null;
+          }>()
       : Promise.resolve({ data: null, error: null }),
   ]);
 
@@ -86,6 +93,7 @@ export async function loadAppointmentContext(
     timezone: location.data?.timezone ?? 'Europe/London',
     clientFirstName: client.data?.first_name ?? null,
     clientPhone: client.data?.phone ?? null,
+    clientEmail: client.data?.email ?? null,
     communicationPreference: preference,
     serviceNames,
     stylistName: typeof metadata['stylist_name'] === 'string' ? (metadata['stylist_name'] as string) : null,

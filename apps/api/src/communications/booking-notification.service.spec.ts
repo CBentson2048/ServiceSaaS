@@ -9,7 +9,7 @@ const NOW = new Date('2026-06-02T09:00:00.000Z');
 interface FakeState {
   appointment: Record<string, unknown> | null;
   location: { name: string; timezone: string };
-  client: { first_name: string; phone: string | null; communication_preference: string | null };
+  client: { first_name: string; phone: string | null; email?: string | null; communication_preference: string | null };
   existingEvents: Array<Record<string, unknown>>;
   inserts: Array<Record<string, unknown>>;
   updates: Array<Record<string, unknown>>;
@@ -88,7 +88,7 @@ function baseState(overrides: Partial<FakeState> = {}): FakeState {
       metadata: { service_names: ['Cut'], stylist_name: 'Alex' },
     },
     location: { name: 'Sheer Soho', timezone: 'Europe/London' },
-    client: { first_name: 'Sam', phone: '+447700900123', communication_preference: 'whatsapp' },
+    client: { first_name: 'Sam', phone: '+447700900123', email: 'sam@example.com', communication_preference: 'whatsapp' },
     existingEvents: [],
     inserts: [],
     updates: [],
@@ -161,10 +161,10 @@ describe('BookingNotificationService.syncBookingNotifications', () => {
     expect(state.updates[0].status).toBe('cancelled');
   });
 
-  it('cancels pending events when the client does not prefer WhatsApp', async () => {
+  it('cancels pending events when an email-preferring client has no email address', async () => {
     const state = baseState({
       appointment: { ...baseState().appointment!, communication_preference: 'email' },
-      client: { first_name: 'Sam', phone: '+447700900123', communication_preference: 'email' },
+      client: { first_name: 'Sam', phone: '+447700900123', email: null, communication_preference: 'email' },
       existingEvents: [
         { id: 'e1', event_key: 'appointment_reminder_24h', channel: 'whatsapp', status: 'queued', scheduled_for: NOW.toISOString() },
       ],
@@ -175,6 +175,43 @@ describe('BookingNotificationService.syncBookingNotifications', () => {
 
     expect(state.inserts).toHaveLength(0);
     expect(state.updates[0].status).toBe('cancelled');
+  });
+
+  it('schedules on the EMAIL channel when the client prefers email and has an address', async () => {
+    const state = baseState({
+      appointment: { ...baseState().appointment!, communication_preference: 'email' },
+      client: { first_name: 'Sam', phone: '+447700900123', email: 'sam@example.com', communication_preference: 'email' },
+    });
+    const service = makeService(state, settings({ sendBookingConfirmation: true, reminder24hEnabled: true }));
+
+    await service.syncBookingNotifications('appt-1', NOW);
+
+    expect(state.inserts.map((i) => i.channel)).toEqual(['email', 'email']);
+    expect(state.inserts.map((i) => i.event_key)).toEqual(['booking_confirmation', 'appointment_reminder_24h']);
+  });
+
+  it('cancels a stale WhatsApp event and reschedules on email when preference switches to email', async () => {
+    const state = baseState({
+      appointment: { ...baseState().appointment!, communication_preference: 'email' },
+      client: { first_name: 'Sam', phone: '+447700900123', email: 'sam@example.com', communication_preference: 'email' },
+      existingEvents: [
+        {
+          id: 'e1',
+          event_key: 'booking_confirmation',
+          channel: 'whatsapp',
+          status: 'queued',
+          scheduled_for: NOW.toISOString(),
+          payload_json: { appointment_start: baseState().appointment!.scheduled_start_at },
+        },
+      ],
+    });
+    const service = makeService(state, settings({ sendBookingConfirmation: true }));
+
+    await service.syncBookingNotifications('appt-1', NOW);
+
+    // The stale WhatsApp confirmation is cancelled; a fresh email confirmation is scheduled.
+    expect(state.updates.some((u) => u.status === 'cancelled')).toBe(true);
+    expect(state.inserts.map((i) => i.channel)).toEqual(['email']);
   });
 
   it('does not schedule when the master switch is off', async () => {

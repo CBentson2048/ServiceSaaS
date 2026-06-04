@@ -75,6 +75,38 @@ export function buildContentVariables(ctx: NotificationContext): Record<string, 
   };
 }
 
+export interface RenderedEmail {
+  subject: string;
+  text: string;
+  html: string;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
+ * Render the email variant of a notification for clients whose communication preference is email.
+ * Reuses {@link renderNotification} for the body so all channels stay consistent; adds an email
+ * subject and a minimal HTML wrapper.
+ */
+export function renderEmail(eventKey: NotificationEventKey, ctx: NotificationContext): RenderedEmail {
+  const { body } = renderNotification(eventKey, ctx);
+  const subject =
+    eventKey === NotificationEventKey.BookingConfirmation
+      ? `Your booking at ${ctx.locationName} is confirmed`
+      : eventKey === NotificationEventKey.Reminder1w
+        ? `Reminder: your appointment at ${ctx.locationName} next week`
+        : eventKey === NotificationEventKey.Reminder48h
+          ? `Reminder: your appointment at ${ctx.locationName} in 2 days`
+          : `Reminder: your appointment at ${ctx.locationName} tomorrow`;
+  return { subject, text: body, html: `<p>${escapeHtml(body)}</p>` };
+}
+
 export function renderNotification(
   eventKey: NotificationEventKey,
   ctx: NotificationContext,

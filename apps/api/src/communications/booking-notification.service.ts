@@ -7,8 +7,13 @@ import {
   loadAppointmentContext,
   type AppointmentNotificationContext,
 } from './appointment-context';
-import { resolveChannelPlan, smsAllowedByPlan, type DeliveryChannel } from './channel-policy';
-import { normalizeE164 } from './phone';
+import {
+  resolveChannelPlan,
+  smsAllowedByPlan,
+  type ContactEligibility,
+  type DeliveryChannel,
+} from './channel-policy';
+import { isValidEmail, normalizeE164 } from './phone';
 import { NotificationEventKey, REMINDER_EVENT_KEYS, SMS_CHANNEL, WHATSAPP_CHANNEL } from './notification.types';
 import { computeDesiredEvents, enabledEventKeys, type DesiredEvent } from './reminder-schedule';
 
@@ -18,6 +23,7 @@ interface ExistingEventRow {
   channel: string;
   status: string;
   scheduled_for: string | null;
+  payload_json: Record<string, unknown> | null;
 }
 
 /**
@@ -86,7 +92,7 @@ export class BookingNotificationService {
     // Resolve the channel for this client (WhatsApp-first, SMS fallback). When no channel is
     // deliverable (master switch off, no enabled channel, opted out, or no valid phone) we cancel
     // any pending events so nothing stale goes out.
-    const plan = resolveChannelPlan(settings, context.communicationPreference, this.hasValidPhone(context));
+    const plan = resolveChannelPlan(settings, context.communicationPreference, this.contactFor(context));
     if (!plan.deliverable) {
       await this.cancelPending(existing);
       return;
@@ -108,8 +114,11 @@ export class BookingNotificationService {
     await this.cancelPending(existing);
   }
 
-  private hasValidPhone(context: AppointmentNotificationContext): boolean {
-    return Boolean(normalizeE164(context.clientPhone));
+  private contactFor(context: AppointmentNotificationContext): ContactEligibility {
+    return {
+      phoneValid: Boolean(normalizeE164(context.clientPhone)),
+      emailValid: isValidEmail(context.clientEmail),
+    };
   }
 
   private async reconcile(
@@ -143,11 +152,19 @@ export class BookingNotificationService {
       }
     }
 
-    // 2. Cancel queued primary-channel events whose rule is no longer enabled (toggled off), or
-    //    whose desired window disappeared. Fallback (other-channel) events are owned by the
-    //    dispatcher/callbacks and are left untouched here.
+    // 2. Cancel stale queued events. Fallback events (SMS created by the dispatcher/callbacks) are
+    //    left untouched. Non-fallback events on a channel other than the current primary are stale
+    //    from a previous preference/channel (e.g. the client switched whatsapp → email) and are
+    //    cancelled. Primary-channel events whose rule is disabled or window disappeared are cancelled.
     for (const row of existing) {
-      if (row.status !== 'queued' || row.channel !== primaryChannel) continue;
+      if (row.status !== 'queued') continue;
+      if (row.payload_json?.['fallback'] === true) continue;
+
+      if (row.channel !== primaryChannel) {
+        await this.cancelEvent(row.id);
+        continue;
+      }
+
       const key = row.event_key as NotificationEventKey;
       const ruleEnabled = enabledKeys.has(key);
       const stillDesired = desiredByKey.has(key) || key === NotificationEventKey.BookingConfirmation;
@@ -259,7 +276,7 @@ export class BookingNotificationService {
       context.appointment.business_id,
       context.appointment.location_id,
     );
-    const plan = resolveChannelPlan(settings, context.communicationPreference, this.hasValidPhone(context));
+    const plan = resolveChannelPlan(settings, context.communicationPreference, this.contactFor(context));
     if (!smsAllowedByPlan(plan)) return 'skipped';
 
     const { appointment } = context;
@@ -316,7 +333,7 @@ export class BookingNotificationService {
     const { data, error } = await this.admin
       .schema('comms')
       .from('notification_events')
-      .select('id,event_key,channel,status,scheduled_for')
+      .select('id,event_key,channel,status,scheduled_for,payload_json')
       .eq('appointment_id', appointmentId)
       .returns<ExistingEventRow[]>();
     if (error) throw new Error(`fetch notification_events failed: ${error.message}`);
