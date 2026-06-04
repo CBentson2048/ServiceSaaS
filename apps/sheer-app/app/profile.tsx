@@ -18,6 +18,7 @@ import { router } from 'expo-router';
 import type { UserProfileResponse } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
+import { StylistTabBar } from '../src/navigation/StylistTabBar';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
 
@@ -40,6 +41,9 @@ export default function ProfileScreen() {
   const userRole = auth.user?.role;
   const isClient = userRole === 'client';
   const isStaff = userRole === 'stylist' || userRole === 'manager' || userRole === 'owner';
+  // Stylists reach Profile via the bottom tab bar (a root tab), so there is no
+  // dashboard to go "back" to — show the tab bar instead of a back button.
+  const showStylistTabs = userRole === 'stylist';
 
   const [signingOut, setSigningOut] = useState(false);
 
@@ -163,13 +167,17 @@ export default function ProfileScreen() {
 
         {/* ── Header ── */}
         <View style={s.header}>
-          <Pressable
-            style={({ pressed }) => [s.headerBack, pressed && s.pressed]}
-            onPress={() => router.back()}
-          >
-            <Text style={s.headerBackArrow}>‹</Text>
-            <Text style={s.headerBackLabel}>Dashboard</Text>
-          </Pressable>
+          {showStylistTabs ? (
+            <View style={s.headerSpacer} />
+          ) : (
+            <Pressable
+              style={({ pressed }) => [s.headerBack, pressed && s.pressed]}
+              onPress={() => router.back()}
+            >
+              <Text style={s.headerBackArrow}>‹</Text>
+              <Text style={s.headerBackLabel}>Dashboard</Text>
+            </Pressable>
+          )}
 
           <Text style={s.headerTitle}>Profile</Text>
 
@@ -200,6 +208,7 @@ export default function ProfileScreen() {
         ) : null}
 
         <ScrollView
+          style={s.scrollView}
           contentContainerStyle={s.scroll}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
@@ -308,6 +317,8 @@ export default function ProfileScreen() {
             </>
           )}
         </ScrollView>
+
+        {showStylistTabs ? <StylistTabBar /> : null}
       </SafeAreaView>
     </ProtectedScreen>
   );
@@ -766,6 +777,7 @@ const s = StyleSheet.create({
   toastText: { color: palette.success[300], fontSize: 13, fontWeight: '700' },
 
   // ── Scroll
+  scrollView: { flex: 1 },
   scroll: {
     paddingTop: spacing.lg,
     paddingBottom: spacing['4xl'],

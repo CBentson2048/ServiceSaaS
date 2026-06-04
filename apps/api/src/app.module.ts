@@ -22,8 +22,10 @@ import { OwnerTaxSettingsModule } from './owner-tax-settings/owner-tax-settings.
 import { OwnerOnboardingModule } from './owner-onboarding/owner-onboarding.module';
 import { ProfileModule } from './profile/profile.module';
 import { PublicBookingModule } from './public-booking/public-booking.module';
+import { RetailSalesModule } from './retail-sales/retail-sales.module';
 import { RotaModule } from './rota/rota.module';
 import { StaffModule } from './staff/staff.module';
+import { TwilioModule } from './twilio/twilio.module';
 import { validateEnv } from './config/env.validation';
 
 @Module({
@@ -44,9 +46,11 @@ import { validateEnv } from './config/env.validation';
     OwnerBillingSettingsModule,
     OwnerTaxSettingsModule,
     PublicBookingModule,
+    TwilioModule,
     CrmModule,
     DashboardModule,
     KpiModule,
+    RetailSalesModule,
     RotaModule,
     InventoryModule,
     HealthModule,

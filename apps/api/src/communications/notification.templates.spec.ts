@@ -1,5 +1,10 @@
 import { NotificationEventKey } from './notification.types';
-import { formatInTimezone, renderNotification, type NotificationContext } from './notification.templates';
+import {
+  buildContentVariables,
+  formatInTimezone,
+  renderNotification,
+  type NotificationContext,
+} from './notification.templates';
 
 const ctx: NotificationContext = {
   clientFirstName: 'Sam',
@@ -46,5 +51,29 @@ describe('renderNotification', () => {
     const msg = renderNotification(NotificationEventKey.Reminder24h, { ...ctx, clientFirstName: null });
     expect(msg.body).not.toContain('undefined');
     expect(msg.body.startsWith('Hi,')).toBe(true);
+  });
+});
+
+describe('buildContentVariables', () => {
+  it('maps the five positional template variables in the location timezone', () => {
+    const vars = buildContentVariables(ctx);
+    expect(vars['1']).toBe('Sam');
+    expect(vars['2']).toBe('Sheer Soho');
+    expect(vars['3']).toBe('Cut & Finish');
+    expect(vars['4']).toBe('Alex');
+    expect(vars['5']).toContain('16:00'); // BST display
+  });
+
+  it('uses friendly defaults for missing fields (Twilio rejects empty variables)', () => {
+    const vars = buildContentVariables({
+      ...ctx,
+      clientFirstName: null,
+      serviceNames: [],
+      stylistName: null,
+    });
+    expect(vars['1']).toBe('there');
+    expect(vars['3']).toBe('your appointment');
+    expect(vars['4']).toBe('our team');
+    expect(Object.values(vars).every((v) => v.length > 0)).toBe(true);
   });
 });

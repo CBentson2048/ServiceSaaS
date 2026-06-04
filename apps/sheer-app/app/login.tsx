@@ -13,7 +13,7 @@ export default function LoginScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (auth.user) {
-    return <Redirect href="/dashboard" />;
+    return <Redirect href={auth.user.role === 'stylist' ? '/performance' : '/dashboard'} />;
   }
 
   async function onSubmit() {
@@ -21,8 +21,8 @@ export default function LoginScreen() {
     setIsSubmitting(true);
 
     try {
-      await auth.signIn(email, password);
-      router.replace('/dashboard');
+      const signedInUser = await auth.signIn(email, password);
+      router.replace(signedInUser.role === 'stylist' ? '/performance' : '/dashboard');
     } catch {
       setError('Sign in failed. Use an active Sheer account for this app.');
     } finally {

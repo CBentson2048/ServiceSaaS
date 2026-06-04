@@ -85,10 +85,21 @@
       "Bash(grep -rn \"@sheer/domain\" tsconfig*.json apps/web/vite.config.*)",
       "Bash(ls -la node_modules/@sheer/domain)",
       "Bash(grep -n \"references\\\\|composite\" apps/web/tsconfig.json)",
-      "Bash(pnpm test *)"
+      "Bash(pnpm test *)",
+      "Bash(grep -nE \"create or replace function|create function|returns|^\\\\s*\\(begin|declare\\)|\\\\$\\\\$\" supabase/migrations/0024_inventory_management_foundation.sql)",
+      "Bash(xargs ls -lh)",
+      "Bash(sed -n '/export interface CreatePublicBookingRequest/,/^}/p' packages/domain/src/index.ts)",
+      "Bash(sed -n '/export interface CreatePublicBookingResponse/,/^}/p' packages/domain/src/index.ts)",
+      "Bash(cd /Users/shiny/Documents/Sheer/sheer-platform && sed -n '/export interface CreatePublicBookingRequest/,/^}/p;/export interface CreatePublicBookingResponse/,/^}/p' packages/domain/src/index.ts)",
+      "Bash(mkdir -p /Users/shiny/Documents/Sheer/sheer-platform/apps/sheer-app/src/navigation)",
+      "Bash(pnpm --filter @sheer/web typecheck)",
+      "Bash(node -e \"JSON.parse\\(require\\('fs'\\).readFileSync\\('app.json','utf8'\\)\\); console.log\\('app.json valid JSON ✓'\\)\")",
+      "Read(//Users/sheer/Documents/Sheer/sheer-platform/apps/api/src/**)",
+      "Bash(npm run *)"
     ],
     "additionalDirectories": [
-      "/Users/shiny/Documents/Sheer/sheer-platform/apps/web/src/auth"
+      "/Users/shiny/Documents/Sheer/sheer-platform/apps/web/src/auth",
+      "/Users/shiny/Documents/Sheer/sheer-platform/apps/sheer-app/src"
     ]
   }
 }

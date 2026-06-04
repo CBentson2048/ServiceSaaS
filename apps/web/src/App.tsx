@@ -26,7 +26,7 @@ import { LoginPage } from './pages/LoginPage';
 import { OwnerOnboardingPage } from './pages/OwnerOnboardingPage';
 import { PasswordResetCompletePage } from './pages/PasswordResetCompletePage';
 import { PerformancePage } from './pages/PerformancePage';
-import { PlaceholderPage } from './pages/PlaceholderPage';
+import { CommissionPage } from './pages/CommissionPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { RotaPage } from './pages/RotaPage';
@@ -79,7 +79,7 @@ export function App() {
           <Route path="/inventory" element={<InventoryPage />} />
           <Route path="/sheer-lab" element={<SheerLabPage />} />
           <Route path="/performance" element={<PerformancePage />} />
-          <Route path="/commission" element={<PlaceholderPage title="Commission" />} />
+          <Route path="/commission" element={<CommissionPage />} />
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="/locations" element={<LocationsPage />} />
           <Route path="/locations/:id" element={<LocationDetailPage />} />

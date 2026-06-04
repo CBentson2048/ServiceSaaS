@@ -55,6 +55,26 @@ function stylistLine(stylistName?: string | null): string {
   return trimmed ? ` with ${trimmed}` : '';
 }
 
+/**
+ * Positional Content template variables for Twilio's Content API. Approved templates must
+ * reference these positions consistently across confirmation + reminders:
+ *   {{1}} client first name   {{2}} location name   {{3}} service(s)
+ *   {{4}} stylist             {{5}} date & time (formatted in the location timezone)
+ *
+ * Values are always non-empty strings (Twilio rejects empty ContentVariables), so missing
+ * fields fall back to friendly defaults.
+ */
+export function buildContentVariables(ctx: NotificationContext): Record<string, string> {
+  const services = ctx.serviceNames.filter(Boolean);
+  return {
+    '1': ctx.clientFirstName?.trim() || 'there',
+    '2': ctx.locationName,
+    '3': services.length ? services.join(', ') : 'your appointment',
+    '4': ctx.stylistName?.trim() || 'our team',
+    '5': formatInTimezone(ctx.scheduledStartAt, ctx.timezone),
+  };
+}
+
 export function renderNotification(
   eventKey: NotificationEventKey,
   ctx: NotificationContext,

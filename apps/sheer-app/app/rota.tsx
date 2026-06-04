@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Modal,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -11,6 +13,7 @@ import type { RotaLeaveRequest, RotaShift, StylistMyWeekResponse } from '@sheer/
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { AppButton, EmptyState, Screen } from '@sheer/ui-mobile';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
+import { StylistTabBar } from '../src/navigation/StylistTabBar';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
 
@@ -18,6 +21,7 @@ export default function RotaScreen() {
   const auth = useAuth();
   const accessToken = auth.session?.accessToken ?? '';
   const [weekStart, setWeekStart] = useState(() => toIsoDate(snapToMonday(new Date())));
+  const [selectedDate, setSelectedDate] = useState<Date>(() => startOfDay(new Date()));
   const [week, setWeek] = useState<StylistMyWeekResponse | null>(null);
   const [leaveRequests, setLeaveRequests] = useState<RotaLeaveRequest[]>([]);
   const [holidayNoticeDays, setHolidayNoticeDays] = useState(30);
@@ -26,6 +30,7 @@ export default function RotaScreen() {
   const [cancellingRequestId, setCancellingRequestId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [leaveModalOpen, setLeaveModalOpen] = useState(false);
   const [leaveStart, setLeaveStart] = useState('');
   const [leaveEnd, setLeaveEnd] = useState('');
   const [leaveReason, setLeaveReason] = useState('');
@@ -113,37 +118,55 @@ export default function RotaScreen() {
     setWeekStart(toIsoDate(addDays(new Date(`${weekStart}T00:00:00`), days)));
   }
 
+  function openLeaveModal() {
+    setError(null);
+    setMessage(null);
+    setLeaveModalOpen(true);
+  }
+
+  const pendingLeaveCount = leaveRequests.filter((request) => request.status === 'pending').length;
+  const showStylistTabs = auth.user?.role === 'stylist';
+
   return (
     <ProtectedScreen allowedRoles={['manager', 'stylist']}>
       <Screen>
-        <View style={styles.hero}>
-          <View style={styles.heroTopRow}>
-            <Text style={styles.eyebrow}>Rota management</Text>
-            <View style={styles.livePill}>
-              <Text style={styles.livePillText}>Live</Text>
-            </View>
+        {/* ── Header with primary action ── */}
+        <View style={styles.header}>
+          <View style={styles.flex}>
+            <Text style={styles.eyebrow}>Rota</Text>
+            <Text style={styles.headerTitle}>My week</Text>
           </View>
-          <Text style={styles.heroTitle}>My week</Text>
-          <Text style={styles.heroBody}>Your shifts, breaks, leave, and absence markers in one clear weekly view.</Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={openLeaveModal}
+            style={({ pressed }) => [styles.requestBtn, pressed && styles.pressed]}
+          >
+            <Text style={styles.requestBtnIcon}>＋</Text>
+            <Text style={styles.requestBtnText}>Request leave</Text>
+            {pendingLeaveCount > 0 ? (
+              <View style={styles.requestBtnBadge}>
+                <Text style={styles.requestBtnBadgeText}>{pendingLeaveCount}</Text>
+              </View>
+            ) : null}
+          </Pressable>
         </View>
 
-        <View style={styles.weekNav}>
-          <AppButton label="Previous" variant="secondary" onPress={() => shiftWeek(-7)} />
-          <View style={styles.weekLabelCard}>
-            <Text style={styles.eyebrow}>Week</Text>
-            <Text style={styles.weekLabel}>{formatWeekLabel(weekDays)}</Text>
-          </View>
-          <AppButton label="Next" variant="secondary" onPress={() => shiftWeek(7)} />
-        </View>
+        {/* ── Professional calendar week strip ── */}
+        <WeekStrip
+          weekDays={weekDays}
+          selectedDate={selectedDate}
+          onSelectDay={setSelectedDate}
+          onShiftWeek={shiftWeek}
+        />
 
-        {message ? (
-          <View style={styles.successCard}>
-            <Text style={styles.success}>{message}</Text>
-          </View>
-        ) : null}
-        {error ? (
+        {error && !leaveModalOpen ? (
           <View style={styles.alertCard}>
             <Text style={styles.error}>{error}</Text>
+          </View>
+        ) : null}
+        {message && !leaveModalOpen ? (
+          <View style={styles.successCard}>
+            <Text style={styles.success}>{message}</Text>
           </View>
         ) : null}
 
@@ -162,7 +185,11 @@ export default function RotaScreen() {
             <View style={styles.metricGrid}>
               <MetricTile label="Shifts" value={String(week?.shifts.length ?? 0)} />
               <MetricTile label="Leave days" value={String(countLeaveDays(week?.leave ?? [], weekDays))} />
-              <MetricTile label="Absences" value={String(week?.absences.length ?? 0)} tone={(week?.absences.length ?? 0) > 0 ? 'warning' : 'default'} />
+              <MetricTile
+                label="Absences"
+                value={String(week?.absences.length ?? 0)}
+                tone={(week?.absences.length ?? 0) > 0 ? 'warning' : 'default'}
+              />
             </View>
 
             <SectionTitle title="Weekly rota" subtitle="Published shift details by day." />
@@ -171,6 +198,7 @@ export default function RotaScreen() {
                 <DayCard
                   key={day.toISOString()}
                   day={day}
+                  selected={isSameCalendarDay(day, selectedDate)}
                   shifts={week?.shifts ?? []}
                   leave={week?.leave ?? []}
                   absences={week?.absences ?? []}
@@ -186,69 +214,250 @@ export default function RotaScreen() {
             ) : null}
           </>
         )}
-
-        <View style={styles.panelAccent}>
-          <Text style={styles.eyebrow}>Leave request</Text>
-          <Text style={styles.panelTitle}>Request leave</Text>
-          <Text style={styles.muted}>Requests inside {holidayNoticeDays} days may need manager override.</Text>
-          <TextInput
-            placeholder="Start date (YYYY-MM-DD)"
-            placeholderTextColor="rgba(255,255,255,0.45)"
-            value={leaveStart}
-            onChangeText={setLeaveStart}
-            style={styles.input}
-            autoCapitalize="none"
-          />
-          <TextInput
-            placeholder="End date (YYYY-MM-DD)"
-            placeholderTextColor="rgba(255,255,255,0.45)"
-            value={leaveEnd}
-            onChangeText={setLeaveEnd}
-            style={styles.input}
-            autoCapitalize="none"
-          />
-          <TextInput
-            placeholder="Optional note"
-            placeholderTextColor="rgba(255,255,255,0.45)"
-            value={leaveReason}
-            onChangeText={setLeaveReason}
-            style={[styles.input, styles.noteInput]}
-            multiline
-          />
-          <AppButton
-            label={submitting ? 'Submitting...' : 'Submit leave request'}
-            onPress={() => void submitLeaveRequest()}
-            disabled={submitting}
-          />
-        </View>
-
-        <SectionTitle title="Leave requests" subtitle="Track manager approval status." />
-        {leaveRequests.length === 0 ? (
-          <EmptyState title="No leave requests" body="Submitted requests will appear here." />
-        ) : (
-          <View style={styles.days}>
-            {leaveRequests.map((request) => (
-              <LeaveRequestCard
-                key={request.id}
-                request={request}
-                cancelling={cancellingRequestId === request.id}
-                onCancel={() => void cancelLeaveRequest(request.id)}
-              />
-            ))}
-          </View>
-        )}
       </Screen>
+
+      <LeaveModal
+        visible={leaveModalOpen}
+        onClose={() => setLeaveModalOpen(false)}
+        holidayNoticeDays={holidayNoticeDays}
+        leaveRequests={leaveRequests}
+        message={message}
+        error={error}
+        submitting={submitting}
+        cancellingRequestId={cancellingRequestId}
+        leaveStart={leaveStart}
+        leaveEnd={leaveEnd}
+        leaveReason={leaveReason}
+        onChangeStart={setLeaveStart}
+        onChangeEnd={setLeaveEnd}
+        onChangeReason={setLeaveReason}
+        onSubmit={() => void submitLeaveRequest()}
+        onCancelRequest={(id) => void cancelLeaveRequest(id)}
+      />
+
+      {showStylistTabs ? <StylistTabBar /> : null}
     </ProtectedScreen>
+  );
+}
+
+// ── Calendar week strip ───────────────────────────────────────────────────────
+
+function WeekStrip({
+  weekDays,
+  selectedDate,
+  onSelectDay,
+  onShiftWeek,
+}: {
+  weekDays: Date[];
+  selectedDate: Date;
+  onSelectDay: (day: Date) => void;
+  onShiftWeek: (days: number) => void;
+}) {
+  const today = startOfDay(new Date());
+  const monthAnchor = weekDays[3] ?? weekDays[0];
+
+  return (
+    <View style={styles.calendar}>
+      <View style={styles.calendarHeader}>
+        <Text style={styles.calendarMonth}>{monthAnchor ? monthYearLabel(monthAnchor) : ''}</Text>
+        <View style={styles.calendarNav}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Previous week"
+            onPress={() => onShiftWeek(-7)}
+            style={({ pressed }) => [styles.calendarNavButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.calendarNavText}>‹</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Next week"
+            onPress={() => onShiftWeek(7)}
+            style={({ pressed }) => [styles.calendarNavButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.calendarNavText}>›</Text>
+          </Pressable>
+        </View>
+      </View>
+      <View style={styles.calendarWeek}>
+        {weekDays.map((day) => {
+          const isToday = isSameCalendarDay(day, today);
+          const isSelected = isSameCalendarDay(day, selectedDate);
+          return (
+            <Pressable
+              key={day.toISOString()}
+              accessibilityRole="button"
+              accessibilityState={{ selected: isSelected }}
+              onPress={() => onSelectDay(day)}
+              style={[
+                styles.dayCell,
+                isSelected && styles.dayCellSelected,
+                !isSelected && isToday && styles.dayCellToday,
+              ]}
+            >
+              <Text style={[styles.dayWeekday, isSelected && styles.dayTextSelected]}>{weekdayShort(day)}</Text>
+              <Text style={[styles.dayNumber, isSelected && styles.dayTextSelected]}>{day.getDate()}</Text>
+              <View
+                style={[
+                  styles.todayDot,
+                  isToday ? styles.todayDotVisible : styles.todayDotHidden,
+                  isSelected && styles.todayDotSelected,
+                ]}
+              />
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+// ── Leave request modal ───────────────────────────────────────────────────────
+
+function LeaveModal({
+  visible,
+  onClose,
+  holidayNoticeDays,
+  leaveRequests,
+  message,
+  error,
+  submitting,
+  cancellingRequestId,
+  leaveStart,
+  leaveEnd,
+  leaveReason,
+  onChangeStart,
+  onChangeEnd,
+  onChangeReason,
+  onSubmit,
+  onCancelRequest,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  holidayNoticeDays: number;
+  leaveRequests: RotaLeaveRequest[];
+  message: string | null;
+  error: string | null;
+  submitting: boolean;
+  cancellingRequestId: string | null;
+  leaveStart: string;
+  leaveEnd: string;
+  leaveReason: string;
+  onChangeStart: (value: string) => void;
+  onChangeEnd: (value: string) => void;
+  onChangeReason: (value: string) => void;
+  onSubmit: () => void;
+  onCancelRequest: (id: string) => void;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={styles.modalScrim} onPress={onClose}>
+        {/* Swallow taps on the sheet so they don't close the modal. */}
+        <Pressable style={styles.modalSheet} onPress={() => undefined}>
+          <View style={styles.modalHandle} />
+          <View style={styles.modalHeader}>
+            <View style={styles.flex}>
+              <Text style={styles.modalTitle}>Request leave</Text>
+              <Text style={styles.muted}>Requests inside {holidayNoticeDays} days may need manager override.</Text>
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+              onPress={onClose}
+              style={({ pressed }) => [styles.modalClose, pressed && styles.pressed]}
+            >
+              <Text style={styles.modalCloseText}>✕</Text>
+            </Pressable>
+          </View>
+
+          <ScrollView
+            contentContainerStyle={styles.modalScroll}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
+            {message ? (
+              <View style={styles.successCard}>
+                <Text style={styles.success}>{message}</Text>
+              </View>
+            ) : null}
+            {error ? (
+              <View style={styles.alertCard}>
+                <Text style={styles.error}>{error}</Text>
+              </View>
+            ) : null}
+
+            <View style={styles.field}>
+              <Text style={styles.fieldLabel}>Start date</Text>
+              <TextInput
+                placeholder="YYYY-MM-DD"
+                placeholderTextColor="rgba(255,255,255,0.45)"
+                value={leaveStart}
+                onChangeText={onChangeStart}
+                style={styles.input}
+                autoCapitalize="none"
+                keyboardType="numbers-and-punctuation"
+              />
+            </View>
+            <View style={styles.field}>
+              <Text style={styles.fieldLabel}>End date</Text>
+              <TextInput
+                placeholder="YYYY-MM-DD"
+                placeholderTextColor="rgba(255,255,255,0.45)"
+                value={leaveEnd}
+                onChangeText={onChangeEnd}
+                style={styles.input}
+                autoCapitalize="none"
+                keyboardType="numbers-and-punctuation"
+              />
+            </View>
+            <View style={styles.field}>
+              <Text style={styles.fieldLabel}>Reason (optional)</Text>
+              <TextInput
+                placeholder="e.g. family holiday"
+                placeholderTextColor="rgba(255,255,255,0.45)"
+                value={leaveReason}
+                onChangeText={onChangeReason}
+                style={[styles.input, styles.noteInput]}
+                multiline
+              />
+            </View>
+            <AppButton
+              label={submitting ? 'Submitting...' : 'Submit leave request'}
+              onPress={onSubmit}
+              disabled={submitting}
+            />
+
+            <SectionTitle title="Your requests" subtitle="Track manager approval status." />
+            {leaveRequests.length === 0 ? (
+              <EmptyState title="No leave requests" body="Submitted requests will appear here." />
+            ) : (
+              <View style={styles.days}>
+                {leaveRequests.map((request) => (
+                  <LeaveRequestCard
+                    key={request.id}
+                    request={request}
+                    cancelling={cancellingRequestId === request.id}
+                    onCancel={() => onCancelRequest(request.id)}
+                  />
+                ))}
+              </View>
+            )}
+          </ScrollView>
+        </Pressable>
+      </Pressable>
+    </Modal>
   );
 }
 
 function DayCard({
   day,
+  selected,
   shifts,
   leave,
   absences,
 }: {
   day: Date;
+  selected: boolean;
   shifts: RotaShift[];
   leave: StylistMyWeekResponse['leave'];
   absences: StylistMyWeekResponse['absences'];
@@ -259,7 +468,7 @@ function DayCard({
   const dayAbsences = absences.filter((item) => isSameLocalDay(item.startsAt, day));
 
   return (
-    <View style={styles.dayCard}>
+    <View style={[styles.dayCard, selected && styles.dayCardSelected]}>
       <View style={styles.dayHeader}>
         <View style={styles.flex}>
           <Text style={styles.dayTitle}>{day.toLocaleDateString(undefined, { weekday: 'long' })}</Text>
@@ -401,6 +610,12 @@ function snapToMonday(date: Date): Date {
   return monday;
 }
 
+function startOfDay(date: Date): Date {
+  const next = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  next.setHours(0, 0, 0, 0);
+  return next;
+}
+
 function addDays(date: Date, days: number): Date {
   const next = new Date(date.getTime());
   next.setDate(next.getDate() + days);
@@ -427,15 +642,20 @@ function isSameLocalDay(iso: string, day: Date): boolean {
   );
 }
 
+function isSameCalendarDay(a: Date, b: Date): boolean {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+function weekdayShort(date: Date): string {
+  return date.toLocaleDateString(undefined, { weekday: 'short' }).slice(0, 3).toUpperCase();
+}
+
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 }
 
-function formatWeekLabel(days: Date[]): string {
-  const start = days[0];
-  const end = days[6];
-  if (!start || !end) return '';
-  return `${start.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} - ${end.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`;
+function monthYearLabel(date: Date): string {
+  return date.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
 }
 
 function formatDateRange(start: string, end: string): string {
@@ -449,97 +669,157 @@ function countLeaveDays(leave: StylistMyWeekResponse['leave'], weekDays: Date[])
   }).length;
 }
 
+const CARD = palette.ink[700];
+const BG = palette.ink[950];
+const BORDER = 'rgba(255,255,255,0.12)';
+const BRAND = palette.brand[500];
+const BRAND_LIGHT = palette.brand[300];
+
 const styles = StyleSheet.create({
   flex: {
     flex: 1,
     gap: spacing.xs,
   },
-  hero: {
-    gap: spacing.sm,
-    padding: spacing.xl,
-    borderRadius: radius.cardLg,
-    borderWidth: 1,
-    borderColor: 'rgba(196,160,245,0.28)',
-    backgroundColor: palette.ink[700],
-  },
-  heroTopRow: {
+
+  // ── Header
+  header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: spacing.md,
   },
   eyebrow: {
-    color: palette.brand[300],
+    color: BRAND_LIGHT,
     fontSize: 12,
     fontWeight: '800',
     letterSpacing: 1.2,
     textTransform: 'uppercase',
   },
-  heroTitle: {
+  headerTitle: {
     color: palette.white,
-    fontSize: 30,
+    fontSize: 28,
     fontWeight: '800',
     letterSpacing: -0.5,
   },
-  heroBody: {
-    color: 'rgba(255,255,255,0.72)',
-    fontSize: 14,
-    lineHeight: 21,
-  },
-  livePill: {
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    backgroundColor: 'rgba(74,222,128,0.16)',
-    borderWidth: 1,
-    borderColor: 'rgba(74,222,128,0.36)',
-  },
-  livePillText: {
-    color: palette.success[300],
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  weekNav: {
-    gap: spacing.sm,
-  },
-  weekLabelCard: {
+  requestBtn: {
+    flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.xs,
+    paddingHorizontal: spacing.base,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.pill,
+    backgroundColor: BRAND,
+    shadowColor: BRAND,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  requestBtnIcon: { color: palette.white, fontSize: 15, fontWeight: '400', marginTop: -1 },
+  requestBtnText: { color: palette.white, fontSize: 13, fontWeight: '800' },
+  requestBtnBadge: {
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 5,
+    borderRadius: radius.full,
+    backgroundColor: palette.white,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  requestBtnBadgeText: { color: BRAND, fontSize: 10, fontWeight: '900' },
+
+  // ── Calendar week strip
+  calendar: {
+    gap: spacing.md,
     padding: spacing.base,
     borderRadius: radius.cardLg,
+    backgroundColor: CARD,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
-    backgroundColor: 'rgba(255,255,255,0.055)',
+    borderColor: BORDER,
   },
-  weekLabel: {
+  calendarHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  calendarMonth: {
     color: palette.white,
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: '800',
-    textAlign: 'center',
+    letterSpacing: -0.2,
   },
-  panel: {
-    gap: spacing.sm,
-    padding: spacing.base,
-    borderRadius: radius.cardLg,
+  calendarNav: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+  },
+  calendarNavButton: {
+    width: 32,
+    height: 32,
+    borderRadius: radius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
-    backgroundColor: 'rgba(255,255,255,0.055)',
+    borderColor: 'rgba(255,255,255,0.14)',
   },
-  panelAccent: {
-    gap: spacing.base,
-    padding: spacing.lg,
-    borderRadius: radius.cardLg,
-    borderWidth: 1,
-    borderColor: 'rgba(196,160,245,0.28)',
-    backgroundColor: 'rgba(166,124,245,0.12)',
-  },
-  panelTitle: {
+  calendarNavText: {
     color: palette.white,
-    fontSize: 22,
+    fontSize: 18,
+    fontWeight: '900',
+    lineHeight: 20,
+  },
+  calendarWeek: {
+    flexDirection: 'row',
+    gap: 4,
+  },
+  dayCell: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.input,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  dayCellSelected: {
+    backgroundColor: BRAND,
+    borderColor: BRAND,
+  },
+  dayCellToday: {
+    borderColor: 'rgba(196,160,245,0.5)',
+  },
+  dayWeekday: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+  },
+  dayNumber: {
+    color: palette.white,
+    fontSize: 16,
     fontWeight: '800',
   },
+  dayTextSelected: {
+    color: palette.white,
+  },
+  todayDot: {
+    width: 4,
+    height: 4,
+    borderRadius: radius.full,
+  },
+  todayDotVisible: {
+    backgroundColor: BRAND_LIGHT,
+  },
+  todayDotHidden: {
+    backgroundColor: 'transparent',
+  },
+  todayDotSelected: {
+    backgroundColor: palette.white,
+  },
+
+  // ── Banners
   alertCard: {
-    gap: spacing.sm,
     padding: spacing.base,
     borderRadius: radius.cardLg,
     borderWidth: 1,
@@ -547,12 +827,21 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(248,113,113,0.09)',
   },
   successCard: {
-    gap: spacing.sm,
     padding: spacing.base,
     borderRadius: radius.cardLg,
     borderWidth: 1,
     borderColor: 'rgba(74,222,128,0.34)',
     backgroundColor: 'rgba(74,222,128,0.09)',
+  },
+
+  // ── Loading
+  panel: {
+    gap: spacing.sm,
+    padding: spacing.base,
+    borderRadius: radius.cardLg,
+    borderWidth: 1,
+    borderColor: BORDER,
+    backgroundColor: CARD,
   },
   loadingRow: {
     flexDirection: 'row',
@@ -564,15 +853,8 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '800',
   },
-  sectionTitle: {
-    gap: spacing.xs,
-    marginTop: spacing.sm,
-  },
-  sectionTitleText: {
-    color: palette.white,
-    fontSize: 20,
-    fontWeight: '800',
-  },
+
+  // ── Metrics
   metricGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -585,15 +867,15 @@ const styles = StyleSheet.create({
     padding: spacing.base,
     borderRadius: radius.cardLg,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
-    backgroundColor: 'rgba(255,255,255,0.055)',
+    borderColor: BORDER,
+    backgroundColor: CARD,
   },
   metricTileWarning: {
     borderColor: 'rgba(245,158,11,0.38)',
     backgroundColor: 'rgba(245,158,11,0.11)',
   },
   metricValue: {
-    color: palette.brand[300],
+    color: BRAND_LIGHT,
     fontSize: 26,
     fontWeight: '800',
   },
@@ -605,8 +887,35 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
+
+  // ── Sections / days
+  sectionTitle: {
+    gap: spacing.xs,
+    marginTop: spacing.sm,
+  },
+  sectionTitleText: {
+    color: palette.white,
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  muted: {
+    color: 'rgba(255,255,255,0.68)',
+    fontSize: 13,
+  },
   days: {
     gap: spacing.base,
+  },
+  dayCard: {
+    gap: spacing.base,
+    padding: spacing.base,
+    borderRadius: radius.cardLg,
+    borderWidth: 1,
+    borderColor: BORDER,
+    backgroundColor: CARD,
+  },
+  dayCardSelected: {
+    borderColor: 'rgba(196,160,245,0.5)',
+    backgroundColor: 'rgba(166,124,245,0.08)',
   },
   dayHeader: {
     flexDirection: 'row',
@@ -618,18 +927,6 @@ const styles = StyleSheet.create({
     color: palette.white,
     fontSize: 17,
     fontWeight: '800',
-  },
-  muted: {
-    color: 'rgba(255,255,255,0.68)',
-    fontSize: 13,
-  },
-  dayCard: {
-    gap: spacing.base,
-    padding: spacing.base,
-    borderRadius: radius.cardLg,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
-    backgroundColor: 'rgba(255,255,255,0.055)',
   },
   countPill: {
     borderRadius: radius.pill,
@@ -674,6 +971,83 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
+  warningText: {
+    color: palette.warning[300],
+    fontWeight: '700',
+  },
+  error: {
+    color: palette.danger[300],
+    fontWeight: '700',
+  },
+  success: {
+    color: palette.success[300],
+    fontWeight: '700',
+  },
+
+  // ── Modal
+  modalScrim: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
+  modalSheet: {
+    maxHeight: '88%',
+    paddingTop: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    borderTopLeftRadius: radius.cardLg,
+    borderTopRightRadius: radius.cardLg,
+    backgroundColor: BG,
+    borderTopWidth: 1,
+    borderColor: BORDER,
+  },
+  modalHandle: {
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    borderRadius: radius.full,
+    backgroundColor: 'rgba(255,255,255,0.22)',
+    marginBottom: spacing.md,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  modalTitle: {
+    color: palette.white,
+    fontSize: 22,
+    fontWeight: '800',
+    letterSpacing: -0.3,
+  },
+  modalClose: {
+    width: 32,
+    height: 32,
+    borderRadius: radius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.07)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.14)',
+  },
+  modalCloseText: { color: palette.white, fontSize: 14, fontWeight: '800' },
+  modalScroll: {
+    gap: spacing.sm,
+    paddingBottom: spacing['4xl'],
+  },
+
+  // ── Form fields
+  field: {
+    gap: spacing.xs,
+  },
+  fieldLabel: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+  },
   input: {
     minHeight: 48,
     borderRadius: radius.inputLg,
@@ -687,17 +1061,13 @@ const styles = StyleSheet.create({
     minHeight: 88,
     paddingTop: spacing.sm,
   },
-  success: {
-    color: palette.success[300],
-    fontWeight: '700',
+
+  // ── Misc
+  pressed: {
+    opacity: 0.78,
   },
-  error: {
-    color: palette.danger[300],
-    fontWeight: '700',
-  },
-  warningText: {
-    color: palette.warning[300],
-    fontWeight: '700',
+  disabled: {
+    opacity: 0.5,
   },
   cancelButton: {
     minHeight: 44,
@@ -710,12 +1080,6 @@ const styles = StyleSheet.create({
   cancelButtonText: {
     color: palette.danger[300],
     fontWeight: '700',
-  },
-  pressed: {
-    opacity: 0.78,
-  },
-  disabled: {
-    opacity: 0.5,
   },
   statusPill: {
     alignSelf: 'flex-start',

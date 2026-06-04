@@ -45,7 +45,9 @@ export function ClientBookingSuccessPage() {
     };
   }, [selection?.bookingAttempt?.id, selection?.bookingAttemptId]);
 
-  if (!selection?.bookingAttemptId && !selection?.bookingAttempt?.id) {
+  // Deposit bookings carry a booking attempt; deposit-free bookings only carry the confirmed
+  // appointment. Either is a valid way to reach the success page.
+  if (!selection?.bookingAttemptId && !selection?.bookingAttempt?.id && !selection?.appointment) {
     return <Navigate to="/book/location" replace />;
   }
   if (attempt && attempt.status !== 'confirmed') {
@@ -83,7 +85,9 @@ export function ClientBookingSuccessPage() {
         </div>
         <h1 className="mt-4 text-[20px] font-semibold leading-6">Your booking is in</h1>
         <p className="mt-2 text-[13px] text-text-secondary">
-          Your deposit has been paid and your appointment is confirmed. The salon will contact you using your selected preference.
+          {attempt
+            ? 'Your deposit has been paid and your appointment is confirmed. The salon will contact you using your selected preference.'
+            : 'Your appointment is confirmed. The salon will contact you using your selected preference.'}
         </p>
       </div>
 
@@ -96,10 +100,14 @@ export function ClientBookingSuccessPage() {
         <Summary label="Client" value={appointment.clientDisplayName} />
         <Summary label="Status" value={formatStatus(appointment.status)} />
         <Summary label="Contact preference" value={formatPreference(appointment.communicationPreference)} />
-        <Summary
-          label="Deposit"
-          value={attempt ? `${formatMoney(attempt.depositAmount, attempt.currencyCode)} paid` : 'Paid'}
-        />
+        {attempt ? (
+          <Summary
+            label="Deposit"
+            value={`${formatMoney(attempt.depositAmount, attempt.currencyCode)} paid`}
+          />
+        ) : (
+          <Summary label="Deposit" value="No deposit required" />
+        )}
         </div>
       </AppCard>
 

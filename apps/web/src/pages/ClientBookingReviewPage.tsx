@@ -4,6 +4,7 @@ import { loadStripe } from '@stripe/stripe-js';
 import { Navigate, useNavigate } from 'react-router-dom';
 import {
   ApiRequestError,
+  createPublicBooking,
   getPublicBookingAttempt,
   startPublicBookingCheckout,
 } from '../auth/api';
@@ -27,6 +28,7 @@ type CompleteReviewSelection = ClientBookingSelection &
   >;
 
 export function ClientBookingReviewPage() {
+  const navigate = useNavigate();
   const selection = readClientBookingSelection();
   const [checkout, setCheckout] = useState<StartPublicBookingCheckoutResponse | null>(() =>
     selection?.bookingAttempt && selection.paymentClientSecret
@@ -49,6 +51,34 @@ export function ClientBookingReviewPage() {
     return <Navigate to={nextIncompleteReviewStep(selection)} replace />;
   }
   const currentSelection = selection;
+  // When none of the requested services require an upfront deposit, the payment step is skipped
+  // and the booking is confirmed directly.
+  const requiresDeposit = totalDeposit(currentSelection.services) > 0;
+
+  async function confirmWithoutPayment() {
+    if (!currentSelection.staffProfileId) return;
+    setStartingCheckout(true);
+    setError(null);
+    try {
+      const result = await createPublicBooking({
+        locationId: currentSelection.locationId,
+        serviceIds: currentSelection.services.map((service) => service.id),
+        staffProfileId: currentSelection.staffProfileId,
+        selectedStartAt: currentSelection.selectedSlot.startAt,
+        staffRequestMode: currentSelection.staffRequestMode,
+        client: currentSelection.client,
+        communicationPreference: currentSelection.communicationPreference,
+        clientProfileId: currentSelection.account.clientProfileId,
+        bookedByUserProfileId: currentSelection.account.userProfileId,
+      });
+      updateClientBookingSelection({ appointment: result.appointment });
+      navigate('/book/success');
+    } catch (err) {
+      setError(toErrorMessage(err));
+    } finally {
+      setStartingCheckout(false);
+    }
+  }
 
   async function startCheckout() {
     if (!currentSelection.staffProfileId) return;
@@ -93,17 +123,21 @@ export function ClientBookingReviewPage() {
             size="lg"
             fullWidth
             loading={startingCheckout}
-            onClick={() => void startCheckout()}
+            onClick={() => void (requiresDeposit ? startCheckout() : confirmWithoutPayment())}
             className="min-h-12 bg-[#1C1628] text-white hover:bg-[#2A2139]"
           >
-            Continue to payment
+            {requiresDeposit ? 'Continue to payment' : 'Confirm booking'}
           </AppButton>
         )
       }
     >
-      <h1 className="text-[18px] font-semibold leading-6">Review and pay deposit</h1>
+      <h1 className="text-[18px] font-semibold leading-6">
+        {requiresDeposit ? 'Review and pay deposit' : 'Review and confirm'}
+      </h1>
       <p className="mt-1 text-[12px] text-text-secondary">
-        We will re-check this slot before taking your deposit. Your appointment is confirmed only after payment succeeds.
+        {requiresDeposit
+          ? 'We will re-check this slot before taking your deposit. Your appointment is confirmed only after payment succeeds.'
+          : 'No deposit is required for these services. We will re-check this slot and confirm your appointment right away.'}
       </p>
       {error ? <div className="mt-4 rounded-input-lg border border-danger-border bg-danger-soft px-3 py-2 text-[13px] text-danger">{error}</div> : null}
       <AppCard className="mt-5">
@@ -120,21 +154,29 @@ export function ClientBookingReviewPage() {
         <Summary label="Phone" value={currentSelection.client.phone || 'Not provided'} />
         </div>
       </AppCard>
-      <AppCard className="mt-4 border-primary/30 bg-primary/5">
-        <div className="text-[13px] font-semibold">Deposit</div>
-        <div className="mt-1 text-[12px] text-text-secondary">
-          {formatDeposit(totalDeposit(currentSelection.services), currentSelection.location.currencyCode)}
-        </div>
-        <div className="mt-2 text-[12px] text-text-secondary">
-          Your card is charged by Stripe. If payment fails or is cancelled, no confirmed appointment is created.
-        </div>
-        {currentSelection.location.cancellationNoticeHours !== undefined ? (
-          <div className="mt-3 rounded-input-lg bg-surface px-3 py-2 text-[12px] text-text-secondary">
+      {requiresDeposit ? (
+        <AppCard className="mt-4 border-primary/30 bg-primary/5">
+          <div className="text-[13px] font-semibold">Deposit</div>
+          <div className="mt-1 text-[12px] text-text-secondary">
+            {formatDeposit(totalDeposit(currentSelection.services), currentSelection.location.currencyCode)}
+          </div>
+          <div className="mt-2 text-[12px] text-text-secondary">
+            Your card is charged by Stripe. If payment fails or is cancelled, no confirmed appointment is created.
+          </div>
+          {currentSelection.location.cancellationNoticeHours !== undefined ? (
+            <div className="mt-3 rounded-input-lg bg-surface px-3 py-2 text-[12px] text-text-secondary">
+              {formatCancellationNotice(currentSelection.location.cancellationNoticeHours)}
+            </div>
+          ) : null}
+        </AppCard>
+      ) : currentSelection.location.cancellationNoticeHours !== undefined ? (
+        <AppCard className="mt-4">
+          <div className="text-[12px] text-text-secondary">
             {formatCancellationNotice(currentSelection.location.cancellationNoticeHours)}
           </div>
-        ) : null}
-      </AppCard>
-      {checkout && stripeOptions ? (
+        </AppCard>
+      ) : null}
+      {requiresDeposit && checkout && stripeOptions ? (
         <Elements stripe={stripePromise} options={stripeOptions}>
           <PaymentForm bookingAttempt={checkout.bookingAttempt} />
         </Elements>

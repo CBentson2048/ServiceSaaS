@@ -24,6 +24,21 @@ const ANALYTICS_RANGES: Array<{ value: SheerLabAnalyticsRange; label: string }> 
   { value: 'month', label: 'This month' },
 ];
 
+type DeviceStatusFilter = 'all' | 'active' | 'inactive' | 'revoked';
+
+const DEVICE_STATUS_FILTERS: Array<{ value: DeviceStatusFilter; label: string }> = [
+  { value: 'all', label: 'All' },
+  { value: 'active', label: 'Active' },
+  { value: 'inactive', label: 'Inactive' },
+  { value: 'revoked', label: 'Revoked' },
+];
+
+function deviceStatusGroup(status: SharedDeviceSummary['status']): Exclude<DeviceStatusFilter, 'all'> {
+  if (status === 'active' || status === 'registered') return 'active';
+  if (status === 'revoked') return 'revoked';
+  return 'inactive';
+}
+
 export function SheerLabPage() {
   const auth = useAuth();
   const accessToken = auth.session?.accessToken;
@@ -35,6 +50,8 @@ export function SheerLabPage() {
   const [error, setError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [locationFilter, setLocationFilter] = useState('all');
+  const [deviceStatusFilter, setDeviceStatusFilter] = useState<DeviceStatusFilter>('all');
+  const [deviceLocationFilter, setDeviceLocationFilter] = useState('all');
   const [pinInputs, setPinInputs] = useState<Record<string, string>>({});
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [deviceLocationId, setDeviceLocationId] = useState('');
@@ -93,6 +110,16 @@ export function SheerLabPage() {
   const stylistsWithPin = useMemo(
     () => stylists.filter((stylist) => stylist.status === 'active').length,
     [stylists],
+  );
+
+  const filteredDevices = useMemo(
+    () =>
+      devices.filter((device) => {
+        if (deviceLocationFilter !== 'all' && device.locationId !== deviceLocationFilter) return false;
+        if (deviceStatusFilter !== 'all' && deviceStatusGroup(device.status) !== deviceStatusFilter) return false;
+        return true;
+      }),
+    [devices, deviceLocationFilter, deviceStatusFilter],
   );
 
   useEffect(() => {
@@ -383,53 +410,93 @@ export function SheerLabPage() {
             </div>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-[13px]">
-              <thead className="bg-surface-alt text-[11px] font-medium uppercase tracking-[0.08em] text-text-secondary">
-                <tr>
-                  <th className="px-4 py-3">Device</th>
-                  <th className="px-4 py-3">Location</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">Last seen</th>
-                  <th className="px-4 py-3 text-right">Manage</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {devices.map((device) => {
-                  const busy = busyKey === `revoke-${device.id}`;
-                  const revoked = device.status === 'revoked';
-                  return (
-                    <tr key={device.id} className={revoked ? 'opacity-60' : undefined}>
-                      <td className="px-4 py-3">
-                        <div className="font-medium text-text-primary">{device.deviceName}</div>
-                        <div className="text-[12px] text-text-secondary">
-                          {device.stationLabel ? device.stationLabel : 'Shared iPad'} · Registered{' '}
-                          {formatDate(device.registeredAt)}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-text-secondary">{device.locationName}</td>
-                      <td className="px-4 py-3">
-                        <DeviceStatusPill status={device.status} />
-                      </td>
-                      <td className="px-4 py-3 text-text-secondary">
-                        {device.lastSeenAt ? formatRelative(device.lastSeenAt) : 'Never'}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <button
-                          type="button"
-                          className="h-9 rounded-pill border border-danger-border px-4 text-[12px] font-semibold text-danger transition hover:bg-danger-soft disabled:opacity-40"
-                          disabled={busy || revoked}
-                          onClick={() => void handleRevokeDevice(device)}
-                        >
-                          {busy ? 'Revoking…' : revoked ? 'Revoked' : 'Revoke'}
-                        </button>
-                      </td>
+          <>
+            <div className="flex flex-col gap-3 border-b border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-wrap items-center gap-2">
+                <FilterToggle
+                  options={DEVICE_STATUS_FILTERS}
+                  value={deviceStatusFilter}
+                  onChange={setDeviceStatusFilter}
+                />
+                {locations.length > 1 ? (
+                  <select
+                    value={deviceLocationFilter}
+                    onChange={(event) => setDeviceLocationFilter(event.target.value)}
+                    aria-label="Filter devices by location"
+                    className="h-9 rounded-input-lg border border-border-strong bg-surface px-3 text-[13px] text-text-primary outline-none focus:border-primary"
+                  >
+                    <option value="all">All locations</option>
+                    {locations.map((location) => (
+                      <option key={location.id} value={location.id}>
+                        {location.name}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
+              </div>
+              <div className="text-[12px] text-text-secondary">
+                Showing {filteredDevices.length} of {devices.length}{' '}
+                {devices.length === 1 ? 'device' : 'devices'}
+              </div>
+            </div>
+
+            {filteredDevices.length === 0 ? (
+              <div className="px-4 py-10 text-center">
+                <div className="text-[14px] font-medium text-text-primary">No matching devices</div>
+                <div className="mt-1 text-[13px] text-text-secondary">
+                  No devices match the selected filters. Try clearing them to see every device.
+                </div>
+              </div>
+            ) : (
+              <div className="max-h-[460px] overflow-auto">
+                <table className="w-full text-left text-[13px]">
+                  <thead className="sticky top-0 z-10 bg-surface-alt text-[11px] font-medium uppercase tracking-[0.08em] text-text-secondary">
+                    <tr className="border-b border-border">
+                      <th className="border-b border-border px-4 py-3">Device</th>
+                      <th className="border-b border-border px-4 py-3">Location</th>
+                      <th className="border-b border-border px-4 py-3">Status</th>
+                      <th className="border-b border-border px-4 py-3">Last seen</th>
+                      <th className="border-b border-border px-4 py-3 text-right">Manage</th>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {filteredDevices.map((device) => {
+                      const busy = busyKey === `revoke-${device.id}`;
+                      const revoked = device.status === 'revoked';
+                      return (
+                        <tr key={device.id} className={revoked ? 'opacity-60' : undefined}>
+                          <td className="px-4 py-3">
+                            <div className="font-medium text-text-primary">{device.deviceName}</div>
+                            <div className="text-[12px] text-text-secondary">
+                              {device.stationLabel ? device.stationLabel : 'Shared iPad'} · Registered{' '}
+                              {formatDate(device.registeredAt)}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-text-secondary">{device.locationName}</td>
+                          <td className="px-4 py-3">
+                            <DeviceStatusPill status={device.status} />
+                          </td>
+                          <td className="px-4 py-3 text-text-secondary">
+                            {device.lastSeenAt ? formatRelative(device.lastSeenAt) : 'Never'}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <button
+                              type="button"
+                              className="h-9 rounded-pill border border-danger-border px-4 text-[12px] font-semibold text-danger transition hover:bg-danger-soft disabled:opacity-40"
+                              disabled={busy || revoked}
+                              onClick={() => void handleRevokeDevice(device)}
+                            >
+                              {busy ? 'Revoking…' : revoked ? 'Revoked' : 'Revoke'}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
         )}
       </section>
 
@@ -588,6 +655,36 @@ function RangeToggle({
   return (
     <div className="inline-flex rounded-pill border border-border-strong bg-surface p-0.5">
       {ANALYTICS_RANGES.map((option) => {
+        const active = option.value === value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => onChange(option.value)}
+            className={`h-8 rounded-pill px-3 text-[12px] font-semibold transition ${
+              active ? 'bg-primary text-text-on-primary' : 'text-text-secondary hover:text-text-primary'
+            }`}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function FilterToggle<T extends string>({
+  options,
+  value,
+  onChange,
+}: {
+  options: Array<{ value: T; label: string }>;
+  value: T;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div className="inline-flex rounded-pill border border-border-strong bg-surface p-0.5">
+      {options.map((option) => {
         const active = option.value === value;
         return (
           <button

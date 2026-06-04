@@ -7,7 +7,9 @@ import {
   loadAppointmentContext,
   type AppointmentNotificationContext,
 } from './appointment-context';
-import { NotificationEventKey, WHATSAPP_CHANNEL } from './notification.types';
+import { resolveChannelPlan, smsAllowedByPlan, type DeliveryChannel } from './channel-policy';
+import { normalizeE164 } from './phone';
+import { NotificationEventKey, REMINDER_EVENT_KEYS, SMS_CHANNEL, WHATSAPP_CHANNEL } from './notification.types';
 import { computeDesiredEvents, enabledEventKeys, type DesiredEvent } from './reminder-schedule';
 
 interface ExistingEventRow {
@@ -81,9 +83,11 @@ export class BookingNotificationService {
       context.appointment.location_id,
     );
 
-    // Master switch off, channel not permitted, client doesn't prefer WhatsApp, or no phone →
-    // we cannot/should not deliver; cancel any pending events so nothing stale goes out.
-    if (!this.canDeliverWhatsApp(settings.enabled, settings.enabledChannels, context)) {
+    // Resolve the channel for this client (WhatsApp-first, SMS fallback). When no channel is
+    // deliverable (master switch off, no enabled channel, opted out, or no valid phone) we cancel
+    // any pending events so nothing stale goes out.
+    const plan = resolveChannelPlan(settings, context.communicationPreference, this.hasValidPhone(context));
+    if (!plan.deliverable) {
       await this.cancelPending(existing);
       return;
     }
@@ -92,7 +96,10 @@ export class BookingNotificationService {
     const enabledKeys = enabledEventKeys(settings);
     const desired = computeDesiredEvents(settings, start, now);
 
-    await this.reconcile(context, existing, desired, enabledKeys, now);
+    // Events are scheduled on the PRIMARY channel only. SMS fallback events are created lazily by
+    // the dispatcher/callbacks when WhatsApp is clearly ineligible or has a real failure — never
+    // up-front, so a pending WhatsApp delivery does not trigger SMS.
+    await this.reconcile(context, existing, desired, enabledKeys, plan.primary, now);
   }
 
   /** Cancel all still-pending events for an appointment (e.g. on cancellation/reschedule). */
@@ -101,17 +108,8 @@ export class BookingNotificationService {
     await this.cancelPending(existing);
   }
 
-  private canDeliverWhatsApp(
-    enabled: boolean,
-    enabledChannels: string[],
-    context: AppointmentNotificationContext,
-  ): boolean {
-    return (
-      enabled &&
-      enabledChannels.includes(WHATSAPP_CHANNEL) &&
-      context.communicationPreference === WHATSAPP_CHANNEL &&
-      Boolean(context.clientPhone?.trim())
-    );
+  private hasValidPhone(context: AppointmentNotificationContext): boolean {
+    return Boolean(normalizeE164(context.clientPhone));
   }
 
   private async reconcile(
@@ -119,18 +117,19 @@ export class BookingNotificationService {
     existing: ExistingEventRow[],
     desired: DesiredEvent[],
     enabledKeys: Set<NotificationEventKey>,
+    primaryChannel: DeliveryChannel,
     now: Date,
   ): Promise<void> {
     const desiredByKey = new Map(desired.map((d) => [d.eventKey, d]));
 
-    // 1. Insert missing / update rescheduled events.
+    // 1. Insert missing / update rescheduled events on the primary channel.
     for (const item of desired) {
       const match = existing.find(
-        (e) => e.event_key === item.eventKey && e.channel === WHATSAPP_CHANNEL && e.status !== 'cancelled',
+        (e) => e.event_key === item.eventKey && e.channel === primaryChannel && e.status !== 'cancelled',
       );
 
       if (!match) {
-        await this.insertEvent(context, item, now);
+        await this.insertEvent(context, item, primaryChannel, now);
         continue;
       }
 
@@ -139,15 +138,16 @@ export class BookingNotificationService {
       if (match.status === 'queued' && item.eventKey !== NotificationEventKey.BookingConfirmation) {
         const desiredIso = item.scheduledFor.toISOString();
         if (match.scheduled_for !== desiredIso) {
-          await this.updateEventSchedule(match.id, item, context);
+          await this.updateEventSchedule(match.id, item, context, primaryChannel);
         }
       }
     }
 
-    // 2. Cancel queued events whose rule is no longer enabled (toggled off), or whose
-    //    desired window disappeared (e.g. reminder now in the past and not re-created).
+    // 2. Cancel queued primary-channel events whose rule is no longer enabled (toggled off), or
+    //    whose desired window disappeared. Fallback (other-channel) events are owned by the
+    //    dispatcher/callbacks and are left untouched here.
     for (const row of existing) {
-      if (row.status !== 'queued' || row.channel !== WHATSAPP_CHANNEL) continue;
+      if (row.status !== 'queued' || row.channel !== primaryChannel) continue;
       const key = row.event_key as NotificationEventKey;
       const ruleEnabled = enabledKeys.has(key);
       const stillDesired = desiredByKey.has(key) || key === NotificationEventKey.BookingConfirmation;
@@ -160,6 +160,7 @@ export class BookingNotificationService {
   private async insertEvent(
     context: AppointmentNotificationContext,
     item: DesiredEvent,
+    channel: DeliveryChannel,
     now: Date,
   ): Promise<void> {
     const { appointment } = context;
@@ -171,11 +172,11 @@ export class BookingNotificationService {
         location_id: appointment.location_id,
         client_profile_id: appointment.client_profile_id,
         appointment_id: appointment.id,
-        channel: WHATSAPP_CHANNEL,
+        channel,
         event_key: item.eventKey,
         status: 'queued',
         scheduled_for: item.scheduledFor.toISOString(),
-        payload_json: this.buildPayload(context, item, now),
+        payload_json: this.buildPayload(context, item.eventKey, channel, now),
       });
 
     if (error) {
@@ -190,13 +191,14 @@ export class BookingNotificationService {
     eventId: string,
     item: DesiredEvent,
     context: AppointmentNotificationContext,
+    channel: DeliveryChannel,
   ): Promise<void> {
     const { error } = await this.admin
       .schema('comms')
       .from('notification_events')
       .update({
         scheduled_for: item.scheduledFor.toISOString(),
-        payload_json: this.buildPayload(context, item, new Date()),
+        payload_json: this.buildPayload(context, item.eventKey, channel, new Date()),
         locked_until: null,
       })
       .eq('id', eventId)
@@ -206,18 +208,86 @@ export class BookingNotificationService {
 
   private buildPayload(
     context: AppointmentNotificationContext,
-    item: DesiredEvent,
+    eventKey: NotificationEventKey,
+    channel: DeliveryChannel,
     now: Date,
+    extra: Record<string, unknown> = {},
   ): Record<string, unknown> {
     return {
-      event_key: item.eventKey,
-      channel: WHATSAPP_CHANNEL,
+      event_key: eventKey,
+      channel,
       // Snapshot of the appointment time the event was scheduled against — the dispatcher
       // compares this with the live appointment to detect stale (rescheduled) reminders.
       appointment_start: context.appointment.scheduled_start_at,
-      scheduled_for: item.scheduledFor.toISOString(),
       generated_at: now.toISOString(),
+      ...extra,
     };
+  }
+
+  /**
+   * Enqueue an SMS fallback for a notification whose WhatsApp attempt was ineligible or had a real
+   * failure. Never throws (used from delivery/callback paths). Idempotent: the partial unique index
+   * on (appointment_id, event_key, channel='sms') prevents a duplicate SMS for the same failed event.
+   */
+  async enqueueSmsFallbackSafe(appointmentId: string, eventKey: string, reason: string): Promise<void> {
+    try {
+      await this.enqueueSmsFallback(appointmentId, eventKey, reason);
+    } catch (err) {
+      this.logger.error(
+        `enqueueSmsFallback failed for appointment ${appointmentId} / ${eventKey}: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  /** Returns 'queued' when an SMS fallback was enqueued, 'skipped' when SMS is not permitted/time-valid. */
+  async enqueueSmsFallback(
+    appointmentId: string,
+    eventKey: string,
+    reason: string,
+    now: Date = new Date(),
+  ): Promise<'queued' | 'skipped'> {
+    const context = await loadAppointmentContext(this.admin, appointmentId);
+    if (!context) return 'skipped';
+    if (INACTIVE_APPOINTMENT_STATUSES.has(context.appointment.status)) return 'skipped';
+
+    // Stale (rescheduled) or already-passed reminders are no longer time-valid to send.
+    if (REMINDER_EVENT_KEYS.has(eventKey)) {
+      if (new Date(context.appointment.scheduled_start_at).getTime() <= now.getTime()) return 'skipped';
+    }
+
+    const settings = await this.settingsService.getForLocation(
+      context.appointment.business_id,
+      context.appointment.location_id,
+    );
+    const plan = resolveChannelPlan(settings, context.communicationPreference, this.hasValidPhone(context));
+    if (!smsAllowedByPlan(plan)) return 'skipped';
+
+    const { appointment } = context;
+    const { error } = await this.admin
+      .schema('comms')
+      .from('notification_events')
+      .insert({
+        business_id: appointment.business_id,
+        location_id: appointment.location_id,
+        client_profile_id: appointment.client_profile_id,
+        appointment_id: appointment.id,
+        channel: SMS_CHANNEL,
+        event_key: eventKey,
+        status: 'queued',
+        scheduled_for: now.toISOString(),
+        payload_json: this.buildPayload(context, eventKey as NotificationEventKey, SMS_CHANNEL, now, {
+          fallback: true,
+          primary_channel: WHATSAPP_CHANNEL,
+          fallback_reason: reason,
+        }),
+      });
+
+    if (error) {
+      if (isUniqueViolation(error)) return 'skipped'; // SMS fallback already exists — no duplicate.
+      throw new Error(`insert SMS fallback event failed: ${error.message}`);
+    }
+    this.logger.log(`SMS fallback queued for appointment ${appointmentId} / ${eventKey}: ${reason}`);
+    return 'queued';
   }
 
   private async cancelPending(existing: ExistingEventRow[]): Promise<void> {

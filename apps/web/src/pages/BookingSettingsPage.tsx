@@ -306,6 +306,7 @@ function NotificationsSection({
     reminder24hEnabled: false,
     reminder48hEnabled: false,
     reminder1wEnabled: false,
+    smsFallbackEnabled: false,
   };
   const [form, setForm] = useState<LocationCommunicationSettings>(initial ?? fallback);
   const [saving, setSaving] = useState(false);
@@ -328,9 +329,10 @@ function NotificationsSection({
         reminder24hEnabled: form.reminder24hEnabled,
         reminder48hEnabled: form.reminder48hEnabled,
         reminder1wEnabled: form.reminder1wEnabled,
+        smsFallbackEnabled: form.smsFallbackEnabled,
       });
       setForm(updated);
-      setNotice({ tone: 'success', text: 'WhatsApp notification settings saved.' });
+      setNotice({ tone: 'success', text: 'Notification settings saved.' });
     } catch (err) {
       setNotice({ tone: 'danger', text: toErrorMessage(err, 'Could not save notification settings') });
     } finally {
@@ -341,10 +343,11 @@ function NotificationsSection({
   const remindersDisabled = !form.enabled;
 
   return (
-    <Panel title="WhatsApp Notifications">
+    <Panel title="Booking Notifications">
       <p className="mb-3 text-[13px] text-text-secondary">
-        Confirmations and reminders are sent over WhatsApp to clients whose communication preference is WhatsApp.
-        Reminder timings are calculated from the appointment time in the location timezone.
+        Confirmations and reminders are sent over WhatsApp first. If WhatsApp is unavailable or fails, the
+        message can fall back to SMS (when enabled below). Reminder timings are calculated from the appointment
+        time in the location timezone.
       </p>
       {notice ? <Notice tone={notice.tone} text={notice.text} /> : null}
       <form onSubmit={save} className="space-y-4">
@@ -375,6 +378,12 @@ function NotificationsSection({
             label="24 hours before"
             checked={form.reminder24hEnabled}
             onChange={(value) => set('reminder24hEnabled', value)}
+          />
+          <div className="text-[12px] font-medium text-text-secondary pt-1">Fallback channel</div>
+          <Checkbox
+            label="Fall back to SMS when WhatsApp is unavailable or fails"
+            checked={form.smsFallbackEnabled}
+            onChange={(value) => set('smsFallbackEnabled', value)}
           />
         </div>
         <div className="flex justify-end">

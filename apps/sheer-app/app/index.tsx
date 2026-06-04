@@ -15,7 +15,13 @@ export default function EntryRoute() {
     );
   }
 
-  return <Redirect href={auth.user ? '/dashboard' : '/login'} />;
+  if (!auth.user) {
+    return <Redirect href="/login" />;
+  }
+
+  // Stylists have no separate dashboard — their home is the performance screen,
+  // navigated through the bottom tab bar.
+  return <Redirect href={auth.user.role === 'stylist' ? '/performance' : '/dashboard'} />;
 }
 
 const styles = StyleSheet.create({

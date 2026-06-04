@@ -389,13 +389,18 @@ export interface LocationCommunicationSettings {
   locationId: string;
   /** Master switch — when false no confirmations or reminders are scheduled. */
   enabled: boolean;
-  /** Channels permitted for this location. Currently only WhatsApp is delivered. */
+  /** Channels permitted for this location. WhatsApp is the primary delivery channel. */
   enabledChannels: CommunicationPreference[];
-  /** Send a WhatsApp confirmation immediately after a successful booking. */
+  /** Send a confirmation immediately after a successful booking (WhatsApp first). */
   sendBookingConfirmation: boolean;
   reminder24hEnabled: boolean;
   reminder48hEnabled: boolean;
   reminder1wEnabled: boolean;
+  /**
+   * When true, a real WhatsApp failure or WhatsApp-ineligibility falls back to SMS for the same
+   * notification. SMS is never sent while WhatsApp is merely pending/queued.
+   */
+  smsFallbackEnabled: boolean;
 }
 
 export interface UpdateLocationCommunicationSettingsRequest {
@@ -405,6 +410,7 @@ export interface UpdateLocationCommunicationSettingsRequest {
   reminder24hEnabled?: boolean;
   reminder48hEnabled?: boolean;
   reminder1wEnabled?: boolean;
+  smsFallbackEnabled?: boolean;
 }
 
 export interface LocationCommunicationSettingsResponse {
@@ -1243,6 +1249,51 @@ export interface AverageBillKpiResult {
   met: boolean;
 }
 
+/**
+ * Commission tier for the period, by service-revenue multiple of labour cost.
+ *  - `below_3x`        multiple < 3.0          → 0%
+ *  - `tier_3x`         3.0 ≤ multiple < 3.5    → 10%
+ *  - `tier_3_5x`       multiple ≥ 3.5, KPIs not all met → 15%
+ *  - `tier_3_5x_unlocked` multiple ≥ 3.5 AND all KPIs met → 30% (replaces 15%)
+ */
+export type CommissionTier = 'below_3x' | 'tier_3x' | 'tier_3_5x' | 'tier_3_5x_unlocked';
+
+/**
+ * Commission engine output for one stylist over one period (V1 rules).
+ *
+ * Base = service revenue only, where service revenue INCLUDES the formula/colour
+ * charge (product_usage) but EXCLUDES retail and deposits. Tiers are decided by
+ * the multiple of that base over labour cost (hourly rate × hours worked); the
+ * all-KPIs gate only promotes the 3.5x tier from 15% → 30%.
+ */
+export interface CommissionResult {
+  /** Labour cost = hourly rate × hours worked (the 1.0x reference). */
+  laborCostCents: number;
+  /** Service revenue used as the commission base (service + colour, no retail). */
+  commissionBaseCents: number;
+  /** commissionBase ÷ labourCost, e.g. 3.42. 0 when there is no labour cost. */
+  serviceMultiple: number;
+  tier: CommissionTier;
+  /** 0 | 10 | 15 | 30. */
+  ratePercent: number;
+  /** Payable commission = base × rate%. */
+  commissionAmountCents: number;
+  /** True when all-KPIs-met promoted the 3.5x tier from 15% to 30%. */
+  kpiUnlockApplied: boolean;
+  /**
+   * If not already on the top tier, what the next step needs. Helps dashboards
+   * show "X away from the next tier" without re-deriving the rules.
+   */
+  nextTier?: {
+    tier: CommissionTier;
+    ratePercent: number;
+    /** Extra service-revenue (cents) needed to reach the next multiple, if any. */
+    additionalServiceRevenueCents?: number;
+    /** True when the next tier additionally requires all KPIs to be met. */
+    requiresAllKpis?: boolean;
+  };
+}
+
 /** The full KPI snapshot for one stylist over one period. */
 export interface StylistKpiResult {
   staffProfileId: string;
@@ -1276,6 +1327,9 @@ export interface StylistKpiResult {
   /** Commission lock/unlock gate: true only when all three KPIs are met. */
   allKpisMet: boolean;
 
+  /** Commission engine output derived from the targets, revenue and KPI gate. */
+  commission: CommissionResult;
+
   notes: KpiDataNote[];
 }
 
@@ -1298,6 +1352,64 @@ export interface StylistKpiListResponse {
   stylists: StylistKpiResult[];
   /** Stylists whose every KPI is met — i.e. eligible for commission unlock. */
   commissionReadyCount: number;
+}
+
+// ---------------------------------------------------------------------------
+// Retail sales — first-class retail revenue
+//
+// Stylist-attributed product sales with stock deduction. The authoritative
+// source for the retail KPI and (indirectly) commission. Money in cents.
+// ---------------------------------------------------------------------------
+
+export type RetailPaymentMethod = 'cash' | 'card_reader' | 'other';
+
+export interface RetailSale {
+  id: string;
+  businessId: string;
+  locationId: string;
+  staffProfileId?: string;
+  productId: string;
+  productName?: string;
+  clientProfileId?: string;
+  visitId?: string;
+  quantity: number;
+  unitPriceCents: number;
+  totalAmountCents: number;
+  currencyCode: string;
+  paymentMethod?: RetailPaymentMethod;
+  soldAt: string; // ISO
+  notes?: string;
+  createdAt: string; // ISO
+}
+
+export interface RecordRetailSaleRequest {
+  locationId: string;
+  productId: string;
+  /** Selling stylist credited for the retail KPI. Optional for desk sales. */
+  staffProfileId?: string;
+  clientProfileId?: string;
+  visitId?: string;
+  quantity: number;
+  /** Omit to default to the product's configured retail price. */
+  unitPriceCents?: number;
+  paymentMethod?: RetailPaymentMethod;
+  /** ISO timestamp of the sale; defaults to now server-side. */
+  soldAt?: string;
+  notes?: string;
+}
+
+export interface RecordRetailSaleResponse {
+  sale: RetailSale;
+}
+
+export interface RetailSalesListResponse {
+  scope: 'owner' | 'manager';
+  selectedLocationId?: string;
+  rangeStart?: string; // ISO
+  rangeEnd?: string; // ISO
+  sales: RetailSale[];
+  totalAmountCents: number;
+  currencyCode: string;
 }
 
 // ---------------------------------------------------------------------------

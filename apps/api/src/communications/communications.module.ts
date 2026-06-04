@@ -2,7 +2,9 @@ import { Module } from '@nestjs/common';
 import { BookingNotificationService } from './booking-notification.service';
 import { CommunicationSettingsService } from './communication-settings.service';
 import { NotificationDispatchService } from './notification-dispatch.service';
+import { SmsService } from './sms.service';
 import { WhatsAppService } from './whatsapp.service';
+import { WhatsAppTemplateConfig } from './whatsapp-template.config';
 
 /**
  * WhatsApp booking notifications: owner-configurable confirmation + reminder rules,
@@ -16,10 +18,12 @@ import { WhatsAppService } from './whatsapp.service';
 @Module({
   providers: [
     WhatsAppService,
+    SmsService,
+    WhatsAppTemplateConfig,
     CommunicationSettingsService,
     BookingNotificationService,
     NotificationDispatchService,
   ],
-  exports: [CommunicationSettingsService, BookingNotificationService],
+  exports: [CommunicationSettingsService, BookingNotificationService, WhatsAppService],
 })
 export class CommunicationsModule {}

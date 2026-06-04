@@ -4,6 +4,7 @@ import type { AppointmentCompletionResponse, CreateStylistRebookingRequest, Staf
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { AppButton, Card, EmptyState, Screen, SectionHeader } from '@sheer/ui-mobile';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
+import { StylistTabBar } from '../src/navigation/StylistTabBar';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
 
@@ -108,6 +109,8 @@ export default function BookingsScreen() {
       setRebookingLoading(false);
     }
   }
+
+  const showStylistTabs = auth.user?.role === 'stylist';
 
   return (
     <ProtectedScreen allowedRoles={['manager', 'stylist']}>
@@ -226,6 +229,7 @@ export default function BookingsScreen() {
           </Card>
         ) : null}
       </Screen>
+      {showStylistTabs ? <StylistTabBar /> : null}
     </ProtectedScreen>
   );
 }

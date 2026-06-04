@@ -105,6 +105,7 @@ function settings(overrides: Partial<LocationCommunicationSettings> = {}): Locat
     reminder24hEnabled: false,
     reminder48hEnabled: false,
     reminder1wEnabled: false,
+    smsFallbackEnabled: false,
     ...overrides,
   };
 }
@@ -182,6 +183,68 @@ describe('BookingNotificationService.syncBookingNotifications', () => {
 
     await service.syncBookingNotifications('appt-1', NOW);
 
+    expect(state.inserts).toHaveLength(0);
+  });
+
+  it('schedules on the SMS channel when the client prefers SMS and SMS is enabled', async () => {
+    const state = baseState({
+      appointment: { ...baseState().appointment!, communication_preference: 'sms' },
+      client: { first_name: 'Sam', phone: '+447700900123', communication_preference: 'sms' },
+    });
+    const service = makeService(state, settings({ sendBookingConfirmation: true, smsFallbackEnabled: true }));
+
+    await service.syncBookingNotifications('appt-1', NOW);
+
+    expect(state.inserts.map((i) => i.channel)).toEqual(['sms']);
+    expect(state.inserts[0].event_key).toBe('booking_confirmation');
+  });
+
+  it('keeps WhatsApp as the primary channel even when SMS fallback is enabled', async () => {
+    const state = baseState();
+    const service = makeService(state, settings({ sendBookingConfirmation: true, smsFallbackEnabled: true }));
+
+    await service.syncBookingNotifications('appt-1', NOW);
+
+    expect(state.inserts.every((i) => i.channel === 'whatsapp')).toBe(true);
+  });
+});
+
+describe('BookingNotificationService.enqueueSmsFallback', () => {
+  it('queues an SMS fallback event for a failed WhatsApp notification when SMS is allowed', async () => {
+    const state = baseState();
+    const service = makeService(state, settings({ sendBookingConfirmation: true, smsFallbackEnabled: true }));
+
+    const result = await service.enqueueSmsFallback('appt-1', 'booking_confirmation', 'WhatsApp failed', NOW);
+
+    expect(result).toBe('queued');
+    expect(state.inserts).toHaveLength(1);
+    expect(state.inserts[0].channel).toBe('sms');
+    expect(state.inserts[0].event_key).toBe('booking_confirmation');
+    expect((state.inserts[0].payload_json as Record<string, unknown>).fallback).toBe(true);
+  });
+
+  it('does not queue an SMS fallback when SMS fallback is disabled', async () => {
+    const state = baseState();
+    const service = makeService(state, settings({ sendBookingConfirmation: true, smsFallbackEnabled: false }));
+
+    const result = await service.enqueueSmsFallback('appt-1', 'booking_confirmation', 'WhatsApp failed', NOW);
+
+    expect(result).toBe('skipped');
+    expect(state.inserts).toHaveLength(0);
+  });
+
+  it('does not queue an SMS fallback for a reminder once the appointment has passed', async () => {
+    const state = baseState({
+      appointment: {
+        ...baseState().appointment!,
+        scheduled_start_at: new Date(NOW.getTime() - DAY).toISOString(),
+      },
+    });
+    const service = makeService(state, settings({ reminder24hEnabled: true, smsFallbackEnabled: true }));
+
+    const result = await service.enqueueSmsFallback('appt-1', 'appointment_reminder_24h', 'WhatsApp failed', NOW);
+
+    expect(result).toBe('skipped');
     expect(state.inserts).toHaveLength(0);
   });
 });

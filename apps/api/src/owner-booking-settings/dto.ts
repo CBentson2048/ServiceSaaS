@@ -33,6 +33,10 @@ export class UpdateLocationCommunicationSettingsDto {
   @IsOptional()
   @IsBoolean()
   reminder1wEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  smsFallbackEnabled?: boolean;
 }
 
 export class UpsertServiceRequirementRuleDto {

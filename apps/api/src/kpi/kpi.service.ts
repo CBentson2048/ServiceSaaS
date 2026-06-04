@@ -96,16 +96,9 @@ interface VisitRow {
   rebooking_outcomes?: RebookingOutcomeRow[] | RebookingOutcomeRow | null;
 }
 
-interface StockMovementRow {
-  product_id: string;
-  quantity_delta_grams: number | string;
-  created_by: string | null;
-}
-
-interface ProductRetailRow {
-  id: string;
-  size_value: number | string | null;
-  retail_price_cents: number | null;
+interface RetailSaleAmountRow {
+  staff_profile_id: string | null;
+  total_amount_cents: number | string | null;
 }
 
 interface KpiScope {
@@ -494,11 +487,11 @@ export class KpiService {
   }
 
   /**
-   * Retail sales per stylist. Retail is currently only modelled as inventory
-   * `retail_sale` stock movements (no native stylist link, valued from the
-   * product's retail price pro-rated by pack size). We attribute a movement to
-   * the staff profile of the user who recorded it (`created_by`). This is best
-   * effort and flagged on every result — see deferred items.
+   * Retail sales per stylist, from the first-class `billing.retail_sales`
+   * table (real stylist attribution, real sale price, period-safe by sold_at).
+   * Desk sales with no stylist are excluded from per-stylist credit. Degrades
+   * to zero (rather than failing the whole KPI) if the table is unavailable —
+   * e.g. before the 0031 migration has run.
    */
   private async fetchRetailByStaff(
     businessId: string,
@@ -508,47 +501,30 @@ export class KpiService {
   ): Promise<Map<string, { cents: number; hadMovements: boolean }>> {
     const result = new Map<string, { cents: number; hadMovements: boolean }>();
     if (locationIds.length === 0 || staff.length === 0) return result;
+    const staffIds = staff.map((s) => s.id);
 
     const { data, error } = await this.admin
-      .schema('inventory')
-      .from('stock_movements')
-      .select('product_id,quantity_delta_grams,created_by')
+      .schema('billing')
+      .from('retail_sales')
+      .select('staff_profile_id,total_amount_cents')
       .eq('business_id', businessId)
-      .eq('movement_type', 'retail_sale')
       .in('location_id', locationIds)
-      .gte('created_at', window.fromIso)
-      .lt('created_at', window.toIso)
-      .returns<StockMovementRow[]>();
-    if (error) this.fail('fetchRetailMovements', error.message);
-    const movements = data ?? [];
-    if (movements.length === 0) return result;
+      .in('staff_profile_id', staffIds)
+      .gte('sold_at', window.fromIso)
+      .lt('sold_at', window.toIso)
+      .returns<RetailSaleAmountRow[]>();
+    if (error) {
+      this.logger.warn(`fetchRetailSales degraded retail KPI to 0: ${error.message}`);
+      return result;
+    }
 
-    const products = await this.fetchRetailProducts(unique(movements.map((m) => m.product_id)));
-    const staffByUserProfile = new Map(staff.map((s) => [s.user_profile_id, s.id]));
-
-    for (const movement of movements) {
-      const staffId = movement.created_by ? staffByUserProfile.get(movement.created_by) : undefined;
-      if (!staffId) continue; // unattributable to an in-scope stylist
-      const product = products.get(movement.product_id);
-      const revenue = retailRevenueCents(movement.quantity_delta_grams, product);
-      const entry = result.get(staffId) ?? { cents: 0, hadMovements: false };
-      entry.cents += revenue;
-      entry.hadMovements = true;
-      result.set(staffId, entry);
+    for (const row of data ?? []) {
+      if (!row.staff_profile_id) continue;
+      const entry = result.get(row.staff_profile_id) ?? { cents: 0, hadMovements: false };
+      entry.cents += Number(row.total_amount_cents ?? 0);
+      result.set(row.staff_profile_id, entry);
     }
     return result;
-  }
-
-  private async fetchRetailProducts(productIds: string[]): Promise<Map<string, ProductRetailRow>> {
-    if (productIds.length === 0) return new Map();
-    const { data, error } = await this.admin
-      .schema('inventory')
-      .from('products')
-      .select('id,size_value,retail_price_cents')
-      .in('id', productIds)
-      .returns<ProductRetailRow[]>();
-    if (error) this.fail('fetchRetailProducts', error.message);
-    return new Map((data ?? []).map((p) => [p.id, p]));
   }
 
   private fail(operation: string, message: string): never {
@@ -620,21 +596,6 @@ function summarizeRevenue(visits: VisitRow[]): {
   }
 
   return { serviceCents, productUsageCents, paidVisits, currencyCode };
-}
-
-/**
- * Value a retail stock movement: pack units sold (|grams| ÷ pack size) × the
- * product's retail price. Returns 0 when the product lacks a size or price so
- * we never invent revenue.
- */
-function retailRevenueCents(quantityDeltaGrams: number | string, product: ProductRetailRow | undefined): number {
-  if (!product || product.retail_price_cents == null) return 0;
-  const sizeValue = Number(product.size_value ?? 0);
-  if (!Number.isFinite(sizeValue) || sizeValue <= 0) return 0;
-  const grams = Math.abs(Number(quantityDeltaGrams ?? 0));
-  if (!Number.isFinite(grams) || grams <= 0) return 0;
-  const units = grams / sizeValue;
-  return Math.round(units * product.retail_price_cents);
 }
 
 function staffDisplayName(row: StaffProfileRow): string {

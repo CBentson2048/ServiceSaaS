@@ -386,8 +386,11 @@ export class PublicBookingService {
     return { location, services, totalDurationMinutes, slots };
   }
 
-  async createAppointment(_input: CreatePublicBookingRequest): Promise<CreatePublicBookingResponse> {
-    throw new BadRequestException('Use /public/booking/start-checkout to create payment-backed bookings');
+  async createAppointment(input: CreatePublicBookingRequest): Promise<CreatePublicBookingResponse> {
+    return this.confirmDepositFreeBooking({
+      ...input,
+      source: input.source ?? 'public_booking_flow',
+    });
   }
 
   async createMobileAppointment(
@@ -395,6 +398,17 @@ export class PublicBookingService {
     input: MobileBookingConfirmRequest,
   ): Promise<CreatePublicBookingResponse> {
     const request = await this.toAuthenticatedBookingRequest(actor, input);
+    return this.confirmDepositFreeBooking(request);
+  }
+
+  /**
+   * Confirms a booking directly, without a Stripe payment step. Only valid when none of the
+   * requested services require an upfront deposit — callers that may carry a deposit must use
+   * the start-checkout flow instead. Shared by the public web flow and the mobile app.
+   */
+  private async confirmDepositFreeBooking(
+    request: CreatePublicBookingRequest,
+  ): Promise<CreatePublicBookingResponse> {
     const context = await this.resolveBookingContext(request);
     const depositAmount = calculateDepositAmount(context.services);
     if (depositAmount > 0) {

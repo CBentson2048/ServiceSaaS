@@ -12,6 +12,8 @@
 
 import type {
   AverageBillKpiResult,
+  CommissionResult,
+  CommissionTier,
   KpiDataNote,
   KpiPeriod,
   RebookingKpiResult,
@@ -27,6 +29,21 @@ export const SERVICE_TARGET_MULTIPLIER = 3;
 export const RETAIL_TARGET_RATIO = 0.1;
 /** Rebooking KPI passes at or above this percentage. */
 export const REBOOKING_THRESHOLD_PERCENT = 50;
+
+/**
+ * Commission tiers (V1). The "multiple" is service-revenue base ÷ labour cost
+ * (hourly rate × hours worked). Note the service target is 3× labour cost, so
+ * hitting 3.0x === hitting the service target.
+ *  - < 3.0x              → 0%
+ *  - 3.0x ≤ m < 3.5x     → 10%
+ *  - m ≥ 3.5x, KPIs not all met → 15%
+ *  - m ≥ 3.5x, all KPIs met     → 30% (the all-KPIs gate only promotes 15 → 30)
+ */
+export const COMMISSION_TIER_3X = 3;
+export const COMMISSION_TIER_3_5X = 3.5;
+export const COMMISSION_RATE_TIER_3X = 10;
+export const COMMISSION_RATE_TIER_3_5X = 15;
+export const COMMISSION_RATE_TIER_UNLOCKED = 30;
 /**
  * Shift statuses that count as rostered working time. Mirrors the existing
  * frontend convention (DayCalendarBoard treats any non-cancelled shift as
@@ -262,6 +279,95 @@ function progressPercent(actualCents: number, targetCents: number): number {
   return Math.round((Math.max(0, actualCents) / targetCents) * 100);
 }
 
+// --- Commission engine ------------------------------------------------------
+
+/**
+ * Commission for the period (V1 rules). `commissionBaseCents` is the service
+ * revenue base (service + colour, excluding retail/deposits); `laborCostCents`
+ * is hourly rate × hours. The all-KPIs gate only promotes the 3.5x tier
+ * (15% → 30%); it never gates the 10% or 15% tiers.
+ */
+export function computeCommission(input: {
+  laborCostCents: number;
+  commissionBaseCents: number;
+  allKpisMet: boolean;
+}): CommissionResult {
+  const laborCostCents = Math.max(0, Math.round(input.laborCostCents));
+  const commissionBaseCents = Math.max(0, Math.round(input.commissionBaseCents));
+  const serviceMultiple =
+    laborCostCents > 0 ? Math.round((commissionBaseCents / laborCostCents) * 100) / 100 : 0;
+
+  // Integer-safe threshold tests (avoid float drift at exactly 3.0x / 3.5x).
+  const meets3x = laborCostCents > 0 && commissionBaseCents * 10 >= 30 * laborCostCents;
+  const meets35x = laborCostCents > 0 && commissionBaseCents * 2 >= 7 * laborCostCents;
+
+  let tier: CommissionTier;
+  let ratePercent: number;
+  let kpiUnlockApplied = false;
+  if (!meets3x) {
+    tier = 'below_3x';
+    ratePercent = 0;
+  } else if (!meets35x) {
+    tier = 'tier_3x';
+    ratePercent = COMMISSION_RATE_TIER_3X;
+  } else if (input.allKpisMet) {
+    tier = 'tier_3_5x_unlocked';
+    ratePercent = COMMISSION_RATE_TIER_UNLOCKED;
+    kpiUnlockApplied = true;
+  } else {
+    tier = 'tier_3_5x';
+    ratePercent = COMMISSION_RATE_TIER_3_5X;
+  }
+
+  const commissionAmountCents = Math.round((commissionBaseCents * ratePercent) / 100);
+
+  return {
+    laborCostCents,
+    commissionBaseCents,
+    serviceMultiple,
+    tier,
+    ratePercent,
+    commissionAmountCents,
+    kpiUnlockApplied,
+    nextTier: computeNextTier(tier, laborCostCents, commissionBaseCents, input.allKpisMet),
+  };
+}
+
+/** Extra service revenue (cents) needed to reach a target multiple of labour cost. */
+function additionalToMultiple(targetMultiple: number, laborCostCents: number, baseCents: number): number {
+  if (laborCostCents <= 0) return 0;
+  return Math.max(0, Math.ceil(targetMultiple * laborCostCents) - baseCents);
+}
+
+function computeNextTier(
+  tier: CommissionTier,
+  laborCostCents: number,
+  baseCents: number,
+  allKpisMet: boolean,
+): CommissionResult['nextTier'] {
+  if (laborCostCents <= 0) return undefined;
+  if (tier === 'below_3x') {
+    return {
+      tier: 'tier_3x',
+      ratePercent: COMMISSION_RATE_TIER_3X,
+      additionalServiceRevenueCents: additionalToMultiple(COMMISSION_TIER_3X, laborCostCents, baseCents),
+    };
+  }
+  if (tier === 'tier_3x') {
+    return {
+      tier: allKpisMet ? 'tier_3_5x_unlocked' : 'tier_3_5x',
+      ratePercent: allKpisMet ? COMMISSION_RATE_TIER_UNLOCKED : COMMISSION_RATE_TIER_3_5X,
+      additionalServiceRevenueCents: additionalToMultiple(COMMISSION_TIER_3_5X, laborCostCents, baseCents),
+      requiresAllKpis: false,
+    };
+  }
+  if (tier === 'tier_3_5x') {
+    // Already at ≥3.5x; the only remaining gain is the KPI unlock to 30%.
+    return { tier: 'tier_3_5x_unlocked', ratePercent: COMMISSION_RATE_TIER_UNLOCKED, requiresAllKpis: true };
+  }
+  return undefined; // tier_3_5x_unlocked is the top tier
+}
+
 // --- Aggregation ------------------------------------------------------------
 
 /** Build the full per-stylist KPI snapshot from loaded inputs. */
@@ -279,6 +385,14 @@ export function aggregateStylistKpi(input: StylistKpiInputs): StylistKpiResult {
   const rebooking = computeRebookingKpi(input);
   const retail = computeRetailKpi(retailTargetCents, actualRetailRevenueCents, hasHours);
   const averageBill = computeAverageBillKpi(toCents(input.averageBillBenchmark), totalBillCents, input.paidVisits);
+
+  const allKpisMet = rebooking.met && retail.met && averageBill.met;
+
+  // Commission base = service revenue including colour (product_usage), per V1
+  // rules — retail and deposits are excluded from the direct base.
+  const laborCostCents = Math.round(hourlyRateCents * hoursWorked);
+  const commissionBaseCents = actualServiceRevenueCents + Math.max(0, input.productUsageRevenueCents);
+  const commission = computeCommission({ laborCostCents, commissionBaseCents, allKpisMet });
 
   const notes: KpiDataNote[] = [];
   if (!hasHours) notes.push('no_hours_worked');
@@ -306,7 +420,8 @@ export function aggregateStylistKpi(input: StylistKpiInputs): StylistKpiResult {
     rebookingKpiMet: rebooking.met,
     retailKpiMet: retail.met,
     averageBillKpiMet: averageBill.met,
-    allKpisMet: rebooking.met && retail.met && averageBill.met,
+    allKpisMet,
+    commission,
     notes,
   };
 }

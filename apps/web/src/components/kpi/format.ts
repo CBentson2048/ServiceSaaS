@@ -1,4 +1,4 @@
-import type { KpiDataNote } from '@sheer/domain';
+import type { CommissionTier, KpiDataNote } from '@sheer/domain';
 
 /**
  * Formatting helpers shared by the KPI components. All KPI money values arrive
@@ -22,6 +22,22 @@ export function formatMoney(cents: number, currencyCode: string): string {
 export function clampPercent(percent: number): number {
   if (!Number.isFinite(percent)) return 0;
   return Math.max(0, Math.min(100, percent));
+}
+
+/** Short label for a commission tier. */
+export function tierLabel(tier: CommissionTier): string {
+  switch (tier) {
+    case 'below_3x':
+      return 'Below 3×';
+    case 'tier_3x':
+      return '3× (10%)';
+    case 'tier_3_5x':
+      return '3.5× (15%)';
+    case 'tier_3_5x_unlocked':
+      return '3.5× unlocked (30%)';
+    default:
+      return tier;
+  }
 }
 
 /** Human-readable label for a KPI data-quality note flag. */

@@ -4,7 +4,7 @@ import type { StylistKpiResult } from '@sheer/domain';
 import { AppText, StatusBadge } from '../../design';
 import { Modal } from '../team/Modal';
 import { KpiProgressBar } from './KpiProgressBar';
-import { formatMoney, noteLabel } from './format';
+import { formatMoney, noteLabel, tierLabel } from './format';
 
 /**
  * Full per-stylist KPI breakdown — the drill-down behind a Performance card.
@@ -44,6 +44,31 @@ export function StylistKpiDetailModal({
             tone={stylist.allKpisMet ? 'success' : 'neutral'}
           />
         </div>
+
+        {/* Commission — the headline outcome */}
+        <Section title="Commission">
+          <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-4">
+            <Stat label="Multiple" value={`${stylist.commission.serviceMultiple.toFixed(2)}×`} />
+            <Stat label="Tier" value={tierLabel(stylist.commission.tier)} />
+            <Stat label="Rate" value={`${stylist.commission.ratePercent}%`} />
+            <Stat
+              label="Commission"
+              value={formatMoney(stylist.commission.commissionAmountCents, currencyCode)}
+              tone={stylist.commission.ratePercent > 0 ? 'success' : undefined}
+            />
+            <Stat label="Service base" value={formatMoney(stylist.commission.commissionBaseCents, currencyCode)} />
+            <Stat label="Labour cost" value={formatMoney(stylist.commission.laborCostCents, currencyCode)} />
+          </div>
+          {stylist.commission.nextTier ? (
+            <AppText as="div" variant="micro" tone="muted" className="mt-2">
+              Next: {stylist.commission.nextTier.ratePercent}%
+              {stylist.commission.nextTier.additionalServiceRevenueCents
+                ? ` — ${formatMoney(stylist.commission.nextTier.additionalServiceRevenueCents, currencyCode)} more service revenue`
+                : ''}
+              {stylist.commission.nextTier.requiresAllKpis ? ' once all KPIs are met' : ''}.
+            </AppText>
+          ) : null}
+        </Section>
 
         {/* Targets */}
         <Section title="Targets">

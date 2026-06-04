@@ -8,13 +8,12 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { Redirect, router } from 'expo-router';
 import type {
   CrmVisitSummary,
   MobileClientDashboardResponse,
   MobileManagerDashboardResponse,
   MobileOwnerDashboardResponse,
-  MobileStylistDashboardResponse,
   StaffBookingSummary,
 } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
@@ -62,6 +61,12 @@ export default function DashboardScreen() {
 
   const name = firstName(user?.profile.fullName);
 
+  // Stylists no longer have a dashboard — their home is the performance screen,
+  // reached through the bottom tab bar.
+  if (user?.role === 'stylist') {
+    return <Redirect href="/performance" />;
+  }
+
   return (
     <ProtectedScreen allowedRoles={['owner', 'manager', 'stylist', 'client']}>
       <SafeAreaView style={s.screen} edges={['top']}>
@@ -105,8 +110,6 @@ export default function DashboardScreen() {
             </View>
           ) : dashboard?.role === 'client' ? (
             <ClientDashboard dashboard={dashboard} />
-          ) : dashboard?.role === 'stylist' ? (
-            <StylistDashboard dashboard={dashboard} />
           ) : dashboard?.role === 'manager' ? (
             <ManagerDashboard dashboard={dashboard} />
           ) : dashboard?.role === 'owner' ? (
@@ -297,40 +300,6 @@ function VisitRow({ visit, isLast }: { visit: CrmVisitSummary; isLast: boolean }
 }
 
 // ── Staff dashboards (unchanged logic, upgraded style) ────────────────────────
-
-function StylistDashboard({ dashboard }: { dashboard: MobileStylistDashboardResponse }) {
-  return (
-    <>
-      {dashboard.today.nextAppointment ? (
-        <StaffAppointmentCard appointment={dashboard.today.nextAppointment} featured />
-      ) : (
-        <View style={s.emptyApptCard}>
-          <Text style={s.emptyApptTitle}>No appointments today</Text>
-          <Text style={s.emptyApptBody}>Enjoy the quiet moment.</Text>
-        </View>
-      )}
-
-      <View style={s.metricRow}>
-        <MetricTile label="Today" value={String(dashboard.today.totalAppointments)} />
-      </View>
-
-      <SectionRow title="Today's schedule" />
-      <StaffAppointmentList
-        appointments={dashboard.today.appointments}
-        emptyTitle="No appointments scheduled"
-        emptyBody="Assigned appointments will appear here."
-      />
-
-      <SectionRow title="Quick actions" />
-      <View style={s.quickGrid}>
-        <QuickAction icon="P" title="Profile" subtitle="Your details" onPress={() => router.push('/profile')} />
-        <QuickAction icon="S" title="Schedule" subtitle="Today's bookings" onPress={() => router.push('/bookings')} />
-        <QuickAction icon="R" title="Rota" subtitle="Your week" onPress={() => router.push('/rota')} />
-        <QuickAction icon="K" title="Performance" subtitle="Your stats" onPress={() => router.push('/performance')} />
-      </View>
-    </>
-  );
-}
 
 function ManagerDashboard({ dashboard }: { dashboard: MobileManagerDashboardResponse }) {
   return (

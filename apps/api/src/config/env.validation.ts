@@ -117,6 +117,54 @@ export class EnvConfig {
   @IsString()
   TWILIO_WHATSAPP_FROM?: string;
 
+  /**
+   * Twilio Messaging Service SID (`MGxx...`). Preferred sender for both WhatsApp and SMS — when set,
+   * messages go out via the Messaging Service (sender pool, compliance) instead of a single number.
+   */
+  @IsOptional()
+  @IsString()
+  TWILIO_MESSAGING_SERVICE_SID?: string;
+
+  /** Twilio SMS sender number, e.g. `+441234567890`. Fallback sender for SMS when no Messaging Service. */
+  @IsOptional()
+  @IsString()
+  TWILIO_SMS_FROM?: string;
+
+  /** Approved Twilio Content template SID (`HXxx...`) for the booking confirmation WhatsApp. */
+  @IsOptional()
+  @IsString()
+  TWILIO_WHATSAPP_CONFIRMATION_CONTENT_SID?: string;
+
+  /** Approved Twilio Content template SID (`HXxx...`) for the 24-hour reminder WhatsApp. */
+  @IsOptional()
+  @IsString()
+  TWILIO_WHATSAPP_REMINDER_24H_CONTENT_SID?: string;
+
+  /** Approved Twilio Content template SID (`HXxx...`) for the 48-hour reminder WhatsApp. */
+  @IsOptional()
+  @IsString()
+  TWILIO_WHATSAPP_REMINDER_48H_CONTENT_SID?: string;
+
+  /** Approved Twilio Content template SID (`HXxx...`) for the 1-week reminder WhatsApp (optional). */
+  @IsOptional()
+  @IsString()
+  TWILIO_WHATSAPP_REMINDER_1W_CONTENT_SID?: string;
+
+  /**
+   * Public URL Twilio posts delivery-status callbacks to, e.g.
+   * `https://api.yourdomain.com/api/twilio/messaging/status`. Passed as `StatusCallback` on every
+   * send so `comms.message_logs` can advance queued → sent → delivered/failed/undelivered/read.
+   * Also used to verify the inbound `X-Twilio-Signature` when behind a proxy that rewrites Host.
+   */
+  @IsOptional()
+  @IsString()
+  TWILIO_STATUS_CALLBACK_URL?: string;
+
+  /** Public URL configured in Twilio for inbound WhatsApp replies (used for signature verification behind a proxy). */
+  @IsOptional()
+  @IsString()
+  TWILIO_INBOUND_CALLBACK_URL?: string;
+
   /** Set to `false` to disable the background notification dispatcher (e.g. in tests/CI). Defaults on. */
   @IsOptional()
   @IsString()

@@ -17,7 +17,7 @@ interface AuthState {
   status: 'bootstrapping' | 'authenticated' | 'anonymous';
   user: AuthUser | null;
   session: AuthSession | null;
-  signIn: (email: string, password: string) => Promise<void>;
+  signIn: (email: string, password: string) => Promise<AuthUser>;
   signOut: () => Promise<void>;
 }
 
@@ -85,6 +85,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (email: string, password: string) => {
       const response = await authApi.login(email, password);
       await persistSession(response.session, response.user);
+      return response.user;
     },
     [persistSession],
   );

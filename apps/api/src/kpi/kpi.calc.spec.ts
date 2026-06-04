@@ -1,6 +1,7 @@
 import {
   aggregateStylistKpi,
   computeAverageBillKpi,
+  computeCommission,
   computeNetWorkedHours,
   computeRebookingKpi,
   computeRetailKpi,
@@ -254,6 +255,75 @@ describe('aggregation — all_kpis_met', () => {
     expect(result.notes).toEqual(
       expect.arrayContaining(['no_hours_worked', 'no_completed_visits', 'missing_benchmark']),
     );
+  });
+});
+
+describe('commission engine', () => {
+  const LABOR = 100_000; // £1000 labour cost (rate × hours)
+
+  it('below 3.0x → 0%', () => {
+    const c = computeCommission({ laborCostCents: LABOR, commissionBaseCents: 299_999, allKpisMet: true });
+    expect(c.tier).toBe('below_3x');
+    expect(c.ratePercent).toBe(0);
+    expect(c.commissionAmountCents).toBe(0);
+  });
+
+  it('exactly 3.0x → 10%', () => {
+    const c = computeCommission({ laborCostCents: LABOR, commissionBaseCents: 300_000, allKpisMet: false });
+    expect(c.tier).toBe('tier_3x');
+    expect(c.ratePercent).toBe(10);
+    expect(c.commissionAmountCents).toBe(30_000);
+  });
+
+  it('between 3.0x and 3.5x → 10% (KPIs do not change it)', () => {
+    const withoutKpis = computeCommission({ laborCostCents: LABOR, commissionBaseCents: 340_000, allKpisMet: false });
+    const withKpis = computeCommission({ laborCostCents: LABOR, commissionBaseCents: 340_000, allKpisMet: true });
+    expect(withoutKpis.ratePercent).toBe(10);
+    expect(withKpis.ratePercent).toBe(10); // all-KPIs gate must not affect the 10% tier
+  });
+
+  it('at/above 3.5x without all KPIs → 15%', () => {
+    const c = computeCommission({ laborCostCents: LABOR, commissionBaseCents: 350_000, allKpisMet: false });
+    expect(c.tier).toBe('tier_3_5x');
+    expect(c.ratePercent).toBe(15);
+    expect(c.commissionAmountCents).toBe(52_500);
+    expect(c.kpiUnlockApplied).toBe(false);
+    expect(c.nextTier).toEqual(
+      expect.objectContaining({ tier: 'tier_3_5x_unlocked', ratePercent: 30, requiresAllKpis: true }),
+    );
+  });
+
+  it('at/above 3.5x with all KPIs → 30% (replaces 15%)', () => {
+    const c = computeCommission({ laborCostCents: LABOR, commissionBaseCents: 350_000, allKpisMet: true });
+    expect(c.tier).toBe('tier_3_5x_unlocked');
+    expect(c.ratePercent).toBe(30);
+    expect(c.commissionAmountCents).toBe(105_000);
+    expect(c.kpiUnlockApplied).toBe(true);
+    expect(c.nextTier).toBeUndefined();
+  });
+
+  it('no labour cost → 0% and no commission', () => {
+    const c = computeCommission({ laborCostCents: 0, commissionBaseCents: 999_999, allKpisMet: true });
+    expect(c.tier).toBe('below_3x');
+    expect(c.ratePercent).toBe(0);
+    expect(c.serviceMultiple).toBe(0);
+  });
+
+  it('aggregate commission base = service + colour (product_usage), excludes retail', () => {
+    // labour = £20 × 40h = £800 = 80000c; base = 300000 + 60000 = 360000 (4.5x); all KPIs met
+    const result = aggregateStylistKpi(baseInputs({ retailSalesCents: 999_999 }));
+    expect(result.commission.laborCostCents).toBe(80_000);
+    expect(result.commission.commissionBaseCents).toBe(360_000); // independent of retail
+    expect(result.commission.serviceMultiple).toBe(4.5);
+    expect(result.commission.tier).toBe('tier_3_5x_unlocked');
+    expect(result.commission.commissionAmountCents).toBe(108_000);
+  });
+
+  it('aggregate: failing a KPI at ≥3.5x drops 30% → 15%', () => {
+    const result = aggregateStylistKpi(baseInputs({ retailSalesCents: 0 })); // retail KPI fails
+    expect(result.allKpisMet).toBe(false);
+    expect(result.commission.tier).toBe('tier_3_5x');
+    expect(result.commission.ratePercent).toBe(15);
   });
 });
 

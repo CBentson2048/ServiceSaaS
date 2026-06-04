@@ -38,6 +38,7 @@ describe('settingsToMetadata', () => {
         reminder24hEnabled: true,
         reminder48hEnabled: false,
         reminder1wEnabled: true,
+        smsFallbackEnabled: false,
       },
       null,
     );
@@ -58,6 +59,7 @@ describe('settingsToMetadata', () => {
         reminder24hEnabled: false,
         reminder48hEnabled: false,
         reminder1wEnabled: false,
+        smsFallbackEnabled: false,
       },
       { sendCancellationNotice: true, sendWaitlistNotifications: true },
     );

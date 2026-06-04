@@ -22,8 +22,17 @@ export const REMINDER_OFFSET_HOURS = {
   [NotificationEventKey.Reminder1w]: 168,
 } as const;
 
-/** The only channel this module physically delivers on today. */
+/** Primary delivery channel. */
 export const WHATSAPP_CHANNEL = 'whatsapp' as const;
+/** Fallback delivery channel. */
+export const SMS_CHANNEL = 'sms' as const;
+
+/** Reminder event keys (everything except the booking confirmation). Shared scheduling/dispatch guard. */
+export const REMINDER_EVENT_KEYS = new Set<string>([
+  NotificationEventKey.Reminder24h,
+  NotificationEventKey.Reminder48h,
+  NotificationEventKey.Reminder1w,
+]);
 
 export const DEFAULT_COMMUNICATION_SETTINGS: Omit<LocationCommunicationSettings, 'locationId'> = {
   enabled: false,
@@ -32,6 +41,7 @@ export const DEFAULT_COMMUNICATION_SETTINGS: Omit<LocationCommunicationSettings,
   reminder24hEnabled: false,
   reminder48hEnabled: false,
   reminder1wEnabled: false,
+  smsFallbackEnabled: false,
 };
 
 /**
@@ -46,6 +56,7 @@ export interface CommunicationMetadata {
   sendCancellationNotice?: boolean;
   sendWaitlistNotifications?: boolean;
   reminderOffsetsHours?: number[];
+  smsFallbackEnabled?: boolean;
 }
 
 /** Map the persisted JSON metadata onto the typed, toggle-oriented settings DTO. */
@@ -66,6 +77,7 @@ export function metadataToSettings(
     reminder24hEnabled: offsets.has(REMINDER_OFFSET_HOURS[NotificationEventKey.Reminder24h]),
     reminder48hEnabled: offsets.has(REMINDER_OFFSET_HOURS[NotificationEventKey.Reminder48h]),
     reminder1wEnabled: offsets.has(REMINDER_OFFSET_HOURS[NotificationEventKey.Reminder1w]),
+    smsFallbackEnabled: metadata?.smsFallbackEnabled ?? DEFAULT_COMMUNICATION_SETTINGS.smsFallbackEnabled,
   };
 }
 
@@ -85,6 +97,7 @@ export function settingsToMetadata(
     enabledChannels: settings.enabledChannels,
     sendBookingConfirmation: settings.sendBookingConfirmation,
     reminderOffsetsHours: offsets,
+    smsFallbackEnabled: settings.smsFallbackEnabled,
   };
 }
 
