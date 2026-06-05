@@ -43,6 +43,7 @@ export const DEFAULT_COMMUNICATION_SETTINGS: Omit<LocationCommunicationSettings,
   reminder24hEnabled: false,
   reminder48hEnabled: false,
   reminder1wEnabled: false,
+  emailFallbackEnabled: false,
   smsFallbackEnabled: false,
 };
 
@@ -58,6 +59,7 @@ export interface CommunicationMetadata {
   sendCancellationNotice?: boolean;
   sendWaitlistNotifications?: boolean;
   reminderOffsetsHours?: number[];
+  emailFallbackEnabled?: boolean;
   smsFallbackEnabled?: boolean;
 }
 
@@ -79,6 +81,7 @@ export function metadataToSettings(
     reminder24hEnabled: offsets.has(REMINDER_OFFSET_HOURS[NotificationEventKey.Reminder24h]),
     reminder48hEnabled: offsets.has(REMINDER_OFFSET_HOURS[NotificationEventKey.Reminder48h]),
     reminder1wEnabled: offsets.has(REMINDER_OFFSET_HOURS[NotificationEventKey.Reminder1w]),
+    emailFallbackEnabled: metadata?.emailFallbackEnabled ?? DEFAULT_COMMUNICATION_SETTINGS.emailFallbackEnabled,
     smsFallbackEnabled: metadata?.smsFallbackEnabled ?? DEFAULT_COMMUNICATION_SETTINGS.smsFallbackEnabled,
   };
 }
@@ -99,6 +102,7 @@ export function settingsToMetadata(
     enabledChannels: settings.enabledChannels,
     sendBookingConfirmation: settings.sendBookingConfirmation,
     reminderOffsetsHours: offsets,
+    emailFallbackEnabled: settings.emailFallbackEnabled,
     smsFallbackEnabled: settings.smsFallbackEnabled,
   };
 }

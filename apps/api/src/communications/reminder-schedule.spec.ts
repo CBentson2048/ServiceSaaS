@@ -13,6 +13,7 @@ function settings(overrides: Partial<LocationCommunicationSettings> = {}): Locat
     reminder24hEnabled: false,
     reminder48hEnabled: false,
     reminder1wEnabled: false,
+    emailFallbackEnabled: false,
     smsFallbackEnabled: false,
     ...overrides,
   };

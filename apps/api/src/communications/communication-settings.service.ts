@@ -67,6 +67,7 @@ export class CommunicationSettingsService {
       reminder24hEnabled: input.reminder24hEnabled ?? current.reminder24hEnabled,
       reminder48hEnabled: input.reminder48hEnabled ?? current.reminder48hEnabled,
       reminder1wEnabled: input.reminder1wEnabled ?? current.reminder1wEnabled,
+      emailFallbackEnabled: input.emailFallbackEnabled ?? current.emailFallbackEnabled,
       smsFallbackEnabled: input.smsFallbackEnabled ?? current.smsFallbackEnabled,
     };
 

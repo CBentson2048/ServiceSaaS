@@ -397,8 +397,15 @@ export interface LocationCommunicationSettings {
   reminder48hEnabled: boolean;
   reminder1wEnabled: boolean;
   /**
-   * When true, a real WhatsApp failure or WhatsApp-ineligibility falls back to SMS for the same
-   * notification. SMS is never sent while WhatsApp is merely pending/queued.
+   * Secondary fallback. When true, a real WhatsApp failure or WhatsApp-ineligibility falls back to
+   * **email** for the same notification (when the client has a valid email). Email is never sent
+   * while WhatsApp is merely pending/queued.
+   */
+  emailFallbackEnabled: boolean;
+  /**
+   * Last-resort fallback. When true, a notification falls back to **SMS** once the channels before
+   * it in the WhatsApp → Email → SMS chain are ineligible or have a real failure. SMS is never sent
+   * while a prior channel is merely pending/queued.
    */
   smsFallbackEnabled: boolean;
 }
@@ -410,6 +417,7 @@ export interface UpdateLocationCommunicationSettingsRequest {
   reminder24hEnabled?: boolean;
   reminder48hEnabled?: boolean;
   reminder1wEnabled?: boolean;
+  emailFallbackEnabled?: boolean;
   smsFallbackEnabled?: boolean;
 }
 

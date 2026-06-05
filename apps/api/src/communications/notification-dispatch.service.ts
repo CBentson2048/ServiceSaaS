@@ -12,7 +12,13 @@ import {
   type AppointmentNotificationContext,
 } from './appointment-context';
 import { BookingNotificationService } from './booking-notification.service';
-import { resolveChannelPlan, smsAllowedByPlan, type ChannelPlan, type DeliveryChannel } from './channel-policy';
+import {
+  channelAllowedByPlan,
+  nextChannelAfter,
+  resolveChannelPlan,
+  type ChannelPlan,
+  type DeliveryChannel,
+} from './channel-policy';
 import { CommunicationSettingsService } from './communication-settings.service';
 import {
   EMAIL_CHANNEL,
@@ -53,23 +59,27 @@ interface DueEventRow {
 }
 
 /**
- * Background poller that delivers due `comms.notification_events` over WhatsApp (primary) and SMS
- * (fallback).
+ * Background poller that delivers due `comms.notification_events` over the WhatsApp → Email → SMS
+ * chain.
  *
  * Robustness model (no external queue/cron dependency):
  *  - Concurrency / restart safety: each tick claims events with an atomic `status='queued'` +
  *    `locked_until` guarded UPDATE, so only one worker (or tick) owns an event at a time.
  *  - Idempotency: an event transitions queued → sent exactly once; the partial unique index
- *    (appointment_id, event_key, channel) prevents duplicate events — including duplicate SMS
- *    fallbacks for the same failed WhatsApp notification.
+ *    (appointment_id, event_key, channel) prevents duplicate events — including duplicate fallbacks
+ *    for the same failed notification.
  *  - Stale protection: cancelled/no-show or rescheduled (start time moved) appointments cancel the
  *    event instead of sending.
- *  - Channel policy: WhatsApp is attempted first. SMS fallback is enqueued only when WhatsApp is
- *    clearly ineligible/unavailable (sync) or has a real failure — never while WhatsApp is merely
- *    pending. A "sent" (accepted-but-undelivered) WhatsApp message does NOT trigger SMS here; the
- *    async status callback enqueues the fallback if Twilio later reports failed/undelivered.
+ *  - Channel policy: the primary channel is attempted first. A fallback (the next channel in the
+ *    WhatsApp → Email → SMS chain) is enqueued only when the current channel is clearly
+ *    ineligible/unavailable (sync) or has a real failure — never while it is merely pending. A
+ *    "sent" (accepted-but-undelivered) message does NOT trigger a fallback here; the async status
+ *    callback (Twilio) or bounce webhook (Resend) enqueues the fallback if the provider later
+ *    reports a real failure.
+ *  - Catch-up: each tick drains the due backlog in batches (bounded by `maxDrainBatches`) so reminders
+ *    queued during downtime fire promptly on the next tick rather than one batch per interval.
  *  - Retries: transient failures requeue with backoff up to `maxAttempts`, then terminate as
- *    `failed` (and, for WhatsApp, enqueue the SMS fallback). Delivery is never faked.
+ *    `failed` (and escalate to the next channel in the chain). Delivery is never faked.
  */
 @Injectable()
 export class NotificationDispatchService implements OnModuleInit, OnModuleDestroy {
@@ -80,6 +90,7 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
   private readonly intervalMs: number;
   private readonly batchSize: number;
   private readonly maxAttempts: number;
+  private readonly maxDrainBatches: number;
   private static readonly LOCK_TTL_MS = 5 * 60 * 1000;
   private static readonly RETRY_BACKOFF_MS = 5 * 60 * 1000;
   private static readonly EVENT_COLUMNS =
@@ -107,6 +118,9 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
     this.intervalMs = clampInt(config.get('COMMS_DISPATCH_INTERVAL_MS'), 60_000, 5_000, 3_600_000);
     this.batchSize = clampInt(config.get('COMMS_DISPATCH_BATCH_SIZE'), 25, 1, 200);
     this.maxAttempts = clampInt(config.get('COMMS_DISPATCH_MAX_ATTEMPTS'), 3, 1, 10);
+    // How many full batches a single tick may drain before yielding to the next interval. Lets a
+    // backlog accumulated during downtime clear quickly without starving the event loop.
+    this.maxDrainBatches = clampInt(config.get('COMMS_DISPATCH_MAX_DRAIN_BATCHES'), 20, 1, 1_000);
   }
 
   onModuleInit(): void {
@@ -124,17 +138,29 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
     this.timer = null;
   }
 
-  /** Process one batch of due events. Public so it can be triggered/tested directly. */
+  /** Drain the due-event backlog (in bounded batches). Public so it can be triggered/tested directly. */
   async tick(): Promise<void> {
     if (this.running) return; // prevent overlapping ticks
     // log-only mode for every channel — don't churn the queue
     if (!this.whatsapp.isEnabled && !this.sms.isEnabled && !this.email.isEnabled) return;
     this.running = true;
     try {
-      const due = await this.fetchDueCandidates();
-      for (const candidate of due) {
-        const claimed = await this.claim(candidate);
-        if (claimed) await this.process(claimed);
+      // Keep processing full batches so a backlog (e.g. accumulated during downtime, or lazy
+      // fallback events queued earlier in this same drain) is cleared promptly rather than one
+      // batch per interval. Bounded by maxDrainBatches to avoid monopolising the event loop.
+      for (let pass = 0; pass < this.maxDrainBatches; pass++) {
+        const due = await this.fetchDueCandidates();
+        if (due.length === 0) break;
+        let processed = 0;
+        for (const candidate of due) {
+          const claimed = await this.claim(candidate);
+          if (claimed) {
+            await this.process(claimed);
+            processed++;
+          }
+        }
+        // Nothing claimable (all locked by another worker/tick) or the queue is drained → stop.
+        if (processed === 0 || due.length < this.batchSize) break;
       }
     } catch (err) {
       this.logger.error(`dispatch tick failed: ${(err as Error).message}`);
@@ -233,17 +259,10 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
     context: AppointmentNotificationContext,
     plan: ChannelPlan,
   ): Promise<void> {
-    const whatsappViable = this.whatsapp.isEnabled && plan.deliverable && plan.primary === WHATSAPP_CHANNEL;
+    const whatsappViable = this.whatsapp.isEnabled && channelAllowedByPlan(plan, WHATSAPP_CHANNEL);
     if (!whatsappViable) {
-      const reason = this.whatsappUnavailableReason(plan);
-      // WhatsApp ineligible/unavailable now. Fall back to SMS if the policy allows it; else skip truthfully.
-      if (smsAllowedByPlan(plan) && this.sms.isEnabled) {
-        await this.logSkippedAttempt(event, context, WHATSAPP_CHANNEL, `${reason}; falling back to SMS`);
-        await this.booking.enqueueSmsFallbackSafe(event.appointment_id!, event.event_key, reason);
-        await this.cancelEvent(event.id);
-      } else {
-        await this.skipEvent(event, context, WHATSAPP_CHANNEL, reason);
-      }
+      // WhatsApp ineligible/unavailable now → escalate to the next channel in the chain, or skip.
+      await this.escalateOrSkip(event, context, WHATSAPP_CHANNEL, plan);
       return;
     }
 
@@ -265,7 +284,7 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
     if (result.accepted) {
       await this.markAccepted(event, logId, this.whatsapp.provider, result.providerMessageId, result.providerStatus);
     } else {
-      // A real send failure. Retry; on terminal failure fall back to SMS (if allowed).
+      // A real send failure. Retry; on terminal failure escalate to the next channel in the chain.
       await this.markFailed(event, logId, result.error ?? 'WhatsApp send failed', plan);
     }
   }
@@ -275,14 +294,10 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
     context: AppointmentNotificationContext,
     plan: ChannelPlan,
   ): Promise<void> {
-    const smsViable = this.sms.isEnabled && smsAllowedByPlan(plan);
+    const smsViable = this.sms.isEnabled && channelAllowedByPlan(plan, SMS_CHANNEL);
     if (!smsViable) {
-      const reason = !this.sms.isEnabled
-        ? 'SMS sender not configured'
-        : plan.deliverable
-          ? 'SMS is not an eligible channel for this client'
-          : plan.skipReason;
-      await this.skipEvent(event, context, SMS_CHANNEL, reason);
+      // SMS is the last channel in the chain → escalateOrSkip records a truthful skip.
+      await this.escalateOrSkip(event, context, SMS_CHANNEL, plan);
       return;
     }
 
@@ -300,8 +315,8 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
     if (result.accepted) {
       await this.markAccepted(event, logId, this.sms.provider, result.providerMessageId, result.providerStatus);
     } else {
-      // SMS is the last channel — no further fallback.
-      await this.markFailed(event, logId, result.error ?? 'SMS send failed');
+      // SMS is the last channel — markFailed finds no next channel, so there is no further fallback.
+      await this.markFailed(event, logId, result.error ?? 'SMS send failed', plan);
     }
   }
 
@@ -310,15 +325,10 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
     context: AppointmentNotificationContext,
     plan: ChannelPlan,
   ): Promise<void> {
-    const emailViable =
-      this.email.isEnabled && plan.deliverable && plan.primary === EMAIL_CHANNEL && isValidEmail(context.clientEmail);
+    const emailViable = this.email.isEnabled && channelAllowedByPlan(plan, EMAIL_CHANNEL);
     if (!emailViable) {
-      const reason = !this.email.isEnabled
-        ? 'Email sender not configured'
-        : plan.deliverable
-          ? 'Email is not an eligible channel for this client'
-          : plan.skipReason;
-      await this.skipEvent(event, context, EMAIL_CHANNEL, reason);
+      // Email ineligible/unavailable now → escalate to the next channel (SMS), or skip truthfully.
+      await this.escalateOrSkip(event, context, EMAIL_CHANNEL, plan);
       return;
     }
 
@@ -337,21 +347,53 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
     });
 
     if (result.delivered) {
-      // Resend accepted the message → `sent`. There is no email delivery webhook wired today, so the
-      // log truthfully stays at `sent` (we never claim `delivered` without confirmation).
+      // Resend accepted the message → `sent`. The Resend bounce/delivery webhook advances it to
+      // delivered/failed and escalates to SMS on a real bounce. We never claim `delivered` here, and
+      // a merely-accepted (pending) email never triggers SMS.
       await this.markAccepted(event, logId, EMAIL_PROVIDER, result.id, undefined);
     } else if (result.skipped) {
-      await this.skipEvent(event, context, EMAIL_CHANNEL, 'Email sender not configured');
+      // Sender lost its config between scheduling and dispatch → escalate to the next channel / skip.
+      await this.escalateOrSkip(event, context, EMAIL_CHANNEL, plan);
     } else {
-      // Email is a terminal channel — no further fallback.
-      await this.markFailed(event, logId, result.error ?? 'Email send failed');
+      // A real send rejection. Retry; on terminal failure escalate to the next channel (SMS).
+      await this.markFailed(event, logId, result.error ?? 'Email send failed', plan);
     }
   }
 
-  private whatsappUnavailableReason(plan: ChannelPlan): string {
-    if (!this.whatsapp.isEnabled) return 'WhatsApp sender not configured';
+  /**
+   * The current channel is ineligible/unavailable. Escalate to the next channel in the
+   * WhatsApp → Email → SMS chain when there is one (recording a truthful `skipped` attempt for the
+   * current channel first, so CRM history shows every attempt), otherwise record a terminal skip.
+   * This is the synchronous-ineligibility counterpart of {@link markFailed}'s terminal escalation.
+   */
+  private async escalateOrSkip(
+    event: DueEventRow,
+    context: AppointmentNotificationContext,
+    channel: DeliveryChannel,
+    plan: ChannelPlan,
+  ): Promise<void> {
+    const reason = this.channelUnavailableReason(channel, plan);
+    const next = nextChannelAfter(plan, channel);
+    if (next && event.appointment_id) {
+      await this.logSkippedAttempt(event, context, channel, `${reason}; falling back to ${next}`);
+      await this.booking.escalateToNextChannelSafe(event.appointment_id, event.event_key, channel, reason);
+      await this.cancelEvent(event.id);
+    } else {
+      await this.skipEvent(event, context, channel, reason);
+    }
+  }
+
+  private channelUnavailableReason(channel: DeliveryChannel, plan: ChannelPlan): string {
+    if (this.senderDisabled(channel)) return `${channel} sender not configured`;
     if (!plan.deliverable) return plan.skipReason;
-    return 'WhatsApp is not the eligible channel for this client';
+    return `${channel} is not an eligible channel for this client`;
+  }
+
+  private senderDisabled(channel: DeliveryChannel): boolean {
+    if (channel === WHATSAPP_CHANNEL) return !this.whatsapp.isEnabled;
+    if (channel === SMS_CHANNEL) return !this.sms.isEnabled;
+    if (channel === EMAIL_CHANNEL) return !this.email.isEnabled;
+    return true;
   }
 
   private renderContext(context: AppointmentNotificationContext): NotificationContext {
@@ -528,13 +570,14 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
 
   /**
    * A real send failure. Records the failure on the log and requeues with backoff up to maxAttempts.
-   * On terminal failure for a WhatsApp event, enqueues the SMS fallback (when policy allows it).
+   * On terminal failure, escalates to the next channel in the WhatsApp → Email → SMS chain (a no-op
+   * when the failed channel is already last in the chain).
    */
   private async markFailed(
     event: DueEventRow,
     logId: string | null,
     errorMessage: string,
-    whatsappFallbackPlan?: ChannelPlan,
+    plan?: ChannelPlan,
   ): Promise<void> {
     const nowIso = new Date().toISOString();
     const terminal = event.attempts >= this.maxAttempts;
@@ -557,19 +600,18 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
         .from('notification_events')
         .update({ status: 'failed', last_error_message: errorMessage.slice(0, 500), locked_until: null })
         .eq('id', event.id);
-      this.logger.warn(`event ${event.id} failed permanently after ${event.attempts} attempts: ${errorMessage}`);
+      this.logger.warn(
+        `event ${event.id} (${event.channel}) failed permanently after ${event.attempts} attempts: ${errorMessage}`,
+      );
 
-      // WhatsApp had a real, persistent failure → fall back to SMS (idempotent enqueue).
-      if (
-        whatsappFallbackPlan &&
-        event.appointment_id &&
-        this.sms.isEnabled &&
-        smsAllowedByPlan(whatsappFallbackPlan)
-      ) {
-        await this.booking.enqueueSmsFallbackSafe(
+      // Real, persistent failure → escalate to the next channel in the WhatsApp → Email → SMS chain
+      // (idempotent enqueue). No-op when the failed channel is already last in the chain (e.g. SMS).
+      if (plan && event.appointment_id) {
+        await this.booking.escalateToNextChannelSafe(
           event.appointment_id,
           event.event_key,
-          `WhatsApp delivery failed: ${errorMessage.slice(0, 160)}`,
+          event.channel as DeliveryChannel,
+          `${event.channel} delivery failed: ${errorMessage.slice(0, 160)}`,
         );
       }
     } else {

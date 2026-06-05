@@ -69,6 +69,25 @@ export class EnvConfig {
   @IsString()
   RESEND_FROM?: string;
 
+  /**
+   * Resend (Svix) webhook signing secret — `whsec_…` — for the email delivery/bounce webhook at
+   * `POST /api/email/status`. Optional in dev; when unset the webhook rejects all requests (the
+   * email channel then advances to `delivered`/`failed` only if/when configured). A hard bounce on
+   * this webhook escalates the notification to SMS.
+   */
+  @IsOptional()
+  @IsString()
+  RESEND_WEBHOOK_SECRET?: string;
+
+  /**
+   * Default country calling code (digits only, e.g. `44` for the UK) used to promote national-format
+   * phone numbers (leading `0`, no `+`) to E.164 for WhatsApp/SMS eligibility + delivery. When unset,
+   * national numbers without a country code are treated as invalid rather than silently mis-sent.
+   */
+  @IsOptional()
+  @IsString()
+  DEFAULT_PHONE_COUNTRY_CALLING_CODE?: string;
+
   /** Public base URL the staff invitation link points to. Defaults to the first CORS origin. */
   @IsOptional()
   @IsString()
@@ -150,6 +169,24 @@ export class EnvConfig {
   @IsString()
   TWILIO_WHATSAPP_REMINDER_1W_CONTENT_SID?: string;
 
+  // Legacy aliases for the Content template SIDs — accepted as a fallback by WhatsAppTemplateConfig so
+  // an env configured under the older `TWILIO_TEMPLATE_BOOKING_*_SID` convention still works.
+  @IsOptional()
+  @IsString()
+  TWILIO_TEMPLATE_BOOKING_CONFIRMATION_SID?: string;
+
+  @IsOptional()
+  @IsString()
+  TWILIO_TEMPLATE_BOOKING_REMINDER_24H_SID?: string;
+
+  @IsOptional()
+  @IsString()
+  TWILIO_TEMPLATE_BOOKING_REMINDER_48H_SID?: string;
+
+  @IsOptional()
+  @IsString()
+  TWILIO_TEMPLATE_BOOKING_REMINDER_1W_SID?: string;
+
   /**
    * Public URL Twilio posts delivery-status callbacks to, e.g.
    * `https://api.yourdomain.com/api/twilio/messaging/status`. Passed as `StatusCallback` on every
@@ -184,6 +221,11 @@ export class EnvConfig {
   @IsOptional()
   @IsString()
   COMMS_DISPATCH_MAX_ATTEMPTS?: string;
+
+  /** Max full batches a single dispatcher tick may drain for downtime catch-up (default 20). */
+  @IsOptional()
+  @IsString()
+  COMMS_DISPATCH_MAX_DRAIN_BATCHES?: string;
 }
 
 /**

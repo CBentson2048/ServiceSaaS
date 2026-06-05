@@ -26,6 +26,7 @@ import type {
 } from '@sheer/domain';
 import { calculateAppointmentBillingTax, type LocationTaxSettings } from '@sheer/domain';
 import { buildProductBillingSnapshot } from '../common/product-billing.helper';
+import { BookingNotificationService } from '../communications/booking-notification.service';
 import type { LabRuntimeSession } from '../lab-session/lab-session.service';
 import { OwnerTaxSettingsService } from '../owner-tax-settings/owner-tax-settings.service';
 import { RebookingService } from '../rebooking/rebooking.service';
@@ -185,6 +186,7 @@ export class LabAppointmentsService {
     config: ConfigService,
     private readonly rebooking: RebookingService,
     private readonly taxSettings: OwnerTaxSettingsService,
+    private readonly bookingNotifications: BookingNotificationService,
   ) {
     const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
@@ -589,6 +591,11 @@ export class LabAppointmentsService {
       selectedStart,
     });
 
+    // A rebooking is a real, valid (confirmed) appointment → schedule its confirmation + reminders
+    // through the same idempotent, fail-soft engine the public booking flow uses. Never blocks the
+    // rebooking (the appointment is already committed).
+    await this.bookingNotifications.syncBookingNotificationsSafe(followUp.id);
+
     return this.linkStylistRebooking(actor, id, {
       sourceVisitId: sourceVisit.id,
       rebookedAppointmentId: followUp.id,
@@ -775,6 +782,10 @@ export class LabAppointmentsService {
           source: 'stylist_checkout_rebooking',
           source_visit_id: input.sourceVisit.id,
           source_appointment_id: input.appointment.id,
+          // Surfaced in the booking-notification message body (services line).
+          service_names: arrayOf(input.appointment.appointment_services)
+            .map((service) => service.service_name_snapshot)
+            .filter(Boolean),
         },
       })
       .select('id')

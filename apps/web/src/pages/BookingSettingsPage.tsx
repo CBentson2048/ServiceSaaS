@@ -306,6 +306,7 @@ function NotificationsSection({
     reminder24hEnabled: false,
     reminder48hEnabled: false,
     reminder1wEnabled: false,
+    emailFallbackEnabled: false,
     smsFallbackEnabled: false,
   };
   const [form, setForm] = useState<LocationCommunicationSettings>(initial ?? fallback);
@@ -329,6 +330,7 @@ function NotificationsSection({
         reminder24hEnabled: form.reminder24hEnabled,
         reminder48hEnabled: form.reminder48hEnabled,
         reminder1wEnabled: form.reminder1wEnabled,
+        emailFallbackEnabled: form.emailFallbackEnabled,
         smsFallbackEnabled: form.smsFallbackEnabled,
       });
       setForm(updated);
@@ -346,13 +348,14 @@ function NotificationsSection({
     <Panel title="Booking Notifications">
       <p className="mb-3 text-[13px] text-text-secondary">
         Confirmations and reminders are sent over WhatsApp first. If WhatsApp is unavailable or fails, the
-        message can fall back to SMS (when enabled below). Reminder timings are calculated from the appointment
-        time in the location timezone.
+        message falls back to Email, then to SMS — using only the fallback channels you enable below, and never
+        while WhatsApp is still pending. A client who has chosen Email or SMS as their preference starts on that
+        channel instead. Reminder timings are calculated from the appointment time in the location timezone.
       </p>
       {notice ? <Notice tone={notice.tone} text={notice.text} /> : null}
       <form onSubmit={save} className="space-y-4">
         <Checkbox
-          label="Enable WhatsApp notifications for this location"
+          label="Enable booking notifications for this location"
           checked={form.enabled}
           onChange={(value) => set('enabled', value)}
         />
@@ -362,28 +365,39 @@ function NotificationsSection({
             label="Send a booking confirmation after booking"
             checked={form.sendBookingConfirmation}
             onChange={(value) => set('sendBookingConfirmation', value)}
+            disabled={remindersDisabled}
           />
           <div className="text-[12px] font-medium text-text-secondary pt-1">Reminders before the appointment</div>
           <Checkbox
             label="1 week before"
             checked={form.reminder1wEnabled}
             onChange={(value) => set('reminder1wEnabled', value)}
+            disabled={remindersDisabled}
           />
           <Checkbox
             label="48 hours before"
             checked={form.reminder48hEnabled}
             onChange={(value) => set('reminder48hEnabled', value)}
+            disabled={remindersDisabled}
           />
           <Checkbox
             label="24 hours before"
             checked={form.reminder24hEnabled}
             onChange={(value) => set('reminder24hEnabled', value)}
+            disabled={remindersDisabled}
           />
-          <div className="text-[12px] font-medium text-text-secondary pt-1">Fallback channel</div>
+          <div className="text-[12px] font-medium text-text-secondary pt-1">Fallback channels (in order)</div>
           <Checkbox
-            label="Fall back to SMS when WhatsApp is unavailable or fails"
+            label="1. Fall back to Email when WhatsApp is unavailable or fails"
+            checked={form.emailFallbackEnabled}
+            onChange={(value) => set('emailFallbackEnabled', value)}
+            disabled={remindersDisabled}
+          />
+          <Checkbox
+            label="2. Fall back to SMS when the channels above are unavailable or fail"
             checked={form.smsFallbackEnabled}
             onChange={(value) => set('smsFallbackEnabled', value)}
+            disabled={remindersDisabled}
           />
         </div>
         <div className="flex justify-end">
@@ -630,10 +644,25 @@ function TextArea({ label, value, onChange, required }: { label: string; value: 
   );
 }
 
-function Checkbox({ label, checked, onChange }: { label: string; checked: boolean; onChange: (value: boolean) => void }) {
+function Checkbox({
+  label,
+  checked,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (value: boolean) => void;
+  disabled?: boolean;
+}) {
   return (
-    <label className="flex items-center gap-2 text-[13px] text-text-secondary">
-      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
+    <label className={`flex items-center gap-2 text-[13px] text-text-secondary ${disabled ? 'cursor-not-allowed' : ''}`}>
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)}
+      />
       {label}
     </label>
   );

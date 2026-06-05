@@ -36,6 +36,10 @@ export class UpdateLocationCommunicationSettingsDto {
 
   @IsOptional()
   @IsBoolean()
+  emailFallbackEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
   smsFallbackEnabled?: boolean;
 }
 

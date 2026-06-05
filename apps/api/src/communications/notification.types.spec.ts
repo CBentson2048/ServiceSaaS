@@ -38,6 +38,7 @@ describe('settingsToMetadata', () => {
         reminder24hEnabled: true,
         reminder48hEnabled: false,
         reminder1wEnabled: true,
+        emailFallbackEnabled: true,
         smsFallbackEnabled: false,
       },
       null,
@@ -47,6 +48,7 @@ describe('settingsToMetadata', () => {
       REMINDER_OFFSET_HOURS[NotificationEventKey.Reminder24h],
     ]);
     expect(meta.sendBookingConfirmation).toBe(true);
+    expect(meta.emailFallbackEnabled).toBe(true);
   });
 
   it('preserves unknown keys already present in metadata (e.g. cancellation notice)', () => {
@@ -59,12 +61,27 @@ describe('settingsToMetadata', () => {
         reminder24hEnabled: false,
         reminder48hEnabled: false,
         reminder1wEnabled: false,
+        emailFallbackEnabled: false,
         smsFallbackEnabled: false,
       },
       { sendCancellationNotice: true, sendWaitlistNotifications: true },
     );
     expect(meta.sendCancellationNotice).toBe(true);
     expect(meta.sendWaitlistNotifications).toBe(true);
+  });
+
+  it('round-trips the email + SMS fallback toggles through metadata', () => {
+    const settings = metadataToSettings('loc-1', {
+      enabled: true,
+      enabledChannels: ['whatsapp'],
+      emailFallbackEnabled: true,
+      smsFallbackEnabled: true,
+    });
+    expect(settings.emailFallbackEnabled).toBe(true);
+    expect(settings.smsFallbackEnabled).toBe(true);
+    const meta = settingsToMetadata(settings, null);
+    expect(meta.emailFallbackEnabled).toBe(true);
+    expect(meta.smsFallbackEnabled).toBe(true);
   });
 
   it('round-trips through metadata → settings → metadata', () => {

@@ -23,7 +23,7 @@ function readEnvironment(value: string | undefined): SheerLabEnvironment {
 
 export const appConfig = {
   environment: readEnvironment(readEnv(SHEER_LAB_ENV)),
-  apiBaseUrl: normalizeApiBaseUrl(readEnv(SHEER_LAB_API_URL) ?? 'http://localhost:3001'),
+  apiBaseUrl: normalizeApiBaseUrl(readEnv(SHEER_LAB_API_URL) ??'https://sheer-platform-develop.up.railway.app/'),
   iosBundleId: readEnv(SHEER_LAB_IOS_BUNDLE_ID) ?? 'com.sheer.lab',
   androidPackage: readEnv(SHEER_LAB_ANDROID_PACKAGE) ?? 'com.sheer.lab',
 } as const;

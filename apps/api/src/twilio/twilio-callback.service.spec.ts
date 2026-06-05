@@ -8,7 +8,7 @@ interface FakeState {
   rows: Record<string, Record<string, unknown> | null>;
   updates: Array<{ table: string; payload: Record<string, unknown> }>;
   inserts: Array<{ table: string; row: Record<string, unknown> }>;
-  fallbacks: Array<{ appointmentId: string; eventKey: string; reason: string }>;
+  fallbacks: Array<{ appointmentId: string; eventKey: string; failedChannel: string; reason: string }>;
 }
 
 function makeFakeClient(state: FakeState) {
@@ -48,9 +48,11 @@ function makeService(state: FakeState): TwilioCallbackService {
   const config = { getOrThrow: () => 'https://example.supabase.co' } as unknown as ConfigService;
   const whatsapp = { provider: 'twilio', verifyWebhookSignature: () => true } as unknown as WhatsAppService;
   const booking = {
-    enqueueSmsFallbackSafe: jest.fn(async (appointmentId: string, eventKey: string, reason: string) => {
-      state.fallbacks.push({ appointmentId, eventKey, reason });
-    }),
+    escalateToNextChannelSafe: jest.fn(
+      async (appointmentId: string, eventKey: string, failedChannel: string, reason: string) => {
+        state.fallbacks.push({ appointmentId, eventKey, failedChannel, reason });
+      },
+    ),
   } as unknown as BookingNotificationService;
   const service = new TwilioCallbackService(config, whatsapp, booking);
   (service as unknown as { admin: unknown }).admin = makeFakeClient(state);
@@ -88,7 +90,7 @@ describe('TwilioCallbackService.handleStatusCallback', () => {
     expect(state.fallbacks).toHaveLength(0);
   });
 
-  it('records the failure reason and triggers an SMS fallback on a failed WhatsApp callback', async () => {
+  it('records the failure reason and escalates to the next channel on a failed WhatsApp callback', async () => {
     const state = emptyState({
       message_logs: {
         id: 'log1',
@@ -112,13 +114,18 @@ describe('TwilioCallbackService.handleStatusCallback', () => {
     expect(logUpdate?.payload.failed_at).toBeDefined();
     expect(String(logUpdate?.payload.error_message)).toContain('63016');
 
-    // Async real failure of WhatsApp → fall back to SMS for the same notification.
+    // Async real failure of WhatsApp → escalate to the next channel in the chain for this notification.
     expect(state.fallbacks).toEqual([
-      { appointmentId: 'apt1', eventKey: 'booking_confirmation', reason: expect.stringContaining('WhatsApp failed') },
+      {
+        appointmentId: 'apt1',
+        eventKey: 'booking_confirmation',
+        failedChannel: 'whatsapp',
+        reason: expect.stringContaining('whatsapp failed'),
+      },
     ]);
   });
 
-  it('does not re-trigger a fallback when an SMS message itself fails', async () => {
+  it('delegates from an SMS failure but the chain has no next channel (no duplicate SMS)', async () => {
     const state = emptyState({
       message_logs: {
         id: 'log2',
@@ -131,7 +138,11 @@ describe('TwilioCallbackService.handleStatusCallback', () => {
     });
     const service = makeService(state);
     await service.handleStatusCallback({ MessageSid: 'SM2', MessageStatus: 'failed', ErrorCode: '30006' });
-    expect(state.fallbacks).toHaveLength(0);
+    // The callback delegates with the failed channel; SMS is last in the chain, so the booking
+    // service finds no next channel and no fallback event is created (verified in its own spec).
+    expect(state.fallbacks).toEqual([
+      { appointmentId: 'apt1', eventKey: 'booking_confirmation', failedChannel: 'sms', reason: expect.any(String) },
+    ]);
   });
 
   it('does not downgrade a delivered log when a late "sent" callback arrives', async () => {

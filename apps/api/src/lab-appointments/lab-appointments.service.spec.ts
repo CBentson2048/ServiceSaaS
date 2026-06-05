@@ -321,6 +321,9 @@ function createService(client: MockSupabaseClient): LabAppointmentsService {
         displayMode: 'ex_tax',
       }),
     } as never,
+    {
+      syncBookingNotificationsSafe: jest.fn().mockResolvedValue(undefined),
+    } as never,
   );
 }
 

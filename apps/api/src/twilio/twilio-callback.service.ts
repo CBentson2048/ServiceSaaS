@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { BookingNotificationService } from '../communications/booking-notification.service';
+import type { DeliveryChannel } from '../communications/channel-policy';
 import { SMS_CHANNEL, WHATSAPP_CHANNEL } from '../communications/notification.types';
 import { normalizeWhatsAppAddress, WhatsAppService } from '../communications/whatsapp.service';
 import { isFailureStatus, mapTwilioStatus, shouldApplyStatus } from './twilio-status';
@@ -120,14 +121,17 @@ export class TwilioCallbackService {
         .eq('id', log.notification_event_id);
     }
 
-    // Async real failure of a WhatsApp message → fall back to SMS for the same notification. This is
-    // the only place a delivered-then-failed (or accepted-then-undelivered) WhatsApp triggers SMS;
-    // a merely-pending message never reaches here. Idempotent via the SMS event's unique index.
-    if (isFailureStatus(mapped) && log.channel === WHATSAPP_CHANNEL && log.appointment_id && log.message_type) {
-      await this.booking.enqueueSmsFallbackSafe(
+    // Async real failure (Twilio reported failed/undelivered) → escalate to the next channel in the
+    // WhatsApp → Email → SMS chain for the same notification. This is the only place a
+    // delivered-then-failed (or accepted-then-undelivered) message triggers a fallback; a
+    // merely-pending message never reaches here. Idempotent via the fallback event's unique index.
+    // A failure on the last channel (SMS) finds no next channel and is a no-op.
+    if (isFailureStatus(mapped) && log.appointment_id && log.message_type && log.channel) {
+      await this.booking.escalateToNextChannelSafe(
         log.appointment_id,
         log.message_type,
-        `WhatsApp ${mapped}${errorMessage ? `: ${errorMessage}` : ''}`,
+        log.channel as DeliveryChannel,
+        `${log.channel} ${mapped}${errorMessage ? `: ${errorMessage}` : ''}`,
       );
     }
   }

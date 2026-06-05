@@ -163,9 +163,16 @@ interface MessageRow {
   appointment_id: string | null;
   visit_id: string | null;
   channel: CrmMessageLog['channel'];
-  event_key?: string | null;
+  message_type: string | null;
   delivery_status: CrmMessageLog['deliveryStatus'];
+  provider: string | null;
+  provider_message_id: string | null;
+  provider_status: string | null;
+  recipient: string | null;
+  template_key: string | null;
   content_preview: string | null;
+  error_message: string | null;
+  metadata: Record<string, unknown> | null;
   sent_at: string | null;
   delivered_at: string | null;
   failed_at: string | null;
@@ -764,7 +771,7 @@ export class CrmService {
       .schema('comms')
       .from('message_logs')
       .select(
-        'id,business_id,location_id,client_profile_id,appointment_id,visit_id,channel,delivery_status,content_preview,sent_at,delivered_at,failed_at,created_at',
+        'id,business_id,location_id,client_profile_id,appointment_id,visit_id,channel,message_type,delivery_status,provider,provider_message_id,provider_status,recipient,template_key,content_preview,error_message,metadata,sent_at,delivered_at,failed_at,created_at',
       )
       .eq('business_id', businessId)
       .eq('client_profile_id', clientId)
@@ -1119,6 +1126,10 @@ function toPatchTest(row: PatchTestRow): CrmPatchTestRecord {
 }
 
 function toMessage(row: MessageRow): CrmMessageLog {
+  const primaryIntended =
+    row.metadata && typeof row.metadata['primary_intended_channel'] === 'string'
+      ? (row.metadata['primary_intended_channel'] as CrmMessageLog['channel'])
+      : undefined;
   return {
     id: row.id,
     businessId: row.business_id,
@@ -1127,9 +1138,18 @@ function toMessage(row: MessageRow): CrmMessageLog {
     appointmentId: row.appointment_id ?? undefined,
     visitId: row.visit_id ?? undefined,
     channel: row.channel,
-    eventKey: row.event_key ?? undefined,
+    primaryIntendedChannel: primaryIntended,
+    // `message_type` is the notification event key (e.g. booking_confirmation, appointment_reminder_24h).
+    eventKey: row.message_type ?? undefined,
+    messageType: row.message_type ?? undefined,
     deliveryStatus: row.delivery_status,
+    provider: row.provider ?? undefined,
+    providerMessageId: row.provider_message_id ?? undefined,
+    providerStatus: row.provider_status ?? undefined,
+    recipient: row.recipient ?? undefined,
+    templateKey: row.template_key ?? undefined,
     contentPreview: row.content_preview ?? undefined,
+    failureReason: row.error_message ?? undefined,
     sentAt: row.sent_at ?? undefined,
     deliveredAt: row.delivered_at ?? undefined,
     failedAt: row.failed_at ?? undefined,

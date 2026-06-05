@@ -105,6 +105,7 @@ function settings(overrides: Partial<LocationCommunicationSettings> = {}): Locat
     reminder24hEnabled: false,
     reminder48hEnabled: false,
     reminder1wEnabled: false,
+    emailFallbackEnabled: false,
     smsFallbackEnabled: false,
     ...overrides,
   };
@@ -182,6 +183,7 @@ describe('BookingNotificationService.syncBookingNotifications', () => {
       appointment: { ...baseState().appointment!, communication_preference: 'email' },
       client: { first_name: 'Sam', phone: '+447700900123', email: 'sam@example.com', communication_preference: 'email' },
     });
+    // emailFallbackEnabled is OFF — an explicit email preference still schedules on email.
     const service = makeService(state, settings({ sendBookingConfirmation: true, reminder24hEnabled: true }));
 
     await service.syncBookingNotifications('appt-1', NOW);
@@ -246,31 +248,59 @@ describe('BookingNotificationService.syncBookingNotifications', () => {
   });
 });
 
-describe('BookingNotificationService.enqueueSmsFallback', () => {
-  it('queues an SMS fallback event for a failed WhatsApp notification when SMS is allowed', async () => {
+describe('BookingNotificationService.escalateToNextChannel', () => {
+  it('escalates a failed WhatsApp notification to SMS when SMS is the next enabled channel', async () => {
     const state = baseState();
     const service = makeService(state, settings({ sendBookingConfirmation: true, smsFallbackEnabled: true }));
 
-    const result = await service.enqueueSmsFallback('appt-1', 'booking_confirmation', 'WhatsApp failed', NOW);
+    const next = await service.escalateToNextChannel('appt-1', 'booking_confirmation', 'whatsapp', 'WhatsApp failed', NOW);
 
-    expect(result).toBe('queued');
+    expect(next).toBe('sms');
     expect(state.inserts).toHaveLength(1);
     expect(state.inserts[0].channel).toBe('sms');
     expect(state.inserts[0].event_key).toBe('booking_confirmation');
-    expect((state.inserts[0].payload_json as Record<string, unknown>).fallback).toBe(true);
+    const payload = state.inserts[0].payload_json as Record<string, unknown>;
+    expect(payload.fallback).toBe(true);
+    expect(payload.primary_channel).toBe('whatsapp');
   });
 
-  it('does not queue an SMS fallback when SMS fallback is disabled', async () => {
+  it('escalates a failed WhatsApp notification to EMAIL when email is the next enabled channel', async () => {
     const state = baseState();
-    const service = makeService(state, settings({ sendBookingConfirmation: true, smsFallbackEnabled: false }));
+    const service = makeService(state, settings({ sendBookingConfirmation: true, emailFallbackEnabled: true }));
 
-    const result = await service.enqueueSmsFallback('appt-1', 'booking_confirmation', 'WhatsApp failed', NOW);
+    const next = await service.escalateToNextChannel('appt-1', 'booking_confirmation', 'whatsapp', 'WhatsApp failed', NOW);
 
-    expect(result).toBe('skipped');
+    expect(next).toBe('email');
+    expect(state.inserts).toHaveLength(1);
+    expect(state.inserts[0].channel).toBe('email');
+  });
+
+  it('escalates a failed EMAIL notification to SMS (next in the WhatsApp → Email → SMS chain)', async () => {
+    const state = baseState();
+    const service = makeService(
+      state,
+      settings({ sendBookingConfirmation: true, emailFallbackEnabled: true, smsFallbackEnabled: true }),
+    );
+
+    const next = await service.escalateToNextChannel('appt-1', 'booking_confirmation', 'email', 'email bounced', NOW);
+
+    expect(next).toBe('sms');
+    expect(state.inserts).toHaveLength(1);
+    expect(state.inserts[0].channel).toBe('sms');
+    expect((state.inserts[0].payload_json as Record<string, unknown>).primary_channel).toBe('email');
+  });
+
+  it('does not escalate when there is no next channel in the chain', async () => {
+    const state = baseState();
+    const service = makeService(state, settings({ sendBookingConfirmation: true }));
+
+    const next = await service.escalateToNextChannel('appt-1', 'booking_confirmation', 'whatsapp', 'WhatsApp failed', NOW);
+
+    expect(next).toBeNull();
     expect(state.inserts).toHaveLength(0);
   });
 
-  it('does not queue an SMS fallback for a reminder once the appointment has passed', async () => {
+  it('does not escalate a reminder once the appointment has passed (no longer time-valid)', async () => {
     const state = baseState({
       appointment: {
         ...baseState().appointment!,
@@ -279,9 +309,9 @@ describe('BookingNotificationService.enqueueSmsFallback', () => {
     });
     const service = makeService(state, settings({ reminder24hEnabled: true, smsFallbackEnabled: true }));
 
-    const result = await service.enqueueSmsFallback('appt-1', 'appointment_reminder_24h', 'WhatsApp failed', NOW);
+    const next = await service.escalateToNextChannel('appt-1', 'appointment_reminder_24h', 'whatsapp', 'WhatsApp failed', NOW);
 
-    expect(result).toBe('skipped');
+    expect(next).toBeNull();
     expect(state.inserts).toHaveLength(0);
   });
 });

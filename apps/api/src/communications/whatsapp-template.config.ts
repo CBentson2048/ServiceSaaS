@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NotificationEventKey } from './notification.types';
 
@@ -11,25 +11,88 @@ import { NotificationEventKey } from './notification.types';
  */
 @Injectable()
 export class WhatsAppTemplateConfig {
+  private readonly logger = new Logger(WhatsAppTemplateConfig.name);
   private readonly contentSids: Partial<Record<NotificationEventKey, string>>;
+  /**
+   * Public delivery-status callback URL passed on every send. Only set when the configured URL is
+   * publicly reachable — Twilio rejects the WHOLE message (error 21609) if `StatusCallback` points at
+   * localhost/a private host, so in local dev we omit it (delivery receipts can't reach localhost
+   * anyway) and the send still goes through.
+   */
   readonly statusCallbackUrl?: string;
 
   constructor(config: ConfigService) {
-    this.contentSids = {
-      [NotificationEventKey.BookingConfirmation]:
-        config.get<string>('TWILIO_WHATSAPP_CONFIRMATION_CONTENT_SID')?.trim() || undefined,
-      [NotificationEventKey.Reminder24h]:
-        config.get<string>('TWILIO_WHATSAPP_REMINDER_24H_CONTENT_SID')?.trim() || undefined,
-      [NotificationEventKey.Reminder48h]:
-        config.get<string>('TWILIO_WHATSAPP_REMINDER_48H_CONTENT_SID')?.trim() || undefined,
-      [NotificationEventKey.Reminder1w]:
-        config.get<string>('TWILIO_WHATSAPP_REMINDER_1W_CONTENT_SID')?.trim() || undefined,
+    // Resolve the documented `TWILIO_WHATSAPP_*_CONTENT_SID` name first, then accept the legacy
+    // `TWILIO_TEMPLATE_BOOKING_*_SID` name some deployments use — so an existing env that set the
+    // approved templates under either convention is honoured (a mismatch here silently falls back to
+    // freeform, which Twilio rejects for business-initiated WhatsApp).
+    const sid = (...keys: string[]): string | undefined => {
+      for (const key of keys) {
+        const value = config.get<string>(key)?.trim();
+        if (value) return value;
+      }
+      return undefined;
     };
-    this.statusCallbackUrl = config.get<string>('TWILIO_STATUS_CALLBACK_URL')?.trim() || undefined;
+    this.contentSids = {
+      [NotificationEventKey.BookingConfirmation]: sid(
+        'TWILIO_WHATSAPP_CONFIRMATION_CONTENT_SID',
+        'TWILIO_TEMPLATE_BOOKING_CONFIRMATION_SID',
+      ),
+      [NotificationEventKey.Reminder24h]: sid(
+        'TWILIO_WHATSAPP_REMINDER_24H_CONTENT_SID',
+        'TWILIO_TEMPLATE_BOOKING_REMINDER_24H_SID',
+      ),
+      [NotificationEventKey.Reminder48h]: sid(
+        'TWILIO_WHATSAPP_REMINDER_48H_CONTENT_SID',
+        'TWILIO_TEMPLATE_BOOKING_REMINDER_48H_SID',
+      ),
+      [NotificationEventKey.Reminder1w]: sid(
+        'TWILIO_WHATSAPP_REMINDER_1W_CONTENT_SID',
+        'TWILIO_TEMPLATE_BOOKING_REMINDER_1W_SID',
+      ),
+    };
+    const configuredCallback = config.get<string>('TWILIO_STATUS_CALLBACK_URL')?.trim() || undefined;
+    this.statusCallbackUrl = publicUrlOrUndefined(configuredCallback);
+    if (configuredCallback && !this.statusCallbackUrl) {
+      this.logger.warn(
+        `TWILIO_STATUS_CALLBACK_URL (${configuredCallback}) is not publicly reachable; omitting StatusCallback ` +
+          'from sends (Twilio rejects non-public callback URLs). Delivery receipts/async fallback are disabled ' +
+          'until a public URL (e.g. a tunnel or your deployed API) is configured.',
+      );
+    }
   }
 
   /** Approved Content template SID for an event, or undefined when not configured. */
   contentSidFor(eventKey: NotificationEventKey | string): string | undefined {
     return this.contentSids[eventKey as NotificationEventKey];
   }
+}
+
+/**
+ * Return the URL only when it is a syntactically valid http(s) URL whose host is publicly reachable
+ * (not localhost / loopback / a private LAN range). Twilio rejects a send outright when StatusCallback
+ * is not publicly reachable, so we treat such URLs as "no callback" rather than letting them fail sends.
+ */
+export function publicUrlOrUndefined(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  let host: string;
+  let protocol: string;
+  try {
+    const parsed = new URL(raw);
+    host = parsed.hostname.toLowerCase();
+    protocol = parsed.protocol;
+  } catch {
+    return undefined;
+  }
+  if (protocol !== 'http:' && protocol !== 'https:') return undefined;
+  const isNonPublic =
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '0.0.0.0' ||
+    host === '::1' ||
+    host.endsWith('.local') ||
+    /^10\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+  return isNonPublic ? undefined : raw;
 }

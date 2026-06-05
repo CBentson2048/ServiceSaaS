@@ -17,7 +17,8 @@ interface State {
   client: { first_name: string; phone: string | null; email: string | null; communication_preference: string | null };
   events: Array<{ op: string; row: Record<string, unknown> }>;
   logs: Array<{ op: string; row: Record<string, unknown> }>;
-  fallbacks: Array<[string, string, string]>;
+  /** Delegated escalations: [appointmentId, eventKey, failedChannel, reason]. */
+  fallbacks: Array<[string, string, string, string]>;
   logSeq: number;
 }
 
@@ -72,6 +73,7 @@ function settings(overrides: Partial<LocationCommunicationSettings> = {}): Locat
     reminder24hEnabled: false,
     reminder48hEnabled: false,
     reminder1wEnabled: false,
+    emailFallbackEnabled: false,
     smsFallbackEnabled: true,
     ...overrides,
   };
@@ -112,6 +114,7 @@ function makeDispatcher(
     smsEnabled?: boolean;
     emailEnabled?: boolean;
     whatsappResult?: Record<string, unknown>;
+    emailResult?: Record<string, unknown>;
   } = {},
 ) {
   const config = { getOrThrow: () => 'https://example.supabase.co', get: () => undefined } as unknown as ConfigService;
@@ -127,13 +130,16 @@ function makeDispatcher(
   } as unknown as SmsService;
   const email = {
     isEnabled: opts.emailEnabled ?? true,
-    send: jest.fn().mockResolvedValue({ delivered: true, id: 'resend-1' }),
+    send: jest.fn().mockResolvedValue(opts.emailResult ?? { delivered: true, id: 'resend-1' }),
   } as unknown as EmailService;
   const templates = { contentSidFor: () => 'HX1', statusCallbackUrl: 'https://cb' } as unknown as WhatsAppTemplateConfig;
   const settingsService = { getForLocation: jest.fn().mockResolvedValue(set) } as unknown as CommunicationSettingsService;
   const booking = {
-    enqueueSmsFallbackSafe: jest.fn(async (a: string, e: string, r: string) => {
-      state.fallbacks.push([a, e, r]);
+    // The dispatcher delegates "what is the next channel?" to the booking service; here we just
+    // record the delegation. Whether a fallback event is actually created is covered by the
+    // BookingNotificationService spec (escalateToNextChannel).
+    escalateToNextChannelSafe: jest.fn(async (a: string, e: string, ch: string, r: string) => {
+      state.fallbacks.push([a, e, ch, r]);
     }),
   } as unknown as BookingNotificationService;
 
@@ -175,16 +181,32 @@ describe('NotificationDispatchService channel + fallback behaviour', () => {
     expect(state.events.some((e) => e.op === 'update' && e.row.status === 'sent')).toBe(true);
   });
 
-  it('enqueues an SMS fallback on a terminal WhatsApp send failure', async () => {
+  it('delegates escalation to the next channel on a terminal WhatsApp send failure', async () => {
     const state = baseState();
     const { d } = makeDispatcher(state, settings(), { whatsappResult: { accepted: false, error: 'boom' } });
     await run(d, event({ attempts: 3 })); // attempts >= maxAttempts (3) → terminal
 
-    expect(state.fallbacks).toEqual([['apt1', 'booking_confirmation', expect.stringContaining('WhatsApp delivery failed')]]);
+    // Dispatcher delegates with the FAILED channel; the booking service decides the actual next channel.
+    expect(state.fallbacks).toEqual([
+      ['apt1', 'booking_confirmation', 'whatsapp', expect.stringContaining('whatsapp delivery failed')],
+    ]);
     expect(state.events.some((e) => e.op === 'update' && e.row.status === 'failed')).toBe(true);
   });
 
-  it('requeues (no fallback) on a non-terminal WhatsApp failure', async () => {
+  it('delegates escalation on a terminal EMAIL send failure (email → SMS)', async () => {
+    const state = baseState();
+    const { d } = makeDispatcher(state, settings({ emailFallbackEnabled: true }), {
+      emailResult: { delivered: false, error: 'rejected' },
+    });
+    await run(d, event({ channel: 'email', attempts: 3 }));
+
+    expect(state.fallbacks).toEqual([
+      ['apt1', 'booking_confirmation', 'email', expect.stringContaining('email delivery failed')],
+    ]);
+    expect(state.events.some((e) => e.op === 'update' && e.row.status === 'failed')).toBe(true);
+  });
+
+  it('requeues (no escalation) on a non-terminal WhatsApp failure', async () => {
     const state = baseState();
     const { d } = makeDispatcher(state, settings(), { whatsappResult: { accepted: false, error: 'temporary' } });
     await run(d, event({ attempts: 1 }));
@@ -193,25 +215,29 @@ describe('NotificationDispatchService channel + fallback behaviour', () => {
     expect(state.events.some((e) => e.op === 'update' && e.row.status === 'queued')).toBe(true);
   });
 
-  it('does not enqueue a fallback on terminal failure when SMS fallback is disabled', async () => {
+  it('escalates to the next channel when the WhatsApp sender is unavailable (sync ineligibility)', async () => {
     const state = baseState();
-    const { d } = makeDispatcher(state, settings({ smsFallbackEnabled: false }), {
-      whatsappResult: { accepted: false, error: 'boom' },
-    });
-    await run(d, event({ attempts: 3 }));
-    expect(state.fallbacks).toHaveLength(0);
+    const { d, whatsapp } = makeDispatcher(state, settings(), { whatsappEnabled: false });
+    await run(d, event());
+
+    expect(whatsapp.send).not.toHaveBeenCalled();
+    expect(state.fallbacks).toEqual([
+      ['apt1', 'booking_confirmation', 'whatsapp', expect.stringContaining('whatsapp sender not configured')],
+    ]);
+    expect(state.events.some((e) => e.op === 'update' && e.row.status === 'cancelled')).toBe(true);
   });
 
-  it('falls back to SMS immediately when WhatsApp is ineligible (client prefers SMS) and SMS is allowed', async () => {
+  it('skips (does not escalate) a stray WhatsApp event for an SMS-preferring client', async () => {
     const state = baseState({
       appointment: { ...baseState().appointment!, communication_preference: 'sms' },
       client: { first_name: 'Sam', phone: '+447700900123', email: 'sam@example.com', communication_preference: 'sms' },
     });
     const { d, whatsapp } = makeDispatcher(state, settings());
-    await run(d, event()); // whatsapp-channel event, but plan primary is now SMS
+    await run(d, event()); // whatsapp-channel event, but WhatsApp is not in this client's chain
 
     expect(whatsapp.send).not.toHaveBeenCalled();
-    expect(state.fallbacks).toHaveLength(1);
+    // WhatsApp is not part of an SMS-preferring client's chain → nothing to escalate to; skip truthfully.
+    expect(state.fallbacks).toHaveLength(0);
     expect(state.events.some((e) => e.op === 'update' && e.row.status === 'cancelled')).toBe(true);
   });
 
@@ -231,6 +257,7 @@ describe('NotificationDispatchService channel + fallback behaviour', () => {
       appointment: { ...baseState().appointment!, communication_preference: 'email' },
       client: { first_name: 'Sam', phone: '+447700900123', email: 'sam@example.com', communication_preference: 'email' },
     });
+    // emailFallbackEnabled is OFF — an explicit email preference still delivers over email.
     const { d, email, whatsapp, sms } = makeDispatcher(state, settings());
     await run(d, event({ channel: 'email' }));
 
@@ -240,6 +267,21 @@ describe('NotificationDispatchService channel + fallback behaviour', () => {
     expect(sms.send).not.toHaveBeenCalled();
     expect(state.events.some((e) => e.op === 'update' && e.row.status === 'sent')).toBe(true);
     expect(state.fallbacks).toHaveLength(0);
+  });
+
+  it('does NOT escalate to SMS when an email is merely accepted (pending is not failure)', async () => {
+    // WhatsApp-first client whose email fallback event was accepted by Resend → stays "sent", no SMS.
+    const state = baseState();
+    const { d, sms } = makeDispatcher(
+      state,
+      settings({ emailFallbackEnabled: true, smsFallbackEnabled: true }),
+      { emailResult: { delivered: true, id: 'resend-2' } },
+    );
+    await run(d, event({ channel: 'email', payload_json: { appointment_start: FUTURE, fallback: true, primary_channel: 'whatsapp' } }));
+
+    expect(sms.send).not.toHaveBeenCalled();
+    expect(state.fallbacks).toHaveLength(0);
+    expect(state.events.some((e) => e.op === 'update' && e.row.status === 'sent')).toBe(true);
   });
 
   it('skips an email event truthfully when the client has no valid email', async () => {
