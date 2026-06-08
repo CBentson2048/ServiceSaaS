@@ -16,6 +16,7 @@ import {
   setLabPin,
 } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
+import { useLocationScope } from '../components/LocationScopeContext';
 import { useSheerLabAnalytics } from '../hooks/useSheerLabAnalytics';
 
 const ANALYTICS_RANGES: Array<{ value: SheerLabAnalyticsRange; label: string }> = [
@@ -43,15 +44,17 @@ export function SheerLabPage() {
   const auth = useAuth();
   const accessToken = auth.session?.accessToken;
   const canViewAnalytics = auth.user?.role === 'owner' || auth.user?.role === 'manager';
+  // The stylist + device lists filter by the shared sidebar scope ("All" shows
+  // every location). The sentinel is the literal 'all', matching the filter
+  // checks below, so the scope value drops straight in.
+  const { selectedLocationId: scopeLocationId } = useLocationScope();
 
   const [stylists, setStylists] = useState<LabPinCredentialStatus[]>([]);
   const [devices, setDevices] = useState<SharedDeviceSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
-  const [locationFilter, setLocationFilter] = useState('all');
   const [deviceStatusFilter, setDeviceStatusFilter] = useState<DeviceStatusFilter>('all');
-  const [deviceLocationFilter, setDeviceLocationFilter] = useState('all');
   const [pinInputs, setPinInputs] = useState<Record<string, string>>({});
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [deviceLocationId, setDeviceLocationId] = useState('');
@@ -97,10 +100,10 @@ export function SheerLabPage() {
 
   const filteredStylists = useMemo(
     () =>
-      locationFilter === 'all'
+      scopeLocationId === 'all'
         ? stylists
-        : stylists.filter((stylist) => stylist.locationId === locationFilter),
-    [locationFilter, stylists],
+        : stylists.filter((stylist) => stylist.locationId === scopeLocationId),
+    [scopeLocationId, stylists],
   );
 
   const activeDeviceCount = useMemo(
@@ -115,11 +118,11 @@ export function SheerLabPage() {
   const filteredDevices = useMemo(
     () =>
       devices.filter((device) => {
-        if (deviceLocationFilter !== 'all' && device.locationId !== deviceLocationFilter) return false;
+        if (scopeLocationId !== 'all' && device.locationId !== scopeLocationId) return false;
         if (deviceStatusFilter !== 'all' && deviceStatusGroup(device.status) !== deviceStatusFilter) return false;
         return true;
       }),
-    [devices, deviceLocationFilter, deviceStatusFilter],
+    [devices, scopeLocationId, deviceStatusFilter],
   );
 
   useEffect(() => {
@@ -236,8 +239,6 @@ export function SheerLabPage() {
       setBusyKey(null);
     }
   }
-
-  const showLocationFilter = auth.user?.role === 'owner' && locations.length > 1;
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-6 lg:px-8">
@@ -418,21 +419,6 @@ export function SheerLabPage() {
                   value={deviceStatusFilter}
                   onChange={setDeviceStatusFilter}
                 />
-                {locations.length > 1 ? (
-                  <select
-                    value={deviceLocationFilter}
-                    onChange={(event) => setDeviceLocationFilter(event.target.value)}
-                    aria-label="Filter devices by location"
-                    className="h-9 rounded-input-lg border border-border-strong bg-surface px-3 text-[13px] text-text-primary outline-none focus:border-primary"
-                  >
-                    <option value="all">All locations</option>
-                    {locations.map((location) => (
-                      <option key={location.id} value={location.id}>
-                        {location.name}
-                      </option>
-                    ))}
-                  </select>
-                ) : null}
               </div>
               <div className="text-[12px] text-text-secondary">
                 Showing {filteredDevices.length} of {devices.length}{' '}
@@ -510,20 +496,6 @@ export function SheerLabPage() {
               PINs are stored hashed and unlock the shared iPad for each stylist. Existing values are never displayed.
             </div>
           </div>
-          {showLocationFilter ? (
-            <select
-              value={locationFilter}
-              onChange={(event) => setLocationFilter(event.target.value)}
-              className="h-9 rounded-input-lg border border-border-strong bg-surface px-3 text-[13px] outline-none focus:border-primary"
-            >
-              <option value="all">All locations</option>
-              {locations.map((location) => (
-                <option key={location.id} value={location.id}>
-                  {location.name}
-                </option>
-              ))}
-            </select>
-          ) : null}
         </header>
 
         {loading ? (

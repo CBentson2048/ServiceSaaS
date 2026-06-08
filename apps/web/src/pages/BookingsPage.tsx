@@ -28,7 +28,9 @@ export function BookingsPage() {
   const auth = useAuth();
   const accessToken = auth.session?.accessToken;
   // The active location is owned by the sidebar's location picker (shared scope).
-  const { selectedLocationId } = useLocationScope();
+  // The day calendar board is single-location, so "All" resolves to the first
+  // location rather than trying to render every salon at once.
+  const { resolvedLocationId: selectedLocationId } = useLocationScope();
 
   const [bookings, setBookings] = useState<StaffBookingSummary[]>([]);
   const [loading, setLoading] = useState(true);

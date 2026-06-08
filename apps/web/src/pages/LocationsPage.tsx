@@ -285,13 +285,7 @@ function LocationRow({
             to={`/locations/${location.id}`}
             className="h-8 rounded-pill border border-border-strong bg-surface px-3 text-[12px] font-medium leading-[30px] text-text-secondary transition hover:bg-surface-alt"
           >
-            View
-          </Link>
-          <Link
-            to={`/locations/${location.id}/edit`}
-            className="h-8 rounded-pill border border-border-strong bg-surface px-3 text-[12px] font-medium leading-[30px] text-text-secondary transition hover:bg-surface-alt"
-          >
-            Edit
+            Detail
           </Link>
           {location.isActive ? (
             <button

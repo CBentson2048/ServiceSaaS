@@ -6,6 +6,7 @@ import { SectionLabel } from '../components/dashboard/SectionLabel';
 import { StylistKpiCard } from '../components/kpi/StylistKpiCard';
 import { StylistKpiDetailModal } from '../components/kpi/StylistKpiDetailModal';
 import { useAuth } from '../auth/AuthProvider';
+import { useLocationScope } from '../components/LocationScopeContext';
 import { ApiRequestError, getStylistKpis } from '../auth/api';
 
 const RANGE_LABEL: Record<DashboardRange, string> = {
@@ -18,9 +19,9 @@ const RANGE_LABEL: Record<DashboardRange, string> = {
 export function PerformancePage() {
   const { user, session } = useAuth();
   const accessToken = session?.accessToken;
+  const { selectedLocationId: locationId } = useLocationScope();
   const [range, setRange] = useState<DashboardRange>('week');
   const [customRange, setCustomRange] = useState<CustomRange>({ from: '', to: '' });
-  const [locationId, setLocationId] = useState<string>('all');
   const [data, setData] = useState<StylistKpiListResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -70,8 +71,6 @@ export function PerformancePage() {
       ),
     [stylists],
   );
-  const locations = data?.locations ?? user?.locations ?? [];
-
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-6 lg:px-8">
       <header className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -91,20 +90,6 @@ export function PerformancePage() {
             customRange={customRange}
             onCustomRangeChange={setCustomRange}
           />
-          {user?.role === 'owner' && locations.length > 1 ? (
-            <select
-              value={locationId}
-              onChange={(event) => setLocationId(event.target.value)}
-              className="h-9 rounded-input-lg border border-border-strong bg-surface px-3 text-[13px] outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
-            >
-              <option value="all">All locations</option>
-              {locations.map((location) => (
-                <option key={location.id} value={location.id}>
-                  {location.name}
-                </option>
-              ))}
-            </select>
-          ) : null}
         </div>
       </header>
 

@@ -7,6 +7,7 @@ import { SectionLabel } from '../components/dashboard/SectionLabel';
 import { StylistKpiDetailModal } from '../components/kpi/StylistKpiDetailModal';
 import { formatMoney, tierLabel } from '../components/kpi/format';
 import { useAuth } from '../auth/AuthProvider';
+import { useLocationScope } from '../components/LocationScopeContext';
 import { ApiRequestError, getStylistKpis } from '../auth/api';
 
 const RANGE_LABEL: Record<DashboardRange, string> = {
@@ -28,8 +29,8 @@ const TIER_TONE: Record<StylistKpiResult['commission']['tier'], StatusTone> = {
 export function CommissionPage() {
   const { user, session } = useAuth();
   const accessToken = session?.accessToken;
+  const { selectedLocationId: locationId } = useLocationScope();
   const [range, setRange] = useState<DashboardRange>('month');
-  const [locationId, setLocationId] = useState<string>('all');
   const [data, setData] = useState<StylistKpiListResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -65,7 +66,6 @@ export function CommissionPage() {
     () => [...stylists].sort((a, b) => b.commission.commissionAmountCents - a.commission.commissionAmountCents),
     [stylists],
   );
-  const locations = data?.locations ?? user?.locations ?? [];
   const currencyCode = stylists[0]?.currencyCode ?? 'GBP';
 
   const totals = useMemo(() => {
@@ -88,20 +88,6 @@ export function CommissionPage() {
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <RangeTabs value={range} onChange={setRange} />
-          {user?.role === 'owner' && locations.length > 1 ? (
-            <select
-              value={locationId}
-              onChange={(event) => setLocationId(event.target.value)}
-              className="h-9 rounded-input-lg border border-border-strong bg-surface px-3 text-[13px] outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
-            >
-              <option value="all">All locations</option>
-              {locations.map((location) => (
-                <option key={location.id} value={location.id}>
-                  {location.name}
-                </option>
-              ))}
-            </select>
-          ) : null}
         </div>
       </header>
 

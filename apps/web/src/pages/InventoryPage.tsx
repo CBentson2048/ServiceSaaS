@@ -19,6 +19,7 @@ import {
   updateInventoryStockThreshold,
 } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
+import { useLocationScope } from '../components/LocationScopeContext';
 
 type ProductForm = {
   id?: string;
@@ -51,12 +52,18 @@ export function InventoryPage() {
   const auth = useAuth();
   const accessToken = auth.session?.accessToken;
   const isOwner = auth.user?.role === 'owner';
+  // The stock table follows the shared sidebar scope: "All" aggregates every
+  // location, a concrete selection narrows to it.
+  const { selectedLocationId: scopeLocationId, isAllLocations } = useLocationScope();
   const [products, setProducts] = useState<InventoryProduct[]>([]);
   const [stock, setStock] = useState<InventoryLocationStock[]>([]);
   const [locations, setLocations] = useState<BusinessLocationSummary[]>([]);
   const [movements, setMovements] = useState<InventoryStockMovement[]>([]);
   const [lowStockCount, setLowStockCount] = useState(0);
-  const [selectedLocationId, setSelectedLocationId] = useState('');
+  // Stock mutations need a concrete target. It tracks the sidebar when a
+  // specific location is picked, and falls back to the first location on "All"
+  // so the adjustment form stays usable; the user can still override it below.
+  const [actionLocationId, setActionLocationId] = useState('');
   const [search, setSearch] = useState('');
   const [lowStockOnly, setLowStockOnly] = useState(false);
   const [productForm, setProductForm] = useState<ProductForm>(emptyProductForm);
@@ -78,33 +85,47 @@ export function InventoryPage() {
     setLoading(true);
     setError(null);
     try {
+      const listingLocationId = isAllLocations ? undefined : scopeLocationId;
       const [productResult, stockResult, movementResult, lowStockResult] = await Promise.all([
         listInventoryProducts(accessToken),
-        listInventoryStock(accessToken, { locationId: selectedLocationId || undefined, q: search, lowStockOnly }),
-        listInventoryMovements(accessToken, { locationId: selectedLocationId || undefined, limit: 20 }),
-        listInventoryLowStock(accessToken, { locationId: selectedLocationId || undefined }),
+        listInventoryStock(accessToken, { locationId: listingLocationId, q: search, lowStockOnly }),
+        listInventoryMovements(accessToken, { locationId: listingLocationId, limit: 20 }),
+        listInventoryLowStock(accessToken, { locationId: listingLocationId }),
       ]);
       setProducts(productResult.products);
       setStock(stockResult.stock);
       setLocations(stockResult.locations);
       setMovements(movementResult.movements);
       setLowStockCount(lowStockResult.alerts.length);
-      if (!selectedLocationId && stockResult.locations.length > 0) {
-        setSelectedLocationId(stockResult.locations[0].id);
-      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not load inventory');
     } finally {
       setLoading(false);
     }
-  }, [accessToken, lowStockOnly, search, selectedLocationId]);
+  }, [accessToken, lowStockOnly, search, scopeLocationId, isAllLocations]);
 
   useEffect(() => {
     void reload();
   }, [reload]);
 
+  // Keep the mutation target sensible: follow the sidebar when it names a
+  // specific location, otherwise (on "All") fall back to the first location so
+  // the adjustment form stays usable. The user can still override it below.
+  useEffect(() => {
+    if (!isAllLocations) {
+      setActionLocationId(scopeLocationId);
+    } else {
+      setActionLocationId((current) => current || locations[0]?.id || '');
+    }
+  }, [isAllLocations, scopeLocationId, locations]);
+
   const activeProducts = useMemo(() => products.filter((product) => product.isActive), [products]);
-  const selectedLocation = locations.find((location) => location.id === selectedLocationId);
+  // The location whose stock the table currently reflects (null while aggregating).
+  const viewedLocation = isAllLocations
+    ? undefined
+    : locations.find((location) => location.id === scopeLocationId);
+  // The location stock mutations will write to (the adjustment form's target).
+  const actionLocation = locations.find((location) => location.id === actionLocationId);
 
   const outOfStockCount = useMemo(
     () => stock.filter((item) => item.quantityOnHandGrams <= 0).length,
@@ -174,13 +195,13 @@ export function InventoryPage() {
   }
 
   async function handleInitializeStock() {
-    if (!accessToken || !selectedLocationId || !stockProductId) return;
+    if (!accessToken || !actionLocationId || !stockProductId) return;
     setBusy('initialize');
     setError(null);
     setActionMessage(null);
     try {
       const result = await initializeInventoryStock(accessToken, {
-        locationId: selectedLocationId,
+        locationId: actionLocationId,
         productId: stockProductId,
         quantityOnHandGrams: optionalNumber(initialQuantity) ?? 0,
         lowStockThresholdGrams: optionalNumber(stockThreshold),
@@ -198,7 +219,7 @@ export function InventoryPage() {
   }
 
   async function handleAdjustStock() {
-    if (!accessToken || !selectedLocationId || !adjustProductId) return;
+    if (!accessToken || !actionLocationId || !adjustProductId) return;
     const magnitude = optionalNumber(adjustQuantity);
     if (!magnitude || magnitude <= 0) {
       setError('Adjustment quantity must be greater than zero.');
@@ -210,7 +231,7 @@ export function InventoryPage() {
     setActionMessage(null);
     try {
       const result = await adjustInventoryStock(accessToken, {
-        locationId: selectedLocationId,
+        locationId: actionLocationId,
         productId: adjustProductId,
         quantityDeltaGrams: delta,
         movementType: delta > 0 ? 'restock' : 'manual_adjustment',
@@ -324,7 +345,7 @@ export function InventoryPage() {
             <div>
               <div className="text-[15px] font-semibold text-text-primary">Product inventory</div>
               <div className="mt-0.5 text-[13px] text-text-secondary">
-                Real-time stock levels across {selectedLocation ? selectedLocation.name : 'all active locations'}.
+                Real-time stock levels across {viewedLocation ? viewedLocation.name : 'all active locations'}.
               </div>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -337,19 +358,6 @@ export function InventoryPage() {
                   className="h-10 w-full rounded-input-lg border border-border-strong bg-surface pl-9 pr-3 text-[13px] outline-none focus:border-primary sm:w-60"
                 />
               </div>
-              {locations.length > 0 ? (
-                <select
-                  value={selectedLocationId}
-                  onChange={(event) => setSelectedLocationId(event.target.value)}
-                  className="h-10 rounded-input-lg border border-border-strong bg-surface px-3 text-[13px] outline-none focus:border-primary"
-                >
-                  {locations.map((location) => (
-                    <option key={location.id} value={location.id}>
-                      {location.name}
-                    </option>
-                  ))}
-                </select>
-              ) : null}
               <label
                 className={`inline-flex h-10 cursor-pointer items-center gap-2 rounded-input-lg border px-3 text-[13px] font-medium transition ${
                   lowStockOnly
@@ -491,8 +499,8 @@ export function InventoryPage() {
             <div className="mt-5 space-y-4">
               <Field label="Location">
                 <select
-                  value={selectedLocationId}
-                  onChange={(event) => setSelectedLocationId(event.target.value)}
+                  value={actionLocationId}
+                  onChange={(event) => setActionLocationId(event.target.value)}
                   className={inputClassTall}
                 >
                   {locations.length === 0 ? <option value="">No locations</option> : null}
@@ -548,7 +556,7 @@ export function InventoryPage() {
             {/* Initialize stock — collapsible secondary action */}
             <details className="mt-5 rounded-input-lg border border-border bg-surface-alt">
               <summary className="cursor-pointer list-none px-3 py-2.5 text-[13px] font-medium text-text-secondary">
-                + Initialize a product at {selectedLocation?.name ?? 'this location'}
+                + Initialize a product at {actionLocation?.name ?? 'this location'}
               </summary>
               <div className="space-y-2 border-t border-border px-3 py-3">
                 <ProductSelect products={activeProducts} value={stockProductId} onChange={setStockProductId} />
@@ -560,7 +568,7 @@ export function InventoryPage() {
                   type="button"
                   className="h-9 rounded-pill bg-surface-ink px-4 text-[12px] font-semibold text-text-on-primary disabled:opacity-50"
                   onClick={() => void handleInitializeStock()}
-                  disabled={busy === 'initialize' || !stockProductId || !selectedLocationId}
+                  disabled={busy === 'initialize' || !stockProductId || !actionLocationId}
                 >
                   Initialize stock
                 </button>

@@ -7,6 +7,7 @@ import type {
 } from '@sheer/domain';
 import { ApiRequestError, getWeeklyRota } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
+import { useLocationScope } from '../components/LocationScopeContext';
 import { AppButton } from '../design';
 import { LeaveRequestsPanel } from '../components/rota/LeaveRequestsPanel';
 import { MarkAbsenceModal } from '../components/rota/MarkAbsenceModal';
@@ -65,17 +66,13 @@ export function RotaPage() {
   const managerLocationId =
     role === 'manager' ? auth.user?.allowedLocationIds[0] ?? null : null;
 
-  // Owners manage any of their locations, so they pick one explicitly. Managers
-  // are scoped to their single assigned location and never see the switcher.
-  const [ownerLocationId, setOwnerLocationId] = useState<string>('');
-  useEffect(() => {
-    if (role === 'owner' && !ownerLocationId && locations.length > 0) {
-      setOwnerLocationId(locations[0].id);
-    }
-  }, [role, ownerLocationId, locations]);
+  // Owners pick a location from the shared sidebar scope. The weekly rota board
+  // is single-location, so "All" resolves to the first location. Managers are
+  // scoped to their single assigned location regardless of the picker.
+  const { resolvedLocationId } = useLocationScope();
 
-  // The location whose rota we load: owner's chosen one, or the manager's assigned one.
-  const requestLocationId = role === 'owner' ? ownerLocationId || null : managerLocationId;
+  // The location whose rota we load: owner's selected one, or the manager's assigned one.
+  const requestLocationId = role === 'owner' ? resolvedLocationId || null : managerLocationId;
   const targetLocationId = requestLocationId ?? data?.locationId ?? null;
 
   const reload = useCallback(async (options: { background?: boolean } = {}) => {
@@ -188,20 +185,6 @@ export function RotaPage() {
           <p className="mt-1 text-[13px] text-text-secondary">
             Manage shifts, breaks, leave, and absences for {locationName}.
           </p>
-          {role === 'owner' && locations.length > 0 ? (
-            <select
-              value={ownerLocationId}
-              onChange={(event) => setOwnerLocationId(event.target.value)}
-              className="mt-2 h-9 rounded-input-lg border border-border-strong bg-surface px-3 text-[13px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
-              aria-label="Location"
-            >
-              {locations.map((location) => (
-                <option key={location.id} value={location.id}>
-                  {location.name}
-                </option>
-              ))}
-            </select>
-          ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <AppButton

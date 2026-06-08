@@ -147,7 +147,10 @@
       "Bash(awk 'NR>=320 && NR<=386 && /private |async |\\): Promise<AuthUser>|: AuthUser/' apps/api/src/auth/auth.service.ts)",
       "Bash(grep -rn \"noUnusedLocals\\\\|noUnusedParameters\" tsconfig*.json src/../tsconfig*.json 2>/dev/null; echo \"---root---\"; cat tsconfig.json 2>/dev/null | grep -i unused; echo \"---app---\"; cat tsconfig.app.json 2>/dev/null | grep -i unused)",
       "Read(//Users/shiny/Documents/Sheer/sheer-platform/apps/web/**)",
-      "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\('react', p.dependencies?.react, '| @types/react', p.devDependencies?.['@types/react']\\); console.log\\('scripts:', JSON.stringify\\(p.scripts,null,2\\)\\)\")"
+      "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\('react', p.dependencies?.react, '| @types/react', p.devDependencies?.['@types/react']\\); console.log\\('scripts:', JSON.stringify\\(p.scripts,null,2\\)\\)\")",
+      "Bash(echo \"TSC_EXIT=$?\")",
+      "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\(JSON.stringify\\(p.scripts,null,2\\)\\)\")",
+      "Bash(echo \"ESLINT_EXIT=$?\")"
     ],
     "additionalDirectories": [
       "/Users/shiny/Documents/Sheer/sheer-platform/apps/web/src/auth",

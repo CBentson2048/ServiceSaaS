@@ -9,6 +9,7 @@ import { RangeTabs, type CustomRange, type DashboardRange } from '../components/
 import { SectionLabel } from '../components/dashboard/SectionLabel';
 import { StylistsTable } from '../components/dashboard/StylistsTable';
 import { useAuth } from '../auth/AuthProvider';
+import { useLocationScope } from '../components/LocationScopeContext';
 import { useDashboardSnapshot } from '../hooks/useDashboardSnapshot';
 import { useSheerLabAnalytics } from '../hooks/useSheerLabAnalytics';
 import { toKpiItems, toLocationCardProps, toStylistRow } from './dashboardMappers';
@@ -17,7 +18,8 @@ export function DashboardPage() {
   const { user } = useAuth();
   const [range, setRange] = useState<DashboardRange>('today');
   const [customRange, setCustomRange] = useState<CustomRange>({ from: '', to: '' });
-  const { data, isLoading, error, locationId, setLocationId } = useDashboardSnapshot(range, customRange);
+  const { selectedLocationId: locationId } = useLocationScope();
+  const { data, isLoading, error } = useDashboardSnapshot(range, customRange);
   const { data: labAnalytics, isLoading: labAnalyticsLoading } = useSheerLabAnalytics(range, customRange);
   const { greeting, kpis, salons, stylists, diagnostics, topServices, inventoryAlerts } = data;
   const hasDashboardData =
@@ -49,20 +51,6 @@ export function DashboardPage() {
               customRange={customRange}
               onCustomRangeChange={setCustomRange}
             />
-            {user?.role === 'owner' && kpis.locations.length > 1 ? (
-              <select
-                value={locationId}
-                onChange={(event) => setLocationId(event.target.value)}
-                className="h-9 rounded-input-lg border border-border-strong bg-surface px-3 text-[13px] outline-none focus:border-primary"
-              >
-                <option value="all">All locations</option>
-                {kpis.locations.map((location) => (
-                  <option key={location.id} value={location.id}>
-                    {location.name}
-                  </option>
-                ))}
-              </select>
-            ) : null}
           </div>
         </div>
 

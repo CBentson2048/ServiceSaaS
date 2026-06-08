@@ -7,6 +7,7 @@ import type {
 } from '@sheer/domain';
 import { resolveCustomWindow, type CustomRange, type DashboardRange } from '../components/dashboard/RangeTabs';
 import { useAuth } from '../auth/AuthProvider';
+import { useLocationScope } from '../components/LocationScopeContext';
 import {
   getDashboardInventoryAlerts,
   getDashboardKpis,
@@ -19,8 +20,6 @@ export interface UseDashboardSnapshotResult {
   data: DashboardSnapshot;
   isLoading: boolean;
   error: Error | null;
-  locationId: string;
-  setLocationId: (locationId: string) => void;
 }
 
 export function useDashboardSnapshot(
@@ -28,14 +27,12 @@ export function useDashboardSnapshot(
   custom?: CustomRange,
 ): UseDashboardSnapshotResult {
   const { session, user } = useAuth();
+  // Location now comes from the shared sidebar scope so the whole dashboard
+  // tracks one selector instead of owning its own.
+  const { selectedLocationId: locationId } = useLocationScope();
   const [data, setData] = useState<DashboardSnapshot>(() => emptyDashboardSnapshot());
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
-  const [locationId, setLocationId] = useState('all');
-
-  useEffect(() => {
-    if (user?.role !== 'owner') setLocationId('all');
-  }, [user?.role]);
 
   const customFrom = custom?.from;
   const customTo = custom?.to;
@@ -89,7 +86,7 @@ export function useDashboardSnapshot(
     };
   }, [locationId, range, customFrom, customTo, session?.accessToken, user]);
 
-  return { data, isLoading, error, locationId, setLocationId };
+  return { data, isLoading, error };
 }
 
 function rangeToDates(range: Exclude<DashboardRange, 'custom'>): { from: string; to: string } {

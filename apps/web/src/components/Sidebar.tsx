@@ -3,7 +3,7 @@ import { NavLink } from 'react-router-dom';
 import type { UserRole } from '@sheer/domain';
 import { cn } from '@sheer/utils';
 import { useAuth } from '../auth/AuthProvider';
-import { useLocationScope } from './LocationScopeContext';
+import { ALL_LOCATIONS, useLocationScope } from './LocationScopeContext';
 import { AppText } from '../design';
 
 type IconComponent = (props: SVGProps<SVGSVGElement>) => ReactElement;
@@ -152,11 +152,16 @@ export function Sidebar() {
 }
 
 function LocationPicker({ collapsed, onExpand }: { collapsed: boolean; onExpand: () => void }) {
-  const { locations, selectedLocationId, setSelectedLocationId } = useLocationScope();
+  const { locations, selectedLocationId, setSelectedLocationId, isAllLocations } = useLocationScope();
   if (locations.length === 0) return null;
 
-  const activeName =
-    locations.find((location) => location.id === selectedLocationId)?.name ?? locations[0]?.name ?? '';
+  // With a single salon "All" is just that salon, so show its name rather than
+  // the abstract label; otherwise reflect the live selection.
+  const activeName = isAllLocations
+    ? locations.length === 1
+      ? locations[0].name
+      : 'All locations'
+    : locations.find((location) => location.id === selectedLocationId)?.name ?? locations[0]?.name ?? '';
 
   if (collapsed) {
     return (
@@ -185,6 +190,9 @@ function LocationPicker({ collapsed, onExpand }: { collapsed: boolean; onExpand:
             aria-label="Location"
             className="mt-1.5 h-9 w-full rounded-input-lg border border-white/15 bg-white/5 px-2.5 text-[13px] font-medium text-white outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/30"
           >
+            <option value={ALL_LOCATIONS} className="text-text-primary">
+              All locations
+            </option>
             {locations.map((location) => (
               <option key={location.id} value={location.id} className="text-text-primary">
                 {location.name}
