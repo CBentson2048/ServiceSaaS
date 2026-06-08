@@ -143,6 +143,96 @@ describe('calculateProductBillableAmount', () => {
     });
   });
 
+  describe('round-up', () => {
+    it('rounds up to the nearest £0.50: £4.44 → £4.50', () => {
+      expect(
+        calculateProductBillableAmount({
+          productCostAmountCents: 444,
+          rule: 'cost_only',
+          markupPercent: null,
+          fixedUpliftAmount: null,
+          roundUpEnabled: true,
+          roundUpIncrement: 0.5,
+        }),
+      ).toBe(450);
+    });
+
+    it('rounds up to the nearest £0.50: £4.89 → £5.00', () => {
+      expect(
+        calculateProductBillableAmount({
+          productCostAmountCents: 489,
+          rule: 'cost_only',
+          markupPercent: null,
+          fixedUpliftAmount: null,
+          roundUpEnabled: true,
+          roundUpIncrement: 0.5,
+        }),
+      ).toBe(500);
+    });
+
+    it('rounds up to the nearest £1.00: £4.89 → £5.00', () => {
+      expect(
+        calculateProductBillableAmount({
+          productCostAmountCents: 489,
+          rule: 'cost_only',
+          markupPercent: null,
+          fixedUpliftAmount: null,
+          roundUpEnabled: true,
+          roundUpIncrement: 1,
+        }),
+      ).toBe(500);
+    });
+
+    it('applies after markup is added: £8.00 + 11% = £8.88 → £9.00 at £0.50 step', () => {
+      expect(
+        calculateProductBillableAmount({
+          productCostAmountCents: 800,
+          rule: 'cost_plus_markup_percent',
+          markupPercent: 11,
+          fixedUpliftAmount: null,
+          roundUpEnabled: true,
+          roundUpIncrement: 0.5,
+        }),
+      ).toBe(900);
+    });
+
+    it('leaves exact multiples unchanged', () => {
+      expect(
+        calculateProductBillableAmount({
+          productCostAmountCents: 500,
+          rule: 'cost_only',
+          markupPercent: null,
+          fixedUpliftAmount: null,
+          roundUpEnabled: true,
+          roundUpIncrement: 0.5,
+        }),
+      ).toBe(500);
+    });
+
+    it('is a no-op when disabled or increment missing', () => {
+      expect(
+        calculateProductBillableAmount({
+          productCostAmountCents: 444,
+          rule: 'cost_only',
+          markupPercent: null,
+          fixedUpliftAmount: null,
+          roundUpEnabled: false,
+          roundUpIncrement: 0.5,
+        }),
+      ).toBe(444);
+      expect(
+        calculateProductBillableAmount({
+          productCostAmountCents: 444,
+          rule: 'cost_only',
+          markupPercent: null,
+          fixedUpliftAmount: null,
+          roundUpEnabled: true,
+          roundUpIncrement: null,
+        }),
+      ).toBe(444);
+    });
+  });
+
   describe('validation', () => {
     it('throws for unknown rule', () => {
       expect(() =>
@@ -166,6 +256,15 @@ describe('buildProductBillingSnapshot', () => {
     expect(snapshot.billingRuleSnapshot).toBe('cost_only');
     expect(snapshot.markupPercentSnapshot).toBeNull();
     expect(snapshot.fixedUpliftAmountSnapshot).toBeNull();
+    expect(snapshot.roundUpEnabledSnapshot).toBe(false);
+    expect(snapshot.roundUpIncrementSnapshot).toBeNull();
+  });
+
+  it('records round-up in the snapshot and applies it to the billable amount', () => {
+    const snapshot = buildProductBillingSnapshot(444, 'cost_only', null, null, true, 0.5);
+    expect(snapshot.billableAmountCents).toBe(450);
+    expect(snapshot.roundUpEnabledSnapshot).toBe(true);
+    expect(snapshot.roundUpIncrementSnapshot).toBe(0.5);
   });
 
   it('cost_plus_markup_percent snapshot records markup', () => {

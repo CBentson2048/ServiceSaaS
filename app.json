@@ -1,3 +1,15 @@
 {
-  "expo": {}
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "64870082-2508-4886-a0bf-adb1b71191ce"
+      }
+    },
+    "ios": {
+      "bundleIdentifier": "com.fulltech2048.sheerplatform",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    }
+  }
 }

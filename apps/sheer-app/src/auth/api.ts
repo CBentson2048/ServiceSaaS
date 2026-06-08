@@ -1,5 +1,6 @@
 import type {
   CreateMyLeaveRequest,
+  ClientLabHistoryResponse,
   CreateStylistRebookingRequest,
   CurrentUserResponse,
   AppointmentCompletionResponse,
@@ -73,6 +74,11 @@ export async function updateMyProfile(
     body: payload,
     accessToken,
   });
+}
+
+// The caller's own colour/formula history — a cost-stripped view for clients.
+export async function getMyLabHistory(accessToken: string): Promise<ClientLabHistoryResponse> {
+  return request<ClientLabHistoryResponse>('/lab/formulas/me/history', { accessToken });
 }
 
 export async function getMyWeek(

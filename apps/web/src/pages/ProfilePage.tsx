@@ -3,12 +3,14 @@ import type { UserProfileResponse } from '@sheer/domain';
 import { cn } from '@sheer/utils';
 import { getMyProfile, updateMyProfile } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
+import { DEFAULT_TIMEZONE, TIMEZONE_OPTIONS } from '../config/timezones';
 
 interface ProfileForm {
   firstName: string;
   lastName: string;
   phone: string;
   avatarUrl: string;
+  timezone: string;
   communicationPreference: 'whatsapp' | 'sms' | 'email';
 }
 
@@ -41,6 +43,7 @@ export function ProfilePage() {
         lastName: result.identity.lastName,
         phone: result.identity.phone ?? '',
         avatarUrl: result.identity.avatarUrl ?? '',
+        timezone: result.identity.timezone ?? DEFAULT_TIMEZONE,
         communicationPreference: result.clientProfile?.communicationPreference ?? 'email',
       };
       setProfile(result);
@@ -64,6 +67,7 @@ export function ProfilePage() {
       form.lastName !== initialForm.lastName ||
       form.phone !== initialForm.phone ||
       form.avatarUrl !== initialForm.avatarUrl ||
+      form.timezone !== initialForm.timezone ||
       form.communicationPreference !== initialForm.communicationPreference
     );
   }, [form, initialForm]);
@@ -84,6 +88,7 @@ export function ProfilePage() {
         lastName: form.lastName.trim(),
         phone: form.phone.trim() || null,
         avatarUrl: form.avatarUrl.trim() || null,
+        timezone: form.timezone,
         communicationPreference:
           profile?.identity.role === 'client' ? form.communicationPreference : undefined,
       });
@@ -92,11 +97,17 @@ export function ProfilePage() {
         lastName: result.profile.identity.lastName,
         phone: result.profile.identity.phone ?? '',
         avatarUrl: result.profile.identity.avatarUrl ?? '',
+        timezone: result.profile.identity.timezone ?? DEFAULT_TIMEZONE,
         communicationPreference: result.profile.clientProfile?.communicationPreference ?? 'email',
       };
       setProfile(result.profile);
       setForm(next);
       setInitialForm(next);
+      // Push the new timezone into the live session so the navbar clock and
+      // other timezone-aware surfaces update without a re-login.
+      if (auth.session && auth.user && auth.user.timezone !== next.timezone) {
+        auth.applyAuthenticatedSession(auth.session, { ...auth.user, timezone: next.timezone });
+      }
       setMessage('Your profile has been updated.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save profile');
@@ -185,6 +196,19 @@ export function ProfilePage() {
                     className="sm:col-span-2"
                   />
                 </div>
+              </Section>
+
+              <Section
+                title="Timezone"
+                description="Dates and times across your dashboard — including the clock in the top bar — are shown in this timezone."
+              >
+                <SelectField
+                  label="Timezone"
+                  value={form.timezone}
+                  onChange={(timezone) => setForm({ ...form, timezone })}
+                  options={TIMEZONE_OPTIONS}
+                  hint="Pick the timezone you work in. This only affects how times are displayed to you."
+                />
               </Section>
 
               {profile.identity.role === 'client' ? (
@@ -377,6 +401,46 @@ function Field({
             : 'border-border bg-surface text-text-primary placeholder:text-text-subtle hover:border-border-strong focus:border-primary focus:ring-2 focus:ring-primary/20',
         )}
       />
+      {hint ? <p className="mt-1 text-[11px] leading-4 text-text-muted">{hint}</p> : null}
+    </div>
+  );
+}
+
+function SelectField({
+  label,
+  value,
+  onChange,
+  options,
+  hint,
+  className,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: { value: string; label: string }[];
+  hint?: string;
+  className?: string;
+}) {
+  // If the saved value isn't in the curated list (e.g. a custom IANA zone set
+  // elsewhere), surface it as an option so it stays selected.
+  const hasValue = options.some((option) => option.value === value);
+  return (
+    <div className={cn('max-w-sm', className)}>
+      <label className="flex items-center gap-1 text-[12px] font-medium text-text-secondary">
+        {label}
+      </label>
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="mt-1.5 h-10 w-full rounded-input border border-border bg-surface px-3 text-[14px] text-text-primary outline-none transition-colors hover:border-border-strong focus:border-primary focus:ring-2 focus:ring-primary/20"
+      >
+        {hasValue ? null : <option value={value}>{value}</option>}
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
       {hint ? <p className="mt-1 text-[11px] leading-4 text-text-muted">{hint}</p> : null}
     </div>
   );

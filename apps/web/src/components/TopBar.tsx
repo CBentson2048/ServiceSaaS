@@ -3,12 +3,15 @@ import { formatDate, cn } from '@sheer/utils';
 import { useNavigate } from 'react-router-dom';
 import { AppText } from '../design';
 import { useAuth } from '../auth/AuthProvider';
+import { resolveTimezone } from '../config/timezones';
 
 export function TopBar() {
   const { signOut, user } = useAuth();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  // All displayed times honour the user's profile timezone setting.
+  const timezone = resolveTimezone(user?.timezone);
 
   const fullName = user?.profile.fullName ?? 'Sheer user';
   const avatarUrl = user?.profile.avatarUrl;
@@ -53,14 +56,10 @@ export function TopBar() {
         SH<span className="text-primary">EE</span>R
       </AppText>
 
-      <AppText as="div" variant="caption" className="hidden !text-white/55 md:block">
-        {formatDate(new Date(), { dateStyle: 'full' })}
-      </AppText>
+      <NavClock timezone={timezone} variant="desktop" />
 
       <div className="flex items-center gap-4">
-        <AppText as="div" variant="caption" className="!text-white/55 md:hidden">
-          {formatDate(new Date(), { dateStyle: 'medium' })}
-        </AppText>
+        <NavClock timezone={timezone} variant="mobile" />
 
         <div ref={menuRef} className="relative">
           <button
@@ -156,6 +155,50 @@ export function TopBar() {
         </div>
       </div>
     </header>
+  );
+}
+
+/**
+ * Live clock for the top bar. Shows the current time (HH:MM) alongside the
+ * date, rendered in the user's profile timezone and refreshed every second.
+ * `desktop` sits in the left corner; `mobile` is a compact variant shown
+ * beside the account menu on small screens.
+ */
+function NavClock({ timezone, variant }: { timezone: string; variant: 'desktop' | 'mobile' }) {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const time = new Intl.DateTimeFormat('en-GB', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: timezone,
+  }).format(now);
+
+  if (variant === 'mobile') {
+    return (
+      <div className="flex items-baseline gap-1.5 md:hidden">
+        <AppText as="span" variant="caption" weight="medium" className="!text-white tabular-nums">
+          {time}
+        </AppText>
+        <AppText as="span" variant="micro" className="!text-white/45">
+          {formatDate(now, { dateStyle: 'medium', timeZone: timezone })}
+        </AppText>
+      </div>
+    );
+  }
+
+  return (
+    <div className="hidden items-baseline gap-2 md:flex">
+      <AppText as="span" variant="caption" weight="medium" className="!text-white tabular-nums">
+        {time}
+      </AppText>
+      <AppText as="span" variant="caption" className="!text-white/55">
+        {formatDate(now, { dateStyle: 'full', timeZone: timezone })}
+      </AppText>
+    </div>
   );
 }
 

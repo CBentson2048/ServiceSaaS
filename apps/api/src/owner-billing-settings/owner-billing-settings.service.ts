@@ -22,10 +22,12 @@ interface BillingRulesRow {
   product_billing_rule: string;
   product_markup_percent: number | null;
   product_fixed_uplift_amount: number | null;
+  product_round_up_enabled: boolean;
+  product_round_up_increment: number | null;
 }
 
 const PRODUCT_BILLING_COLUMNS =
-  'id,location_id,product_billing_enabled,product_billing_rule,product_markup_percent,product_fixed_uplift_amount';
+  'id,location_id,product_billing_enabled,product_billing_rule,product_markup_percent,product_fixed_uplift_amount,product_round_up_enabled,product_round_up_increment';
 
 @Injectable()
 export class OwnerBillingSettingsService {
@@ -62,6 +64,7 @@ export class OwnerBillingSettingsService {
     const existing = await this.fetchBillingRulesRow(actor.businessId, input.locationId);
 
     const merged = mergeSettings(existing, input);
+    this.assertRoundUp(merged);
 
     const { error } = await this.admin
       .schema('billing')
@@ -71,6 +74,8 @@ export class OwnerBillingSettingsService {
         product_billing_rule: merged.productBillingRule,
         product_markup_percent: merged.productMarkupPercent,
         product_fixed_uplift_amount: merged.productFixedUpliftAmount,
+        product_round_up_enabled: merged.productRoundUpEnabled,
+        product_round_up_increment: merged.productRoundUpIncrement,
       })
       .eq('id', existing.id)
       .eq('business_id', actor.businessId);
@@ -107,6 +112,18 @@ export class OwnerBillingSettingsService {
       if (input.productFixedUpliftAmount < 0) {
         throw new BadRequestException('productFixedUpliftAmount must be >= 0');
       }
+    }
+  }
+
+  private assertRoundUp(merged: LocationProductBillingSettings): void {
+    if (!merged.productRoundUpEnabled) return;
+    if (merged.productRoundUpIncrement === null || merged.productRoundUpIncrement === undefined) {
+      throw new BadRequestException(
+        'productRoundUpIncrement is required when productRoundUpEnabled is true',
+      );
+    }
+    if (merged.productRoundUpIncrement <= 0) {
+      throw new BadRequestException('productRoundUpIncrement must be > 0');
     }
   }
 
@@ -164,6 +181,9 @@ function toSettings(row: BillingRulesRow, locationId: string): LocationProductBi
     productMarkupPercent: row.product_markup_percent !== undefined ? row.product_markup_percent : null,
     productFixedUpliftAmount:
       row.product_fixed_uplift_amount !== undefined ? row.product_fixed_uplift_amount : null,
+    productRoundUpEnabled: row.product_round_up_enabled ?? false,
+    productRoundUpIncrement:
+      row.product_round_up_increment !== undefined ? row.product_round_up_increment : null,
   };
 }
 
@@ -174,6 +194,8 @@ function mergeSettings(
   const rule: ProductBillingRule =
     (input.productBillingRule as ProductBillingRule | undefined) ??
     (existing.product_billing_rule as ProductBillingRule);
+
+  const roundUpEnabled = input.productRoundUpEnabled ?? existing.product_round_up_enabled ?? false;
 
   return {
     locationId: existing.location_id,
@@ -187,5 +209,9 @@ function mergeSettings(
       rule === 'fixed_uplift'
         ? (input.productFixedUpliftAmount ?? existing.product_fixed_uplift_amount ?? null)
         : null,
+    productRoundUpEnabled: roundUpEnabled,
+    productRoundUpIncrement: roundUpEnabled
+      ? (input.productRoundUpIncrement ?? existing.product_round_up_increment ?? null)
+      : null,
   };
 }

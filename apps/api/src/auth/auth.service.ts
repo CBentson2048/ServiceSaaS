@@ -42,6 +42,7 @@ interface ProfileRow {
   phone: string | null;
   avatar_url: string | null;
   is_active?: boolean | null;
+  timezone?: string | null;
 }
 
 interface MembershipRow {
@@ -413,6 +414,7 @@ export class AuthService {
       clientProfileId: clientProfile?.id,
       clientCode: clientProfile?.client_code,
       clientCommunicationPreference: clientProfile?.communication_preference ?? undefined,
+      timezone: profile.timezone ?? undefined,
     };
   }
 
@@ -686,7 +688,7 @@ export class AuthService {
     const { data, error } = await this.admin
       .schema('core')
       .from('user_profiles')
-      .select('id,email,first_name,last_name,full_name,display_name,phone,avatar_url,is_active')
+      .select('id,email,first_name,last_name,full_name,display_name,phone,avatar_url,is_active,timezone')
       .eq('id', userId)
       .single<ProfileRow>();
 
@@ -701,7 +703,7 @@ export class AuthService {
     const { data, error } = await this.admin
       .schema('core')
       .from('user_profiles')
-      .select('id,email,first_name,last_name,full_name,display_name,phone,avatar_url,is_active')
+      .select('id,email,first_name,last_name,full_name,display_name,phone,avatar_url,is_active,timezone')
       .eq('email', email)
       .maybeSingle<ProfileRow>();
 

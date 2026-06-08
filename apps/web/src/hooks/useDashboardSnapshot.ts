@@ -5,7 +5,7 @@ import type {
   DashboardStylistPerformanceResponse,
   DashboardTopServicesResponse,
 } from '@sheer/domain';
-import type { DashboardRange } from '../components/dashboard/RangeTabs';
+import { resolveCustomWindow, type CustomRange, type DashboardRange } from '../components/dashboard/RangeTabs';
 import { useAuth } from '../auth/AuthProvider';
 import {
   getDashboardInventoryAlerts,
@@ -23,7 +23,10 @@ export interface UseDashboardSnapshotResult {
   setLocationId: (locationId: string) => void;
 }
 
-export function useDashboardSnapshot(range: DashboardRange): UseDashboardSnapshotResult {
+export function useDashboardSnapshot(
+  range: DashboardRange,
+  custom?: CustomRange,
+): UseDashboardSnapshotResult {
   const { session, user } = useAuth();
   const [data, setData] = useState<DashboardSnapshot>(() => emptyDashboardSnapshot());
   const [isLoading, setIsLoading] = useState(false);
@@ -34,6 +37,9 @@ export function useDashboardSnapshot(range: DashboardRange): UseDashboardSnapsho
     if (user?.role !== 'owner') setLocationId('all');
   }, [user?.role]);
 
+  const customFrom = custom?.from;
+  const customTo = custom?.to;
+
   useEffect(() => {
     let cancelled = false;
 
@@ -43,7 +49,15 @@ export function useDashboardSnapshot(range: DashboardRange): UseDashboardSnapsho
         return;
       }
 
-      const dateRange = rangeToDates(range);
+      const dateRange =
+        range === 'custom' ? resolveCustomWindow({ from: customFrom ?? '', to: customTo ?? '' }) : rangeToDates(range);
+      if (!dateRange) {
+        // Custom range not fully selected yet — show nothing until both dates are set.
+        setData(emptyDashboardSnapshot());
+        setIsLoading(false);
+        setError(null);
+        return;
+      }
       const selectedLocationId = user.role === 'owner' && locationId !== 'all' ? locationId : undefined;
       setIsLoading(true);
       setError(null);
@@ -73,12 +87,12 @@ export function useDashboardSnapshot(range: DashboardRange): UseDashboardSnapsho
     return () => {
       cancelled = true;
     };
-  }, [locationId, range, session?.accessToken, user]);
+  }, [locationId, range, customFrom, customTo, session?.accessToken, user]);
 
   return { data, isLoading, error, locationId, setLocationId };
 }
 
-function rangeToDates(range: DashboardRange): { from: string; to: string } {
+function rangeToDates(range: Exclude<DashboardRange, 'custom'>): { from: string; to: string } {
   const now = new Date();
   const from = new Date(now);
   from.setHours(0, 0, 0, 0);

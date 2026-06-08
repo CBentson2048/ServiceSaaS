@@ -16,7 +16,11 @@ import {
   formatDuration,
   formatMoney,
 } from '../../src/booking/bookingStyles';
-import { isStripeConfigured, STRIPE_URL_SCHEME } from '../../src/payments/stripeConfig';
+import {
+  isStripeConfigured,
+  STRIPE_DEFAULT_MERCHANT_COUNTRY,
+  STRIPE_URL_SCHEME,
+} from '../../src/payments/stripeConfig';
 
 export default function BookingReviewScreen() {
   const auth = useAuth();
@@ -67,6 +71,12 @@ export default function BookingReviewScreen() {
           merchantDisplayName: selectedLocation.name,
           paymentIntentClientSecret: result.clientSecret,
           returnURL: `${STRIPE_URL_SCHEME}://stripe-redirect`,
+          // Offer Apple Pay alongside card and Link. The available methods are
+          // restricted to card + Link server-side; Apple Pay is a card wallet.
+          applePay: {
+            merchantCountryCode: selectedLocation.countryCode ?? STRIPE_DEFAULT_MERCHANT_COUNTRY,
+          },
+          paymentMethodOrder: ['apple_pay', 'card', 'link'],
         });
         if (initResult.error) {
           setError(initResult.error.message);

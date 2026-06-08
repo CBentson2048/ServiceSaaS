@@ -5,7 +5,7 @@ import { CommissionReadinessCard } from '../components/dashboard/CommissionReadi
 import { DiagnosticCard } from '../components/dashboard/DiagnosticCard';
 import { KpiStrip } from '../components/dashboard/KpiStrip';
 import { LocationCard } from '../components/dashboard/LocationCard';
-import { RangeTabs, type DashboardRange } from '../components/dashboard/RangeTabs';
+import { RangeTabs, type CustomRange, type DashboardRange } from '../components/dashboard/RangeTabs';
 import { SectionLabel } from '../components/dashboard/SectionLabel';
 import { StylistsTable } from '../components/dashboard/StylistsTable';
 import { useAuth } from '../auth/AuthProvider';
@@ -16,8 +16,9 @@ import { toKpiItems, toLocationCardProps, toStylistRow } from './dashboardMapper
 export function DashboardPage() {
   const { user } = useAuth();
   const [range, setRange] = useState<DashboardRange>('today');
-  const { data, isLoading, error, locationId, setLocationId } = useDashboardSnapshot(range);
-  const { data: labAnalytics, isLoading: labAnalyticsLoading } = useSheerLabAnalytics(range);
+  const [customRange, setCustomRange] = useState<CustomRange>({ from: '', to: '' });
+  const { data, isLoading, error, locationId, setLocationId } = useDashboardSnapshot(range, customRange);
+  const { data: labAnalytics, isLoading: labAnalyticsLoading } = useSheerLabAnalytics(range, customRange);
   const { greeting, kpis, salons, stylists, diagnostics, topServices, inventoryAlerts } = data;
   const hasDashboardData =
     kpis.summary.totalBookings > 0 || kpis.summary.totalRevenueCents > 0 || kpis.summary.lowStockProducts > 0;
@@ -41,7 +42,13 @@ export function DashboardPage() {
             </AppText>
           </div>
           <div className="flex flex-col gap-2 sm:items-end">
-            <RangeTabs value={range} onChange={setRange} />
+            <RangeTabs
+              value={range}
+              onChange={setRange}
+              allowCustom
+              customRange={customRange}
+              onCustomRangeChange={setCustomRange}
+            />
             {user?.role === 'owner' && kpis.locations.length > 1 ? (
               <select
                 value={locationId}
@@ -101,7 +108,7 @@ export function DashboardPage() {
 
           <SectionLabel>KPI &amp; commission readiness</SectionLabel>
           <div className="mb-6">
-            <CommissionReadinessCard range={range} locationId={locationId} />
+            <CommissionReadinessCard range={range} customRange={customRange} locationId={locationId} />
           </div>
 
           <SectionLabel>Diagnostics</SectionLabel>

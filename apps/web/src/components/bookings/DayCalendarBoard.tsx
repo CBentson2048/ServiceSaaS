@@ -17,11 +17,13 @@ function CalendarEmptyIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-const HOUR_PX = 44;
-const MIN_BLOCK_PX = 22;
+// Vertical zoom: taller hour rows make appointment blocks easier to read and
+// let the board fill the (now much wider) right-hand content area.
+const HOUR_PX = 60;
+const MIN_BLOCK_PX = 30;
 const DEFAULT_START_HOUR = 9;
 const DEFAULT_END_HOUR = 18;
-const COLUMN_WIDTH = 200;
+const COLUMN_WIDTH = 220;
 const HEADER_HEIGHT = 'h-12';
 const HEADER_HEIGHT_PX = 48; // keep in sync with HEADER_HEIGHT (h-12)
 

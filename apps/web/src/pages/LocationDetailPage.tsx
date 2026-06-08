@@ -156,7 +156,21 @@ type BillingFormState = {
   productBillingRule: ProductBillingRule;
   productMarkupPercent: string;
   productFixedUpliftAmount: string;
+  productRoundUpEnabled: boolean;
+  productRoundUpIncrement: string;
 };
+
+// Common round-up steps offered as quick presets (decimal GBP).
+const ROUND_UP_PRESETS = ['0.05', '0.10', '0.50', '1.00'];
+
+/** Rounds a major-unit amount UP to the nearest increment, working in pence to avoid float drift. */
+function applyRoundUpMajor(amount: number, increment: number): number {
+  if (!(increment > 0)) return amount;
+  const amountPence = Math.round(amount * 100);
+  const stepPence = Math.round(increment * 100);
+  if (stepPence <= 0) return amount;
+  return (Math.ceil(amountPence / stepPence) * stepPence) / 100;
+}
 
 const BILLING_RULES: { value: ProductBillingRule; label: string; description: string }[] = [
   {
@@ -182,19 +196,32 @@ function previewBillableAmount(
   rule: ProductBillingRule,
   markup: string,
   uplift: string,
-): { amount: number; valid: boolean } {
-  if (rule === 'cost_only') return { amount: EXAMPLE_COST, valid: true };
+  roundUpEnabled: boolean,
+  roundUpIncrement: string,
+): { amount: number; base: number; valid: boolean; rounded: boolean } {
+  const base = baseBillableAmount(rule, markup, uplift);
+  if (base === null) return { amount: EXAMPLE_COST, base: EXAMPLE_COST, valid: false, rounded: false };
+
+  if (!roundUpEnabled) return { amount: base, base, valid: true, rounded: false };
+  const inc = parseFloat(roundUpIncrement);
+  if (isNaN(inc) || inc <= 0) return { amount: base, base, valid: true, rounded: false };
+  const amount = applyRoundUpMajor(base, inc);
+  return { amount, base, valid: true, rounded: amount !== base };
+}
+
+function baseBillableAmount(rule: ProductBillingRule, markup: string, uplift: string): number | null {
+  if (rule === 'cost_only') return EXAMPLE_COST;
   if (rule === 'cost_plus_markup_percent') {
     const pct = parseFloat(markup);
-    if (isNaN(pct) || pct < 0) return { amount: EXAMPLE_COST, valid: false };
-    return { amount: EXAMPLE_COST + (EXAMPLE_COST * pct) / 100, valid: true };
+    if (isNaN(pct) || pct < 0) return null;
+    return EXAMPLE_COST + (EXAMPLE_COST * pct) / 100;
   }
   if (rule === 'fixed_uplift') {
     const amt = parseFloat(uplift);
-    if (isNaN(amt) || amt < 0) return { amount: EXAMPLE_COST, valid: false };
-    return { amount: EXAMPLE_COST + amt, valid: true };
+    if (isNaN(amt) || amt < 0) return null;
+    return EXAMPLE_COST + amt;
   }
-  return { amount: EXAMPLE_COST, valid: false };
+  return null;
 }
 
 function toForm(settings?: LocationProductBillingSettings): BillingFormState {
@@ -205,6 +232,9 @@ function toForm(settings?: LocationProductBillingSettings): BillingFormState {
       settings?.productMarkupPercent != null ? String(settings.productMarkupPercent) : '',
     productFixedUpliftAmount:
       settings?.productFixedUpliftAmount != null ? String(settings.productFixedUpliftAmount) : '',
+    productRoundUpEnabled: settings?.productRoundUpEnabled ?? false,
+    productRoundUpIncrement:
+      settings?.productRoundUpIncrement != null ? String(settings.productRoundUpIncrement) : '0.50',
   };
 }
 
@@ -217,11 +247,14 @@ function isDirty(form: BillingFormState, settings: LocationProductBillingSetting
     form.productBillingRule === 'fixed_uplift'
       ? parseFloat(form.productFixedUpliftAmount)
       : null;
+  const incrementNum = form.productRoundUpEnabled ? parseFloat(form.productRoundUpIncrement) : null;
   return (
     form.productBillingEnabled !== settings.productBillingEnabled ||
     form.productBillingRule !== settings.productBillingRule ||
     markupNum !== settings.productMarkupPercent ||
-    upliftNum !== settings.productFixedUpliftAmount
+    upliftNum !== settings.productFixedUpliftAmount ||
+    form.productRoundUpEnabled !== settings.productRoundUpEnabled ||
+    incrementNum !== settings.productRoundUpIncrement
   );
 }
 
@@ -286,6 +319,13 @@ function ProductBillingSection({
       return;
     }
 
+    const roundUpEnabled = form.productRoundUpEnabled;
+    const roundUpIncrement = roundUpEnabled ? parseFloat(form.productRoundUpIncrement) : null;
+    if (roundUpEnabled && (isNaN(roundUpIncrement!) || roundUpIncrement! <= 0)) {
+      showNotice('danger', 'Round-up increment must be a number greater than 0 (e.g. 0.50).');
+      return;
+    }
+
     setSaving(true);
     setNotice(null);
     try {
@@ -295,6 +335,8 @@ function ProductBillingSection({
         productBillingRule: rule,
         productMarkupPercent: markupPercent,
         productFixedUpliftAmount: fixedUpliftAmount,
+        productRoundUpEnabled: roundUpEnabled,
+        productRoundUpIncrement: roundUpIncrement,
       });
       setSettings(updated);
       setForm(toForm(updated));
@@ -327,6 +369,8 @@ function ProductBillingSection({
     form.productBillingRule,
     form.productMarkupPercent,
     form.productFixedUpliftAmount,
+    form.productRoundUpEnabled,
+    form.productRoundUpIncrement,
   );
 
   const hasChanges = settings ? isDirty(form, settings) : false;
@@ -481,12 +525,74 @@ function ProductBillingSection({
             </div>
           ) : null}
 
+          {/* Round-up */}
+          <div className="rounded-input-lg border border-border bg-surface-alt/30 px-4 py-3.5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-[12px] font-semibold text-text-secondary">Round up billable amount</div>
+                <p className="mt-0.5 text-[11px] leading-4 text-text-muted">
+                  Rounds the final amount up to the nearest increment — e.g. £4.44 → £4.50, £4.89 → £5.00.
+                </p>
+              </div>
+              <EnableToggle
+                enabled={form.productRoundUpEnabled}
+                onChange={(enabled) => setForm((f) => ({ ...f, productRoundUpEnabled: enabled }))}
+              />
+            </div>
+
+            {form.productRoundUpEnabled ? (
+              <div className="mt-3.5 flex flex-col gap-2">
+                <label htmlFor="round-up-increment" className="text-[12px] font-medium text-text-secondary">
+                  Round up to the nearest
+                </label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="relative w-32">
+                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[13px] font-medium text-text-muted">
+                      £
+                    </span>
+                    <input
+                      id="round-up-increment"
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      value={form.productRoundUpIncrement}
+                      onChange={(e) => setForm((f) => ({ ...f, productRoundUpIncrement: e.target.value }))}
+                      placeholder="e.g. 0.50"
+                      className="h-10 w-full rounded-input-lg border border-border-strong bg-surface pl-7 pr-3 text-[13px] text-text-primary outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {ROUND_UP_PRESETS.map((preset) => {
+                      const active = parseFloat(form.productRoundUpIncrement) === parseFloat(preset);
+                      return (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => setForm((f) => ({ ...f, productRoundUpIncrement: preset }))}
+                          className={`inline-flex h-8 items-center rounded-pill border px-3 text-[12px] font-medium transition-colors ${
+                            active
+                              ? 'border-primary bg-primary/[0.06] text-primary'
+                              : 'border-border bg-surface text-text-secondary hover:border-border-strong hover:bg-surface-alt'
+                          }`}
+                        >
+                          £{preset}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </div>
+
           {/* Live preview */}
           <BillingPreview
             rule={form.productBillingRule}
             preview={preview}
             markupPercent={form.productMarkupPercent}
             fixedUplift={form.productFixedUpliftAmount}
+            roundUpEnabled={form.productRoundUpEnabled}
+            roundUpIncrement={form.productRoundUpIncrement}
           />
         </fieldset>
 
@@ -551,25 +657,37 @@ function BillingPreview({
   preview,
   markupPercent,
   fixedUplift,
+  roundUpEnabled,
+  roundUpIncrement,
 }: {
   rule: ProductBillingRule;
-  preview: { amount: number; valid: boolean };
+  preview: { amount: number; base: number; valid: boolean; rounded: boolean };
   markupPercent: string;
   fixedUplift: string;
+  roundUpEnabled: boolean;
+  roundUpIncrement: string;
 }) {
   const baseFmt = fmtGbp(EXAMPLE_COST);
+  const baseBillFmt = preview.valid ? fmtGbp(preview.base) : '—';
   const billFmt = preview.valid ? fmtGbp(preview.amount) : '—';
 
   let formulaLabel = '';
   if (rule === 'cost_only') formulaLabel = `${baseFmt} (cost only)`;
   else if (rule === 'cost_plus_markup_percent') {
     const pct = parseFloat(markupPercent);
-    formulaLabel = isNaN(pct) ? `${baseFmt} + ?%` : `${baseFmt} + ${pct}% = ${billFmt}`;
+    formulaLabel = isNaN(pct) ? `${baseFmt} + ?%` : `${baseFmt} + ${pct}% = ${baseBillFmt}`;
   } else if (rule === 'fixed_uplift') {
     const amt = parseFloat(fixedUplift);
     formulaLabel = isNaN(amt)
       ? `${baseFmt} + £?`
-      : `${baseFmt} + ${fmtGbp(amt)} uplift = ${billFmt}`;
+      : `${baseFmt} + ${fmtGbp(amt)} uplift = ${baseBillFmt}`;
+  }
+
+  if (preview.valid && roundUpEnabled) {
+    const inc = parseFloat(roundUpIncrement);
+    if (!isNaN(inc) && inc > 0) {
+      formulaLabel = `${formulaLabel}, rounded up to nearest ${fmtGbp(inc)} = ${billFmt}`;
+    }
   }
 
   return (

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { SheerLabAnalyticsRange, SheerLabAnalyticsResponse } from '@sheer/domain';
 import { useAuth } from '../auth/AuthProvider';
 import { getSheerLabAnalytics } from '../auth/api';
+import { resolveCustomWindow, type CustomRange } from '../components/dashboard/RangeTabs';
 
 export interface UseSheerLabAnalyticsResult {
   data: SheerLabAnalyticsResponse | null;
@@ -9,11 +10,17 @@ export interface UseSheerLabAnalyticsResult {
   error: Error | null;
 }
 
-export function useSheerLabAnalytics(range: SheerLabAnalyticsRange): UseSheerLabAnalyticsResult {
+export function useSheerLabAnalytics(
+  range: SheerLabAnalyticsRange,
+  custom?: CustomRange,
+): UseSheerLabAnalyticsResult {
   const { session, user } = useAuth();
   const [data, setData] = useState<SheerLabAnalyticsResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+
+  const customFrom = custom?.from;
+  const customTo = custom?.to;
 
   useEffect(() => {
     let cancelled = false;
@@ -24,10 +31,22 @@ export function useSheerLabAnalytics(range: SheerLabAnalyticsRange): UseSheerLab
         return;
       }
 
+      const window = range === 'custom' ? resolveCustomWindow({ from: customFrom ?? '', to: customTo ?? '' }) : null;
+      if (range === 'custom' && !window) {
+        // Wait for both custom dates before fetching.
+        setData(null);
+        setIsLoading(false);
+        setError(null);
+        return;
+      }
+
       setIsLoading(true);
       setError(null);
       try {
-        const response = await getSheerLabAnalytics(session.accessToken, { range });
+        const response = await getSheerLabAnalytics(
+          session.accessToken,
+          window ? { range, from: window.from, to: window.to } : { range },
+        );
         if (!cancelled) setData(response);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err : new Error('Unable to load Sheer Lab analytics'));
@@ -41,7 +60,7 @@ export function useSheerLabAnalytics(range: SheerLabAnalyticsRange): UseSheerLab
     return () => {
       cancelled = true;
     };
-  }, [range, session?.accessToken, user]);
+  }, [range, customFrom, customTo, session?.accessToken, user]);
 
   return { data, isLoading, error };
 }

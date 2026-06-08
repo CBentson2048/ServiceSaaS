@@ -34,6 +34,7 @@ interface UserProfileRow {
   phone: string | null;
   avatar_url: string | null;
   is_active: boolean | null;
+  timezone: string | null;
 }
 
 interface MembershipRow {
@@ -92,7 +93,7 @@ const ROLE_PRIORITY: Record<UserRole, number> = {
 };
 
 const PROFILE_COLUMNS =
-  'id,email,first_name,last_name,full_name,display_name,phone,avatar_url,is_active';
+  'id,email,first_name,last_name,full_name,display_name,phone,avatar_url,is_active,timezone';
 const CLIENT_COLUMNS =
   'id,business_id,user_profile_id,primary_location_id,first_name,last_name,email,phone,communication_preference,notes,client_code,source,tags';
 const STAFF_COLUMNS =
@@ -387,6 +388,7 @@ export class ProfileService {
     if (input.lastName !== undefined) patch.last_name = cleanRequired(input.lastName, 'lastName');
     if (input.phone !== undefined) patch.phone = cleanOptional(input.phone);
     if (input.avatarUrl !== undefined) patch.avatar_url = cleanOptional(input.avatarUrl);
+    if (input.timezone !== undefined) patch.timezone = assertValidTimezone(input.timezone);
     return patch;
   }
 
@@ -574,6 +576,7 @@ export class ProfileService {
       avatarUrl: row.avatar_url ?? undefined,
       role,
       isActive: row.is_active ?? true,
+      timezone: row.timezone ?? undefined,
     };
   }
 
@@ -719,6 +722,18 @@ function cleanRequired(value: string, label: string): string {
 function cleanOptional(value: string | null | undefined): string | null {
   if (value === null || value === undefined) return null;
   return value.trim() || null;
+}
+
+function assertValidTimezone(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) throw new BadRequestException('timezone is required');
+  try {
+    // Throws RangeError for an unknown/invalid IANA zone.
+    new Intl.DateTimeFormat('en-GB', { timeZone: trimmed });
+  } catch {
+    throw new BadRequestException(`Invalid timezone: ${value}`);
+  }
+  return trimmed;
 }
 
 function splitName(fullName: string): { firstName: string; lastName: string } {

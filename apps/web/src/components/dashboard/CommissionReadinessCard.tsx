@@ -5,7 +5,7 @@ import { cn } from '@sheer/utils';
 import { AppCard, AppText, StatusBadge } from '../../design';
 import { ApiRequestError, getStylistKpis } from '../../auth/api';
 import { useAuth } from '../../auth/AuthProvider';
-import type { DashboardRange } from './RangeTabs';
+import { rangeToQueryParams, type CustomRange, type DashboardRange } from './RangeTabs';
 
 const COLS = '1.7fr 1fr 1fr 1fr 96px';
 
@@ -17,9 +17,11 @@ const COLS = '1.7fr 1fr 1fr 1fr 96px';
  */
 export function CommissionReadinessCard({
   range,
+  customRange,
   locationId,
 }: {
   range: DashboardRange;
+  customRange?: CustomRange;
   locationId: string;
 }) {
   const { session } = useAuth();
@@ -29,13 +31,25 @@ export function CommissionReadinessCard({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const customFrom = customRange?.from;
+  const customTo = customRange?.to;
+
   const load = useCallback(async () => {
     if (!accessToken) return;
+    const queryParams = rangeToQueryParams(range, { from: customFrom ?? '', to: customTo ?? '' });
+    if (!queryParams) {
+      // Custom range not fully selected yet.
+      setStylists([]);
+      setReadyCount(0);
+      setLoading(false);
+      setError(null);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
       const result = await getStylistKpis(accessToken, {
-        period: range,
+        ...queryParams,
         locationId: locationId !== 'all' ? locationId : undefined,
       });
       setStylists(result.stylists);
@@ -47,7 +61,7 @@ export function CommissionReadinessCard({
     } finally {
       setLoading(false);
     }
-  }, [accessToken, range, locationId]);
+  }, [accessToken, range, customFrom, customTo, locationId]);
 
   useEffect(() => {
     void load();

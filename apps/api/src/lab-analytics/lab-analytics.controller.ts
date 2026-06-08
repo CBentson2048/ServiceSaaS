@@ -16,7 +16,9 @@ export class LabAnalyticsController {
     @CurrentUser() actor: AuthUser,
     @Query('range') range: SheerLabAnalyticsRange = 'today',
     @Query('locationId') locationId?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ): Promise<SheerLabAnalyticsResponse> {
-    return this.labAnalytics.summary(actor, range, locationId);
+    return this.labAnalytics.summary(actor, range, locationId, from, to);
   }
 }

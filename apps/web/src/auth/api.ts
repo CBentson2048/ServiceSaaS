@@ -367,11 +367,13 @@ export async function createStylistRebooking(
 
 export async function getSheerLabAnalytics(
   accessToken: string,
-  params: { range?: SheerLabAnalyticsRange; locationId?: string } = {},
+  params: { range?: SheerLabAnalyticsRange; locationId?: string; from?: string; to?: string } = {},
 ): Promise<SheerLabAnalyticsResponse> {
   const search = new URLSearchParams();
   if (params.range) search.set('range', params.range);
   if (params.locationId) search.set('locationId', params.locationId);
+  if (params.from) search.set('from', params.from);
+  if (params.to) search.set('to', params.to);
   const query = search.toString();
   return request<SheerLabAnalyticsResponse>(`/lab/analytics/summary${query ? `?${query}` : ''}`, {
     accessToken,

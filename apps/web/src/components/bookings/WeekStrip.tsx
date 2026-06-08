@@ -14,6 +14,8 @@ interface WeekStripProps {
   /** View toggles, rendered as a toolbar docked to the top of the calendar. */
   toolbar: CalendarToolbarState;
   onToggleToolbar: (key: CalendarToolbarKey) => void;
+  /** Controls docked to the far right of the toolbar (location picker, refresh). */
+  toolbarTrailing?: ReactNode;
 }
 
 /**
@@ -30,7 +32,7 @@ interface WeekStripProps {
  * (leaving the timetable untouched); the toolbar itself stays put so the
  * toggles remain reachable.
  */
-export function WeekStrip({ day, onSelectDay, toolbar, onToggleToolbar }: WeekStripProps) {
+export function WeekStrip({ day, onSelectDay, toolbar, onToggleToolbar, toolbarTrailing }: WeekStripProps) {
   const [weekStart, setWeekStart] = useState<Date>(() => snapToMonday(day));
 
   // Keep the visible week in sync when the selected day jumps outside it
@@ -43,10 +45,10 @@ export function WeekStrip({ day, onSelectDay, toolbar, onToggleToolbar }: WeekSt
   const days = Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
 
   return (
-    <div className="max-w-3xl overflow-hidden rounded-card border border-border bg-surface shadow-sm">
+    <div className="w-full overflow-hidden rounded-card border border-border bg-surface shadow-sm">
       {/* View toolbar, docked to the top of the calendar. Stays put even when
           the date picker is auto-hidden, so the toggles remain reachable. */}
-      <CalendarToolbar state={toolbar} onToggle={onToggleToolbar} />
+      <CalendarToolbar state={toolbar} onToggle={onToggleToolbar} trailing={toolbarTrailing} />
 
       {toolbar.autoHideCalendar ? null : (
         <div className="px-3 pb-3 pt-5">

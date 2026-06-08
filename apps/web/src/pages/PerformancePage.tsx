@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { StylistKpiListResponse, StylistKpiResult } from '@sheer/domain';
 import { AppText } from '../design';
-import { RangeTabs, type DashboardRange } from '../components/dashboard/RangeTabs';
+import { RangeTabs, rangeToQueryParams, type CustomRange, type DashboardRange } from '../components/dashboard/RangeTabs';
 import { SectionLabel } from '../components/dashboard/SectionLabel';
 import { StylistKpiCard } from '../components/kpi/StylistKpiCard';
 import { StylistKpiDetailModal } from '../components/kpi/StylistKpiDetailModal';
@@ -12,25 +12,38 @@ const RANGE_LABEL: Record<DashboardRange, string> = {
   today: 'today',
   week: 'this week',
   month: 'this month',
+  custom: 'a custom range',
 };
 
 export function PerformancePage() {
   const { user, session } = useAuth();
   const accessToken = session?.accessToken;
   const [range, setRange] = useState<DashboardRange>('week');
+  const [customRange, setCustomRange] = useState<CustomRange>({ from: '', to: '' });
   const [locationId, setLocationId] = useState<string>('all');
   const [data, setData] = useState<StylistKpiListResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<StylistKpiResult | null>(null);
 
+  const customFrom = customRange.from;
+  const customTo = customRange.to;
+
   const load = useCallback(async () => {
     if (!accessToken) return;
+    const queryParams = rangeToQueryParams(range, { from: customFrom, to: customTo });
+    if (!queryParams) {
+      // Custom range not fully selected yet.
+      setData(null);
+      setLoading(false);
+      setError(null);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
       const result = await getStylistKpis(accessToken, {
-        period: range,
+        ...queryParams,
         locationId: locationId !== 'all' ? locationId : undefined,
       });
       setData(result);
@@ -41,7 +54,7 @@ export function PerformancePage() {
     } finally {
       setLoading(false);
     }
-  }, [accessToken, range, locationId]);
+  }, [accessToken, range, customFrom, customTo, locationId]);
 
   useEffect(() => {
     void load();
@@ -71,7 +84,13 @@ export function PerformancePage() {
           </AppText>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <RangeTabs value={range} onChange={setRange} />
+          <RangeTabs
+            value={range}
+            onChange={setRange}
+            allowCustom
+            customRange={customRange}
+            onCustomRangeChange={setCustomRange}
+          />
           {user?.role === 'owner' && locations.length > 1 ? (
             <select
               value={locationId}

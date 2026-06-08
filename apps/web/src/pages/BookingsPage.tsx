@@ -6,7 +6,7 @@ import type {
   StaffBookingSummary,
   WeeklyRotaResponse,
 } from '@sheer/domain';
-import { AppButton, AppCard, AppText, Pill, StatusBadge } from '../design';
+import { AppButton, AppCard, Pill, StatusBadge } from '../design';
 import {
   ApiRequestError,
   completeBooking,
@@ -16,35 +16,21 @@ import {
   listBookings,
 } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
+import { useLocationScope } from '../components/LocationScopeContext';
 import { DayCalendarBoard } from '../components/bookings/DayCalendarBoard';
 import { WeekStrip } from '../components/bookings/WeekStrip';
 import type { CalendarToolbarKey, CalendarToolbarState } from '../components/bookings/CalendarToolbar';
 import { isSameLocalDay, snapToMonday, toIsoDate } from '../components/rota/dateUtils';
 
-type StatusFilter = 'all' | StaffBookingSummary['status'];
 type StatusTone = 'success' | 'warning' | 'danger' | 'neutral';
-type BookingsView = 'calendar' | 'list';
-
-const STATUS_FILTERS: StatusFilter[] = [
-  'all',
-  'pending',
-  'confirmed',
-  'checked_in',
-  'in_progress',
-  'completed',
-  'cancelled',
-  'no_show',
-];
 
 export function BookingsPage() {
   const auth = useAuth();
   const accessToken = auth.session?.accessToken;
-  const locations = useMemo(() => auth.user?.locations ?? [], [auth.user?.locations]);
+  // The active location is owned by the sidebar's location picker (shared scope).
+  const { selectedLocationId } = useLocationScope();
 
   const [bookings, setBookings] = useState<StaffBookingSummary[]>([]);
-  const [scope, setScope] = useState<'owner' | 'manager' | 'stylist' | null>(null);
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [loading, setLoading] = useState(true);
   const [completionLoadingId, setCompletionLoadingId] = useState<string | null>(null);
   const [paymentLoadingId, setPaymentLoadingId] = useState<string | null>(null);
@@ -55,9 +41,8 @@ export function BookingsPage() {
   const [rebookingSkipped, setRebookingSkipped] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
 
-  // Calendar view state
-  const [view, setView] = useState<BookingsView>('calendar');
-  const [selectedLocationId, setSelectedLocationId] = useState(() => auth.user?.locations?.[0]?.id ?? '');
+  // Calendar state. The timetable spans the full page width and appointments
+  // are selected straight from the board.
   const [day, setDay] = useState<Date>(() => new Date());
   const [rota, setRota] = useState<WeeklyRotaResponse | null>(null);
   const [rotaLoading, setRotaLoading] = useState(false);
@@ -80,7 +65,6 @@ export function BookingsPage() {
     try {
       const result = await listBookings(accessToken);
       setBookings(result.bookings);
-      setScope(result.scope);
     } catch (err: unknown) {
       if (err instanceof ApiRequestError) setError(err.message);
       else if (err instanceof Error) setError(err.message);
@@ -182,16 +166,11 @@ export function BookingsPage() {
     void reload();
   }, [reload]);
 
-  // Default the calendar to the first available location once the user loads.
-  useEffect(() => {
-    if (!selectedLocationId && locations.length > 0) setSelectedLocationId(locations[0].id);
-  }, [locations, selectedLocationId]);
-
   const weekStartIso = useMemo(() => toIsoDate(snapToMonday(day)), [day]);
 
   // Load rota (column roster + working hours + leave/absence) for the calendar.
   useEffect(() => {
-    if (view !== 'calendar' || !accessToken || !selectedLocationId) return;
+    if (!accessToken || !selectedLocationId) return;
     let cancelled = false;
     setRotaLoading(true);
     setRotaError(null);
@@ -211,32 +190,18 @@ export function BookingsPage() {
     return () => {
       cancelled = true;
     };
-  }, [view, accessToken, selectedLocationId, weekStartIso]);
+  }, [accessToken, selectedLocationId, weekStartIso]);
 
-  // A selected appointment should not linger when the day / location / view changes.
+  // A selected appointment should not linger when the day / location changes.
   useEffect(() => {
     setSelectedBookingId(null);
-  }, [day, selectedLocationId, view]);
-
-  const visibleBookings = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    return bookings.filter((booking) => {
-      if (statusFilter !== 'all' && booking.status !== statusFilter) return false;
-      if (!term) return true;
-      return [
-        booking.clientDisplayName,
-        booking.serviceNames.join(' '),
-        booking.status,
-        booking.locationId,
-      ]
-        .join(' ')
-        .toLowerCase()
-        .includes(term);
-    });
-  }, [bookings, search, statusFilter]);
+  }, [day, selectedLocationId]);
 
   const calendarBookings = useMemo(
-    () => bookings.filter((booking) => booking.locationId === selectedLocationId && isSameLocalDay(booking.startsAt, day)),
+    () =>
+      bookings
+        .filter((booking) => booking.locationId === selectedLocationId && isSameLocalDay(booking.startsAt, day))
+        .sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt)),
     [bookings, selectedLocationId, day],
   );
 
@@ -245,59 +210,24 @@ export function BookingsPage() {
     [bookings, selectedBookingId],
   );
 
-  const subtitle =
-    scope === 'owner'
-      ? 'Showing bookings across your business.'
-      : scope === 'manager'
-        ? 'Showing bookings for your assigned location scope.'
-        : 'Showing bookings in your permitted scope.';
-
-  const hasResults = !loading && visibleBookings.length > 0;
   const showSelectedStrip =
     selectedBooking && (!checkoutSummary || checkoutSummary.appointment.id !== selectedBooking.id);
 
-  return (
-    <div className="mx-auto w-full max-w-6xl px-4 py-8 lg:px-8">
-      <header className="mb-7 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <AppText as="h1" variant="heading" weight="medium" className="text-[22px] text-text-primary">
-            Bookings
-          </AppText>
-          <p className="mt-1 text-[13px] text-text-secondary">{subtitle}</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2.5">
-          <div
-            role="tablist"
-            aria-label="View mode"
-            className="flex items-center rounded-pill border border-border bg-surface p-0.5 shadow-sm"
-          >
-            {(['calendar', 'list'] as const).map((v) => (
-              <button
-                key={v}
-                type="button"
-                role="tab"
-                aria-selected={view === v}
-                onClick={() => setView(v)}
-                className={`h-7 rounded-pill px-4 text-[12px] font-medium transition-all ${
-                  view === v
-                    ? 'bg-text-primary text-white shadow-sm'
-                    : 'text-text-secondary hover:text-text-primary'
-                }`}
-              >
-                {v.charAt(0).toUpperCase() + v.slice(1)}
-              </button>
-            ))}
-          </div>
-          <AppButton
-            variant="secondary"
-            leadingIcon={<RefreshIcon className="h-3.5 w-3.5" />}
-            onClick={() => void reload()}
-          >
-            Refresh
-          </AppButton>
-        </div>
-      </header>
+  // The location picker now lives at the bottom of the nav sidebar; only the
+  // refresh control is docked to the calendar toolbar.
+  const calendarControls = (
+    <AppButton
+      variant="secondary"
+      size="sm"
+      leadingIcon={<RefreshIcon className="h-3.5 w-3.5" />}
+      onClick={() => void reload()}
+    >
+      Refresh
+    </AppButton>
+  );
 
+  return (
+    <div className="w-full px-4 py-5 lg:px-6">
       {error ? (
         <div className="mb-4 rounded-input-lg border border-danger-border bg-danger-soft px-4 py-3 text-[13px] text-danger">
           {error}
@@ -327,174 +257,54 @@ export function BookingsPage() {
         />
       ) : null}
 
-      {view === 'calendar' ? (
-        <>
-          <div className="mb-4 flex flex-col gap-3">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <span className="text-[15px] font-semibold text-text-primary">{formatDayHeading(day)}</span>
-              {locations.length > 1 ? (
-                <label className="flex items-center gap-2 text-[12px] text-text-muted">
-                  <span className="font-medium uppercase tracking-[0.08em]">Location</span>
-                  <select
-                    value={selectedLocationId}
-                    onChange={(event) => setSelectedLocationId(event.target.value)}
-                    className="h-8 rounded-full border border-border bg-surface px-3 text-[12px] font-medium text-text-primary shadow-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
-                  >
-                    {locations.map((location) => (
-                      <option key={location.id} value={location.id}>
-                        {location.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : locations[0] ? (
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-3.5 py-1.5 text-[12px] font-medium text-text-secondary shadow-sm">
-                  {locations[0].name}
-                </span>
-              ) : null}
-            </div>
+      {/* Calendar + timetable claim the full page width. The day agenda panel
+          was removed; appointments are selected directly on the board, and the
+          location picker / refresh now live in the calendar toolbar. */}
+      <div className="flex flex-col gap-4">
+        <WeekStrip
+          day={day}
+          onSelectDay={setDay}
+          toolbar={toolbar}
+          onToggleToolbar={toggleToolbar}
+          toolbarTrailing={calendarControls}
+        />
 
-            <WeekStrip
-              day={day}
-              onSelectDay={setDay}
-              toolbar={toolbar}
-              onToggleToolbar={toggleToolbar}
-            />
+        {showSelectedStrip && selectedBooking ? (
+          <SelectedBookingStrip
+            booking={selectedBooking}
+            completing={completionLoadingId === selectedBooking.id}
+            onComplete={() => void handleComplete(selectedBooking)}
+            onClose={() => setSelectedBookingId(null)}
+          />
+        ) : null}
+
+        {!selectedLocationId ? (
+          <AppCard padding="none" elevation="card">
+            <EmptyState title="No location available" body="A salon location is needed to show the calendar." />
+          </AppCard>
+        ) : rotaError ? (
+          <div className="rounded-input-lg border border-danger-border bg-danger-soft px-4 py-3 text-[13px] text-danger">
+            {rotaError}
           </div>
-
-          {showSelectedStrip && selectedBooking ? (
-            <SelectedBookingStrip
-              booking={selectedBooking}
-              completing={completionLoadingId === selectedBooking.id}
-              onComplete={() => void handleComplete(selectedBooking)}
-              onClose={() => setSelectedBookingId(null)}
-            />
-          ) : null}
-
-          {!selectedLocationId ? (
-            <AppCard padding="none" elevation="card">
-              <EmptyState title="No location available" body="A salon location is needed to show the calendar." />
-            </AppCard>
-          ) : rotaError ? (
-            <div className="rounded-input-lg border border-danger-border bg-danger-soft px-4 py-3 text-[13px] text-danger">
-              {rotaError}
-            </div>
-          ) : (loading || rotaLoading) && !rota ? (
-            <AppCard padding="none" elevation="card">
-              <EmptyState title="Loading calendar…" body="Fetching the rota and appointments for this day." />
-            </AppCard>
-          ) : (
-            <DayCalendarBoard
-              day={day}
-              staff={rota?.staff ?? []}
-              shifts={rota?.shifts ?? []}
-              leave={rota?.leave ?? []}
-              absences={rota?.absences ?? []}
-              bookings={calendarBookings}
-              selectedBookingId={selectedBookingId}
-              onSelectBooking={(booking) => setSelectedBookingId(booking.id)}
-              showAllTeamMembers={toolbar.showAllTeamMembers}
-              showTimeline={toolbar.showTimeline}
-            />
-          )}
-        </>
-      ) : (
-        <>
-          <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="relative w-full lg:w-96">
-              <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
-              <input
-                type="search"
-                placeholder="Search client, service, status, or location"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                className="h-10 w-full rounded-input-lg border border-border-strong bg-surface pl-9 pr-3 text-[13px] text-text-primary outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
-              />
-            </div>
-            <div
-              role="tablist"
-              aria-label="Filter by status"
-              className="-mx-1 flex flex-nowrap items-center gap-1.5 overflow-x-auto px-1 pb-1 lg:mx-0 lg:flex-wrap lg:overflow-visible lg:pb-0"
-            >
-              {STATUS_FILTERS.map((status) => (
-                <Pill
-                  key={status}
-                  label={status === 'all' ? 'All' : formatStatus(status)}
-                  active={statusFilter === status}
-                  tone="ink"
-                  className="shrink-0"
-                  onClick={() => setStatusFilter(status)}
-                />
-              ))}
-            </div>
-          </div>
-
-          {hasResults ? (
-            <p className="mb-3 text-[12px] text-text-secondary">
-              Showing {visibleBookings.length} of {bookings.length} booking
-              {bookings.length === 1 ? '' : 's'}.
-            </p>
-          ) : null}
-
-          {loading ? (
-            <AppCard padding="none" elevation="card">
-              <EmptyState title="Loading bookings…" body="Fetching the latest appointment list." />
-            </AppCard>
-          ) : visibleBookings.length === 0 ? (
-            <AppCard padding="none" elevation="card">
-              <EmptyState
-                title={bookings.length === 0 ? 'No bookings yet' : 'No bookings match these filters'}
-                body={
-                  bookings.length === 0
-                    ? 'Bookings will appear here as clients schedule appointments.'
-                    : 'Try clearing the search or switching to All.'
-                }
-              />
-            </AppCard>
-          ) : (
-            <>
-              {/* Desktop: dense management table */}
-              <AppCard padding="none" elevation="card" className="hidden overflow-hidden lg:block">
-                <table className="w-full text-left text-[13px]">
-                  <thead className="bg-surface-alt text-[11px] font-medium uppercase tracking-[0.08em] text-text-secondary">
-                    <tr>
-                      <th className="border-l-[3px] border-l-transparent px-4 py-3">Client</th>
-                      <th className="px-4 py-3">Service</th>
-                      <th className="px-4 py-3">Date &amp; time</th>
-                      <th className="px-4 py-3">Duration</th>
-                      <th className="px-4 py-3">Status</th>
-                      <th className="px-4 py-3">Deposit</th>
-                      <th className="px-4 py-3 text-right">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {visibleBookings.map((booking) => (
-                      <BookingRow
-                        key={booking.id}
-                        booking={booking}
-                        completing={completionLoadingId === booking.id}
-                        onComplete={() => void handleComplete(booking)}
-                      />
-                    ))}
-                  </tbody>
-                </table>
-              </AppCard>
-
-              {/* Mobile / tablet: stacked booking cards */}
-              <div className="grid gap-3 lg:hidden">
-                {visibleBookings.map((booking) => (
-                  <BookingCard
-                    key={booking.id}
-                    booking={booking}
-                    completing={completionLoadingId === booking.id}
-                    onComplete={() => void handleComplete(booking)}
-                  />
-                ))}
-              </div>
-            </>
-          )}
-        </>
-      )}
+        ) : (loading || rotaLoading) && !rota ? (
+          <AppCard padding="none" elevation="card">
+            <EmptyState title="Loading calendar…" body="Fetching the rota and appointments for this day." />
+          </AppCard>
+        ) : (
+          <DayCalendarBoard
+            day={day}
+            staff={rota?.staff ?? []}
+            shifts={rota?.shifts ?? []}
+            leave={rota?.leave ?? []}
+            absences={rota?.absences ?? []}
+            bookings={calendarBookings}
+            selectedBookingId={selectedBookingId}
+            onSelectBooking={(booking) => setSelectedBookingId(booking.id)}
+            showAllTeamMembers={toolbar.showAllTeamMembers}
+            showTimeline={toolbar.showTimeline}
+          />
+        )}
+      </div>
     </div>
   );
 }
@@ -562,93 +372,6 @@ function CompleteButton({
     >
       {label}
     </AppButton>
-  );
-}
-
-function BookingRow({
-  booking,
-  completing,
-  onComplete,
-}: {
-  booking: StaffBookingSummary;
-  completing: boolean;
-  onComplete: () => void;
-}) {
-  const tone = statusTone(booking.status);
-  const accent = statusAccent(tone);
-  return (
-    <tr className={`transition-colors hover:bg-surface-alt/40 ${booking.status === 'paid' ? 'bg-surface-alt/60' : ''}`}>
-      <td className={`border-l-[3px] ${accent.border} px-4 py-3`}>
-        <div className="font-medium text-text-primary">{booking.clientDisplayName}</div>
-        {booking.clientNote ? (
-          <div className="mt-0.5 max-w-xs truncate text-[12px] text-warning">Note: {booking.clientNote}</div>
-        ) : null}
-      </td>
-      <td className="px-4 py-3 text-text-secondary">{booking.serviceNames.join(', ') || 'Service'}</td>
-      <td className="px-4 py-3 text-text-secondary">
-        <div>{formatDate(booking.startsAt)}</div>
-        <div className="text-[12px]">
-          {formatTime(booking.startsAt)} – {formatTime(booking.endsAt)}
-        </div>
-      </td>
-      <td className="px-4 py-3 text-text-secondary">
-        {booking.durationMinutes ? `${booking.durationMinutes} min` : 'Not set'}
-      </td>
-      <td className="px-4 py-3">
-        <StatusBadge label={formatStatus(booking.status)} tone={tone} />
-      </td>
-      <td className="px-4 py-3 text-text-secondary">{depositLabel(booking)}</td>
-      <td className="px-4 py-3 text-right">
-        <CompleteButton booking={booking} completing={completing} onComplete={onComplete} />
-      </td>
-    </tr>
-  );
-}
-
-function BookingCard({
-  booking,
-  completing,
-  onComplete,
-}: {
-  booking: StaffBookingSummary;
-  completing: boolean;
-  onComplete: () => void;
-}) {
-  const tone = statusTone(booking.status);
-  const accent = statusAccent(tone);
-  return (
-    <AppCard padding="none" elevation="card" className="overflow-hidden">
-      <div className="flex">
-        <div className={`w-1 shrink-0 ${accent.bar}`} aria-hidden />
-        <div className="min-w-0 flex-1 p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="truncate font-medium text-text-primary">{booking.clientDisplayName}</div>
-              <div className="mt-0.5 truncate text-[13px] text-text-secondary">
-                {booking.serviceNames.join(', ') || 'Service'}
-              </div>
-            </div>
-            <StatusBadge label={formatStatus(booking.status)} tone={tone} />
-          </div>
-          {booking.clientNote ? (
-            <div className="mt-2 rounded-input border border-border bg-surface-alt px-2.5 py-1.5 text-[12px] text-warning">
-              Note: {booking.clientNote}
-            </div>
-          ) : null}
-          <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2">
-            <Field
-              label="Date & time"
-              value={`${formatDate(booking.startsAt)} · ${formatTime(booking.startsAt)} – ${formatTime(booking.endsAt)}`}
-            />
-            <Field label="Duration" value={booking.durationMinutes ? `${booking.durationMinutes} min` : 'Not set'} />
-            <Field label="Deposit" value={depositLabel(booking)} />
-          </dl>
-          <div className="mt-3">
-            <CompleteButton booking={booking} completing={completing} onComplete={onComplete} fullWidth />
-          </div>
-        </div>
-      </div>
-    </AppCard>
   );
 }
 
@@ -866,30 +589,12 @@ function TaxSummaryLine({ tax, currencyCode }: { tax: AppointmentBillingTax; cur
   );
 }
 
-function Field({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0">
-      <dt className="text-[11px] font-medium uppercase tracking-[0.08em] text-text-muted">{label}</dt>
-      <dd className="mt-0.5 text-[13px] text-text-primary">{value}</dd>
-    </div>
-  );
-}
-
 function EmptyState({ title, body }: { title: string; body: string }) {
   return (
     <div className="px-4 py-12 text-center">
       <div className="text-[14px] font-medium text-text-primary">{title}</div>
       <div className="mt-1 text-[13px] text-text-secondary">{body}</div>
     </div>
-  );
-}
-
-function SearchIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.6} aria-hidden {...props}>
-      <circle cx="9" cy="9" r="6" />
-      <path d="m17 17-3.5-3.5" strokeLinecap="round" />
-    </svg>
   );
 }
 
@@ -945,18 +650,6 @@ function saveToolbarState(state: CalendarToolbarState): void {
   }
 }
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-  });
-}
-
-function formatDayHeading(day: Date): string {
-  return day.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
-}
-
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 }
@@ -987,23 +680,6 @@ function statusTone(status: StaffBookingSummary['status']): StatusTone {
   }
 }
 
-function statusAccent(tone: StatusTone): { bar: string; border: string } {
-  switch (tone) {
-    case 'success':
-      return { bar: 'bg-success-fill', border: 'border-l-success-fill' };
-    case 'warning':
-      return { bar: 'bg-warning-fill', border: 'border-l-warning-fill' };
-    case 'danger':
-      return { bar: 'bg-danger-fill', border: 'border-l-danger-fill' };
-    default:
-      return { bar: 'bg-border-strong', border: 'border-l-border-strong' };
-  }
-}
-
-function depositLabel(booking: StaffBookingSummary): string {
-  if (!booking.depositRequiredAmount) return 'None';
-  return booking.depositStatus ? formatStatus(booking.depositStatus) : 'Required';
-}
 
 function isCompletionLocked(status: StaffBookingSummary['status']): boolean {
   return (

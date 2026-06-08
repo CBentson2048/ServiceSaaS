@@ -15,14 +15,13 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import type { UserProfileResponse } from '@sheer/domain';
+import type { ClientLabFormulaSummary, CrmVisitSummary, UserProfileResponse } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
 import { StylistTabBar } from '../src/navigation/StylistTabBar';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
 
-type RoleView = 'stylist' | 'manager';
 type ProfileTab = 'profile' | 'visits' | 'lab';
 type CommPref = 'email' | 'sms' | 'whatsapp';
 
@@ -40,7 +39,6 @@ export default function ProfileScreen() {
   const accessToken = auth.session?.accessToken ?? '';
   const userRole = auth.user?.role;
   const isClient = userRole === 'client';
-  const isStaff = userRole === 'stylist' || userRole === 'manager' || userRole === 'owner';
   // Stylists reach Profile via the bottom tab bar (a root tab), so there is no
   // dashboard to go "back" to — show the tab bar instead of a back button.
   const showStylistTabs = userRole === 'stylist';
@@ -59,7 +57,6 @@ export default function ProfileScreen() {
   const [saveSuccess, setSaveSuccess] = useState(false);
 
   // UI state
-  const [roleView, setRoleView] = useState<RoleView>('stylist');
   const [tab, setTab] = useState<ProfileTab>('profile');
   const [copied, setCopied] = useState(false);
 
@@ -181,23 +178,7 @@ export default function ProfileScreen() {
 
           <Text style={s.headerTitle}>Profile</Text>
 
-          {isStaff ? (
-            <View style={s.roleToggle}>
-              {(['stylist', 'manager'] as RoleView[]).map((v) => (
-                <Pressable
-                  key={v}
-                  onPress={() => setRoleView(v)}
-                  style={[s.roleToggleBtn, roleView === v && s.roleToggleBtnActive]}
-                >
-                  <Text style={[s.roleToggleBtnText, roleView === v && s.roleToggleBtnTextActive]}>
-                    {v.charAt(0).toUpperCase() + v.slice(1)}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-          ) : (
-            <View style={s.headerSpacer} />
-          )}
+          <View style={s.headerSpacer} />
         </View>
 
         {/* ── Success toast ── */}
@@ -291,9 +272,9 @@ export default function ProfileScreen() {
                   onChangeForm={(patch) => setForm((f) => f ? { ...f, ...patch } : f)}
                 />
               ) : tab === 'visits' ? (
-                <VisitsTab />
+                <VisitsTab accessToken={accessToken} isClient={isClient} />
               ) : (
-                <LabTab />
+                <LabTab accessToken={accessToken} isClient={isClient} />
               )}
 
               {/* ── Account actions ── */}
@@ -498,24 +479,204 @@ function ContactSection({
   );
 }
 
-// ── Placeholder tabs ──────────────────────────────────────────────────────────
+// ── Visits tab ──────────────────────────────────────────────────────────────
 
-function VisitsTab() {
+function VisitsTab({ accessToken, isClient }: { accessToken: string; isClient: boolean }) {
+  const [visits, setVisits] = useState<CrmVisitSummary[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    if (!accessToken || !isClient) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await api.getMobileDashboard(accessToken, 'client');
+      if (result.role === 'client') setVisits(result.visitHistory);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load visit history');
+    } finally {
+      setLoading(false);
+    }
+  }, [accessToken, isClient]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  if (!isClient) {
+    return (
+      <EmptyTab icon="📋" title="No visits" body="Visit history is available on client accounts." />
+    );
+  }
+  if (loading) return <TabLoading label="Loading visits…" />;
+  if (error) return <TabError message={error} onRetry={() => void load()} />;
+  if (!visits || visits.length === 0) {
+    return <EmptyTab icon="📋" title="No visits yet" body="Completed visits will appear here." />;
+  }
+
   return (
-    <View style={s.emptyTab}>
-      <Text style={s.emptyTabIcon}>📋</Text>
-      <Text style={s.emptyTabTitle}>No visits yet</Text>
-      <Text style={s.mutedSm}>Completed visits will appear here.</Text>
+    <View style={s.tabList}>
+      {visits.map((visit, idx) => (
+        <ProfileVisitRow key={visit.id} visit={visit} isLast={idx === visits.length - 1} />
+      ))}
     </View>
   );
 }
 
-function LabTab() {
+function ProfileVisitRow({ visit, isLast }: { visit: CrmVisitSummary; isLast: boolean }) {
+  const tone = visitTone(visit.status);
+  return (
+    <View style={[s.recordRow, isLast && s.recordRowLast]}>
+      <View style={[s.recordAccent, tone === 'success' ? s.accentGreen : tone === 'warning' ? s.accentAmber : s.accentGray]} />
+      <View style={s.recordBody}>
+        <View style={s.recordTitleRow}>
+          <Text style={s.recordTitle} numberOfLines={1}>
+            {visit.serviceSummary ?? visit.clientVisibleSummary ?? 'Visit'}
+          </Text>
+          <View style={[s.statusPill, tone === 'success' ? s.statusGreen : tone === 'warning' ? s.statusAmber : s.statusGray]}>
+            <Text style={[s.statusPillText, tone === 'success' ? s.statusTextGreen : tone === 'warning' ? s.statusTextAmber : s.statusTextGray]}>
+              {formatStatus(visit.status)}
+            </Text>
+          </View>
+        </View>
+        <View style={s.recordMeta}>
+          <Text style={s.recordMetaText}>{formatDate(visit.occurredAt)}</Text>
+          {visit.stylistName ? (
+            <>
+              <View style={s.recordMetaDot} />
+              <Text style={s.recordMetaText}>with {visit.stylistName}</Text>
+            </>
+          ) : null}
+          {visit.priceAmount != null ? (
+            <>
+              <View style={s.recordMetaDot} />
+              <Text style={s.recordMetaPrice}>
+                {formatMoney(visit.priceAmount, visit.currencyCode ?? 'GBP')}
+              </Text>
+            </>
+          ) : null}
+        </View>
+      </View>
+    </View>
+  );
+}
+
+// ── Lab tab ───────────────────────────────────────────────────────────────────
+
+function LabTab({ accessToken, isClient }: { accessToken: string; isClient: boolean }) {
+  const [formulas, setFormulas] = useState<ClientLabFormulaSummary[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    if (!accessToken || !isClient) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await api.getMyLabHistory(accessToken);
+      setFormulas(result.formulas);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load lab history');
+    } finally {
+      setLoading(false);
+    }
+  }, [accessToken, isClient]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  if (!isClient) {
+    return (
+      <EmptyTab icon="🧪" title="No lab records" body="Colour records are available on client accounts." />
+    );
+  }
+  if (loading) return <TabLoading label="Loading lab history…" />;
+  if (error) return <TabError message={error} onRetry={() => void load()} />;
+  if (!formulas || formulas.length === 0) {
+    return (
+      <EmptyTab icon="🧪" title="No lab records" body="Formula and colour records will appear here." />
+    );
+  }
+
+  return (
+    <View style={s.labList}>
+      {formulas.map((formula) => (
+        <LabFormulaCard key={formula.id} formula={formula} />
+      ))}
+    </View>
+  );
+}
+
+function LabFormulaCard({ formula }: { formula: ClientLabFormulaSummary }) {
+  return (
+    <View style={s.labCard}>
+      <View style={s.labCardHeader}>
+        <Text style={s.labCardTitle}>{formula.serviceType ?? 'Colour formula'}</Text>
+        <Text style={s.labCardDate}>{formatDate(formula.savedAt)}</Text>
+      </View>
+      {formula.items.length === 0 ? (
+        <Text style={s.mutedSm}>No product details recorded.</Text>
+      ) : (
+        formula.items.map((item, idx) => (
+          <View
+            key={`${formula.id}-${idx}`}
+            style={[s.labItemRow, idx === formula.items.length - 1 && s.labItemRowLast]}
+          >
+            <Text style={s.labItemName} numberOfLines={1}>
+              {[item.brand, item.shade].filter(Boolean).join(' ') || item.productName}
+            </Text>
+            <Text style={s.labItemDetail} numberOfLines={1}>
+              {[
+                item.developer,
+                item.ratio,
+                item.processingTimeMinutes != null ? `${item.processingTimeMinutes} min` : null,
+              ]
+                .filter(Boolean)
+                .join(' · ') || item.productName}
+            </Text>
+          </View>
+        ))
+      )}
+    </View>
+  );
+}
+
+// ── Tab state helpers ─────────────────────────────────────────────────────────
+
+function EmptyTab({ icon, title, body }: { icon: string; title: string; body: string }) {
   return (
     <View style={s.emptyTab}>
-      <Text style={s.emptyTabIcon}>🧪</Text>
-      <Text style={s.emptyTabTitle}>No lab records</Text>
-      <Text style={s.mutedSm}>Formula and colour records will appear here.</Text>
+      <Text style={s.emptyTabIcon}>{icon}</Text>
+      <Text style={s.emptyTabTitle}>{title}</Text>
+      <Text style={s.mutedSm}>{body}</Text>
+    </View>
+  );
+}
+
+function TabLoading({ label }: { label: string }) {
+  return (
+    <View style={s.tabStateCard}>
+      <ActivityIndicator color={palette.brand[300]} size="small" />
+      <Text style={s.mutedSm}>{label}</Text>
+    </View>
+  );
+}
+
+function TabError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <View style={s.tabErrorCard}>
+      <Text style={s.tabErrorText}>{message}</Text>
+      <Pressable onPress={onRetry} style={({ pressed }) => [s.retryBtn, pressed && s.pressed]}>
+        <Text style={s.retryText}>Try again</Text>
+      </Pressable>
     </View>
   );
 }
@@ -684,6 +845,32 @@ function clientSince(): string {
   return 'March 2023';
 }
 
+function visitTone(status: string): 'success' | 'warning' | 'neutral' {
+  if (status === 'completed' || status === 'paid') return 'success';
+  if (status === 'cancelled' || status === 'no_show') return 'warning';
+  return 'neutral';
+}
+
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+
+function formatStatus(value: string): string {
+  return value.split('_').map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
+}
+
+function formatMoney(amount: number, currency: string): string {
+  try {
+    return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(amount);
+  } catch {
+    return `${currency} ${amount.toFixed(2)}`;
+  }
+}
+
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const BG = '#18141F';
@@ -734,30 +921,6 @@ const s = StyleSheet.create({
     letterSpacing: -0.3,
   },
   headerSpacer: { minWidth: 90 },
-
-  roleToggle: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: radius.pill,
-    padding: 3,
-    gap: 2,
-  },
-  roleToggleBtn: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: 5,
-    borderRadius: radius.pill,
-    alignItems: 'center',
-  },
-  roleToggleBtnActive: {
-    backgroundColor: BRAND,
-    shadowColor: BRAND,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.45,
-    shadowRadius: 6,
-    elevation: 4,
-  },
-  roleToggleBtnText: { color: 'rgba(255,255,255,0.4)', fontSize: 12, fontWeight: '700' },
-  roleToggleBtnTextActive: { color: palette.white },
 
   // ── Toast
   toast: {
@@ -1104,6 +1267,107 @@ const s = StyleSheet.create({
   emptyTabIcon: { fontSize: 28, marginBottom: spacing.xs },
   emptyTabTitle: { color: palette.white, fontSize: 15, fontWeight: '700' },
   mutedSm: { color: 'rgba(255,255,255,0.38)', fontSize: 13 },
+
+  // ── Tab loading / error states
+  tabStateCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    marginHorizontal: spacing.base,
+    padding: spacing.lg,
+    borderRadius: radius.cardLg,
+    backgroundColor: CARD_BG,
+    borderWidth: 1,
+    borderColor: BORDER,
+  },
+  tabErrorCard: {
+    gap: spacing.sm,
+    marginHorizontal: spacing.base,
+    padding: spacing.base,
+    borderRadius: radius.cardLg,
+    borderWidth: 1,
+    borderColor: 'rgba(248,113,113,0.3)',
+    backgroundColor: 'rgba(248,113,113,0.08)',
+  },
+  tabErrorText: { color: palette.danger[300], fontSize: 13, fontWeight: '600' },
+  retryBtn: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: 'rgba(248,113,113,0.35)',
+  },
+  retryText: { color: palette.danger[300], fontSize: 12, fontWeight: '700' },
+
+  // ── Visit / record list
+  tabList: {
+    marginHorizontal: spacing.base,
+    borderRadius: radius.cardLg,
+    backgroundColor: CARD_BG,
+    borderWidth: 1,
+    borderColor: BORDER_MED,
+    overflow: 'hidden',
+  },
+  recordRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: BORDER_MED,
+  },
+  recordRowLast: { borderBottomWidth: 0 },
+  recordAccent: { width: 3, alignSelf: 'stretch' },
+  accentGreen: { backgroundColor: palette.success[300] },
+  accentAmber: { backgroundColor: palette.warning[300] },
+  accentGray: { backgroundColor: 'rgba(255,255,255,0.18)' },
+  recordBody: { flex: 1, paddingHorizontal: spacing.base, paddingVertical: spacing.md, gap: 5 },
+  recordTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  recordTitle: { flex: 1, color: palette.white, fontSize: 14, fontWeight: '700' },
+  statusPill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill, borderWidth: 1 },
+  statusGreen: { backgroundColor: 'rgba(74,222,128,0.12)', borderColor: 'rgba(74,222,128,0.3)' },
+  statusAmber: { backgroundColor: 'rgba(245,158,11,0.12)', borderColor: 'rgba(245,158,11,0.3)' },
+  statusGray: { backgroundColor: 'rgba(148,163,184,0.12)', borderColor: 'rgba(148,163,184,0.25)' },
+  statusPillText: { fontSize: 10, fontWeight: '700' },
+  statusTextGreen: { color: palette.success[300] },
+  statusTextAmber: { color: palette.warning[300] },
+  statusTextGray: { color: 'rgba(255,255,255,0.45)' },
+  recordMeta: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+  recordMetaText: { color: 'rgba(255,255,255,0.45)', fontSize: 12 },
+  recordMetaDot: { width: 3, height: 3, borderRadius: 1.5, backgroundColor: 'rgba(255,255,255,0.2)' },
+  recordMetaPrice: { color: BRAND_LIGHT, fontSize: 12, fontWeight: '700' },
+
+  // ── Lab cards
+  labList: { marginHorizontal: spacing.base, gap: spacing.sm },
+  labCard: {
+    borderRadius: radius.cardLg,
+    backgroundColor: CARD_BG,
+    borderWidth: 1,
+    borderColor: BORDER_MED,
+    padding: spacing.base,
+    gap: spacing.sm,
+  },
+  labCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  labCardTitle: { flex: 1, color: palette.white, fontSize: 14, fontWeight: '800' },
+  labCardDate: { color: 'rgba(255,255,255,0.45)', fontSize: 12, fontWeight: '600' },
+  labItemRow: {
+    gap: 2,
+    paddingTop: spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: BORDER_MED,
+  },
+  labItemRowLast: {},
+  labItemName: { color: 'rgba(255,255,255,0.92)', fontSize: 13, fontWeight: '700' },
+  labItemDetail: { color: BRAND_LIGHT, fontSize: 12, fontWeight: '600' },
 
   // ── Account actions
   accountSection: {

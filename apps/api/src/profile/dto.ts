@@ -57,6 +57,12 @@ export class UpdateCurrentProfileDto {
   @IsOptional()
   @IsIn(COMMUNICATION_PREFERENCES)
   communicationPreference?: CommunicationPreference;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(64)
+  timezone?: string;
 }
 
 export class AdminUpdateProfileDto {

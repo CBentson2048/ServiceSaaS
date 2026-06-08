@@ -32,10 +32,10 @@ interface AbsenceModalState {
 }
 
 /**
- * Manager-facing rota page. The same backend endpoints already accept
- * owner callers, but this page intentionally renders only the manager
- * UX. Owner / stylist surfaces will mount alongside this page in a
- * follow-up phase.
+ * Rota management page for owners and managers. Managers are scoped to their
+ * single assigned location; owners get a location switcher and full access to
+ * every location in their business (the backend already authorises owners for
+ * all rota operations).
  */
 export function RotaPage() {
   const auth = useAuth();
@@ -61,18 +61,36 @@ export function RotaPage() {
   const [absenceModal, setAbsenceModal] = useState<AbsenceModalState>({ open: false });
 
   const role = auth.user?.role;
+  const locations = useMemo(() => auth.user?.locations ?? [], [auth.user?.locations]);
   const managerLocationId =
     role === 'manager' ? auth.user?.allowedLocationIds[0] ?? null : null;
 
-  const targetLocationId = managerLocationId ?? data?.locationId ?? null;
+  // Owners manage any of their locations, so they pick one explicitly. Managers
+  // are scoped to their single assigned location and never see the switcher.
+  const [ownerLocationId, setOwnerLocationId] = useState<string>('');
+  useEffect(() => {
+    if (role === 'owner' && !ownerLocationId && locations.length > 0) {
+      setOwnerLocationId(locations[0].id);
+    }
+  }, [role, ownerLocationId, locations]);
+
+  // The location whose rota we load: owner's chosen one, or the manager's assigned one.
+  const requestLocationId = role === 'owner' ? ownerLocationId || null : managerLocationId;
+  const targetLocationId = requestLocationId ?? data?.locationId ?? null;
 
   const reload = useCallback(async (options: { background?: boolean } = {}) => {
     if (!accessToken) return;
+    // Owners must have a location selected before the rota can load.
+    if (role === 'owner' && !requestLocationId) {
+      setData(null);
+      setLoading(false);
+      return;
+    }
     if (!options.background) setLoading(true);
     setError(null);
     try {
       const result = await getWeeklyRota(accessToken, {
-        locationId: managerLocationId ?? undefined,
+        locationId: requestLocationId ?? undefined,
         weekStart,
       });
       setData(result);
@@ -83,7 +101,7 @@ export function RotaPage() {
     } finally {
       if (!options.background) setLoading(false);
     }
-  }, [accessToken, managerLocationId, weekStart]);
+  }, [accessToken, role, requestLocationId, weekStart]);
 
   useEffect(() => {
     void reload();
@@ -99,18 +117,10 @@ export function RotaPage() {
     return <Navigate to="/unauthorized" replace />;
   }
 
-  // Owner UI for rota is intentionally deferred to a later phase. The
-  // same backend endpoints serve owners; we just don't render the
-  // multi-location switcher here yet.
-  if (role === 'owner') {
+  if (role === 'owner' && locations.length === 0) {
     return (
-      <div className="mx-auto w-full max-w-3xl px-4 py-6 lg:px-8">
-        <h1 className="text-[22px] font-semibold leading-7 text-text-primary">Rota</h1>
-        <p className="mt-1 text-[13px] text-text-secondary">
-          The owner rota view is coming in a follow-up phase. The reusable rota backend is
-          already live — managers can already manage their location rota at /rota when
-          signed in with a manager account.
-        </p>
+      <div className="mx-auto w-full max-w-3xl px-4 py-10 text-center text-[13px] text-text-secondary">
+        No locations found for your business yet. Create a location before managing the rota.
       </div>
     );
   }
@@ -178,6 +188,20 @@ export function RotaPage() {
           <p className="mt-1 text-[13px] text-text-secondary">
             Manage shifts, breaks, leave, and absences for {locationName}.
           </p>
+          {role === 'owner' && locations.length > 0 ? (
+            <select
+              value={ownerLocationId}
+              onChange={(event) => setOwnerLocationId(event.target.value)}
+              className="mt-2 h-9 rounded-input-lg border border-border-strong bg-surface px-3 text-[13px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+              aria-label="Location"
+            >
+              {locations.map((location) => (
+                <option key={location.id} value={location.id}>
+                  {location.name}
+                </option>
+              ))}
+            </select>
+          ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <AppButton

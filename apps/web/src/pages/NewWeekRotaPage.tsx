@@ -52,9 +52,20 @@ export function NewWeekRotaPage() {
   const [shiftEditor, setShiftEditor] = useState<ShiftEditorState>({ open: false });
 
   const role = auth.user?.role;
+  const locations = useMemo(() => auth.user?.locations ?? [], [auth.user?.locations]);
   const managerLocationId = role === 'manager' ? auth.user?.allowedLocationIds[0] ?? null : null;
+
+  // Owners pick which location's week they're building; managers are fixed to theirs.
+  const [ownerLocationId, setOwnerLocationId] = useState<string>('');
+  useEffect(() => {
+    if (role === 'owner' && !ownerLocationId && locations.length > 0) {
+      setOwnerLocationId(locations[0].id);
+    }
+  }, [role, ownerLocationId, locations]);
+
+  const effectiveLocationId = role === 'owner' ? ownerLocationId || null : managerLocationId;
   const locationName =
-    auth.user?.locations.find((loc) => loc.id === managerLocationId)?.name ?? 'Current location';
+    locations.find((loc) => loc.id === effectiveLocationId)?.name ?? 'Current location';
 
   const weekDates = useMemo(() => {
     const start = new Date(`${weekStart}T00:00:00`);
@@ -69,11 +80,11 @@ export function NewWeekRotaPage() {
   }, [weekDates, weekStart]);
 
   const loadTargetWeek = useCallback(async () => {
-    if (!accessToken || !managerLocationId) return;
+    if (!accessToken || !effectiveLocationId) return;
     setRotaLoading(true);
     try {
       const result = await getWeeklyRota(accessToken, {
-        locationId: managerLocationId,
+        locationId: effectiveLocationId,
         weekStart,
       });
       setTargetWeek(result);
@@ -85,14 +96,14 @@ export function NewWeekRotaPage() {
     } finally {
       setRotaLoading(false);
     }
-  }, [accessToken, managerLocationId, weekStart]);
+  }, [accessToken, effectiveLocationId, weekStart]);
 
   useEffect(() => {
     void loadTargetWeek();
   }, [loadTargetWeek]);
 
   const initialiseWorkspace = useCallback(async () => {
-    if (!accessToken || !managerLocationId || rotaLoading) return;
+    if (!accessToken || !effectiveLocationId || rotaLoading) return;
     setWorkspaceLoading(true);
     setError(null);
     setActionMessage(null);
@@ -113,7 +124,7 @@ export function NewWeekRotaPage() {
       }
 
       if (creationMode === 'generate_from_defaults') {
-        const generated = buildDefaultDraftShifts(targetWeek?.staff ?? [], weekDates, managerLocationId);
+        const generated = buildDefaultDraftShifts(targetWeek?.staff ?? [], weekDates, effectiveLocationId);
         setWorkspacePlan({
           weekStart,
           creationMode,
@@ -133,7 +144,7 @@ export function NewWeekRotaPage() {
       const res = await previewNewWeek(accessToken, {
         weekStart,
         creationMode,
-        locationId: managerLocationId,
+        locationId: effectiveLocationId,
       });
       setWorkspacePlan(res);
       setDraftShifts(res.draftShifts ?? []);
@@ -149,7 +160,7 @@ export function NewWeekRotaPage() {
   }, [
     accessToken,
     creationMode,
-    managerLocationId,
+    effectiveLocationId,
     rotaLoading,
     targetWeek?.shifts.length,
     targetWeek?.staff,
@@ -165,13 +176,10 @@ export function NewWeekRotaPage() {
     return <Navigate to="/unauthorized" replace />;
   }
 
-  if (role === 'owner') {
+  if (role === 'owner' && locations.length === 0) {
     return (
-      <div className="mx-auto w-full max-w-3xl px-4 py-6 lg:px-8">
-        <h1 className="text-[22px] font-semibold leading-7 text-text-primary">Create New Week Rota</h1>
-        <p className="mt-1 text-[13px] text-text-secondary">
-          The owner rota view is coming in a follow-up phase.
-        </p>
+      <div className="mx-auto w-full max-w-3xl px-4 py-10 text-center text-[13px] text-text-secondary">
+        No locations found for your business yet. Create a location before building a rota week.
       </div>
     );
   }
@@ -208,7 +216,7 @@ export function NewWeekRotaPage() {
       await createNewWeek(accessToken, {
         weekStart,
         creationMode,
-        locationId: managerLocationId ?? undefined,
+        locationId: effectiveLocationId ?? undefined,
         shifts: draftShifts.map(toNewWeekDraftShift),
       });
       navigate(`/rota?weekStart=${weekStart}`);
@@ -302,11 +310,26 @@ export function NewWeekRotaPage() {
               Location / Team
             </AppText>
           <select
-            value={managerLocationId ?? 'current'}
-            onChange={() => undefined}
-              className="mt-1 h-9 w-full rounded-input-lg border border-border-strong bg-surface px-3 text-[13px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+            value={role === 'owner' ? ownerLocationId : managerLocationId ?? 'current'}
+            onChange={(event) => {
+              if (role !== 'owner') return;
+              setOwnerLocationId(event.target.value);
+              setWorkspacePlan(null);
+              setDraftShifts([]);
+              setActionMessage(null);
+            }}
+            disabled={role !== 'owner'}
+              className="mt-1 h-9 w-full rounded-input-lg border border-border-strong bg-surface px-3 text-[13px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:opacity-70"
           >
-            <option value={managerLocationId ?? 'current'}>{locationName}</option>
+            {role === 'owner' ? (
+              locations.map((location) => (
+                <option key={location.id} value={location.id}>
+                  {location.name}
+                </option>
+              ))
+            ) : (
+              <option value={managerLocationId ?? 'current'}>{locationName}</option>
+            )}
           </select>
           </label>
           <label>
@@ -491,11 +514,11 @@ export function NewWeekRotaPage() {
         </aside>
       </div>
 
-      {targetWeek && managerLocationId ? (
+      {targetWeek && effectiveLocationId ? (
         <ShiftEditorModal
           open={shiftEditor.open}
           accessToken={accessToken}
-          locationId={managerLocationId}
+          locationId={effectiveLocationId}
           staff={targetWeek.staff}
           shift={shiftEditor.shift}
           initialStaffProfileId={shiftEditor.staffProfileId}

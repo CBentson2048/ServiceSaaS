@@ -13,6 +13,7 @@ const RANGE_LABEL: Record<DashboardRange, string> = {
   today: 'today',
   week: 'this week',
   month: 'this month',
+  custom: 'a custom range',
 };
 
 const COLS = '1.8fr 0.8fr 1.3fr 0.7fr 1fr 92px';
@@ -40,7 +41,9 @@ export function CommissionPage() {
     setError(null);
     try {
       const result = await getStylistKpis(accessToken, {
-        period: range,
+        // CommissionPage only offers presets (no custom tab), but the shared
+        // range type now includes 'custom' — guard to keep `period` valid.
+        period: range === 'custom' ? 'month' : range,
         locationId: locationId !== 'all' ? locationId : undefined,
       });
       setData(result);

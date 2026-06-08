@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { cn } from '@sheer/utils';
 
 export interface CalendarToolbarState {
@@ -33,13 +34,19 @@ const TOGGLES: { key: CalendarToolbarKey; label: string; hint: string }[] = [
  * Owner / manager calendar toolbar. Three switch-style toggles that tune what
  * the day calendar board renders. The page owns the state (and persists it);
  * this component is purely presentational.
+ *
+ * `trailing` is rendered on the far right of the bar — the page docks the
+ * location picker and refresh control here so they live alongside the view
+ * toggles instead of in a separate panel.
  */
 export function CalendarToolbar({
   state,
   onToggle,
+  trailing,
 }: {
   state: CalendarToolbarState;
   onToggle: (key: CalendarToolbarKey) => void;
+  trailing?: ReactNode;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-x-5 gap-y-2.5 border-b border-border bg-surface-alt/50 px-4 py-2.5">
@@ -53,6 +60,7 @@ export function CalendarToolbar({
           onChange={() => onToggle(toggle.key)}
         />
       ))}
+      {trailing ? <div className="ml-auto flex items-center gap-2">{trailing}</div> : null}
     </div>
   );
 }

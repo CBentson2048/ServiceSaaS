@@ -7,6 +7,14 @@ export type StripePaymentIntent = Awaited<ReturnType<StripeClient['paymentIntent
 type StripePaymentIntentCreateParams = Parameters<StripeClient['paymentIntents']['create']>[0];
 type StripeEvent = ReturnType<StripeClient['webhooks']['constructEvent']>;
 
+/**
+ * Payment methods offered when paying a booking deposit. Restricting this list
+ * (rather than relying on Stripe's automatic payment methods) keeps the Payment
+ * Sheet to card, Apple Pay, and Link only. Apple Pay rides on the `card` rail,
+ * so it does not need its own entry here — it is enabled client-side instead.
+ */
+const BOOKING_DEPOSIT_PAYMENT_METHOD_TYPES = ['card', 'link'] as const;
+
 export interface BookingPaymentIntentInput {
   amount: number;
   currency: string;
@@ -46,6 +54,7 @@ export class StripeService {
     const params: StripePaymentIntentCreateParams = {
       amount: amountInMinorUnits,
       currency: input.currency.toLowerCase(),
+      payment_method_types: [...BOOKING_DEPOSIT_PAYMENT_METHOD_TYPES],
       metadata: {
         booking_attempt_id: input.bookingAttemptId,
         location_id: input.locationId,

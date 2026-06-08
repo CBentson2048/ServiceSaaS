@@ -108,9 +108,12 @@ export class LabAnalyticsService {
     actor: AuthUser,
     range: SheerLabAnalyticsRange,
     requestedLocationId?: string,
+    from?: string,
+    to?: string,
   ): Promise<SheerLabAnalyticsResponse> {
-    const normalizedRange = normalizeRange(range);
-    const { rangeStart, rangeEnd } = rangeWindow(normalizedRange);
+    const customWindow = resolveCustomWindow(from, to);
+    const normalizedRange: SheerLabAnalyticsRange = customWindow ? 'custom' : normalizeRange(range);
+    const { rangeStart, rangeEnd } = customWindow ?? rangeWindow(normalizedRange);
     const locationIds = this.resolveLocationScope(actor, requestedLocationId);
 
     const [locations, formulas, lowStockAlerts] = await Promise.all([
@@ -280,6 +283,18 @@ export class LabAnalyticsService {
 
 function normalizeRange(range: SheerLabAnalyticsRange | undefined): SheerLabAnalyticsRange {
   return range === 'week' || range === 'month' ? range : 'today';
+}
+
+/** Validate an explicit from/to pair into an ISO window, or null when unusable. */
+function resolveCustomWindow(
+  from: string | undefined,
+  to: string | undefined,
+): { rangeStart: string; rangeEnd: string } | null {
+  if (!from || !to) return null;
+  const start = new Date(from);
+  const end = new Date(to);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start >= end) return null;
+  return { rangeStart: start.toISOString(), rangeEnd: end.toISOString() };
 }
 
 function rangeWindow(range: SheerLabAnalyticsRange): { rangeStart: string; rangeEnd: string } {

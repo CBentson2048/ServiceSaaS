@@ -30,4 +30,13 @@ export class UpdateProductBillingSettingsDto {
   @IsNumber()
   @Min(0)
   productFixedUpliftAmount?: number | null;
+
+  @IsOptional()
+  @IsBoolean()
+  productRoundUpEnabled?: boolean;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0.01)
+  productRoundUpIncrement?: number | null;
 }

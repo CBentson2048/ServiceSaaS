@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
-import type { AuthUser } from '@sheer/domain';
+import type { AuthUser, ClientLabHistoryResponse } from '@sheer/domain';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { RequireRoles, RolesGuard } from '../auth/roles.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
@@ -22,6 +22,14 @@ export class LabFormulaController {
   @Post('start')
   start(@CurrentUser() actor: AuthUser, @Body() dto: StartFormulaDto) {
     return this.labFormulaService.start(actor, dto);
+  }
+
+  // Client-facing: a customer's own cost-stripped colour/formula history.
+  // Method-level role overrides the controller's staff-only default.
+  @Get('me/history')
+  @RequireRoles('client')
+  myHistory(@CurrentUser() actor: AuthUser): ClientLabHistoryResponse {
+    return this.labFormulaService.historyForSelf(actor);
   }
 
   @Get('client/:clientProfileId/latest')

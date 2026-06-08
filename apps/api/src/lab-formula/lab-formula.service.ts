@@ -7,7 +7,13 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import type { AuthUser, LocationProductBillingSettings, ProductBillingRule } from '@sheer/domain';
+import type {
+  AuthUser,
+  ClientLabFormulaSummary,
+  ClientLabHistoryResponse,
+  LocationProductBillingSettings,
+  ProductBillingRule,
+} from '@sheer/domain';
 import { buildProductBillingSnapshot } from '../common/product-billing.helper';
 import {
   calculateFormulaBillableChargeCents,
@@ -89,6 +95,8 @@ interface ProductBillingRulesRow {
   product_billing_rule: string;
   product_markup_percent: number | null;
   product_fixed_uplift_amount: number | null;
+  product_round_up_enabled: boolean | null;
+  product_round_up_increment: number | null;
 }
 
 @Injectable()
@@ -288,6 +296,8 @@ export class LabFormulaService {
         productBillingRule: 'cost_only',
         productMarkupPercent: null,
         productFixedUpliftAmount: null,
+        productRoundUpEnabled: false,
+        productRoundUpIncrement: null,
       };
     }
 
@@ -297,11 +307,24 @@ export class LabFormulaService {
       productBillingRule: rules.product_billing_rule as ProductBillingRule,
       productMarkupPercent: rules.product_markup_percent,
       productFixedUpliftAmount: rules.product_fixed_uplift_amount,
+      productRoundUpEnabled: rules.product_round_up_enabled ?? false,
+      productRoundUpIncrement: rules.product_round_up_increment,
     };
   }
 
   latestForClient(actor: AuthUser, clientProfileId: string): FormulaHistoryRecord | null {
     return this.historyForClient(actor, clientProfileId)[0] ?? null;
+  }
+
+  // A customer's own saved formulas, stripped of cost/waste/billing data before
+  // it ever leaves the API. Reuses historyForClient (which already scopes a
+  // client to their own clientProfileId) and maps to the client-safe shape.
+  historyForSelf(actor: AuthUser): ClientLabHistoryResponse {
+    if (actor.role !== 'client' || !actor.clientProfileId) {
+      throw new ForbiddenException('Lab history requires a client account');
+    }
+    const records = this.historyForClient(actor, actor.clientProfileId);
+    return { formulas: records.map(toClientLabFormulaSummary) };
   }
 
   historyForClient(actor: AuthUser, clientProfileId: string): FormulaHistoryRecord[] {
@@ -647,7 +670,9 @@ export class LabFormulaService {
     const { data, error } = await this.admin
       .schema('billing')
       .from('billing_rules')
-      .select('product_billing_enabled,product_billing_rule,product_markup_percent,product_fixed_uplift_amount')
+      .select(
+        'product_billing_enabled,product_billing_rule,product_markup_percent,product_fixed_uplift_amount,product_round_up_enabled,product_round_up_increment',
+      )
       .eq('business_id', businessId)
       .eq('location_id', locationId)
       .maybeSingle<ProductBillingRulesRow>();
@@ -675,6 +700,8 @@ export class LabFormulaService {
       rule,
       rules.product_markup_percent,
       rules.product_fixed_uplift_amount,
+      rules.product_round_up_enabled ?? false,
+      rules.product_round_up_increment,
     );
 
     const { error } = await this.admin
@@ -694,6 +721,8 @@ export class LabFormulaService {
           billing_rule_snapshot: snapshot.billingRuleSnapshot,
           markup_percent_snapshot: snapshot.markupPercentSnapshot,
           fixed_uplift_amount_snapshot: snapshot.fixedUpliftAmountSnapshot,
+          round_up_enabled_snapshot: snapshot.roundUpEnabledSnapshot,
+          round_up_increment_snapshot: snapshot.roundUpIncrementSnapshot,
         },
         { onConflict: 'visit_id,line_type' },
       );
@@ -791,5 +820,25 @@ function toAuthUserFromLabSession(session: LabRuntimeSession): AuthUser {
       fullName: 'Sheer Lab session',
     },
     staffProfileId: session.staffProfileId,
+  };
+}
+
+// Projects a saved formula down to the fields a client may see. Cost, waste,
+// grams, billing and inventory data are deliberately dropped here.
+function toClientLabFormulaSummary(record: FormulaHistoryRecord): ClientLabFormulaSummary {
+  return {
+    id: record.id,
+    savedAt: record.savedAt,
+    serviceType: record.visit?.serviceType,
+    appointmentId: record.appointmentId,
+    visitId: record.visitId,
+    items: record.items.map((item) => ({
+      productName: item.productName,
+      brand: item.brand,
+      shade: item.shade,
+      developer: item.developer,
+      ratio: item.ratio,
+      processingTimeMinutes: item.processingTimeMinutes,
+    })),
   };
 }

@@ -44,6 +44,8 @@ export interface AuthUser {
   clientProfileId?: string;
   clientCode?: string;
   clientCommunicationPreference?: 'whatsapp' | 'sms' | 'email';
+  /** IANA timezone for the signed-in user (e.g. 'Europe/London'). Drives app-wide date/time display. */
+  timezone?: string;
 }
 
 export interface AuthSession {
@@ -466,6 +468,10 @@ export interface LocationProductBillingSettings {
   productMarkupPercent: number | null;
   /** Required when productBillingRule = 'fixed_uplift'. >= 0, decimal (e.g. 4.00 = £4) */
   productFixedUpliftAmount: number | null;
+  /** When true, the billable amount is rounded UP to the nearest productRoundUpIncrement after the rule is applied. */
+  productRoundUpEnabled: boolean;
+  /** Round-up step in decimal GBP (e.g. 0.50, 1.00). Required when productRoundUpEnabled. > 0 */
+  productRoundUpIncrement: number | null;
 }
 
 export interface GetLocationProductBillingSettingsResponse {
@@ -478,6 +484,8 @@ export interface UpdateLocationProductBillingSettingsRequest {
   productBillingRule?: ProductBillingRule;
   productMarkupPercent?: number | null;
   productFixedUpliftAmount?: number | null;
+  productRoundUpEnabled?: boolean;
+  productRoundUpIncrement?: number | null;
 }
 
 export interface UpdateLocationProductBillingSettingsResponse {
@@ -490,6 +498,8 @@ export interface ProductBillingSnapshot {
   billingRuleSnapshot: ProductBillingRule;
   markupPercentSnapshot: number | null;
   fixedUpliftAmountSnapshot: number | null;
+  roundUpEnabledSnapshot: boolean;
+  roundUpIncrementSnapshot: number | null;
 }
 
 export interface StaffInvitation {
@@ -674,6 +684,8 @@ export interface UserProfileIdentity {
   avatarUrl?: string;
   role: UserRole;
   isActive: boolean;
+  /** IANA timezone (e.g. 'Europe/London'). Defaults server-side when unset. */
+  timezone?: string;
 }
 
 export interface ClientProfileDetails {
@@ -741,6 +753,8 @@ export interface UpdateCurrentProfileRequest {
   phone?: string | null;
   avatarUrl?: string | null;
   communicationPreference?: CommunicationPreference;
+  /** IANA timezone (e.g. 'Europe/London'). */
+  timezone?: string;
 }
 
 export interface AdminUpdateProfileRequest {
@@ -1007,7 +1021,7 @@ export interface LabDeviceMutationResponse {
   device: SharedDeviceSummary;
 }
 
-export type SheerLabAnalyticsRange = 'today' | 'week' | 'month';
+export type SheerLabAnalyticsRange = 'today' | 'week' | 'month' | 'custom';
 
 export interface SheerLabAnalyticsSummary {
   colourRevenueCents: number;
@@ -1436,6 +1450,34 @@ export interface MobileClientDashboardResponse {
   nextAppointment?: StaffBookingSummary;
   upcomingAppointments: StaffBookingSummary[];
   visitHistory: CrmVisitSummary[];
+}
+
+// Client-facing lab/colour history: a cost-stripped view of a customer's own
+// saved formulas so they can see what colour and products were used on them.
+// Salon cost, waste, billing and inventory data are intentionally omitted — the
+// raw FormulaHistoryRecord (in @sheer/lab-core) must never be returned to clients.
+export interface ClientLabFormulaItem {
+  productName: string;
+  brand?: string;
+  shade?: string;
+  developer?: string;
+  ratio?: string;
+  processingTimeMinutes?: number;
+  // Note: item `notes` are intentionally excluded — that free-text field can
+  // carry stylist-internal remarks and is not safe to surface to clients.
+}
+
+export interface ClientLabFormulaSummary {
+  id: string;
+  savedAt: string;
+  serviceType?: string;
+  appointmentId?: string;
+  visitId?: string;
+  items: ClientLabFormulaItem[];
+}
+
+export interface ClientLabHistoryResponse {
+  formulas: ClientLabFormulaSummary[];
 }
 
 export interface MobileStylistDashboardResponse {

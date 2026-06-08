@@ -130,6 +130,8 @@ interface ProductBillingRulesRow {
   product_billing_rule: string;
   product_markup_percent: number | null;
   product_fixed_uplift_amount: number | null;
+  product_round_up_enabled: boolean | null;
+  product_round_up_increment: number | null;
 }
 
 interface SalonPaymentRow {
@@ -1024,6 +1026,8 @@ export class LabAppointmentsService {
       rules.product_billing_rule as ProductBillingRule,
       rules.product_markup_percent,
       rules.product_fixed_uplift_amount,
+      rules.product_round_up_enabled ?? false,
+      rules.product_round_up_increment,
     );
 
     const { error } = await this.admin.schema('billing').from('visit_line_items').upsert(
@@ -1040,6 +1044,8 @@ export class LabAppointmentsService {
         billing_rule_snapshot: snapshot.billingRuleSnapshot,
         markup_percent_snapshot: snapshot.markupPercentSnapshot,
         fixed_uplift_amount_snapshot: snapshot.fixedUpliftAmountSnapshot,
+        round_up_enabled_snapshot: snapshot.roundUpEnabledSnapshot,
+        round_up_increment_snapshot: snapshot.roundUpIncrementSnapshot,
         metadata: { source: 'appointment_completion', appointment_id: appointment.id },
       },
       { onConflict: 'visit_id,line_type' },
@@ -1057,7 +1063,9 @@ export class LabAppointmentsService {
     const { data, error } = await this.admin
       .schema('billing')
       .from('billing_rules')
-      .select('product_billing_enabled,product_billing_rule,product_markup_percent,product_fixed_uplift_amount')
+      .select(
+        'product_billing_enabled,product_billing_rule,product_markup_percent,product_fixed_uplift_amount,product_round_up_enabled,product_round_up_increment',
+      )
       .eq('business_id', businessId)
       .eq('location_id', locationId)
       .maybeSingle<ProductBillingRulesRow>();

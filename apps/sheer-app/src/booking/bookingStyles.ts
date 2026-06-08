@@ -583,8 +583,21 @@ export const bookingStyles = StyleSheet.create({
     backgroundColor: 'rgba(166,124,245,0.14)',
   },
   slotTimes: {
-    width: 96,
-    gap: 2,
+    width: 130,
+    gap: spacing.xs,
+  },
+  slotTimeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  slotTimeLabel: {
+    width: 38,
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
   },
   slotStart: {
     color: palette.white,

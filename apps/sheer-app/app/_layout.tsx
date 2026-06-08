@@ -3,11 +3,19 @@ import { StatusBar } from 'expo-status-bar';
 import { StripeProvider } from '@stripe/stripe-react-native';
 import { AuthProvider } from '../src/auth/AuthProvider';
 import { BookingFlowProvider } from '../src/booking/BookingFlowProvider';
-import { STRIPE_PUBLISHABLE_KEY, STRIPE_URL_SCHEME } from '../src/payments/stripeConfig';
+import {
+  STRIPE_MERCHANT_IDENTIFIER,
+  STRIPE_PUBLISHABLE_KEY,
+  STRIPE_URL_SCHEME,
+} from '../src/payments/stripeConfig';
 
 export default function RootLayout() {
   return (
-    <StripeProvider publishableKey={STRIPE_PUBLISHABLE_KEY} urlScheme={STRIPE_URL_SCHEME}>
+    <StripeProvider
+      publishableKey={STRIPE_PUBLISHABLE_KEY}
+      urlScheme={STRIPE_URL_SCHEME}
+      merchantIdentifier={STRIPE_MERCHANT_IDENTIFIER}
+    >
       <AuthProvider>
         <BookingFlowProvider>
           <StatusBar style="light" />

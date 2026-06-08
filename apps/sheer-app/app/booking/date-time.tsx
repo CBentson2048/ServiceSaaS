@@ -495,8 +495,18 @@ function SlotRow({
       style={({ pressed }) => [styles.slotRow, selected && styles.slotRowSelected, pressed && s.pressed]}
     >
       <View style={styles.slotTimes}>
-        <Text style={styles.slotStart}>{formatTime(slot.startAt)}</Text>
-        <Text style={styles.slotEnd}>{formatTime(slot.endAt)}</Text>
+        <View style={styles.slotTimeRow}>
+          <Text style={styles.slotTimeLabel} numberOfLines={1}>
+            Start
+          </Text>
+          <Text style={styles.slotStart}>{formatTime(slot.startAt)}</Text>
+        </View>
+        <View style={styles.slotTimeRow}>
+          <Text style={styles.slotTimeLabel} numberOfLines={1}>
+            End
+          </Text>
+          <Text style={styles.slotEnd}>{formatTime(slot.endAt)}</Text>
+        </View>
       </View>
       <View style={styles.slotMid}>
         <View style={styles.durationChip}>
