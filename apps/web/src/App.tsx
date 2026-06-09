@@ -18,11 +18,13 @@ import { CrmClientsPage } from './pages/CrmClientsPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { EditLocationPage } from './pages/EditLocationPage';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
+import { InventoryCategoriesPage } from './pages/InventoryCategoriesPage';
 import { InventoryPage } from './pages/InventoryPage';
 import { LandingPage } from './pages/LandingPage';
 import { LocationDetailPage } from './pages/LocationDetailPage';
 import { LocationsPage } from './pages/LocationsPage';
 import { LoginPage } from './pages/LoginPage';
+import { NewBookingPage } from './pages/NewBookingPage';
 import { OwnerOnboardingPage } from './pages/OwnerOnboardingPage';
 import { PasswordResetCompletePage } from './pages/PasswordResetCompletePage';
 import { PerformancePage } from './pages/PerformancePage';
@@ -72,11 +74,13 @@ export function App() {
         <Route element={<DashboardLayout />}>
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/bookings" element={<BookingsPage />} />
+          <Route path="/bookings/new" element={<NewBookingPage />} />
           <Route path="/crm" element={<CrmClientsPage />} />
           <Route path="/crm/clients/:id" element={<CrmClientDetailPage />} />
           <Route path="/rota" element={<RotaPage />} />
           <Route path="/rota/new-week" element={<NewWeekRotaPage />} />
           <Route path="/inventory" element={<InventoryPage />} />
+          <Route path="/inventory/categories" element={<InventoryCategoriesPage />} />
           <Route path="/sheer-lab" element={<SheerLabPage />} />
           <Route path="/performance" element={<PerformancePage />} />
           <Route path="/commission" element={<CommissionPage />} />

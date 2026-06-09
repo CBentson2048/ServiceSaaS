@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   InternalServerErrorException,
@@ -11,12 +12,15 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type {
   AuthUser,
   BusinessLocationSummary,
+  InventoryCategory,
+  InventoryCategoryResponse,
   InventoryLocationStock,
   InventoryLowStockAlert,
   InventoryProduct,
   InventoryProductResponse,
   InventoryStockMovement,
   InventoryStockMutationResponse,
+  ListInventoryCategoriesResponse,
   ListInventoryLowStockResponse,
   ListInventoryMovementsResponse,
   ListInventoryProductsResponse,
@@ -25,10 +29,13 @@ import type {
 import type { LabRuntimeSession } from '../lab-session/lab-session.service';
 import type {
   AdjustInventoryStockDto,
+  CategoryQueryDto,
+  CreateInventoryCategoryDto,
   InitializeInventoryStockDto,
   InventoryQueryDto,
   MovementQueryDto,
   StockQueryDto,
+  UpdateInventoryCategoryDto,
   UpdateInventoryStockThresholdDto,
   UpsertInventoryProductDto,
 } from './dto';
@@ -38,7 +45,7 @@ interface ProductRow {
   business_id: string;
   brand: string | null;
   name: string;
-  category: string | null;
+  category_id: string | null;
   sku: string | null;
   size_value: number | string | null;
   size_unit: string;
@@ -95,12 +102,23 @@ interface AlertRow {
   last_triggered_at: string;
 }
 
+interface CategoryRow {
+  id: string;
+  business_id: string;
+  name: string;
+  description: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 const PRODUCT_COLUMNS =
-  'id,business_id,brand,name,category,sku,size_value,size_unit,default_unit,default_cost_per_gram_cents,retail_price_cents,low_stock_threshold_grams,is_active,created_at,updated_at';
+  'id,business_id,brand,name,category_id,sku,size_value,size_unit,default_unit,default_cost_per_gram_cents,retail_price_cents,low_stock_threshold_grams,is_active,created_at,updated_at';
 const STOCK_COLUMNS =
   'id,business_id,location_id,product_id,quantity_on_hand_grams,low_stock_threshold_grams,is_active,updated_at';
 const MOVEMENT_COLUMNS =
   'id,business_id,location_id,product_id,location_stock_id,movement_type,quantity_delta_grams,unit_cost_cents,total_cost_cents,reference_type,reference_id,reason,notes,created_by,created_at';
+const CATEGORY_COLUMNS = 'id,business_id,name,description,is_active,created_at,updated_at';
 
 @Injectable()
 export class InventoryService {
@@ -132,6 +150,7 @@ export class InventoryService {
 
   async createProduct(actor: AuthUser, dto: UpsertInventoryProductDto): Promise<InventoryProductResponse> {
     this.assertOwner(actor);
+    if (dto.categoryId) await this.assertCategory(actor.businessId, dto.categoryId);
     const { data, error } = await this.admin
       .schema('inventory')
       .from('products')
@@ -143,11 +162,12 @@ export class InventoryService {
       this.logger.error(`createProduct failed: ${error?.message ?? 'no row'}`);
       throw new InternalServerErrorException('Unable to create inventory product');
     }
-    return { product: toProduct(data) };
+    return { product: toProduct(data, await this.fetchCategoryNames(actor.businessId, [data.category_id])) };
   }
 
   async updateProduct(actor: AuthUser, productId: string, dto: UpsertInventoryProductDto): Promise<InventoryProductResponse> {
     this.assertOwner(actor);
+    if (dto.categoryId) await this.assertCategory(actor.businessId, dto.categoryId);
     const { data, error } = await this.admin
       .schema('inventory')
       .from('products')
@@ -162,7 +182,7 @@ export class InventoryService {
       throw new InternalServerErrorException('Unable to update inventory product');
     }
     if (!data) throw new NotFoundException('Inventory product not found');
-    return { product: toProduct(data) };
+    return { product: toProduct(data, await this.fetchCategoryNames(actor.businessId, [data.category_id])) };
   }
 
   async archiveProduct(actor: AuthUser, productId: string): Promise<InventoryProductResponse> {
@@ -181,7 +201,7 @@ export class InventoryService {
       throw new InternalServerErrorException('Unable to archive inventory product');
     }
     if (!data) throw new NotFoundException('Inventory product not found');
-    return { product: toProduct(data) };
+    return { product: toProduct(data, await this.fetchCategoryNames(actor.businessId, [data.category_id])) };
   }
 
   async listStock(actor: AuthUser, query: StockQueryDto): Promise<ListInventoryStockResponse> {
@@ -348,6 +368,111 @@ export class InventoryService {
     return { alerts: (data ?? []).map((row) => toAlert(row, products, locations)) };
   }
 
+  async listCategories(actor: AuthUser, query: CategoryQueryDto): Promise<ListInventoryCategoriesResponse> {
+    this.assertManagerOrOwner(actor);
+    let request = this.admin
+      .schema('inventory')
+      .from('categories')
+      .select(CATEGORY_COLUMNS)
+      .eq('business_id', actor.businessId)
+      .order('name', { ascending: true });
+
+    if (!query.includeInactive) request = request.eq('is_active', true);
+    if (query.q?.trim()) {
+      const term = escapeSupabaseOr(query.q.trim());
+      request = request.or(`name.ilike.%${term}%,description.ilike.%${term}%`);
+    }
+
+    const { data, error } = await request.returns<CategoryRow[]>();
+    if (error) {
+      this.logger.error(`listCategories failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load inventory categories');
+    }
+    return { categories: (data ?? []).map(toCategory) };
+  }
+
+  async createCategory(actor: AuthUser, dto: CreateInventoryCategoryDto): Promise<InventoryCategoryResponse> {
+    this.assertOwner(actor);
+    const name = dto.name.trim();
+    if (!name) throw new BadRequestException('name is required');
+
+    const { data, error } = await this.admin
+      .schema('inventory')
+      .from('categories')
+      .insert({
+        business_id: actor.businessId,
+        name,
+        description: clean(dto.description),
+        is_active: dto.isActive ?? true,
+      })
+      .select(CATEGORY_COLUMNS)
+      .single<CategoryRow>();
+
+    if (error || !data) {
+      if (error?.code === '23505') {
+        throw new ConflictException('A category with this name already exists');
+      }
+      this.logger.error(`createCategory failed: ${error?.message ?? 'no row'}`);
+      throw new InternalServerErrorException('Unable to create inventory category');
+    }
+    return { category: toCategory(data) };
+  }
+
+  async updateCategory(
+    actor: AuthUser,
+    categoryId: string,
+    dto: UpdateInventoryCategoryDto,
+  ): Promise<InventoryCategoryResponse> {
+    this.assertOwner(actor);
+    const patch: Record<string, unknown> = {};
+    if (dto.name !== undefined) {
+      const name = dto.name.trim();
+      if (!name) throw new BadRequestException('name must not be empty');
+      patch.name = name;
+    }
+    if ('description' in dto) patch.description = clean(dto.description);
+    if (dto.isActive !== undefined) patch.is_active = dto.isActive;
+    if (Object.keys(patch).length === 0) throw new BadRequestException('No category fields to update');
+
+    const { data, error } = await this.admin
+      .schema('inventory')
+      .from('categories')
+      .update(patch)
+      .eq('id', categoryId)
+      .eq('business_id', actor.businessId)
+      .select(CATEGORY_COLUMNS)
+      .maybeSingle<CategoryRow>();
+
+    if (error) {
+      if (error.code === '23505') {
+        throw new ConflictException('A category with this name already exists');
+      }
+      this.logger.error(`updateCategory failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to update inventory category');
+    }
+    if (!data) throw new NotFoundException('Inventory category not found');
+    return { category: toCategory(data) };
+  }
+
+  async deleteCategory(actor: AuthUser, categoryId: string): Promise<InventoryCategoryResponse> {
+    this.assertOwner(actor);
+    const { data, error } = await this.admin
+      .schema('inventory')
+      .from('categories')
+      .delete()
+      .eq('id', categoryId)
+      .eq('business_id', actor.businessId)
+      .select(CATEGORY_COLUMNS)
+      .maybeSingle<CategoryRow>();
+
+    if (error) {
+      this.logger.error(`deleteCategory failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to delete inventory category');
+    }
+    if (!data) throw new NotFoundException('Inventory category not found');
+    return { category: toCategory(data) };
+  }
+
   private assertManagerOrOwner(actor: AuthUser): void {
     if (actor.role !== 'owner' && actor.role !== 'manager') {
       throw new ForbiddenException('Inventory is limited to owners and managers');
@@ -447,10 +572,10 @@ export class InventoryService {
       .order('name', { ascending: true });
 
     if (!query.includeInactive) request = request.eq('is_active', true);
-    if (query.category) request = request.ilike('category', `%${query.category.trim()}%`);
+    if (query.categoryId) request = request.eq('category_id', query.categoryId);
     if (query.q?.trim()) {
       const term = escapeSupabaseOr(query.q.trim());
-      request = request.or(`name.ilike.%${term}%,brand.ilike.%${term}%,sku.ilike.%${term}%,category.ilike.%${term}%`);
+      request = request.or(`name.ilike.%${term}%,brand.ilike.%${term}%,sku.ilike.%${term}%`);
     }
 
     const { data, error } = await request.returns<ProductRow[]>();
@@ -458,7 +583,9 @@ export class InventoryService {
       this.logger.error(`listProducts failed: ${error.message}`);
       throw new InternalServerErrorException('Unable to load inventory products');
     }
-    return { products: (data ?? []).map(toProduct) };
+    const rows = data ?? [];
+    const categoryNames = await this.fetchCategoryNames(businessId, rows.map((row) => row.category_id));
+    return { products: rows.map((row) => toProduct(row, categoryNames)) };
   }
 
   private async fetchProductsById(businessId: string, productIds: string[]): Promise<Map<string, InventoryProduct>> {
@@ -475,7 +602,44 @@ export class InventoryService {
       this.logger.error(`fetchProductsById failed: ${error.message}`);
       throw new InternalServerErrorException('Unable to load inventory products');
     }
-    return new Map((data ?? []).map((row) => [row.id, toProduct(row)]));
+    const rows = data ?? [];
+    const categoryNames = await this.fetchCategoryNames(businessId, rows.map((row) => row.category_id));
+    return new Map(rows.map((row) => [row.id, toProduct(row, categoryNames)]));
+  }
+
+  private async fetchCategoryNames(
+    businessId: string,
+    categoryIds: (string | null)[],
+  ): Promise<Map<string, string>> {
+    const ids = Array.from(new Set(categoryIds.filter((id): id is string => Boolean(id))));
+    if (ids.length === 0) return new Map();
+    const { data, error } = await this.admin
+      .schema('inventory')
+      .from('categories')
+      .select('id,name')
+      .eq('business_id', businessId)
+      .in('id', ids)
+      .returns<{ id: string; name: string }[]>();
+    if (error) {
+      this.logger.error(`fetchCategoryNames failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load inventory categories');
+    }
+    return new Map((data ?? []).map((row) => [row.id, row.name]));
+  }
+
+  private async assertCategory(businessId: string, categoryId: string): Promise<void> {
+    const { data, error } = await this.admin
+      .schema('inventory')
+      .from('categories')
+      .select('id')
+      .eq('business_id', businessId)
+      .eq('id', categoryId)
+      .maybeSingle<{ id: string }>();
+    if (error) {
+      this.logger.error(`assertCategory failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to validate category');
+    }
+    if (!data) throw new BadRequestException('categoryId is not valid for this business');
   }
 
   private async fetchLocations(businessId: string, locationIds?: string[]): Promise<BusinessLocationSummary[]> {
@@ -530,7 +694,7 @@ function toProductPatch(dto: UpsertInventoryProductDto): Record<string, unknown>
   return {
     brand: clean(dto.brand),
     name: dto.name.trim(),
-    category: clean(dto.category),
+    category_id: dto.categoryId ?? null,
     sku: clean(dto.sku),
     size_value: dto.sizeValue ?? null,
     size_unit: clean(dto.sizeUnit) ?? 'g',
@@ -546,13 +710,14 @@ function clean(value: string | null | undefined): string | null {
   return next ? next : null;
 }
 
-function toProduct(row: ProductRow): InventoryProduct {
+function toProduct(row: ProductRow, categoryNames?: Map<string, string>): InventoryProduct {
   return {
     id: row.id,
     businessId: row.business_id,
     brand: row.brand ?? undefined,
     name: row.name,
-    category: row.category ?? undefined,
+    categoryId: row.category_id ?? undefined,
+    category: row.category_id ? categoryNames?.get(row.category_id) : undefined,
     sku: row.sku ?? undefined,
     sizeValue: row.size_value === null ? undefined : Number(row.size_value),
     sizeUnit: row.size_unit,
@@ -560,6 +725,18 @@ function toProduct(row: ProductRow): InventoryProduct {
     defaultCostPerGramCents: row.default_cost_per_gram_cents ?? undefined,
     retailPriceCents: row.retail_price_cents ?? undefined,
     lowStockThresholdGrams: Number(row.low_stock_threshold_grams),
+    isActive: row.is_active,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toCategory(row: CategoryRow): InventoryCategory {
+  return {
+    id: row.id,
+    businessId: row.business_id,
+    name: row.name,
+    description: row.description ?? undefined,
     isActive: row.is_active,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

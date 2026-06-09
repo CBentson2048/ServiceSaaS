@@ -18,10 +18,12 @@ interface NavEntry {
 
 const NAV: NavEntry[] = [
   { to: '/dashboard', label: 'Dashboard', icon: DashboardIcon, end: true },
-  { to: '/bookings', label: 'Appointment Book', icon: CalendarIcon },
+  { to: '/bookings', label: 'Appointment Book', icon: CalendarIcon, end: true },
+  { to: '/bookings/new', label: 'New booking', icon: PlusIcon, allowedRoles: ['owner', 'manager'] },
   { to: '/crm', label: 'CRM', icon: CrmIcon },
   { to: '/rota', label: 'Rota', icon: ClockIcon },
-  { to: '/inventory', label: 'Inventory', icon: BoxIcon, allowedRoles: ['owner', 'manager'] },
+  { to: '/inventory', label: 'Inventory', icon: BoxIcon, end: true, allowedRoles: ['owner', 'manager'] },
+  { to: '/inventory/categories', label: 'Categories', icon: TagIcon, allowedRoles: ['owner', 'manager'] },
   { to: '/sheer-lab', label: 'Sheer Lab', icon: BeakerIcon },
   { to: '/performance', label: 'Performance', icon: ChartIcon, allowedRoles: ['owner', 'manager'] },
   { to: '/commission', label: 'Commission', icon: PercentIcon },
@@ -40,9 +42,10 @@ export function Sidebar() {
   );
 
   // Collapsed state is a per-user preference, persisted across sessions.
+  // Defaults to collapsed; only an explicit '0' (user expanded it) keeps it open.
   const [collapsed, setCollapsed] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    return window.localStorage.getItem(STORAGE_KEY) === '1';
+    if (typeof window === 'undefined') return true;
+    return window.localStorage.getItem(STORAGE_KEY) !== '0';
   });
   const toggleCollapsed = () =>
     setCollapsed((current) => {
@@ -260,6 +263,15 @@ function CalendarIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+function PlusIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Svg {...props}>
+      <rect x="3" y="4" width="14" height="13" rx="2" />
+      <path d="M3 8h14M7 2v4M13 2v4M10 11v4M8 13h4" />
+    </Svg>
+  );
+}
+
 function CrmIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Svg {...props}>
@@ -285,6 +297,15 @@ function BoxIcon(props: SVGProps<SVGSVGElement>) {
     <Svg {...props}>
       <path d="M3.5 6.5 10 3l6.5 3.5v7L10 17l-6.5-3.5v-7Z" />
       <path d="M3.5 6.5 10 10l6.5-3.5M10 10v7" />
+    </Svg>
+  );
+}
+
+function TagIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Svg {...props}>
+      <path d="M3.5 3.5h6l7 7-6 6-7-7v-6Z" />
+      <circle cx="6.75" cy="6.75" r="1" />
     </Svg>
   );
 }

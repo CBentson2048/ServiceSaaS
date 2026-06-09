@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { router } from 'expo-router';
 import type { AppointmentCompletionResponse, CreateStylistRebookingRequest, StaffBookingSummary } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { AppButton, Card, EmptyState, Screen, SectionHeader } from '@sheer/ui-mobile';
@@ -116,6 +117,8 @@ export default function BookingsScreen() {
     <ProtectedScreen allowedRoles={['manager', 'stylist']}>
       <Screen>
         <SectionHeader title="Today's Bookings" subtitle="Your assigned appointments for today." />
+
+        <AppButton label="+ New booking" onPress={() => router.push('/new-booking')} />
 
         {error ? (
           <Card>

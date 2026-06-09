@@ -27,6 +27,7 @@ import type {
   LabDeviceMutationResponse,
   LabDeviceRegistrationResponse,
   ListLabDevicesResponse,
+  InventoryCategoryResponse,
   InventoryProductResponse,
   InventoryStockMutationResponse,
   CreateShiftRequest,
@@ -40,6 +41,7 @@ import type {
   LinkStylistRebookingRequest,
   LeaveRequestStatus,
   LabPinMutationResponse,
+  ListInventoryCategoriesResponse,
   ListInventoryLowStockResponse,
   ListInventoryMovementsResponse,
   ListInventoryProductsResponse,
@@ -72,6 +74,9 @@ import type {
   CreateNewWeekResponse,
   CreatePublicBookingRequest,
   CreatePublicBookingResponse,
+  CreateStaffBookingRequest,
+  CreateStaffBookingResponse,
+  CrmClientSummary,
   PreviewNewWeekRequest,
   PreviewNewWeekResponse,
   PublicBookingAttemptResponse,
@@ -276,6 +281,89 @@ export async function getPublicBookingAttempt(
   return request<PublicBookingAttemptResponse>(
     `/public/booking/attempts/${encodeURIComponent(bookingAttemptId)}`,
   );
+}
+
+// -------------------- Staff booking (internal: owner / manager / stylist) --------------------
+
+export async function getStaffBookingSelection(
+  accessToken: string,
+  params: { locationId: string },
+): Promise<PublicBookingServiceSelectionResponse> {
+  const search = new URLSearchParams({ locationId: params.locationId });
+  return request<PublicBookingServiceSelectionResponse>(
+    `/staff/booking/selection?${search.toString()}`,
+    { accessToken },
+  );
+}
+
+export async function getStaffBookingStylists(
+  accessToken: string,
+  params: { locationId: string; serviceIds: string[] },
+): Promise<PublicBookingStylistsResponse> {
+  const search = new URLSearchParams({ locationId: params.locationId });
+  search.set('serviceIds', params.serviceIds.join(','));
+  return request<PublicBookingStylistsResponse>(
+    `/staff/booking/stylists?${search.toString()}`,
+    { accessToken },
+  );
+}
+
+export async function getStaffBookingAvailability(
+  accessToken: string,
+  params: {
+    locationId: string;
+    serviceIds: string[];
+    stylistId?: string;
+    nextAvailable?: boolean;
+    dateFrom: string;
+    dateTo: string;
+  },
+): Promise<PublicBookingAvailabilityResponse> {
+  const search = new URLSearchParams({ locationId: params.locationId });
+  search.set('serviceIds', params.serviceIds.join(','));
+  if (params.stylistId) search.set('stylistId', params.stylistId);
+  if (params.nextAvailable) search.set('nextAvailable', 'true');
+  search.set('dateFrom', params.dateFrom);
+  search.set('dateTo', params.dateTo);
+  return request<PublicBookingAvailabilityResponse>(
+    `/staff/booking/availability?${search.toString()}`,
+    { accessToken },
+  );
+}
+
+export async function searchStaffBookingClients(
+  accessToken: string,
+  params: { q?: string; locationId?: string } = {},
+): Promise<ListCrmClientsResponse> {
+  const search = new URLSearchParams();
+  if (params.q) search.set('q', params.q);
+  if (params.locationId) search.set('locationId', params.locationId);
+  const query = search.toString();
+  return request<ListCrmClientsResponse>(`/staff/booking/clients${query ? `?${query}` : ''}`, {
+    accessToken,
+  });
+}
+
+export async function createStaffBookingClient(
+  accessToken: string,
+  payload: CreateCrmClientRequest,
+): Promise<{ client: CrmClientSummary }> {
+  return request<{ client: CrmClientSummary }>('/staff/booking/clients', {
+    method: 'POST',
+    accessToken,
+    body: payload,
+  });
+}
+
+export async function createStaffBooking(
+  accessToken: string,
+  payload: CreateStaffBookingRequest,
+): Promise<CreateStaffBookingResponse> {
+  return request<CreateStaffBookingResponse>('/staff/booking/appointments', {
+    method: 'POST',
+    accessToken,
+    body: payload,
+  });
 }
 
 // -------------------- CRM (owner / manager / scoped stylist) --------------------
@@ -521,7 +609,7 @@ export async function createInventoryProduct(
   payload: {
     brand?: string | null;
     name: string;
-    category?: string | null;
+    categoryId?: string | null;
     sku?: string | null;
     sizeValue?: number | null;
     sizeUnit?: string | null;
@@ -628,6 +716,46 @@ export async function listInventoryLowStock(
   if (params.locationId) search.set('locationId', params.locationId);
   const query = search.toString();
   return request<ListInventoryLowStockResponse>(`/inventory/low-stock${query ? `?${query}` : ''}`, { accessToken });
+}
+
+export async function listInventoryCategories(
+  accessToken: string,
+  params: { q?: string; includeInactive?: boolean } = {},
+): Promise<ListInventoryCategoriesResponse> {
+  const search = new URLSearchParams();
+  if (params.q) search.set('q', params.q);
+  if (params.includeInactive) search.set('includeInactive', 'true');
+  const query = search.toString();
+  return request<ListInventoryCategoriesResponse>(`/inventory/categories${query ? `?${query}` : ''}`, { accessToken });
+}
+
+export async function createInventoryCategory(
+  accessToken: string,
+  payload: { name: string; description?: string | null; isActive?: boolean },
+): Promise<InventoryCategoryResponse> {
+  return request<InventoryCategoryResponse>('/inventory/categories', { method: 'POST', accessToken, body: payload });
+}
+
+export async function updateInventoryCategory(
+  accessToken: string,
+  categoryId: string,
+  payload: { name?: string; description?: string | null; isActive?: boolean },
+): Promise<InventoryCategoryResponse> {
+  return request<InventoryCategoryResponse>(`/inventory/categories/${encodeURIComponent(categoryId)}`, {
+    method: 'PATCH',
+    accessToken,
+    body: payload,
+  });
+}
+
+export async function deleteInventoryCategory(
+  accessToken: string,
+  categoryId: string,
+): Promise<InventoryCategoryResponse> {
+  return request<InventoryCategoryResponse>(`/inventory/categories/${encodeURIComponent(categoryId)}`, {
+    method: 'DELETE',
+    accessToken,
+  });
 }
 
 export async function createCrmClient(

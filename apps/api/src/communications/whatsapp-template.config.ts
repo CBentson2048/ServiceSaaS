@@ -60,12 +60,44 @@ export class WhatsAppTemplateConfig {
           'until a public URL (e.g. a tunnel or your deployed API) is configured.',
       );
     }
+
+    this.logConfigurationSummary();
   }
 
   /** Approved Content template SID for an event, or undefined when not configured. */
   contentSidFor(eventKey: NotificationEventKey | string): string | undefined {
     return this.contentSids[eventKey as NotificationEventKey];
   }
+
+  /**
+   * Logs, at startup, which notification events have an approved Content template SID configured and
+   * which do not — so it is immediately obvious from the boot logs whether WhatsApp sends will use
+   * the predefined templates or silently fall back to a freeform body. SIDs are masked (they are not
+   * secret credentials, but there is no reason to print them in full).
+   */
+  private logConfigurationSummary(): void {
+    const entries = Object.entries(this.contentSids) as Array<[string, string | undefined]>;
+    const summary = entries
+      .map(([eventKey, sid]) => `${eventKey}=${sid ? maskSid(sid) : 'MISSING'}`)
+      .join(', ');
+    const missing = entries.filter(([, sid]) => !sid).map(([eventKey]) => eventKey);
+
+    this.logger.log(`WhatsApp Content templates: ${summary}`);
+    if (missing.length > 0) {
+      this.logger.warn(
+        `No approved WhatsApp Content template SID configured for: ${missing.join(', ')}. ` +
+          'These events fall back to a freeform body, which WhatsApp rejects for business-initiated ' +
+          'messages outside the 24h session window. Set TWILIO_WHATSAPP_<EVENT>_CONTENT_SID (or the ' +
+          'legacy TWILIO_TEMPLATE_BOOKING_<EVENT>_SID) in the running environment — note the deployed ' +
+          'env (e.g. Railway) does not read apps/api/.env, so these must be set there too.',
+      );
+    }
+  }
+}
+
+/** Mask a Content SID for logs: keep the `HX` + first 2 chars, hide the rest. */
+function maskSid(sid: string): string {
+  return sid.length > 6 ? `${sid.slice(0, 4)}…(${sid.length} chars)` : 'set';
 }
 
 /**

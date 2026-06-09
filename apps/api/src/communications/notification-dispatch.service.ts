@@ -272,6 +272,17 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
     const contentSid = this.templates.contentSidFor(eventKey);
     const contentVariables = buildContentVariables(renderCtx);
 
+    if (!contentSid) {
+      // No approved Content template for this event → we can only send a freeform body, which WhatsApp
+      // rejects for business-initiated messages outside the 24h session window. Make it loud so a
+      // missing TWILIO_WHATSAPP_<EVENT>_CONTENT_SID in the running env is obvious rather than silent.
+      this.logger.warn(
+        `WhatsApp ${eventKey} for appointment ${event.appointment_id} has no approved Content template ` +
+          'SID configured; sending a freeform body (delivers only inside the 24h session window). ' +
+          'Configure the template SID to send the approved template.',
+      );
+    }
+
     const logId = await this.ensureMessageLog(event, context, WHATSAPP_CHANNEL, message, contentSid, contentVariables);
     const result = await this.whatsapp.send({
       to: context.clientPhone!,
@@ -453,6 +464,9 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
           primary_intended_channel: (payload['primary_channel'] as string) ?? channel,
           fallback: payload['fallback'] === true,
           ...(payload['fallback_reason'] ? { fallback_reason: payload['fallback_reason'] } : {}),
+          // For WhatsApp, record whether an approved Content template was used (vs a freeform body
+          // fallback) so it is auditable per message in CRM history.
+          ...(channel === WHATSAPP_CHANNEL ? { used_template: Boolean(contentSid) } : {}),
         },
         payload_snapshot: {
           content_sid: contentSid ?? null,

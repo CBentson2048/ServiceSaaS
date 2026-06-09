@@ -150,12 +150,24 @@
       "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\('react', p.dependencies?.react, '| @types/react', p.devDependencies?.['@types/react']\\); console.log\\('scripts:', JSON.stringify\\(p.scripts,null,2\\)\\)\")",
       "Bash(echo \"TSC_EXIT=$?\")",
       "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\(JSON.stringify\\(p.scripts,null,2\\)\\)\")",
-      "Bash(echo \"ESLINT_EXIT=$?\")"
+      "Bash(echo \"ESLINT_EXIT=$?\")",
+      "Bash(exit 1)",
+      "Bash(awk -F: '{print $1}')",
+      "Bash(sed -n '1,30p' apps/sheer-lab/src/features/inventory/productsApi.ts)",
+      "Bash(sed -n '130,145p' apps/sheer-lab/src/screens/Formula/FormulaScreen.tsx)",
+      "Bash(echo \"=== appointments table \\(0004\\) ===\" && sed -n '/create table booking.appointments/,/\\);/p' supabase/migrations/0004_booking_foundation.sql && echo \"=== booking_channel enum ===\" && grep -rn \"booking_channel_enum\\\\|staff_request_mode_enum\\\\|appointment_status_enum\" supabase/migrations/0004_booking_foundation.sql | head -40)",
+      "Bash(echo \"=== EXIT: $? ===\")",
+      "Bash(echo \"=== API EXIT: $? ===\")",
+      "Bash(echo \"jest_exit=$?\")",
+      "Bash(grep -E '\\\\.\\(ts|tsx|json|js\\)$')",
+      "Bash(node -e ' *)",
+      "Bash(echo \"=== TYPECHECK EXIT: $? ===\")"
     ],
     "additionalDirectories": [
       "/Users/shiny/Documents/Sheer/sheer-platform/apps/web/src/auth",
       "/Users/shiny/Documents/Sheer/sheer-platform/apps/sheer-app/src",
-      "/Users/shiny/Documents/Sheer/sheer-platform/apps/api/src"
+      "/Users/shiny/Documents/Sheer/sheer-platform/apps/api/src",
+      "/Users/shiny/Documents/Sheer/sheer-platform/supabase/migrations"
     ]
   }
 }

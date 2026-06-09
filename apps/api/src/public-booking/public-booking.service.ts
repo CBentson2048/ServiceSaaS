@@ -14,6 +14,8 @@ import type {
   AuthUser,
   CreatePublicBookingRequest,
   CreatePublicBookingResponse,
+  CreateStaffBookingRequest,
+  CreateStaffBookingResponse,
   MobileBookingConfirmRequest,
   MobileBookingStartCheckoutRequest,
   PublicBookingAppointmentSummary,
@@ -30,6 +32,7 @@ import type {
   PublicBookingStylistSummary,
   PublicBookingStylistsResponse,
   PublicBookingUpgradeSuggestion,
+  StaffBookingSource,
   StartPublicBookingCheckoutRequest,
   StartPublicBookingCheckoutResponse,
 } from '@sheer/domain';
@@ -273,8 +276,9 @@ export class PublicBookingService {
 
   async getServiceSelection(
     query: PublicBookingSelectionQueryDto,
+    options: { allowOfflineBooking?: boolean } = {},
   ): Promise<PublicBookingServiceSelectionResponse> {
-    const location = await this.resolveLocation(query);
+    const location = await this.resolveLocation(query, options);
     const services = await this.fetchServices(location.businessId, location.id, location.currencyCode);
     const [finishingRequirements, upgradeSuggestions] = await Promise.all([
       this.fetchFinishingRequirements(location.businessId, location.id, location.currencyCode),
@@ -283,8 +287,11 @@ export class PublicBookingService {
     return { location, services, finishingRequirements, upgradeSuggestions };
   }
 
-  async getStylists(query: PublicBookingStylistsQueryDto): Promise<PublicBookingStylistsResponse> {
-    const location = await this.resolveLocation(query);
+  async getStylists(
+    query: PublicBookingStylistsQueryDto,
+    options: { allowOfflineBooking?: boolean } = {},
+  ): Promise<PublicBookingStylistsResponse> {
+    const location = await this.resolveLocation(query, options);
     const services = await this.fetchServicesByIds(
       location.businessId,
       location.id,
@@ -324,8 +331,9 @@ export class PublicBookingService {
 
   async getAvailability(
     query: PublicBookingAvailabilityQueryDto,
+    options: { allowOfflineBooking?: boolean } = {},
   ): Promise<PublicBookingAvailabilityResponse> {
-    const location = await this.resolveLocation(query);
+    const location = await this.resolveLocation(query, options);
     const services = await this.fetchServicesByIds(
       location.businessId,
       location.id,
@@ -591,6 +599,7 @@ export class PublicBookingService {
 
   private async resolveLocation(
     query: PublicBookingSelectionQueryDto,
+    options: { allowOfflineBooking?: boolean } = {},
   ): Promise<PublicBookingLocationSummary> {
     if (!query.locationId && (!query.businessSlug || !query.locationSlug)) {
       throw new BadRequestException('locationId or businessSlug + locationSlug is required');
@@ -619,7 +628,9 @@ export class PublicBookingService {
     if (!data) throw new NotFoundException('Booking location not found');
 
     const settings = first(data.location_settings);
-    if (settings && !settings.online_booking_enabled) {
+    if (settings && !settings.online_booking_enabled && !options.allowOfflineBooking) {
+      // Staff/internal bookings pass allowOfflineBooking so they keep working even
+      // when public online booking is switched off for the location.
       throw new NotFoundException('Online booking is not available for this location');
     }
     return toLocationSummary(data);
@@ -1065,6 +1076,7 @@ export class PublicBookingService {
   private async resolveBookingContext(
     input: StartPublicBookingCheckoutRequest,
     excludeBookingAttemptId?: string,
+    options: { allowOfflineBooking?: boolean } = {},
   ): Promise<{
     location: PublicBookingLocationSummary;
     services: PublicBookingServiceSummary[];
@@ -1072,7 +1084,7 @@ export class PublicBookingService {
     selectedStart: Date;
     selectedEnd: Date;
   }> {
-    const location = await this.resolveLocation({ locationId: input.locationId });
+    const location = await this.resolveLocation({ locationId: input.locationId }, options);
     const services = await this.fetchServicesByIds(
       location.businessId,
       location.id,
@@ -1212,33 +1224,74 @@ export class PublicBookingService {
       selectedEnd: Date;
     },
   ): Promise<AppointmentInsertRow> {
+    return this.insertAppointmentRecord({
+      businessId: context.location.businessId,
+      locationId: context.location.id,
+      clientId: client.id,
+      bookedByUserProfileId: input.bookedByUserProfileId,
+      assignedStaffProfileId: context.stylist.id,
+      requestedStaffProfileId: input.staffRequestMode === 'specific_staff' ? context.stylist.id : null,
+      staffRequestMode: input.staffRequestMode,
+      bookingChannel: 'client_app',
+      scheduledStart: context.selectedStart,
+      scheduledEnd: context.selectedEnd,
+      communicationPreference: input.communicationPreference,
+      clientNote: input.clientNote?.trim() || null,
+      internalNote: null,
+      metadata: {
+        source: 'mobile_app',
+        service_ids: context.services.map((service) => service.id),
+        service_names: context.services.map((service) => service.name),
+        stylist_name: context.stylist.display_name,
+        client_display_name: `${client.first_name} ${client.last_name}`.trim(),
+        total_duration_minutes: totalDuration(context.services),
+        total_price_amount: totalPrice(context.services),
+        payment_status: 'not_required',
+      },
+    });
+  }
+
+  /**
+   * Shared appointment-header writer. Both the deposit-free public/mobile flow
+   * and the internal staff-booking flow insert a `confirmed` appointment through
+   * here so the DB no-overlap guard, error mapping, and column shape stay in one
+   * place. Callers vary only the channel, who booked it, the notes, and metadata.
+   */
+  private async insertAppointmentRecord(params: {
+    businessId: string;
+    locationId: string;
+    clientId: string;
+    bookedByUserProfileId: string | null;
+    assignedStaffProfileId: string;
+    requestedStaffProfileId: string | null;
+    staffRequestMode: 'specific_staff' | 'next_available';
+    bookingChannel: 'client_app' | 'staff_app' | 'web_dashboard' | 'phone' | 'walk_in' | 'api';
+    scheduledStart: Date;
+    scheduledEnd: Date;
+    communicationPreference: string;
+    clientNote: string | null;
+    internalNote: string | null;
+    metadata: Record<string, unknown>;
+  }): Promise<AppointmentInsertRow> {
     const { data, error } = await this.admin
       .schema('booking')
       .from('appointments')
       .insert({
-        business_id: context.location.businessId,
-        location_id: context.location.id,
-        client_profile_id: client.id,
-        booked_by_user_profile_id: input.bookedByUserProfileId,
-        assigned_staff_profile_id: context.stylist.id,
-        requested_staff_profile_id: input.staffRequestMode === 'specific_staff' ? context.stylist.id : null,
-        staff_request_mode: input.staffRequestMode,
+        business_id: params.businessId,
+        location_id: params.locationId,
+        client_profile_id: params.clientId,
+        booked_by_user_profile_id: params.bookedByUserProfileId,
+        assigned_staff_profile_id: params.assignedStaffProfileId,
+        requested_staff_profile_id: params.requestedStaffProfileId,
+        staff_request_mode: params.staffRequestMode,
         status: 'confirmed',
-        booking_channel: 'client_app',
-        scheduled_start_at: context.selectedStart.toISOString(),
-        scheduled_end_at: context.selectedEnd.toISOString(),
-        communication_preference: input.communicationPreference,
-        client_note: input.clientNote?.trim() || null,
-        metadata: {
-          source: 'mobile_app',
-          service_ids: context.services.map((service) => service.id),
-          service_names: context.services.map((service) => service.name),
-          stylist_name: context.stylist.display_name,
-          client_display_name: `${client.first_name} ${client.last_name}`.trim(),
-          total_duration_minutes: totalDuration(context.services),
-          total_price_amount: totalPrice(context.services),
-          payment_status: 'not_required',
-        },
+        booking_channel: params.bookingChannel,
+        scheduled_start_at: params.scheduledStart.toISOString(),
+        scheduled_end_at: params.scheduledEnd.toISOString(),
+        communication_preference: params.communicationPreference,
+        client_note: params.clientNote,
+        internal_note: params.internalNote,
+        metadata: params.metadata,
       })
       .select('id,status,scheduled_start_at,scheduled_end_at')
       .single<AppointmentInsertRow>();
@@ -1248,10 +1301,126 @@ export class PublicBookingService {
       if (message.toLowerCase().includes('booking_appointments_staff_no_overlap')) {
         throw new BadRequestException('Selected slot is no longer available');
       }
-      this.logger.error(`insertMobileAppointment failed: ${message}`);
+      this.logger.error(`insertAppointmentRecord failed: ${message}`);
       throw new InternalServerErrorException('Unable to create appointment');
     }
     return data;
+  }
+
+  /**
+   * Creates an appointment on behalf of a client from inside the salon (staff
+   * booking). Reuses the public availability engine via {@link resolveBookingContext}
+   * — same rota/leave/break/conflict checks, same multi-service duration stacking,
+   * and the DB no-overlap guard as a backstop — so it is NOT a second booking
+   * engine. It differs from the public flow only in that it: is initiated by a
+   * staff user, never forces the Stripe deposit path (payment is recorded via
+   * {@link StaffBookingPaymentMode}), records the booking source/channel, and
+   * supports an internal staff-only note.
+   *
+   * Permission + client-scope checks are enforced by the staff-booking module
+   * before this is called; `businessId`/`bookedByUserProfileId` come from the
+   * authenticated staff actor.
+   */
+  async createInternalBooking(params: {
+    businessId: string;
+    bookedByUserProfileId: string;
+    request: CreateStaffBookingRequest;
+  }): Promise<CreateStaffBookingResponse> {
+    const { request } = params;
+    const client = await this.fetchClientById(params.businessId, request.clientProfileId);
+
+    const context = await this.resolveBookingContext({
+      locationId: request.locationId,
+      serviceIds: request.serviceIds,
+      staffProfileId: request.staffProfileId,
+      selectedStartAt: request.selectedStartAt,
+      staffRequestMode: request.staffRequestMode,
+      client: {
+        firstName: client.first_name,
+        lastName: client.last_name,
+        email: client.email ?? undefined,
+        phone: client.phone ?? undefined,
+      },
+      communicationPreference: request.communicationPreference,
+      clientProfileId: request.clientProfileId,
+      bookedByUserProfileId: params.bookedByUserProfileId,
+      clientNote: request.clientNote,
+    }, undefined, { allowOfflineBooking: true });
+
+    // Defence in depth: the resolved location must belong to the actor's business.
+    if (context.location.businessId !== params.businessId) {
+      throw new ForbiddenException('Location is outside your business');
+    }
+
+    const depositRequiredAmount = calculateDepositAmount(context.services);
+    const bookingChannel = staffBookingChannel(request.bookingSource);
+
+    const appointment = await this.insertAppointmentRecord({
+      businessId: context.location.businessId,
+      locationId: context.location.id,
+      clientId: client.id,
+      bookedByUserProfileId: params.bookedByUserProfileId,
+      assignedStaffProfileId: context.stylist.id,
+      requestedStaffProfileId: request.staffRequestMode === 'specific_staff' ? context.stylist.id : null,
+      staffRequestMode: request.staffRequestMode,
+      bookingChannel,
+      scheduledStart: context.selectedStart,
+      scheduledEnd: context.selectedEnd,
+      communicationPreference: request.communicationPreference,
+      clientNote: request.clientNote?.trim() || null,
+      internalNote: request.internalNote?.trim() || null,
+      metadata: {
+        source: request.bookingSource,
+        booking_origin: 'staff_booking',
+        booking_channel: bookingChannel,
+        created_by_user_profile_id: params.bookedByUserProfileId,
+        payment_mode: request.paymentMode,
+        deposit_required_amount: depositRequiredAmount,
+        deposit_collected: request.paymentMode === 'paid_in_full',
+        service_ids: context.services.map((service) => service.id),
+        service_names: context.services.map((service) => service.name),
+        stylist_name: context.stylist.display_name,
+        client_display_name: `${client.first_name} ${client.last_name}`.trim(),
+        total_duration_minutes: totalDuration(context.services),
+        total_price_amount: totalPrice(context.services),
+      },
+    });
+
+    await this.insertMobileAppointmentServices(appointment.id, context);
+
+    // Soft-link to the client's latest eligible completed visit so stylist
+    // rebooking KPIs still credit in-salon rebookings. No-op when none exists.
+    await this.linkClientRebookingOutcome({
+      businessId: context.location.businessId,
+      clientProfileId: client.id,
+      appointmentId: appointment.id,
+      bookedByUserProfileId: params.bookedByUserProfileId,
+      bookingSource: request.bookingSource,
+    });
+
+    // Reuse the same notification pipeline (channel resolution + comms logging).
+    // Fail-soft: scheduling must never roll back a confirmed booking.
+    let confirmationScheduled = false;
+    if (request.sendConfirmation !== false) {
+      await this.bookingNotifications.syncBookingNotificationsSafe(appointment.id);
+      confirmationScheduled = true;
+    }
+
+    return {
+      appointment: toAppointmentSummary({
+        appointment,
+        location: context.location,
+        attemptServices: toAttemptServices(context.services),
+        stylist: context.stylist,
+        client,
+        communicationPreference: request.communicationPreference,
+        depositAmount: depositRequiredAmount,
+      }),
+      bookingSource: request.bookingSource,
+      paymentMode: request.paymentMode,
+      depositRequiredAmount,
+      confirmationScheduled,
+    };
   }
 
   private async insertMobileAppointmentServices(
@@ -1950,6 +2119,19 @@ function dateRangeContains(row: LeaveRow, date: Date): boolean {
 
 function calculateDepositAmount(services: PublicBookingServiceSummary[]): number {
   return services.reduce((sum, service) => sum + service.depositRequiredAmount, 0);
+}
+
+/** Maps a staff booking source onto the booking.booking_channel_enum value persisted on the appointment. */
+export function staffBookingChannel(source: StaffBookingSource): 'staff_app' | 'phone' | 'walk_in' {
+  switch (source) {
+    case 'walk_in':
+      return 'walk_in';
+    case 'phone_booking':
+      return 'phone';
+    case 'staff_booking':
+    default:
+      return 'staff_app';
+  }
 }
 
 function totalDuration(services: PublicBookingServiceSummary[]): number {

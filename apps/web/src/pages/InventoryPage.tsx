@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { Navigate } from 'react-router-dom';
 import type {
   BusinessLocationSummary,
+  InventoryCategory,
   InventoryLocationStock,
   InventoryProduct,
   InventoryStockMovement,
@@ -11,6 +12,7 @@ import {
   archiveInventoryProduct,
   createInventoryProduct,
   initializeInventoryStock,
+  listInventoryCategories,
   listInventoryLowStock,
   listInventoryMovements,
   listInventoryProducts,
@@ -25,7 +27,10 @@ type ProductForm = {
   id?: string;
   brand: string;
   name: string;
-  category: string;
+  categoryId: string;
+  // Display name of the selected category; only used to label a still-selected
+  // category that is no longer in the active list (e.g. archived after assignment).
+  categoryName: string;
   sku: string;
   sizeValue: string;
   sizeUnit: string;
@@ -37,7 +42,8 @@ type ProductForm = {
 const emptyProductForm: ProductForm = {
   brand: '',
   name: '',
-  category: '',
+  categoryId: '',
+  categoryName: '',
   sku: '',
   sizeValue: '',
   sizeUnit: 'g',
@@ -56,6 +62,7 @@ export function InventoryPage() {
   // location, a concrete selection narrows to it.
   const { selectedLocationId: scopeLocationId, isAllLocations } = useLocationScope();
   const [products, setProducts] = useState<InventoryProduct[]>([]);
+  const [categories, setCategories] = useState<InventoryCategory[]>([]);
   const [stock, setStock] = useState<InventoryLocationStock[]>([]);
   const [locations, setLocations] = useState<BusinessLocationSummary[]>([]);
   const [movements, setMovements] = useState<InventoryStockMovement[]>([]);
@@ -86,13 +93,15 @@ export function InventoryPage() {
     setError(null);
     try {
       const listingLocationId = isAllLocations ? undefined : scopeLocationId;
-      const [productResult, stockResult, movementResult, lowStockResult] = await Promise.all([
+      const [productResult, categoryResult, stockResult, movementResult, lowStockResult] = await Promise.all([
         listInventoryProducts(accessToken),
+        listInventoryCategories(accessToken),
         listInventoryStock(accessToken, { locationId: listingLocationId, q: search, lowStockOnly }),
         listInventoryMovements(accessToken, { locationId: listingLocationId, limit: 20 }),
         listInventoryLowStock(accessToken, { locationId: listingLocationId }),
       ]);
       setProducts(productResult.products);
+      setCategories(categoryResult.categories);
       setStock(stockResult.stock);
       setLocations(stockResult.locations);
       setMovements(movementResult.movements);
@@ -156,7 +165,7 @@ export function InventoryPage() {
       const payload = {
         brand: nullable(productForm.brand),
         name: productForm.name.trim(),
-        category: nullable(productForm.category),
+        categoryId: productForm.categoryId || null,
         sku: nullable(productForm.sku),
         sizeValue: optionalNumber(productForm.sizeValue),
         sizeUnit: nullable(productForm.sizeUnit) ?? 'g',
@@ -395,7 +404,17 @@ export function InventoryPage() {
             <div className="grid gap-2 border-b border-border bg-surface-alt px-5 py-4 md:grid-cols-3">
               <input value={productForm.brand} onChange={(e) => setProductForm({ ...productForm, brand: e.target.value })} placeholder="Brand" className={inputClass} />
               <input value={productForm.name} onChange={(e) => setProductForm({ ...productForm, name: e.target.value })} placeholder="Product name" className={inputClass} />
-              <input value={productForm.category} onChange={(e) => setProductForm({ ...productForm, category: e.target.value })} placeholder="Category" className={inputClass} />
+              <select value={productForm.categoryId} onChange={(e) => setProductForm({ ...productForm, categoryId: e.target.value })} className={inputClass}>
+                <option value="">Uncategorised</option>
+                {productForm.categoryId && !categories.some((category) => category.id === productForm.categoryId) ? (
+                  <option value={productForm.categoryId}>{productForm.categoryName || 'Current category'}</option>
+                ) : null}
+                {categories.map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {category.name}
+                  </option>
+                ))}
+              </select>
               <input value={productForm.sku} onChange={(e) => setProductForm({ ...productForm, sku: e.target.value })} placeholder="SKU / code" className={inputClass} />
               <NumberInput value={productForm.sizeValue} onChange={(value) => setProductForm({ ...productForm, sizeValue: value })} placeholder="Size" />
               <input value={productForm.sizeUnit} onChange={(e) => setProductForm({ ...productForm, sizeUnit: e.target.value })} placeholder="Unit" className={inputClass} />
@@ -937,7 +956,8 @@ function toProductForm(product: InventoryProduct): ProductForm {
     id: product.id,
     brand: product.brand ?? '',
     name: product.name,
-    category: product.category ?? '',
+    categoryId: product.categoryId ?? '',
+    categoryName: product.category ?? '',
     sku: product.sku ?? '',
     sizeValue: product.sizeValue === undefined ? '' : String(product.sizeValue),
     sizeUnit: product.sizeUnit,

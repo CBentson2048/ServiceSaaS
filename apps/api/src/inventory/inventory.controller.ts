@@ -1,8 +1,10 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import type {
   AuthUser,
+  InventoryCategoryResponse,
   InventoryProductResponse,
   InventoryStockMutationResponse,
+  ListInventoryCategoriesResponse,
   ListInventoryLowStockResponse,
   ListInventoryMovementsResponse,
   ListInventoryProductsResponse,
@@ -14,10 +16,13 @@ import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { LabSessionService } from '../lab-session/lab-session.service';
 import {
   AdjustInventoryStockDto,
+  CategoryQueryDto,
+  CreateInventoryCategoryDto,
   InitializeInventoryStockDto,
   InventoryQueryDto,
   MovementQueryDto,
   StockQueryDto,
+  UpdateInventoryCategoryDto,
   UpdateInventoryStockThresholdDto,
   UpsertInventoryProductDto,
 } from './dto';
@@ -97,6 +102,36 @@ export class InventoryController {
   @Get('low-stock')
   listLowStock(@CurrentUser() actor: AuthUser, @Query('locationId') locationId?: string): Promise<ListInventoryLowStockResponse> {
     return this.inventory.listLowStock(actor, locationId);
+  }
+
+  @Get('categories')
+  listCategories(
+    @CurrentUser() actor: AuthUser,
+    @Query() query: CategoryQueryDto,
+  ): Promise<ListInventoryCategoriesResponse> {
+    return this.inventory.listCategories(actor, query);
+  }
+
+  @Post('categories')
+  createCategory(
+    @CurrentUser() actor: AuthUser,
+    @Body() dto: CreateInventoryCategoryDto,
+  ): Promise<InventoryCategoryResponse> {
+    return this.inventory.createCategory(actor, dto);
+  }
+
+  @Patch('categories/:id')
+  updateCategory(
+    @CurrentUser() actor: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateInventoryCategoryDto,
+  ): Promise<InventoryCategoryResponse> {
+    return this.inventory.updateCategory(actor, id, dto);
+  }
+
+  @Delete('categories/:id')
+  deleteCategory(@CurrentUser() actor: AuthUser, @Param('id') id: string): Promise<InventoryCategoryResponse> {
+    return this.inventory.deleteCategory(actor, id);
   }
 }
 

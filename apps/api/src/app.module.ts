@@ -25,6 +25,7 @@ import { PublicBookingModule } from './public-booking/public-booking.module';
 import { RetailSalesModule } from './retail-sales/retail-sales.module';
 import { RotaModule } from './rota/rota.module';
 import { StaffModule } from './staff/staff.module';
+import { StaffBookingModule } from './staff-booking/staff-booking.module';
 import { TwilioModule } from './twilio/twilio.module';
 import { validateEnv } from './config/env.validation';
 
@@ -46,6 +47,7 @@ import { validateEnv } from './config/env.validation';
     OwnerBillingSettingsModule,
     OwnerTaxSettingsModule,
     PublicBookingModule,
+    StaffBookingModule,
     TwilioModule,
     CrmModule,
     DashboardModule,

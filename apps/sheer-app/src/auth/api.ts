@@ -1,8 +1,13 @@
 import type {
   CreateMyLeaveRequest,
   ClientLabHistoryResponse,
+  CreateCrmClientRequest,
+  CreateStaffBookingRequest,
+  CreateStaffBookingResponse,
   CreateStylistRebookingRequest,
+  CrmClientSummary,
   CurrentUserResponse,
+  ListCrmClientsResponse,
   AppointmentCompletionResponse,
   AppointmentPaymentConfirmationRequest,
   AppointmentPaymentConfirmationResponse,
@@ -290,6 +295,90 @@ export async function getMobileBookingAttempt(
     `/mobile/booking/attempts/${encodeURIComponent(bookingAttemptId)}`,
     { accessToken },
   );
+}
+
+// -------------------- Staff booking (owner / manager / stylist) --------------------
+// Internal flow: a staff member books on behalf of a client (walk-in, phone,
+// manual). Reuses the same rota-based availability engine as the client flow.
+
+export async function getStaffBookingSelection(
+  accessToken: string,
+  params: { locationId: string },
+): Promise<PublicBookingServiceSelectionResponse> {
+  return request<PublicBookingServiceSelectionResponse>(
+    `/staff/booking/selection?locationId=${encodeURIComponent(params.locationId)}`,
+    { accessToken },
+  );
+}
+
+export async function getStaffBookingStylists(
+  accessToken: string,
+  params: { locationId: string; serviceIds: string[] },
+): Promise<PublicBookingStylistsResponse> {
+  const search = new URLSearchParams();
+  search.set('locationId', params.locationId);
+  search.set('serviceIds', params.serviceIds.join(','));
+  return request<PublicBookingStylistsResponse>(`/staff/booking/stylists?${search.toString()}`, {
+    accessToken,
+  });
+}
+
+export async function getStaffBookingAvailability(
+  accessToken: string,
+  params: {
+    locationId: string;
+    serviceIds: string[];
+    stylistId?: string;
+    nextAvailable?: boolean;
+    dateFrom: string;
+    dateTo: string;
+  },
+): Promise<PublicBookingAvailabilityResponse> {
+  const search = new URLSearchParams();
+  search.set('locationId', params.locationId);
+  search.set('serviceIds', params.serviceIds.join(','));
+  if (params.stylistId) search.set('stylistId', params.stylistId);
+  if (params.nextAvailable) search.set('nextAvailable', 'true');
+  search.set('dateFrom', params.dateFrom);
+  search.set('dateTo', params.dateTo);
+  return request<PublicBookingAvailabilityResponse>(`/staff/booking/availability?${search.toString()}`, {
+    accessToken,
+  });
+}
+
+export async function searchStaffBookingClients(
+  accessToken: string,
+  params: { q?: string; locationId?: string } = {},
+): Promise<ListCrmClientsResponse> {
+  const search = new URLSearchParams();
+  if (params.q) search.set('q', params.q);
+  if (params.locationId) search.set('locationId', params.locationId);
+  const query = search.toString();
+  return request<ListCrmClientsResponse>(`/staff/booking/clients${query ? `?${query}` : ''}`, {
+    accessToken,
+  });
+}
+
+export async function createStaffBookingClient(
+  accessToken: string,
+  payload: CreateCrmClientRequest,
+): Promise<{ client: CrmClientSummary }> {
+  return request<{ client: CrmClientSummary }>('/staff/booking/clients', {
+    method: 'POST',
+    body: payload,
+    accessToken,
+  });
+}
+
+export async function createStaffBooking(
+  accessToken: string,
+  payload: CreateStaffBookingRequest,
+): Promise<CreateStaffBookingResponse> {
+  return request<CreateStaffBookingResponse>('/staff/booking/appointments', {
+    method: 'POST',
+    body: payload,
+    accessToken,
+  });
 }
 
 async function request<T>(

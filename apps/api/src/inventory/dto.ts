@@ -6,6 +6,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  MaxLength,
   Min,
   MinLength,
 } from 'class-validator';
@@ -19,8 +20,8 @@ export class InventoryQueryDto {
   q?: string;
 
   @IsOptional()
-  @IsString()
-  category?: string;
+  @IsUUID()
+  categoryId?: string;
 
   @IsOptional()
   @Type(() => Boolean)
@@ -38,8 +39,8 @@ export class UpsertInventoryProductDto {
   name!: string;
 
   @IsOptional()
-  @IsString()
-  category?: string | null;
+  @IsUUID()
+  categoryId?: string | null;
 
   @IsOptional()
   @IsString()
@@ -166,4 +167,48 @@ export class MovementQueryDto {
   @IsNumber()
   @Min(1)
   limit?: number;
+}
+
+export class CategoryQueryDto {
+  @IsOptional()
+  @IsString()
+  q?: string;
+
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  includeInactive?: boolean;
+}
+
+export class CreateInventoryCategoryDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(80)
+  name!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(280)
+  description?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+}
+
+export class UpdateInventoryCategoryDto {
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(80)
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(280)
+  description?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
 }

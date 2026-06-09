@@ -277,6 +277,27 @@ export class CrmService {
     input: CreateCrmClientRequest,
   ): Promise<{ client: CrmClientSummary }> {
     this.assertManagerOrOwner(actor);
+    return this.persistClient(actor, input);
+  }
+
+  /**
+   * Quick-create used by the staff booking flow. Unlike {@link createClient}
+   * (full CRM management, owner/manager only) this also allows stylists to
+   * register a walk-in / phone client at the point of booking. Still scoped to
+   * the actor's locations and blocked for client-role users.
+   */
+  async createClientForBooking(
+    actor: AuthUser,
+    input: CreateCrmClientRequest,
+  ): Promise<{ client: CrmClientSummary }> {
+    this.assertStaffRole(actor);
+    return this.persistClient(actor, input);
+  }
+
+  private async persistClient(
+    actor: AuthUser,
+    input: CreateCrmClientRequest,
+  ): Promise<{ client: CrmClientSummary }> {
     const locationId = this.resolveWriteLocation(actor, input.primaryLocationId);
     if (locationId) this.assertLocationScope(actor, locationId);
 

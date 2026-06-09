@@ -1533,6 +1533,9 @@ export interface InventoryProduct {
   businessId: string;
   brand?: string;
   name: string;
+  /** FK to the inventory category, or undefined when uncategorised. */
+  categoryId?: string;
+  /** Resolved category name for display; undefined when uncategorised. */
   category?: string;
   sku?: string;
   sizeValue?: number;
@@ -1609,7 +1612,7 @@ export interface InventoryProductResponse {
 export interface UpsertInventoryProductRequest {
   brand?: string | null;
   name: string;
-  category?: string | null;
+  categoryId?: string | null;
   sku?: string | null;
   sizeValue?: number | null;
   sizeUnit?: string | null;
@@ -1656,6 +1659,36 @@ export interface ListInventoryMovementsResponse {
 
 export interface ListInventoryLowStockResponse {
   alerts: InventoryLowStockAlert[];
+}
+
+export interface InventoryCategory {
+  id: string;
+  businessId: string;
+  name: string;
+  description?: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ListInventoryCategoriesResponse {
+  categories: InventoryCategory[];
+}
+
+export interface InventoryCategoryResponse {
+  category: InventoryCategory;
+}
+
+export interface CreateInventoryCategoryRequest {
+  name: string;
+  description?: string | null;
+  isActive?: boolean;
+}
+
+export interface UpdateInventoryCategoryRequest {
+  name?: string;
+  description?: string | null;
+  isActive?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -1867,6 +1900,64 @@ export interface CreatePublicBookingResponse {
   appointment: PublicBookingAppointmentSummary;
   depositRequired: boolean;
   depositPlaceholder: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Staff (internal) booking
+//
+// Owner/manager/front-desk/stylist create appointments on behalf of clients —
+// walk-ins, phone bookings, manual appointments. This reuses the SAME
+// availability engine, appointment schema, and notification pipeline as the
+// public/client flow; it differs only in who books (a staff member, not the
+// client), the booking channel/source, internal notes, and flexible payment
+// handling that does not force the public Stripe deposit path.
+// ---------------------------------------------------------------------------
+
+/** How an internal booking originated. Maps onto booking.booking_channel_enum. */
+export type StaffBookingSource = 'walk_in' | 'phone_booking' | 'staff_booking';
+
+/**
+ * Internal payment handling for a staff-created booking. Unlike the public flow
+ * (which forces a Stripe deposit when one is configured), staff record how the
+ * booking will be settled without necessarily collecting anything up front.
+ */
+export type StaffBookingPaymentMode =
+  | 'pay_in_salon' // settle at the salon via the normal completion flow
+  | 'deposit_waived' // a deposit is configured but the staff member waived it
+  | 'deposit_due' // deposit owed; not collected yet (follow up later)
+  | 'paid_in_full' // already settled (e.g. cash taken up front)
+  | 'no_deposit'; // no deposit configured for the selected services
+
+export interface CreateStaffBookingRequest {
+  locationId: string;
+  serviceIds: string[];
+  staffProfileId: string;
+  selectedStartAt: string;
+  staffRequestMode: 'specific_staff' | 'next_available';
+  /** Existing CRM client to book for. Quick-create a client first if needed. */
+  clientProfileId: string;
+  communicationPreference: 'whatsapp' | 'sms' | 'email';
+  bookingSource: StaffBookingSource;
+  paymentMode: StaffBookingPaymentMode;
+  /** Client-facing note (may surface to the client). */
+  clientNote?: string;
+  /** Internal, staff-only note. Never sent to the client. */
+  internalNote?: string;
+  /** Send the client a confirmation now (still subject to location comms settings). Defaults to true. */
+  sendConfirmation?: boolean;
+}
+
+export interface CreateStaffBookingResponse {
+  appointment: PublicBookingAppointmentSummary;
+  bookingSource: StaffBookingSource;
+  paymentMode: StaffBookingPaymentMode;
+  depositRequiredAmount: number;
+  /**
+   * Whether a client confirmation send was requested for this booking. Actual
+   * delivery still depends on the location's communication settings and the
+   * client having a reachable phone/email.
+   */
+  confirmationScheduled: boolean;
 }
 
 export interface ClientBookingSelection {
