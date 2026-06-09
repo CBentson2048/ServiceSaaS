@@ -33,7 +33,7 @@ export function CrmClientsPage() {
     } catch (err: unknown) {
       if (err instanceof ApiRequestError) setError(err.message);
       else if (err instanceof Error) setError(err.message);
-      else setError('Could not load CRM clients');
+      else setError('Could not load clients');
     } finally {
       setLoading(false);
     }
@@ -87,9 +87,9 @@ export function CrmClientsPage() {
         communicationPreference: 'email',
       });
       setShowCreate(false);
-      setActionMessage(`${result.client.displayName} has been added to CRM.`);
+      setActionMessage(`${result.client.displayName} has been added to Client Hub.`);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not create CRM client');
+      setError(err instanceof Error ? err.message : 'Could not create client');
     } finally {
       setCreating(false);
     }
@@ -99,7 +99,7 @@ export function CrmClientsPage() {
     <div className="mx-auto w-full max-w-6xl px-4 py-6 lg:px-8">
       <header className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-[22px] font-semibold leading-7 text-text-primary">CRM</h1>
+          <h1 className="text-[22px] font-semibold leading-7 text-text-primary">Client Hub</h1>
           <p className="mt-1 text-[13px] text-text-secondary">
             Search client records, check alerts, and open visit history.
           </p>
@@ -208,10 +208,10 @@ export function CrmClientsPage() {
 
       <section className="overflow-hidden rounded-card-lg border border-border bg-surface">
         {loading ? (
-          <EmptyState title="Loading clients…" body="Fetching CRM records." />
+          <EmptyState title="Loading clients…" body="Fetching client records." />
         ) : visibleClients.length === 0 ? (
           <EmptyState
-            title={clients.length === 0 ? 'No CRM clients yet' : 'No clients match this search'}
+            title={clients.length === 0 ? 'No clients yet' : 'No clients match this search'}
             body={
               clients.length === 0
                 ? 'Client records will appear after bookings or manual staff-side creation.'

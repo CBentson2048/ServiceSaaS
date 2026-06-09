@@ -20,7 +20,7 @@ const NAV: NavEntry[] = [
   { to: '/dashboard', label: 'Dashboard', icon: DashboardIcon, end: true },
   { to: '/bookings', label: 'Appointment Book', icon: CalendarIcon, end: true },
   { to: '/bookings/new', label: 'New booking', icon: PlusIcon, allowedRoles: ['owner', 'manager'] },
-  { to: '/crm', label: 'CRM', icon: CrmIcon },
+  { to: '/crm', label: 'Client Hub', icon: CrmIcon },
   { to: '/rota', label: 'Rota', icon: ClockIcon },
   { to: '/inventory', label: 'Inventory', icon: BoxIcon, end: true, allowedRoles: ['owner', 'manager'] },
   { to: '/inventory/categories', label: 'Categories', icon: TagIcon, allowedRoles: ['owner', 'manager'] },

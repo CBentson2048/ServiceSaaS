@@ -44,7 +44,7 @@ export function CrmClientDetailPage() {
         if (cancelled) return;
         if (err instanceof ApiRequestError) setError(err.message);
         else if (err instanceof Error) setError(err.message);
-        else setError('Could not load CRM client');
+        else setError('Could not load client');
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -126,7 +126,7 @@ export function CrmClientDetailPage() {
     <div className="mx-auto w-full max-w-6xl px-4 py-6 lg:px-8">
       <nav className="mb-4 text-[12px] text-text-secondary">
         <Link to="/crm" className="hover:text-text-primary">
-          CRM
+          Client Hub
         </Link>
         <span className="mx-1.5">/</span>
         <span className="text-text-primary">{detail?.profile.displayName ?? 'Client'}</span>
@@ -134,7 +134,7 @@ export function CrmClientDetailPage() {
 
       {loading ? (
         <Panel>
-          <Empty title="Loading client…" body="Fetching CRM detail." />
+          <Empty title="Loading client…" body="Fetching client detail." />
         </Panel>
       ) : error && !detail ? (
         <div className="rounded-input-lg border border-danger-border bg-danger-soft px-4 py-3 text-[13px] text-danger">
