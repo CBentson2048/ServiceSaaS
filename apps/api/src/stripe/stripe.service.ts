@@ -78,6 +78,17 @@ export class StripeService {
     });
   }
 
+  /**
+   * Refund a captured PaymentIntent in full. Used when an owner/manager rejects a
+   * client booking whose deposit was already paid. Throws when Stripe is not
+   * configured or the refund call fails — the caller decides how to surface that.
+   */
+  async refundPaymentIntent(paymentIntentId: string): Promise<{ id: string; status: string | null }> {
+    const stripe = this.requireStripe();
+    const refund = await stripe.refunds.create({ payment_intent: paymentIntentId });
+    return { id: refund.id, status: refund.status };
+  }
+
   verifyWebhookSignature(rawBody: Buffer, signature: string | undefined): StripeEvent {
     const stripe = this.requireStripe();
     if (!this.webhookSecret) {

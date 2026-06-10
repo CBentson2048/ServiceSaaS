@@ -1,4 +1,4 @@
-import { useEffect, useState, type SVGProps } from 'react';
+import { useEffect, useRef, useState, type SVGProps } from 'react';
 import type {
   RotaAbsenceIndicator,
   RotaLeaveIndicator,
@@ -31,6 +31,8 @@ type StatusTone = 'success' | 'warning' | 'danger' | 'neutral';
 
 interface ColumnModel {
   key: string;
+  /** Staff profile this column books into. Undefined for the Unassigned column. */
+  staffProfileId?: string;
   name: string;
   subtitle: string;
   colorHex?: string;
@@ -38,6 +40,30 @@ interface ColumnModel {
   absences: RotaAbsenceIndicator[];
   onLeave: boolean;
   bookings: StaffBookingSummary[];
+}
+
+const SLOT_SNAP_MINUTES = 15;
+
+export interface AddAppointmentInput {
+  staffProfileId: string;
+  staffName: string;
+  /** ISO timestamp of the clicked slot start (snapped to 15 minutes). */
+  startAt: string;
+}
+
+export interface AddBookoutInput extends AddAppointmentInput {
+  endsAt: string;
+  notes?: string;
+}
+
+interface SlotMenuState {
+  staffProfileId: string;
+  staffName: string;
+  startAt: string;
+  /** Click position relative to the board's positioned container. */
+  x: number;
+  y: number;
+  boardWidth: number;
 }
 
 interface DayCalendarBoardProps {
@@ -54,6 +80,10 @@ interface DayCalendarBoardProps {
   showAllTeamMembers?: boolean;
   /** When true, a red "now" line is drawn at the current time (today only). */
   showTimeline?: boolean;
+  /** Clicking an empty slot in a stylist column → "Add appointment" (deep-links into booking). */
+  onAddAppointment?: (input: AddAppointmentInput) => void;
+  /** Clicking an empty slot → "Add bookout" (blocks the stylist's time). */
+  onAddBookout?: (input: AddBookoutInput) => void;
 }
 
 /**
@@ -81,6 +111,8 @@ export function DayCalendarBoard({
   onSelectBooking,
   showAllTeamMembers = true,
   showTimeline = true,
+  onAddAppointment,
+  onAddBookout,
 }: DayCalendarBoardProps) {
   // A live clock so the "now" line tracks the current time. Updates once a
   // minute — fine for a calendar that snaps to half-hour gridlines.
@@ -89,6 +121,12 @@ export function DayCalendarBoard({
     const id = window.setInterval(() => setNow(new Date()), 60_000);
     return () => window.clearInterval(id);
   }, []);
+
+  // Click-to-create: clicking an empty slot in a stylist column opens a small
+  // menu (Add appointment / Add bookout), the primary way to add appointments.
+  const boardRef = useRef<HTMLDivElement>(null);
+  const [slotMenu, setSlotMenu] = useState<SlotMenuState | null>(null);
+  const createEnabled = Boolean(onAddAppointment || onAddBookout);
 
   const dayIso = toIsoDate(day);
   const dayStart = new Date(day.getFullYear(), day.getMonth(), day.getDate());
@@ -122,6 +160,36 @@ export function DayCalendarBoard({
   const hours = range(startHour, endHour);
   const totalHeight = (endHour - startHour) * HOUR_PX;
 
+  function openSlotMenu(event: React.MouseEvent<HTMLDivElement>, column: ColumnModel) {
+    if (!createEnabled || !column.staffProfileId) return;
+    const board = boardRef.current;
+    if (!board) return;
+    const gridRect = event.currentTarget.getBoundingClientRect();
+    const boardRect = board.getBoundingClientRect();
+    const minutesFromStart = ((event.clientY - gridRect.top) / HOUR_PX) * 60;
+    const absoluteMinutes = Math.max(
+      0,
+      Math.round((startHour * 60 + minutesFromStart) / SLOT_SNAP_MINUTES) * SLOT_SNAP_MINUTES,
+    );
+    const start = new Date(
+      day.getFullYear(),
+      day.getMonth(),
+      day.getDate(),
+      Math.floor(absoluteMinutes / 60),
+      absoluteMinutes % 60,
+      0,
+      0,
+    );
+    setSlotMenu({
+      staffProfileId: column.staffProfileId,
+      staffName: column.name,
+      startAt: start.toISOString(),
+      x: event.clientX - boardRect.left,
+      y: event.clientY - boardRect.top,
+      boardWidth: boardRect.width,
+    });
+  }
+
   // Position of the current-time line within the visible window.
   const isToday = isSameDayLocal(now, day);
   const nowMinutes = now.getHours() * 60 + now.getMinutes() - startHour * 60;
@@ -150,7 +218,7 @@ export function DayCalendarBoard({
 
   return (
     <div className="overflow-x-auto rounded-2xl border border-border bg-surface shadow-sm">
-      <div className="relative flex" style={{ minWidth: minBoardWidth }}>
+      <div ref={boardRef} className="relative flex" style={{ minWidth: minBoardWidth }}>
         {/* Time axis */}
         <div className="sticky left-0 z-30 w-16 shrink-0 border-r border-border/60 bg-surface">
           <div className={`${HEADER_HEIGHT} border-b border-border/60`} />
@@ -186,7 +254,11 @@ export function DayCalendarBoard({
               </div>
             </div>
 
-            <div className="relative" style={{ height: totalHeight }}>
+            <div
+              className={`relative ${createEnabled && column.staffProfileId ? 'cursor-pointer' : ''}`}
+              style={{ height: totalHeight }}
+              onClick={(event) => openSlotMenu(event, column)}
+            >
               {/* Hour gridlines */}
               {hours.map((hour, idx) => (
                 <div
@@ -273,7 +345,11 @@ export function DayCalendarBoard({
                   <button
                     key={booking.id}
                     type="button"
-                    onClick={() => onSelectBooking(booking)}
+                    onClick={(event) => {
+                      // Don't let a block click also open the empty-slot create menu.
+                      event.stopPropagation();
+                      onSelectBooking(booking);
+                    }}
                     style={{
                       top,
                       height,
@@ -321,8 +397,150 @@ export function DayCalendarBoard({
             </div>
           </div>
         ) : null}
+
+        {slotMenu ? (
+          <SlotMenu
+            state={slotMenu}
+            onClose={() => setSlotMenu(null)}
+            onAddAppointment={
+              onAddAppointment
+                ? () => {
+                    onAddAppointment({
+                      staffProfileId: slotMenu.staffProfileId,
+                      staffName: slotMenu.staffName,
+                      startAt: slotMenu.startAt,
+                    });
+                    setSlotMenu(null);
+                  }
+                : undefined
+            }
+            onAddBookout={
+              onAddBookout
+                ? (minutes, notes) => {
+                    const endsAt = new Date(new Date(slotMenu.startAt).getTime() + minutes * 60_000).toISOString();
+                    onAddBookout({
+                      staffProfileId: slotMenu.staffProfileId,
+                      staffName: slotMenu.staffName,
+                      startAt: slotMenu.startAt,
+                      endsAt,
+                      notes,
+                    });
+                    setSlotMenu(null);
+                  }
+                : undefined
+            }
+          />
+        ) : null}
       </div>
     </div>
+  );
+}
+
+function SlotMenu({
+  state,
+  onClose,
+  onAddAppointment,
+  onAddBookout,
+}: {
+  state: SlotMenuState;
+  onClose: () => void;
+  onAddAppointment?: () => void;
+  onAddBookout?: (minutes: number, notes?: string) => void;
+}) {
+  const [bookoutMode, setBookoutMode] = useState(false);
+  const [minutes, setMinutes] = useState(30);
+  const [note, setNote] = useState('');
+
+  const PANEL_WIDTH = 256;
+  const left = Math.max(8, Math.min(state.x, state.boardWidth - PANEL_WIDTH - 8));
+
+  return (
+    <>
+      {/* Click-away backdrop */}
+      <div className="absolute inset-0 z-40" onClick={onClose} aria-hidden />
+      <div
+        className="absolute z-50 rounded-card-lg border border-border bg-surface p-3 shadow-lg"
+        style={{ top: state.y, left, width: PANEL_WIDTH }}
+        role="dialog"
+      >
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <div className="min-w-0 text-[13px] font-semibold text-text-primary">
+            <span className="truncate">{state.staffName}</span>
+            <span className="text-text-secondary"> · {formatTime(state.startAt)}</span>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="inline-flex h-6 w-6 items-center justify-center rounded-full text-text-secondary transition hover:bg-surface-alt hover:text-text-primary"
+          >
+            ×
+          </button>
+        </div>
+
+        {bookoutMode ? (
+          <div className="flex flex-col gap-2">
+            <label className="text-[11px] font-medium uppercase tracking-[0.06em] text-text-secondary">
+              Duration
+              <select
+                value={minutes}
+                onChange={(event) => setMinutes(Number(event.target.value))}
+                className="mt-1 h-9 w-full rounded-input border border-border bg-surface px-2 text-[13px] text-text-primary outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+              >
+                {[15, 30, 45, 60, 90, 120].map((m) => (
+                  <option key={m} value={m}>
+                    {m} min
+                  </option>
+                ))}
+              </select>
+            </label>
+            <input
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              placeholder="Reason (optional)"
+              className="h-9 w-full rounded-input border border-border bg-surface px-2 text-[13px] text-text-primary outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+            />
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setBookoutMode(false)}
+                className="h-9 flex-1 rounded-pill border border-border-strong bg-surface text-[13px] font-medium text-text-secondary transition hover:bg-surface-alt"
+              >
+                Back
+              </button>
+              <button
+                type="button"
+                onClick={() => onAddBookout?.(minutes, note.trim() || undefined)}
+                className="h-9 flex-1 rounded-pill bg-primary text-[13px] font-semibold text-text-on-primary transition hover:bg-primary-deep"
+              >
+                Create bookout
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {onAddAppointment ? (
+              <button
+                type="button"
+                onClick={onAddAppointment}
+                className="h-10 w-full rounded-pill bg-primary text-[13px] font-semibold text-text-on-primary transition hover:bg-primary-deep"
+              >
+                Add appointment
+              </button>
+            ) : null}
+            {onAddBookout ? (
+              <button
+                type="button"
+                onClick={() => setBookoutMode(true)}
+                className="h-10 w-full rounded-pill border border-border-strong bg-surface text-[13px] font-semibold text-text-primary transition hover:bg-surface-alt"
+              >
+                Add bookout
+              </button>
+            ) : null}
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -390,6 +608,7 @@ function buildColumns(input: {
 
   const columns: ColumnModel[] = staff.map((member) => ({
     key: member.staffProfileId,
+    staffProfileId: member.staffProfileId,
     name: member.displayName || member.fullName || 'Stylist',
     subtitle: subtitleForStaff(member, leaveStaffOnDay.has(member.staffProfileId), shiftsForDay),
     colorHex: member.colorHex,
@@ -406,6 +625,7 @@ function buildColumns(input: {
     if (rosterIds.has(staffProfileId)) continue;
     columns.push({
       key: staffProfileId,
+      staffProfileId,
       name: 'Other stylist',
       subtitle: 'Not on this location’s rota',
       shifts: [],

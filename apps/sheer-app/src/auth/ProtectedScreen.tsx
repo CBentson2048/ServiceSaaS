@@ -17,7 +17,7 @@ export function ProtectedScreen({
     return (
       <View style={styles.loading}>
         <ActivityIndicator color={palette.brand[300]} />
-        <Text style={styles.loadingText}>Restoring your Sheer session...</Text>
+        <Text style={styles.loadingText}>Restoring your QLOOQO session...</Text>
       </View>
     );
   }

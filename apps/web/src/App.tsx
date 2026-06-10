@@ -33,6 +33,8 @@ import { ProfilePage } from './pages/ProfilePage';
 import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { RotaPage } from './pages/RotaPage';
 import { NewWeekRotaPage } from './pages/NewWeekRotaPage';
+import { ServiceCategoriesPage } from './pages/ServiceCategoriesPage';
+import { ServicesPage } from './pages/ServicesPage';
 import { SheerLabPage } from './pages/SheerLabPage';
 import { TeamPage } from './pages/TeamPage';
 import { UnauthorizedPage } from './pages/UnauthorizedPage';
@@ -79,6 +81,8 @@ export function App() {
           <Route path="/crm/clients/:id" element={<CrmClientDetailPage />} />
           <Route path="/rota" element={<RotaPage />} />
           <Route path="/rota/new-week" element={<NewWeekRotaPage />} />
+          <Route path="/services" element={<ServicesPage />} />
+          <Route path="/services/categories" element={<ServiceCategoriesPage />} />
           <Route path="/inventory" element={<InventoryPage />} />
           <Route path="/inventory/categories" element={<InventoryCategoriesPage />} />
           <Route path="/sheer-lab" element={<SheerLabPage />} />

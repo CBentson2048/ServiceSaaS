@@ -23,6 +23,7 @@ export function InventoryCategoriesPage() {
   const auth = useAuth();
   const accessToken = auth.session?.accessToken;
   const isOwner = auth.user?.role === 'owner';
+  const canManage = auth.user?.role === 'owner' || auth.user?.role === 'manager';
   const [categories, setCategories] = useState<InventoryCategory[]>([]);
   const [search, setSearch] = useState('');
   const [includeInactive, setIncludeInactive] = useState(false);
@@ -89,7 +90,7 @@ export function InventoryCategoriesPage() {
 
   async function handleSave(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!accessToken || !isOwner) return;
+    if (!accessToken || !canManage) return;
     if (!form.name.trim()) {
       setError('Category name is required.');
       return;
@@ -139,7 +140,7 @@ export function InventoryCategoriesPage() {
             Maintain the category taxonomy used to organise your product range.
           </p>
         </div>
-        {isOwner ? (
+        {canManage ? (
           <button
             type="button"
             className="inline-flex h-10 items-center justify-center rounded-pill bg-primary px-5 text-[13px] font-semibold text-text-on-primary transition hover:bg-primary-deep"
@@ -162,7 +163,7 @@ export function InventoryCategoriesPage() {
         </div>
       ) : null}
 
-      {isOwner && showForm ? (
+      {canManage && showForm ? (
         <form
           onSubmit={handleSave}
           className="mb-5 grid gap-3 rounded-card-lg border border-border bg-surface p-4 sm:grid-cols-2"
@@ -233,9 +234,9 @@ export function InventoryCategoriesPage() {
             title={categories.length === 0 ? 'No categories yet' : 'No categories match this search'}
             body={
               categories.length === 0
-                ? isOwner
+                ? canManage
                   ? 'Create your first category to start organising products.'
-                  : 'Categories will appear here once an owner adds them.'
+                  : 'Categories will appear here once they are added.'
                 : 'Try a different search term.'
             }
           />
@@ -247,7 +248,7 @@ export function InventoryCategoriesPage() {
                 <th className="px-4 py-3">Description</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Updated</th>
-                {isOwner ? <th className="px-4 py-3 text-right">Actions</th> : null}
+                {canManage ? <th className="px-4 py-3 text-right">Actions</th> : null}
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -267,7 +268,7 @@ export function InventoryCategoriesPage() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-text-secondary">{formatDate(category.updatedAt)}</td>
-                  {isOwner ? (
+                  {canManage ? (
                     <td className="px-4 py-3 text-right">
                       <div className="flex justify-end gap-3">
                         <button
@@ -277,13 +278,15 @@ export function InventoryCategoriesPage() {
                         >
                           Edit
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleDelete(category)}
-                          className="text-[13px] font-medium text-danger hover:opacity-80"
-                        >
-                          Delete
-                        </button>
+                        {isOwner ? (
+                          <button
+                            type="button"
+                            onClick={() => void handleDelete(category)}
+                            className="text-[13px] font-medium text-danger hover:opacity-80"
+                          >
+                            Delete
+                          </button>
+                        ) : null}
                       </div>
                     </td>
                   ) : null}

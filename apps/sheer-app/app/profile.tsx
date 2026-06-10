@@ -44,6 +44,7 @@ export default function ProfileScreen() {
   const showStylistTabs = userRole === 'stylist';
 
   const [signingOut, setSigningOut] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const [profile, setProfile] = useState<UserProfileResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -153,6 +154,45 @@ export default function ProfileScreen() {
       { text: 'Cancel', style: 'cancel' },
       { text: 'Sign out', style: 'destructive', onPress: () => void performSignOut() },
     ]);
+  }
+
+  async function performDeleteAccount() {
+    if (!accessToken) return;
+    setDeleting(true);
+    try {
+      await api.deleteMyAccount(accessToken);
+      // The account is gone server-side — clear the local session so
+      // ProtectedScreen redirects to login. Component unmounts on redirect, so
+      // there is no need to reset `deleting` on the success path.
+      await auth.signOut();
+    } catch (err) {
+      setDeleting(false);
+      Alert.alert(
+        'Could not delete account',
+        err instanceof Error ? err.message : 'Please try again later.',
+      );
+    }
+  }
+
+  function confirmDeleteAccount() {
+    if (deleting || signingOut) return;
+    Alert.alert(
+      'Delete account',
+      'This permanently deletes your QLOOQO account and sign-in. Your salon may keep booking and payment records where the law requires it. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete account',
+          style: 'destructive',
+          // Second confirmation — deletion is irreversible.
+          onPress: () =>
+            Alert.alert('Are you sure?', 'Your account will be permanently deleted.', [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Delete', style: 'destructive', onPress: () => void performDeleteAccount() },
+            ]),
+        },
+      ],
+    );
   }
 
   const client = profile?.clientProfile;
@@ -294,6 +334,28 @@ export default function ProfileScreen() {
                   )}
                   <Text style={s.signOutBtnText}>{signingOut ? 'Signing out…' : 'Sign out'}</Text>
                 </Pressable>
+
+                {isClient ? (
+                  <>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Delete account"
+                      onPress={confirmDeleteAccount}
+                      disabled={deleting || signingOut}
+                      style={({ pressed }) => [s.deleteBtn, pressed && s.pressed, deleting && s.signOutBtnDisabled]}
+                    >
+                      {deleting ? (
+                        <ActivityIndicator color={palette.danger[300]} size="small" />
+                      ) : (
+                        <Ionicons name="trash-outline" size={16} color={palette.danger[300]} />
+                      )}
+                      <Text style={s.deleteBtnText}>{deleting ? 'Deleting account…' : 'Delete account'}</Text>
+                    </Pressable>
+                    <Text style={s.deleteCaption}>
+                      Permanently deletes your account and sign-in. This cannot be undone.
+                    </Text>
+                  </>
+                ) : null}
               </View>
             </>
           )}
@@ -1388,4 +1450,19 @@ const s = StyleSheet.create({
   },
   signOutBtnDisabled: { opacity: 0.6 },
   signOutBtnText: { color: palette.danger[300], fontSize: 15, fontWeight: '700' },
+  deleteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    paddingVertical: 12,
+    borderRadius: radius.cardLg,
+  },
+  deleteBtnText: { color: palette.danger[300], fontSize: 13, fontWeight: '700' },
+  deleteCaption: {
+    color: 'rgba(255,255,255,0.32)',
+    fontSize: 11,
+    textAlign: 'center',
+    paddingHorizontal: spacing.base,
+  },
 });

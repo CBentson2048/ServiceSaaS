@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, Navigate } from 'react-router-dom';
+import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import type {
   CreateStaffBookingResponse,
   CrmClientSummary,
@@ -60,7 +60,26 @@ export function NewBookingPage() {
   const accessToken = auth.session?.accessToken;
   const { locations, resolvedLocationId } = useLocationScope();
 
-  const [locationId, setLocationId] = useState<string>(resolvedLocationId);
+  // Deep-link prefill from the Appointment Book ("Add appointment" on a slot):
+  // ?staffProfileId&staffName&startAt&locationId. Stylist + date are applied
+  // immediately; the matching time slot is auto-selected once services are chosen.
+  const [searchParams] = useSearchParams();
+  const prefill = useMemo(() => {
+    const startAt = searchParams.get('startAt') ?? undefined;
+    const parsedStart = startAt ? new Date(startAt) : undefined;
+    const validStart = parsedStart && !Number.isNaN(parsedStart.getTime()) ? parsedStart : undefined;
+    return {
+      staffProfileId: searchParams.get('staffProfileId') ?? undefined,
+      staffName: searchParams.get('staffName') ?? undefined,
+      locationId: searchParams.get('locationId') ?? undefined,
+      date: validStart ? toLocalIsoDate(validStart) : undefined,
+      time: validStart ? toLocalHm(validStart) : undefined,
+    };
+  }, [searchParams]);
+  const prefillStylistApplied = useRef(false);
+  const prefillSlotApplied = useRef(false);
+
+  const [locationId, setLocationId] = useState<string>(prefill.locationId ?? resolvedLocationId);
 
   // Client selection
   const [clientQuery, setClientQuery] = useState('');
@@ -81,7 +100,7 @@ export function NewBookingPage() {
   const [stylistChoice, setStylistChoice] = useState<string>(ANY_STYLIST);
 
   // Date + time
-  const [date, setDate] = useState<string>(todayIso);
+  const [date, setDate] = useState<string>(() => prefill.date ?? todayIso());
   const [slots, setSlots] = useState<PublicBookingAvailabilitySlot[]>([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [selectedSlot, setSelectedSlot] = useState<PublicBookingAvailabilitySlot | null>(null);
@@ -182,7 +201,17 @@ export function NewBookingPage() {
           locationId,
           serviceIds: selectedServiceIds,
         });
-        if (!cancelled) setStylists(result.stylists);
+        if (cancelled) return;
+        setStylists(result.stylists);
+        // Lock the booking to the stylist whose column was clicked (once).
+        if (
+          !prefillStylistApplied.current &&
+          prefill.staffProfileId &&
+          result.stylists.some((stylist) => stylist.staffProfileId === prefill.staffProfileId)
+        ) {
+          prefillStylistApplied.current = true;
+          setStylistChoice(prefill.staffProfileId);
+        }
       } catch (err) {
         if (!cancelled) setError(messageFrom(err, 'Could not load stylists'));
       }
@@ -210,7 +239,21 @@ export function NewBookingPage() {
           dateFrom: `${date}T00:00:00.000Z`,
           dateTo: `${date}T23:59:59.999Z`,
         });
-        if (!cancelled) setSlots(result.slots);
+        if (cancelled) return;
+        setSlots(result.slots);
+        // Auto-select the clicked time once, but only when the prefilled stylist
+        // is the active one (so we pick that stylist's slot, not another's).
+        if (
+          !prefillSlotApplied.current &&
+          prefill.time &&
+          (!prefill.staffProfileId || stylistChoice === prefill.staffProfileId)
+        ) {
+          const match = result.slots.find((slot) => toLocalHm(new Date(slot.startAt)) === prefill.time);
+          if (match) {
+            prefillSlotApplied.current = true;
+            setSelectedSlot(match);
+          }
+        }
       } catch (err) {
         if (!cancelled) {
           setError(messageFrom(err, 'Could not load availability'));
@@ -396,6 +439,19 @@ export function NewBookingPage() {
           </label>
         ) : null}
       </header>
+
+      {prefill.staffProfileId && prefill.date ? (
+        <div className="mb-4 rounded-input-lg border border-primary/30 bg-primary/5 px-4 py-3 text-[13px] text-text-primary">
+          From the book:{' '}
+          <span className="font-semibold">{prefill.staffName ?? 'selected stylist'}</span>
+          {prefill.time ? (
+            <>
+              {' '}at <span className="font-semibold">{prefill.time}</span>
+            </>
+          ) : null}{' '}
+          on {prefill.date}. Pick a client and services — the stylist and time are pre-selected.
+        </div>
+      ) : null}
 
       {error ? (
         <div className="mb-4 rounded-input-lg border border-danger-border bg-danger-soft px-4 py-3 text-[13px] text-danger">
@@ -871,6 +927,16 @@ function todayIso(): string {
   const now = new Date();
   const offset = now.getTimezoneOffset() * 60_000;
   return new Date(now.getTime() - offset).toISOString().slice(0, 10);
+}
+
+function toLocalIsoDate(date: Date): string {
+  const offset = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 10);
+}
+
+function toLocalHm(date: Date): string {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 function formatTime(iso: string): string {

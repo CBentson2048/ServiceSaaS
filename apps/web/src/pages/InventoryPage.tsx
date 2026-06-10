@@ -58,6 +58,7 @@ export function InventoryPage() {
   const auth = useAuth();
   const accessToken = auth.session?.accessToken;
   const isOwner = auth.user?.role === 'owner';
+  const canManage = auth.user?.role === 'owner' || auth.user?.role === 'manager';
   // The stock table follows the shared sidebar scope: "All" aggregates every
   // location, a concrete selection narrows to it.
   const { selectedLocationId: scopeLocationId, isAllLocations } = useLocationScope();
@@ -153,7 +154,7 @@ export function InventoryPage() {
   }
 
   async function handleSaveProduct() {
-    if (!accessToken || !isOwner) return;
+    if (!accessToken || !canManage) return;
     if (!productForm.name.trim()) {
       setError('Product name is required.');
       return;
@@ -383,7 +384,7 @@ export function InventoryPage() {
                 <FilterIcon className="h-4 w-4" />
                 Low stock
               </label>
-              {isOwner ? (
+              {canManage ? (
                 <button
                   type="button"
                   className="inline-flex h-10 items-center gap-1.5 rounded-input-lg bg-primary px-4 text-[13px] font-semibold text-text-on-primary transition hover:bg-primary-deep"
@@ -399,8 +400,8 @@ export function InventoryPage() {
             </div>
           </div>
 
-          {/* Inline product form (owner only) */}
-          {isOwner && showProductForm ? (
+          {/* Inline product form (owner or manager) */}
+          {canManage && showProductForm ? (
             <div className="grid gap-2 border-b border-border bg-surface-alt px-5 py-4 md:grid-cols-3">
               <input value={productForm.brand} onChange={(e) => setProductForm({ ...productForm, brand: e.target.value })} placeholder="Brand" className={inputClass} />
               <input value={productForm.name} onChange={(e) => setProductForm({ ...productForm, name: e.target.value })} placeholder="Product name" className={inputClass} />
@@ -643,8 +644,8 @@ export function InventoryPage() {
         </div>
       </section>
 
-      {/* Product catalogue management (owner archive controls) */}
-      {isOwner ? (
+      {/* Product catalogue management (edit for owner/manager, archive for owner) */}
+      {canManage ? (
         <section className="mt-8 rounded-card-lg border border-border bg-surface shadow-card">
           <header className="flex items-center justify-between border-b border-border px-5 py-4">
             <div className="text-[15px] font-semibold text-text-primary">Product catalogue</div>
@@ -667,7 +668,9 @@ export function InventoryPage() {
                   {product.isActive ? (
                     <>
                       <button type="button" className="rounded-pill border border-border-strong px-3 py-1 font-semibold text-text-primary transition hover:bg-surface-alt" onClick={() => { setProductForm(toProductForm(product)); setShowProductForm(true); }}>Edit</button>
-                      <button type="button" className="rounded-pill border border-danger-border px-3 py-1 font-semibold text-danger transition hover:bg-danger-soft disabled:opacity-50" onClick={() => void handleArchiveProduct(product)} disabled={busy === product.id}>Archive</button>
+                      {isOwner ? (
+                        <button type="button" className="rounded-pill border border-danger-border px-3 py-1 font-semibold text-danger transition hover:bg-danger-soft disabled:opacity-50" onClick={() => void handleArchiveProduct(product)} disabled={busy === product.id}>Archive</button>
+                      ) : null}
                     </>
                   ) : null}
                 </div>

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Query, UseGuards } from '@nestjs/common';
 import type { AuthUser, ListProfilesResponse, UpdateProfileResponse, UserProfileResponse } from '@sheer/domain';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { RequireRoles, RolesGuard } from '../auth/roles.guard';
@@ -22,6 +22,12 @@ export class ProfileController {
     @Body() body: UpdateCurrentProfileDto,
   ): Promise<UpdateProfileResponse> {
     return this.profiles.updateCurrentProfile(actor, body);
+  }
+
+  @Delete('me')
+  @HttpCode(204)
+  deleteMe(@CurrentUser() actor: AuthUser): Promise<void> {
+    return this.profiles.deleteCurrentAccount(actor);
   }
 
   @Get()

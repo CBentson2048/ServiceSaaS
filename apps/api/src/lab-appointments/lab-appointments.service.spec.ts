@@ -324,6 +324,9 @@ function createService(client: MockSupabaseClient): LabAppointmentsService {
     {
       syncBookingNotificationsSafe: jest.fn().mockResolvedValue(undefined),
     } as never,
+    {
+      refundPaymentIntent: jest.fn().mockResolvedValue({ id: 're_test', status: 'succeeded' }),
+    } as never,
   );
 }
 

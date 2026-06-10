@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type SVGProps } from 'react';
+import { useNavigate } from 'react-router-dom';
 import type {
   AppointmentBillingTax,
   AppointmentCompletionResponse,
@@ -8,16 +9,23 @@ import type {
 } from '@sheer/domain';
 import { AppButton, AppCard, Pill, StatusBadge } from '../design';
 import {
+  acceptBooking,
   ApiRequestError,
   completeBooking,
   confirmBookingPayment,
   createStylistRebooking,
   getWeeklyRota,
   listBookings,
+  markRotaAbsence,
+  rejectBooking,
 } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
 import { useLocationScope } from '../components/LocationScopeContext';
-import { DayCalendarBoard } from '../components/bookings/DayCalendarBoard';
+import {
+  DayCalendarBoard,
+  type AddAppointmentInput,
+  type AddBookoutInput,
+} from '../components/bookings/DayCalendarBoard';
 import { WeekStrip } from '../components/bookings/WeekStrip';
 import type { CalendarToolbarKey, CalendarToolbarState } from '../components/bookings/CalendarToolbar';
 import { isSameLocalDay, snapToMonday, toIsoDate } from '../components/rota/dateUtils';
@@ -26,6 +34,7 @@ type StatusTone = 'success' | 'warning' | 'danger' | 'neutral';
 
 export function BookingsPage() {
   const auth = useAuth();
+  const navigate = useNavigate();
   const accessToken = auth.session?.accessToken;
   // The active location is owned by the sidebar's location picker (shared scope).
   // The day calendar board is single-location, so "All" resolves to the first
@@ -41,7 +50,10 @@ export function BookingsPage() {
   const [checkoutMessage, setCheckoutMessage] = useState<string | null>(null);
   const [rebookingLoading, setRebookingLoading] = useState(false);
   const [rebookingSkipped, setRebookingSkipped] = useState<Record<string, boolean>>({});
+  const [reviewLoadingId, setReviewLoadingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const isReviewer = auth.user?.role === 'owner' || auth.user?.role === 'manager';
 
   // Calendar state. The timetable spans the full page width and appointments
   // are selected straight from the board.
@@ -49,6 +61,8 @@ export function BookingsPage() {
   const [rota, setRota] = useState<WeeklyRotaResponse | null>(null);
   const [rotaLoading, setRotaLoading] = useState(false);
   const [rotaError, setRotaError] = useState<string | null>(null);
+  // Bumped to re-fetch the rota (e.g. after creating a bookout) so the board updates.
+  const [rotaReloadNonce, setRotaReloadNonce] = useState(0);
   const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null);
   const [toolbar, setToolbar] = useState<CalendarToolbarState>(loadToolbarState);
 
@@ -159,10 +173,106 @@ export function BookingsPage() {
     [accessToken],
   );
 
+  const handleAcceptRequest = useCallback(
+    async (booking: StaffBookingSummary) => {
+      if (!accessToken) return;
+      setReviewLoadingId(booking.id);
+      setError(null);
+      setCheckoutMessage(null);
+      try {
+        const result = await acceptBooking(accessToken, booking.id);
+        setBookings((current) =>
+          current.map((entry) => (entry.id === booking.id ? { ...entry, ...result.appointment } : entry)),
+        );
+        setCheckoutMessage(`Accepted ${result.appointment.clientDisplayName}'s booking. They've been notified.`);
+      } catch (err: unknown) {
+        if (err instanceof ApiRequestError) setError(err.message);
+        else if (err instanceof Error) setError(err.message);
+        else setError('Could not accept booking');
+      } finally {
+        setReviewLoadingId(null);
+      }
+    },
+    [accessToken],
+  );
+
+  const handleRejectRequest = useCallback(
+    async (booking: StaffBookingSummary) => {
+      if (!accessToken) return;
+      const reason = window.prompt(`Reject ${booking.clientDisplayName}'s booking? Add an optional reason:`, '');
+      // `null` means the prompt was cancelled — abort. An empty string is a valid "no reason".
+      if (reason === null) return;
+      setReviewLoadingId(booking.id);
+      setError(null);
+      setCheckoutMessage(null);
+      try {
+        const result = await rejectBooking(accessToken, booking.id, { reason: reason.trim() || undefined });
+        setBookings((current) =>
+          current.map((entry) => (entry.id === booking.id ? { ...entry, ...result.appointment } : entry)),
+        );
+        const refundNote = result.depositRefunded
+          ? ' Deposit refunded.'
+          : result.refundError
+            ? ` Deposit refund failed: ${result.refundError}`
+            : '';
+        setCheckoutMessage(`Rejected ${result.appointment.clientDisplayName}'s booking.${refundNote}`);
+      } catch (err: unknown) {
+        if (err instanceof ApiRequestError) setError(err.message);
+        else if (err instanceof Error) setError(err.message);
+        else setError('Could not reject booking');
+      } finally {
+        setReviewLoadingId(null);
+      }
+    },
+    [accessToken],
+  );
+
   const handleCloseCheckout = useCallback(() => {
     setCheckoutSummary(null);
     setCheckoutMessage(null);
   }, []);
+
+  // Primary "add from the book" flow: jump into the booking screen with the
+  // clicked stylist, date and time prefilled.
+  const handleAddAppointment = useCallback(
+    (input: AddAppointmentInput) => {
+      const params = new URLSearchParams({
+        staffProfileId: input.staffProfileId,
+        staffName: input.staffName,
+        startAt: input.startAt,
+      });
+      if (selectedLocationId) params.set('locationId', selectedLocationId);
+      navigate(`/bookings/new?${params.toString()}`);
+    },
+    [navigate, selectedLocationId],
+  );
+
+  // Bookout = a block of the stylist's time. Reuses the rota absence primitive
+  // (type 'other'), which the availability engine already treats as busy.
+  const handleAddBookout = useCallback(
+    async (input: AddBookoutInput) => {
+      if (!accessToken || !selectedLocationId) return;
+      setError(null);
+      setCheckoutMessage(null);
+      try {
+        await markRotaAbsence(accessToken, {
+          staffProfileId: input.staffProfileId,
+          locationId: selectedLocationId,
+          absenceType: 'other',
+          startsAt: input.startAt,
+          endsAt: input.endsAt,
+          notes: input.notes ?? 'Bookout',
+        });
+        setRotaReloadNonce((nonce) => nonce + 1);
+        setCheckoutMessage(`Bookout added for ${input.staffName} at ${formatTime(input.startAt)}.`);
+      } catch (err: unknown) {
+        if (err instanceof ApiRequestError) setError(err.message);
+        else if (err instanceof Error) setError(err.message);
+        else setError('Could not add bookout');
+      }
+    },
+    [accessToken, selectedLocationId],
+  );
 
   useEffect(() => {
     void reload();
@@ -192,7 +302,7 @@ export function BookingsPage() {
     return () => {
       cancelled = true;
     };
-  }, [accessToken, selectedLocationId, weekStartIso]);
+  }, [accessToken, selectedLocationId, weekStartIso, rotaReloadNonce]);
 
   // A selected appointment should not linger when the day / location changes.
   useEffect(() => {
@@ -205,6 +315,16 @@ export function BookingsPage() {
         .filter((booking) => booking.locationId === selectedLocationId && isSameLocalDay(booking.startsAt, day))
         .sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt)),
     [bookings, selectedLocationId, day],
+  );
+
+  // Client-requested bookings awaiting owner/manager review (across all of the
+  // signed-in user's locations, regardless of the day the calendar is showing).
+  const pendingRequests = useMemo(
+    () =>
+      bookings
+        .filter((booking) => booking.status === 'awaiting_acceptance')
+        .sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt)),
+    [bookings],
   );
 
   const selectedBooking = useMemo(
@@ -240,6 +360,15 @@ export function BookingsPage() {
         <div className="mb-4 rounded-input-lg border border-success-border bg-success-soft px-4 py-3 text-[13px] text-success">
           {checkoutMessage}
         </div>
+      ) : null}
+
+      {isReviewer && pendingRequests.length > 0 ? (
+        <PendingRequestsPanel
+          requests={pendingRequests}
+          reviewLoadingId={reviewLoadingId}
+          onAccept={(booking) => void handleAcceptRequest(booking)}
+          onReject={(booking) => void handleRejectRequest(booking)}
+        />
       ) : null}
 
       {checkoutSummary ? (
@@ -304,10 +433,67 @@ export function BookingsPage() {
             onSelectBooking={(booking) => setSelectedBookingId(booking.id)}
             showAllTeamMembers={toolbar.showAllTeamMembers}
             showTimeline={toolbar.showTimeline}
+            onAddAppointment={handleAddAppointment}
+            onAddBookout={(input) => void handleAddBookout(input)}
           />
         )}
       </div>
     </div>
+  );
+}
+
+function PendingRequestsPanel({
+  requests,
+  reviewLoadingId,
+  onAccept,
+  onReject,
+}: {
+  requests: StaffBookingSummary[];
+  reviewLoadingId: string | null;
+  onAccept: (booking: StaffBookingSummary) => void;
+  onReject: (booking: StaffBookingSummary) => void;
+}) {
+  return (
+    <AppCard elevation="hero" padding="lg" className="mb-4 rounded-card-lg border border-warning-border bg-warning-soft/40">
+      <div className="flex items-center gap-2">
+        <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-pill bg-warning px-2 text-[12px] font-semibold text-text-on-primary">
+          {requests.length}
+        </span>
+        <h2 className="text-[15px] font-semibold text-text-primary">
+          New booking {requests.length === 1 ? 'request' : 'requests'} awaiting your review
+        </h2>
+      </div>
+      <ul className="mt-3 flex flex-col gap-2">
+        {requests.map((booking) => {
+          const loading = reviewLoadingId === booking.id;
+          return (
+            <li
+              key={booking.id}
+              className="flex flex-col gap-3 rounded-input-lg border border-border bg-surface px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+            >
+              <div className="min-w-0">
+                <div className="truncate text-[14px] font-medium text-text-primary">{booking.clientDisplayName}</div>
+                <div className="mt-0.5 truncate text-[12px] text-text-secondary">
+                  {(booking.serviceNames.join(', ') || 'Service')} · {formatDateTime(booking.startsAt)}
+                  {booking.depositRequiredAmount ? ' · deposit paid' : ''}
+                </div>
+                {booking.clientNote ? (
+                  <div className="mt-0.5 truncate text-[12px] text-text-muted">“{booking.clientNote}”</div>
+                ) : null}
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <AppButton size="sm" variant="secondary" disabled={loading} onClick={() => onReject(booking)}>
+                  Reject
+                </AppButton>
+                <AppButton size="sm" variant="primary" loading={loading} onClick={() => onAccept(booking)}>
+                  Accept
+                </AppButton>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </AppCard>
   );
 }
 
@@ -656,6 +842,16 @@ function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 }
 
+function formatDateTime(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    weekday: 'short',
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 function formatStatus(status: string): string {
   return status
     .split('_')
@@ -670,6 +866,7 @@ function statusTone(status: StaffBookingSummary['status']): StatusTone {
     case 'in_progress':
     case 'in_service':
       return 'success';
+    case 'awaiting_acceptance':
     case 'pending':
     case 'draft':
     case 'booked':
@@ -689,6 +886,7 @@ function isCompletionLocked(status: StaffBookingSummary['status']): boolean {
     status === 'completed' ||
     status === 'cancelled' ||
     status === 'no_show' ||
+    status === 'awaiting_acceptance' ||
     status === 'pending' ||
     status === 'draft' ||
     status === 'booked'

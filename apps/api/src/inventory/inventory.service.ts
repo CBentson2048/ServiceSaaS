@@ -149,7 +149,7 @@ export class InventoryService {
   }
 
   async createProduct(actor: AuthUser, dto: UpsertInventoryProductDto): Promise<InventoryProductResponse> {
-    this.assertOwner(actor);
+    this.assertManagerOrOwner(actor);
     if (dto.categoryId) await this.assertCategory(actor.businessId, dto.categoryId);
     const { data, error } = await this.admin
       .schema('inventory')
@@ -166,7 +166,7 @@ export class InventoryService {
   }
 
   async updateProduct(actor: AuthUser, productId: string, dto: UpsertInventoryProductDto): Promise<InventoryProductResponse> {
-    this.assertOwner(actor);
+    this.assertManagerOrOwner(actor);
     if (dto.categoryId) await this.assertCategory(actor.businessId, dto.categoryId);
     const { data, error } = await this.admin
       .schema('inventory')
@@ -392,7 +392,7 @@ export class InventoryService {
   }
 
   async createCategory(actor: AuthUser, dto: CreateInventoryCategoryDto): Promise<InventoryCategoryResponse> {
-    this.assertOwner(actor);
+    this.assertManagerOrOwner(actor);
     const name = dto.name.trim();
     if (!name) throw new BadRequestException('name is required');
 
@@ -423,7 +423,7 @@ export class InventoryService {
     categoryId: string,
     dto: UpdateInventoryCategoryDto,
   ): Promise<InventoryCategoryResponse> {
-    this.assertOwner(actor);
+    this.assertManagerOrOwner(actor);
     const patch: Record<string, unknown> = {};
     if (dto.name !== undefined) {
       const name = dto.name.trim();

@@ -1,17 +1,19 @@
 import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import type {
+  AcceptBookingResponse,
   AppointmentCompletionResponse,
   AppointmentPaymentConfirmationRequest,
   AppointmentPaymentConfirmationResponse,
   AuthUser,
   ListStaffBookingsResponse,
+  RejectBookingResponse,
   StaffBookingDetail,
 } from '@sheer/domain';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { RequireRoles, RolesGuard } from '../auth/roles.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { LabSessionService } from '../lab-session/lab-session.service';
-import { CreateStylistRebookingDto, LinkStylistRebookingDto } from './dto';
+import { CreateStylistRebookingDto, LinkStylistRebookingDto, RejectBookingDto } from './dto';
 import { LabAppointmentsService } from './lab-appointments.service';
 
 @Controller('lab/appointments')
@@ -45,6 +47,23 @@ export class LabAppointmentsController {
     @Param('id') id: string,
   ): Promise<StaffBookingDetail> {
     return this.labAppointmentsService.detail(actor, id);
+  }
+
+  @Post(':id/accept')
+  accept(
+    @CurrentUser() actor: AuthUser,
+    @Param('id') id: string,
+  ): Promise<AcceptBookingResponse> {
+    return this.labAppointmentsService.accept(actor, id);
+  }
+
+  @Post(':id/reject')
+  reject(
+    @CurrentUser() actor: AuthUser,
+    @Param('id') id: string,
+    @Body() body: RejectBookingDto,
+  ): Promise<RejectBookingResponse> {
+    return this.labAppointmentsService.reject(actor, id, body.reason);
   }
 
   @Post(':id/complete')

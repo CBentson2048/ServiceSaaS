@@ -9,6 +9,13 @@ export class LinkStylistRebookingDto {
   rebookedAppointmentId!: string;
 }
 
+export class RejectBookingDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
+}
+
 export class CreateStylistRebookingDto {
   @IsOptional()
   @IsUUID()

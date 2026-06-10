@@ -1,5 +1,6 @@
 import type {
   AbsenceMutationResponse,
+  AcceptBookingResponse,
   AcceptStaffInvitationRequest,
   AcceptStaffInvitationResponse,
   AppointmentCompletionResponse,
@@ -46,6 +47,13 @@ import type {
   ListInventoryMovementsResponse,
   ListInventoryProductsResponse,
   ListInventoryStockResponse,
+  ListManagedServicesResponse,
+  ManagedServiceResponse,
+  ListServiceCategoriesResponse,
+  ServiceCategoryResponse,
+  CreateServiceCategoryRequest,
+  UpdateServiceCategoryRequest,
+  UpsertServiceRequest,
   ListLabPinStatusesResponse,
   ListStaffBookingsResponse,
   ListCrmClientAllergiesResponse,
@@ -84,6 +92,8 @@ import type {
   PublicBookingLocationsResponse,
   PublicBookingServiceSelectionResponse,
   PublicBookingStylistsResponse,
+  RejectBookingRequest,
+  RejectBookingResponse,
   RejectLeaveRequestRequest,
   SaveWeeklyRotaRequest,
   SaveWeeklyRotaResponse,
@@ -393,6 +403,27 @@ export async function listBookings(
   return request<ListStaffBookingsResponse>(`/lab/appointments${query ? `?${query}` : ''}`, {
     accessToken,
   });
+}
+
+export async function acceptBooking(
+  accessToken: string,
+  bookingId: string,
+): Promise<AcceptBookingResponse> {
+  return request<AcceptBookingResponse>(
+    `/lab/appointments/${encodeURIComponent(bookingId)}/accept`,
+    { method: 'POST', accessToken },
+  );
+}
+
+export async function rejectBooking(
+  accessToken: string,
+  bookingId: string,
+  payload: RejectBookingRequest = {},
+): Promise<RejectBookingResponse> {
+  return request<RejectBookingResponse>(
+    `/lab/appointments/${encodeURIComponent(bookingId)}/reject`,
+    { method: 'POST', accessToken, body: payload },
+  );
 }
 
 export async function completeBooking(
@@ -754,6 +785,92 @@ export async function deleteInventoryCategory(
 ): Promise<InventoryCategoryResponse> {
   return request<InventoryCategoryResponse>(`/inventory/categories/${encodeURIComponent(categoryId)}`, {
     method: 'DELETE',
+    accessToken,
+  });
+}
+
+// --- Service categories -----------------------------------------------------
+
+export async function listServiceCategories(
+  accessToken: string,
+  params: { q?: string; includeInactive?: boolean } = {},
+): Promise<ListServiceCategoriesResponse> {
+  const search = new URLSearchParams();
+  if (params.q) search.set('q', params.q);
+  if (params.includeInactive) search.set('includeInactive', 'true');
+  const query = search.toString();
+  return request<ListServiceCategoriesResponse>(`/services/categories${query ? `?${query}` : ''}`, { accessToken });
+}
+
+export async function createServiceCategory(
+  accessToken: string,
+  payload: CreateServiceCategoryRequest,
+): Promise<ServiceCategoryResponse> {
+  return request<ServiceCategoryResponse>('/services/categories', { method: 'POST', accessToken, body: payload });
+}
+
+export async function updateServiceCategory(
+  accessToken: string,
+  categoryId: string,
+  payload: UpdateServiceCategoryRequest,
+): Promise<ServiceCategoryResponse> {
+  return request<ServiceCategoryResponse>(`/services/categories/${encodeURIComponent(categoryId)}`, {
+    method: 'PATCH',
+    accessToken,
+    body: payload,
+  });
+}
+
+export async function deleteServiceCategory(
+  accessToken: string,
+  categoryId: string,
+): Promise<ServiceCategoryResponse> {
+  return request<ServiceCategoryResponse>(`/services/categories/${encodeURIComponent(categoryId)}`, {
+    method: 'DELETE',
+    accessToken,
+  });
+}
+
+// --- Services ---------------------------------------------------------------
+
+export async function listServices(
+  accessToken: string,
+  params: { q?: string; serviceCategoryId?: string; locationId?: string; includeInactive?: boolean } = {},
+): Promise<ListManagedServicesResponse> {
+  const search = new URLSearchParams();
+  if (params.q) search.set('q', params.q);
+  if (params.serviceCategoryId) search.set('serviceCategoryId', params.serviceCategoryId);
+  if (params.locationId) search.set('locationId', params.locationId);
+  if (params.includeInactive) search.set('includeInactive', 'true');
+  const query = search.toString();
+  return request<ListManagedServicesResponse>(`/services${query ? `?${query}` : ''}`, { accessToken });
+}
+
+export async function createService(
+  accessToken: string,
+  payload: UpsertServiceRequest,
+): Promise<ManagedServiceResponse> {
+  return request<ManagedServiceResponse>('/services', { method: 'POST', accessToken, body: payload });
+}
+
+export async function updateService(
+  accessToken: string,
+  serviceId: string,
+  payload: UpsertServiceRequest,
+): Promise<ManagedServiceResponse> {
+  return request<ManagedServiceResponse>(`/services/${encodeURIComponent(serviceId)}`, {
+    method: 'PATCH',
+    accessToken,
+    body: payload,
+  });
+}
+
+export async function archiveService(
+  accessToken: string,
+  serviceId: string,
+): Promise<ManagedServiceResponse> {
+  return request<ManagedServiceResponse>(`/services/${encodeURIComponent(serviceId)}/archive`, {
+    method: 'POST',
     accessToken,
   });
 }

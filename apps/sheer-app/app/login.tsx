@@ -24,7 +24,7 @@ export default function LoginScreen() {
       const signedInUser = await auth.signIn(email, password);
       router.replace(signedInUser.role === 'stylist' ? '/performance' : '/dashboard');
     } catch {
-      setError('Sign in failed. Use an active Sheer account for this app.');
+      setError('Sign in failed. Use an active QLOOQO account for this app.');
     } finally {
       setIsSubmitting(false);
     }
@@ -33,13 +33,13 @@ export default function LoginScreen() {
   return (
     <Screen>
       <SectionHeader
-        title="SHEER"
-        subtitle="Personal Sheer app"
+        title="QLOOQO"
+        subtitle="Personal QLOOQO app"
       />
       <Card>
         <SectionHeader
           title="Welcome back"
-          subtitle="Sign in with your personal Sheer credentials. Sheer Lab shared-device PIN auth remains separate."
+          subtitle="Sign in with your personal QLOOQO credentials."
         />
         <View style={styles.form}>
           <TextInput

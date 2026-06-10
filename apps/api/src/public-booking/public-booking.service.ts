@@ -435,17 +435,10 @@ export class PublicBookingService {
 
     const appointment = await this.insertMobileAppointment(request, client, context);
     await this.insertMobileAppointmentServices(appointment.id, context);
-    await this.linkClientRebookingOutcome({
-      businessId: context.location.businessId,
-      clientProfileId: client.id,
-      appointmentId: appointment.id,
-      bookedByUserProfileId: request.bookedByUserProfileId,
-      bookingSource: request.source ?? 'mobile_app',
-    });
 
-    // Schedule WhatsApp confirmation + configured reminders for the new booking.
-    // Fail-soft: notification scheduling must never roll back a confirmed booking.
-    await this.bookingNotifications.syncBookingNotificationsSafe(appointment.id);
+    // The booking is 'awaiting_acceptance' — do NOT confirm to the client or link
+    // a rebooking outcome yet. Client confirmation + reminders + rebooking credit
+    // are scheduled when an owner/manager accepts the request (LabAppointmentsService.accept).
 
     return {
       appointment: toAppointmentSummary({
@@ -551,14 +544,13 @@ export class PublicBookingService {
     );
     if (attempt.status === 'confirmed' && attempt.appointment_id) {
       await this.markDepositPaid(attempt, paymentIntent);
-      await this.linkClientRebookingOutcomeForAttempt(attempt, attempt.appointment_id);
       return;
     }
     if (attempt.status !== 'pending_payment') return;
 
     const appointment = await this.finalizePaidBookingAttempt(attempt, paymentIntent);
     await this.markDepositPaid({ ...attempt, appointment_id: appointment.id }, paymentIntent);
-    await this.linkClientRebookingOutcomeForAttempt(attempt, appointment.id);
+    // Rebooking credit is linked on owner/manager acceptance, not at payment time.
   }
 
   async handlePaymentIntentFailed(paymentIntent: StripePaymentIntent): Promise<void> {
@@ -864,7 +856,7 @@ export class PublicBookingService {
           .eq('business_id', businessId)
           .eq('location_id', locationId)
           .or(staffIds.map((id) => `assigned_staff_profile_id.eq.${id}`).join(','))
-          .in('status', ['pending', 'confirmed', 'checked_in', 'in_progress'])
+          .in('status', ['awaiting_acceptance', 'pending', 'confirmed', 'checked_in', 'in_progress'])
           .gte('scheduled_end_at', searchStart.toISOString())
           .lt('scheduled_start_at', searchEnd.toISOString())
           .returns<AppointmentRow[]>(),
@@ -1233,6 +1225,8 @@ export class PublicBookingService {
       requestedStaffProfileId: input.staffRequestMode === 'specific_staff' ? context.stylist.id : null,
       staffRequestMode: input.staffRequestMode,
       bookingChannel: 'client_app',
+      // Client-initiated bookings await owner/manager acceptance before they are confirmed.
+      status: 'awaiting_acceptance',
       scheduledStart: context.selectedStart,
       scheduledEnd: context.selectedEnd,
       communicationPreference: input.communicationPreference,
@@ -1266,6 +1260,8 @@ export class PublicBookingService {
     requestedStaffProfileId: string | null;
     staffRequestMode: 'specific_staff' | 'next_available';
     bookingChannel: 'client_app' | 'staff_app' | 'web_dashboard' | 'phone' | 'walk_in' | 'api';
+    /** Initial status. Client bookings open as 'awaiting_acceptance'; staff bookings as 'confirmed' (default). */
+    status?: AppointmentStatus;
     scheduledStart: Date;
     scheduledEnd: Date;
     communicationPreference: string;
@@ -1284,7 +1280,7 @@ export class PublicBookingService {
         assigned_staff_profile_id: params.assignedStaffProfileId,
         requested_staff_profile_id: params.requestedStaffProfileId,
         staff_request_mode: params.staffRequestMode,
-        status: 'confirmed',
+        status: params.status ?? 'confirmed',
         booking_channel: params.bookingChannel,
         scheduled_start_at: params.scheduledStart.toISOString(),
         scheduled_end_at: params.scheduledEnd.toISOString(),
@@ -1661,9 +1657,8 @@ export class PublicBookingService {
       `Finalized booking attempt ${confirmedAttempt.id} into appointment ${appointment.id} for PaymentIntent ${paymentIntent.id}`,
     );
 
-    // Schedule WhatsApp confirmation + configured reminders once the paid booking exists.
-    // Fail-soft and idempotent — safe even if a duplicate webhook replays finalization.
-    await this.bookingNotifications.syncBookingNotificationsSafe(appointment.id);
+    // The paid booking is 'awaiting_acceptance' — client confirmation + reminders are
+    // scheduled when an owner/manager accepts it, not here.
 
     return appointment;
   }
@@ -1691,7 +1686,8 @@ export class PublicBookingService {
         requested_staff_profile_id:
           attempt.staff_request_mode === 'specific_staff' ? attempt.stylist_profile_id : null,
         staff_request_mode: attempt.staff_request_mode,
-        status: 'confirmed',
+        // Client paid the deposit, but the booking still awaits owner/manager acceptance.
+        status: 'awaiting_acceptance',
         booking_channel: 'api',
         scheduled_start_at: context.selectedStart.toISOString(),
         scheduled_end_at: context.selectedEnd.toISOString(),
@@ -1839,21 +1835,6 @@ export class PublicBookingService {
         booking_source: input.bookingSource,
         booking_attempt_id: input.bookingAttemptId,
       },
-    });
-  }
-
-  private async linkClientRebookingOutcomeForAttempt(
-    attempt: BookingAttemptRow,
-    appointmentId: string,
-  ): Promise<void> {
-    await this.linkClientRebookingOutcome({
-      businessId: attempt.business_id,
-      clientProfileId: attempt.client_profile_id,
-      appointmentId,
-      bookedByUserProfileId: attempt.user_profile_id,
-      bookingSource:
-        typeof attempt.metadata?.source === 'string' ? attempt.metadata.source : 'public_booking_flow',
-      bookingAttemptId: attempt.id,
     });
   }
 

@@ -9,6 +9,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type {
+  AcceptBookingResponse,
   AppointmentCompletionLineItem,
   AppointmentCompletionResponse,
   AppointmentPaymentConfirmationRequest,
@@ -20,6 +21,7 @@ import type {
   CrmVisitSummary,
   ListStaffBookingsResponse,
   ProductBillingRule,
+  RejectBookingResponse,
   StaffBookingPatchTestSummary,
   StaffBookingDetail,
   StaffBookingSummary,
@@ -30,6 +32,7 @@ import { BookingNotificationService } from '../communications/booking-notificati
 import type { LabRuntimeSession } from '../lab-session/lab-session.service';
 import { OwnerTaxSettingsService } from '../owner-tax-settings/owner-tax-settings.service';
 import { RebookingService } from '../rebooking/rebooking.service';
+import { StripeService } from '../stripe/stripe.service';
 
 interface AppointmentServiceRow {
   id?: string;
@@ -160,6 +163,7 @@ interface ScopedAppointmentQuery<TQuery> {
 }
 
 const ACTIVE_BOOKING_STATUSES: AppointmentStatus[] = [
+  'awaiting_acceptance',
   'pending',
   'confirmed',
   'checked_in',
@@ -189,6 +193,7 @@ export class LabAppointmentsService {
     private readonly rebooking: RebookingService,
     private readonly taxSettings: OwnerTaxSettingsService,
     private readonly bookingNotifications: BookingNotificationService,
+    private readonly stripe: StripeService,
   ) {
     const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
@@ -376,6 +381,145 @@ export class LabAppointmentsService {
       clientsById.get(data.client_profile_id),
       patchTestsByClient.get(data.client_profile_id),
     );
+  }
+
+  /**
+   * Owner/manager approves a client-requested booking. Moves it from
+   * 'awaiting_acceptance' → 'confirmed' and only THEN schedules the client
+   * confirmation + reminders and credits any eligible rebooking outcome (these
+   * are deliberately not fired at booking time for client requests).
+   */
+  async accept(actor: AuthUser, id: string): Promise<AcceptBookingResponse> {
+    this.assertOwnerOrManager(actor);
+    const appointment = await this.fetchAppointmentForActor(actor, id);
+    if (appointment.status !== 'awaiting_acceptance') {
+      throw new ConflictException(`Booking cannot be accepted from ${appointment.status}`);
+    }
+
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('appointments')
+      .update({ status: 'confirmed' })
+      .eq('id', appointment.id)
+      .eq('business_id', appointment.business_id)
+      .eq('status', 'awaiting_acceptance')
+      .select(DETAIL_COLUMNS)
+      .maybeSingle<AppointmentRow>();
+    if (error) {
+      this.logger.error(`accept failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to accept booking');
+    }
+    const confirmed = data ?? (await this.fetchAppointmentById(id, actor.businessId));
+    if (confirmed.status !== 'confirmed') {
+      throw new ConflictException('Booking was updated before it could be accepted');
+    }
+
+    // Now it is a real confirmed appointment → schedule the client confirmation +
+    // reminders through the same fail-soft, idempotent engine the booking flow uses.
+    await this.bookingNotifications.syncBookingNotificationsSafe(confirmed.id);
+    // Credit a rebooking outcome if the client had an eligible recent visit. Fail-soft:
+    // a rebooking edge must never block the acceptance.
+    try {
+      await this.rebooking.linkLatestEligibleClientVisit({
+        businessId: confirmed.business_id,
+        clientProfileId: confirmed.client_profile_id,
+        rebookedAppointmentId: confirmed.id,
+        rebookedByUserProfileId: actor.id,
+        source: 'client',
+        metadata: { booking_source: 'client_booking_acceptance' },
+      });
+    } catch (err) {
+      this.logger.warn(`rebooking link on accept failed (non-fatal): ${(err as Error).message}`);
+    }
+
+    const clientsById = await this.fetchClientProfiles(actor.businessId, [confirmed.client_profile_id]);
+    return { appointment: toBookingDetail(confirmed, clientsById.get(confirmed.client_profile_id)) };
+  }
+
+  /**
+   * Owner/manager rejects a client-requested booking. Refunds any paid deposit via
+   * Stripe (the client is made whole), then moves the appointment to 'cancelled'.
+   * The refund is best-effort: a refund failure is surfaced but never blocks the
+   * cancellation (the deposit stays 'paid' so it can be refunded manually).
+   */
+  async reject(actor: AuthUser, id: string, reason?: string): Promise<RejectBookingResponse> {
+    this.assertOwnerOrManager(actor);
+    const appointment = await this.fetchAppointmentForActor(actor, id);
+    if (appointment.status !== 'awaiting_acceptance') {
+      throw new ConflictException(`Booking cannot be rejected from ${appointment.status}`);
+    }
+
+    const refund = await this.refundPaidDeposit(appointment);
+
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('appointments')
+      .update({
+        status: 'cancelled',
+        cancelled_at: new Date().toISOString(),
+        cancellation_reason: reason?.trim() || 'Rejected by salon',
+      })
+      .eq('id', appointment.id)
+      .eq('business_id', appointment.business_id)
+      .eq('status', 'awaiting_acceptance')
+      .select(DETAIL_COLUMNS)
+      .maybeSingle<AppointmentRow>();
+    if (error) {
+      this.logger.error(`reject failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to reject booking');
+    }
+    const cancelled = data ?? (await this.fetchAppointmentById(id, actor.businessId));
+    if (cancelled.status !== 'cancelled') {
+      throw new ConflictException('Booking was updated before it could be rejected');
+    }
+
+    const clientsById = await this.fetchClientProfiles(actor.businessId, [cancelled.client_profile_id]);
+    return {
+      appointment: toBookingDetail(cancelled, clientsById.get(cancelled.client_profile_id)),
+      depositRefunded: refund.refunded,
+      refundError: refund.error,
+    };
+  }
+
+  /** Refund the appointment's paid deposit (if any) via Stripe. Best-effort, never throws. */
+  private async refundPaidDeposit(appointment: AppointmentRow): Promise<{ refunded: boolean; error?: string }> {
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('deposits')
+      .select('id,provider_payment_intent_id,status')
+      .eq('appointment_id', appointment.id)
+      .eq('status', 'paid')
+      .maybeSingle<{ id: string; provider_payment_intent_id: string | null; status: string }>();
+    if (error) {
+      this.logger.error(`refundPaidDeposit lookup failed: ${error.message}`);
+      return { refunded: false, error: 'Could not load the deposit to refund' };
+    }
+    if (!data?.provider_payment_intent_id) return { refunded: false };
+
+    try {
+      await this.stripe.refundPaymentIntent(data.provider_payment_intent_id);
+    } catch (err) {
+      const message = (err as Error).message ?? 'Stripe refund failed';
+      this.logger.error(`refundPaidDeposit failed for deposit ${data.id}: ${message}`);
+      // Leave the deposit 'paid' so it is clearly still owed back and can be refunded manually.
+      return { refunded: false, error: message };
+    }
+
+    const { error: updateError } = await this.admin
+      .schema('booking')
+      .from('deposits')
+      .update({ status: 'refunded', refunded_at: new Date().toISOString() })
+      .eq('id', data.id);
+    if (updateError) {
+      this.logger.error(`mark deposit refunded failed for ${data.id}: ${updateError.message}`);
+    }
+    return { refunded: true };
+  }
+
+  private assertOwnerOrManager(actor: AuthUser): void {
+    if (actor.role !== 'owner' && actor.role !== 'manager') {
+      throw new ForbiddenException('Only an owner or manager can review booking requests');
+    }
   }
 
   async complete(actor: AuthUser, id: string): Promise<AppointmentCompletionResponse> {

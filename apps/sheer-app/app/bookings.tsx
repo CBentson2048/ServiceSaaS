@@ -597,6 +597,7 @@ function statusStyle(status: StaffBookingSummary['status']) {
     case 'in_progress':
     case 'in_service':
       return styles.statusActive;
+    case 'awaiting_acceptance':
     case 'awaiting_payment':
       return styles.statusPending;
     case 'paid':
@@ -626,7 +627,7 @@ function formatStatus(status: string): string {
 }
 
 function isCompletionLocked(status: StaffBookingSummary['status']): boolean {
-  return status === 'paid' || status === 'completed' || status === 'cancelled' || status === 'no_show' || status === 'pending' || status === 'draft' || status === 'booked';
+  return status === 'paid' || status === 'completed' || status === 'cancelled' || status === 'no_show' || status === 'awaiting_acceptance' || status === 'pending' || status === 'draft' || status === 'booked';
 }
 
 function formatMoney(amountCents: number, currencyCode: string): string {

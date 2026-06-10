@@ -81,6 +81,12 @@ export async function updateMyProfile(
   });
 }
 
+// Permanently deletes the caller's own account. Client-only on the server; staff
+// accounts are managed by the salon and rejected with a 403.
+export async function deleteMyAccount(accessToken: string): Promise<void> {
+  await request<void>('/profiles/me', { method: 'DELETE', accessToken });
+}
+
 // The caller's own colour/formula history — a cost-stripped view for clients.
 export async function getMyLabHistory(accessToken: string): Promise<ClientLabHistoryResponse> {
   return request<ClientLabHistoryResponse>('/lab/formulas/me/history', { accessToken });
@@ -403,7 +409,7 @@ async function request<T>(
     } catch {
       parsed = undefined;
     }
-    const message = extractErrorMessage(parsed) ?? raw ?? `Sheer API request failed with ${response.status}`;
+    const message = extractErrorMessage(parsed) ?? raw ?? `QLOOQO request failed with ${response.status}`;
     throw new Error(message);
   }
 

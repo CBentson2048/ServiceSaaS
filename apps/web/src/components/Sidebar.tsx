@@ -20,10 +20,12 @@ const NAV: NavEntry[] = [
   { to: '/dashboard', label: 'Dashboard', icon: DashboardIcon, end: true },
   { to: '/bookings', label: 'Appointment Book', icon: CalendarIcon, end: true },
   { to: '/bookings/new', label: 'New booking', icon: PlusIcon, allowedRoles: ['owner', 'manager'] },
+  { to: '/services', label: 'Services', icon: ScissorsIcon, end: true, allowedRoles: ['owner', 'manager'] },
+  { to: '/services/categories', label: 'Service categories', icon: TagIcon, allowedRoles: ['owner', 'manager'] },
   { to: '/crm', label: 'Client Hub', icon: CrmIcon },
   { to: '/rota', label: 'Rota', icon: ClockIcon },
   { to: '/inventory', label: 'Inventory', icon: BoxIcon, end: true, allowedRoles: ['owner', 'manager'] },
-  { to: '/inventory/categories', label: 'Categories', icon: TagIcon, allowedRoles: ['owner', 'manager'] },
+  { to: '/inventory/categories', label: 'Product categories', icon: TagIcon, allowedRoles: ['owner', 'manager'] },
   { to: '/sheer-lab', label: 'Sheer Lab', icon: BeakerIcon },
   { to: '/performance', label: 'Performance', icon: ChartIcon, allowedRoles: ['owner', 'manager'] },
   { to: '/commission', label: 'Commission', icon: PercentIcon },
@@ -306,6 +308,16 @@ function TagIcon(props: SVGProps<SVGSVGElement>) {
     <Svg {...props}>
       <path d="M3.5 3.5h6l7 7-6 6-7-7v-6Z" />
       <circle cx="6.75" cy="6.75" r="1" />
+    </Svg>
+  );
+}
+
+function ScissorsIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Svg {...props}>
+      <circle cx="6" cy="6" r="2" />
+      <circle cx="6" cy="14" r="2" />
+      <path d="M7.8 7.4 16 14M7.8 12.6 16 6" />
     </Svg>
   );
 }

@@ -865,6 +865,27 @@ export interface AppointmentPaymentConfirmationResponse extends AppointmentCompl
   alreadyPaid: boolean;
 }
 
+// --- Client booking acceptance (owner/manager approve or reject) ---
+// Appointments a client books start as 'awaiting_acceptance'. An owner or
+// manager accepts (→ 'confirmed', client confirmation + reminders scheduled) or
+// rejects (→ 'cancelled', any paid deposit auto-refunded).
+
+export interface AcceptBookingResponse {
+  appointment: StaffBookingDetail;
+}
+
+export interface RejectBookingRequest {
+  reason?: string;
+}
+
+export interface RejectBookingResponse {
+  appointment: StaffBookingDetail;
+  /** True when a paid deposit was refunded via Stripe as part of the rejection. */
+  depositRefunded: boolean;
+  /** Set when a refund was attempted but failed — the appointment is still cancelled. */
+  refundError?: string;
+}
+
 export interface LinkStylistRebookingRequest {
   sourceVisitId?: string;
   rebookedAppointmentId: string;
@@ -898,6 +919,7 @@ export type AppointmentStatus =
   | 'pending'
   | 'draft'
   | 'booked'
+  | 'awaiting_acceptance'
   | 'confirmed'
   | 'checked_in'
   | 'in_progress'
@@ -1689,6 +1711,99 @@ export interface UpdateInventoryCategoryRequest {
   name?: string;
   description?: string | null;
   isActive?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Service catalogue (managed services + service categories)
+//
+// Service categories live in the `booking` schema and are completely
+// independent from product categories (`inventory.categories`). Services may
+// only belong to a ServiceCategory; products may only belong to an
+// InventoryCategory. The two never overlap.
+// ---------------------------------------------------------------------------
+
+export interface ServiceCategory {
+  id: string;
+  businessId: string;
+  name: string;
+  description?: string;
+  isActive: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ListServiceCategoriesResponse {
+  categories: ServiceCategory[];
+}
+
+export interface ServiceCategoryResponse {
+  category: ServiceCategory;
+}
+
+export interface CreateServiceCategoryRequest {
+  name: string;
+  description?: string | null;
+  isActive?: boolean;
+  sortOrder?: number;
+}
+
+export interface UpdateServiceCategoryRequest {
+  name?: string;
+  description?: string | null;
+  isActive?: boolean;
+  sortOrder?: number;
+}
+
+export type ServiceDepositType = 'none' | 'fixed_amount' | 'percentage';
+
+/** A bookable service in the managed catalogue. */
+export interface ManagedService {
+  id: string;
+  businessId: string;
+  /** Null/undefined means the service applies to every location. */
+  locationId?: string;
+  name: string;
+  description?: string;
+  /** FK to the service category, or undefined when uncategorised. */
+  serviceCategoryId?: string;
+  /** Resolved category name for display; undefined when uncategorised. */
+  category?: string;
+  estimatedDurationMinutes: number;
+  processingTimeMinutes: number;
+  /** Price in major currency units (e.g. pounds), matching numeric(12,2). */
+  basePrice: number;
+  depositType: ServiceDepositType;
+  depositValue: number;
+  requiresPatchTest: boolean;
+  isActive: boolean;
+  sortOrder: number;
+  currencyCode: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ListManagedServicesResponse {
+  services: ManagedService[];
+}
+
+export interface ManagedServiceResponse {
+  service: ManagedService;
+}
+
+export interface UpsertServiceRequest {
+  name: string;
+  description?: string | null;
+  serviceCategoryId?: string | null;
+  locationId?: string | null;
+  estimatedDurationMinutes: number;
+  processingTimeMinutes?: number;
+  basePrice?: number;
+  depositType?: ServiceDepositType;
+  depositValue?: number;
+  requiresPatchTest?: boolean;
+  isActive?: boolean;
+  sortOrder?: number;
 }
 
 // ---------------------------------------------------------------------------

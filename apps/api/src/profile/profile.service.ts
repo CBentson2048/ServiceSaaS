@@ -137,6 +137,46 @@ export class ProfileService {
     return { profile: await this.getCurrentProfile(actor) };
   }
 
+  /**
+   * Permanently deletes the caller's own account (App Store Guideline 5.1.1(v)).
+   *
+   * Only clients may self-delete from the app. Staff/owner/manager accounts are
+   * provisioned and managed by the salon, and deleting their auth user would
+   * cascade-delete the staff_profile — an HR action, not self-service.
+   */
+  async deleteCurrentAccount(actor: AuthUser): Promise<void> {
+    if (actor.role !== 'client') {
+      throw new ForbiddenException(
+        'Only client accounts can be deleted from the app. Staff accounts are managed by your salon.',
+      );
+    }
+
+    // booking.booking_attempts.user_profile_id is ON DELETE RESTRICT, so any past
+    // deposit checkout would block the auth-user cascade below. Remove the caller's
+    // attempts first; booking.deposits.booking_attempt_id is ON DELETE SET NULL, so
+    // the financial deposit records are retained, just detached.
+    const { error: attemptsError } = await this.admin
+      .schema('booking')
+      .from('booking_attempts')
+      .delete()
+      .eq('user_profile_id', actor.id);
+    if (attemptsError) {
+      this.logger.error(`deleteCurrentAccount: clearing booking attempts failed: ${attemptsError.message}`);
+      throw new InternalServerErrorException('Unable to delete account');
+    }
+
+    // Deleting the Supabase auth user cascades to core.user_profiles (→ memberships)
+    // and detaches core.client_profiles (user_profile_id ON DELETE SET NULL), so the
+    // salon's booking/visit history is preserved but no longer linked to a login.
+    const { error: authError } = await this.admin.auth.admin.deleteUser(actor.id);
+    if (authError) {
+      this.logger.error(`deleteCurrentAccount: auth user delete failed: ${authError.message}`);
+      throw new InternalServerErrorException('Unable to delete account');
+    }
+
+    this.logger.log(`Deleted account for user ${actor.id}`);
+  }
+
   async listProfiles(actor: AuthUser, query: ListProfilesQueryDto): Promise<ListProfilesResponse> {
     this.assertManagerOrOwner(actor);
     if (query.locationId) this.assertLocationScope(actor, query.locationId);
