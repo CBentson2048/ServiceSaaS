@@ -292,15 +292,16 @@ export class PublicBookingService {
     options: { allowOfflineBooking?: boolean } = {},
   ): Promise<PublicBookingStylistsResponse> {
     const location = await this.resolveLocation(query, options);
+    const serviceIds = parseServiceIds(query.serviceIds);
     const services = await this.fetchServicesByIds(
       location.businessId,
       location.id,
-      parseServiceIds(query.serviceIds),
+      serviceIds,
       location.currencyCode,
     );
     await this.assertServiceRulesSatisfied(location.businessId, location.id, services, location.currencyCode);
     const totalDurationMinutes = totalDuration(services);
-    const staff = await this.fetchBookableStaff(location.businessId, location.id);
+    const staff = await this.fetchBookableStaff(location.businessId, location.id, serviceIds);
     const nextAvailableByStaff = await this.fetchNextAvailableByStaff(
       location.businessId,
       location.id,
@@ -334,15 +335,16 @@ export class PublicBookingService {
     options: { allowOfflineBooking?: boolean } = {},
   ): Promise<PublicBookingAvailabilityResponse> {
     const location = await this.resolveLocation(query, options);
+    const serviceIds = parseServiceIds(query.serviceIds);
     const services = await this.fetchServicesByIds(
       location.businessId,
       location.id,
-      parseServiceIds(query.serviceIds),
+      serviceIds,
       location.currencyCode,
     );
     await this.assertServiceRulesSatisfied(location.businessId, location.id, services, location.currencyCode);
     const totalDurationMinutes = totalDuration(services);
-    const staff = await this.fetchBookableStaff(location.businessId, location.id);
+    const staff = await this.fetchBookableStaff(location.businessId, location.id, serviceIds);
     const requestedStaffIds = query.stylistId
       ? staff.filter((row) => row.id === query.stylistId).map((row) => row.id)
       : staff.map((row) => row.id);
@@ -780,7 +782,11 @@ export class PublicBookingService {
       .filter((suggestion): suggestion is PublicBookingUpgradeSuggestion => Boolean(suggestion));
   }
 
-  private async fetchBookableStaff(businessId: string, locationId: string): Promise<StaffRow[]> {
+  private async fetchBookableStaff(
+    businessId: string,
+    locationId: string,
+    serviceIds: string[] = [],
+  ): Promise<StaffRow[]> {
     const { data, error } = await this.admin
       .schema('core')
       .from('staff_profiles')
@@ -796,7 +802,67 @@ export class PublicBookingService {
       this.logger.error(`fetchBookableStaff failed: ${error.message}`);
       throw new InternalServerErrorException('Unable to load stylists');
     }
-    return data ?? [];
+    const rows = data ?? [];
+
+    // Restrict to stylists eligible for EVERY selected service. A service with no
+    // eligibility rows has no eligible stylist, so it is effectively unbookable
+    // until an owner assigns stylists (surfaced as a dashboard warning).
+    const required = Array.from(new Set(serviceIds.filter(Boolean)));
+    if (required.length === 0) return rows;
+    const eligible = await this.fetchEligibleStaffIdsForServices(businessId, required);
+    return rows.filter((row) => eligible.has(row.id));
+  }
+
+  /**
+   * Returns the set of staff_profile_ids eligible to perform ALL of `serviceIds`.
+   * Eligibility lives in booking.staff_service_eligibility (queried directly —
+   * no PostgREST embed since staff live in the core schema).
+   */
+  private async fetchEligibleStaffIdsForServices(
+    businessId: string,
+    serviceIds: string[],
+  ): Promise<Set<string>> {
+    const required = Array.from(new Set(serviceIds.filter(Boolean)));
+    if (required.length === 0) return new Set();
+
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('staff_service_eligibility')
+      .select('staff_profile_id,service_id')
+      .eq('business_id', businessId)
+      .in('service_id', required)
+      .returns<{ staff_profile_id: string; service_id: string }[]>();
+    if (error) {
+      this.logger.error(`fetchEligibleStaffIdsForServices failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load stylist eligibility');
+    }
+
+    const byStaff = new Map<string, Set<string>>();
+    for (const row of data ?? []) {
+      const set = byStaff.get(row.staff_profile_id) ?? new Set<string>();
+      set.add(row.service_id);
+      byStaff.set(row.staff_profile_id, set);
+    }
+    const eligible = new Set<string>();
+    for (const [staffProfileId, services] of byStaff) {
+      if (services.size === required.length) eligible.add(staffProfileId);
+    }
+    return eligible;
+  }
+
+  private async assertStaffEligibleForServices(
+    businessId: string,
+    staffProfileId: string,
+    serviceIds: string[],
+  ): Promise<void> {
+    const required = Array.from(new Set(serviceIds.filter(Boolean)));
+    if (required.length === 0) return;
+    const eligible = await this.fetchEligibleStaffIdsForServices(businessId, required);
+    if (!eligible.has(staffProfileId)) {
+      throw new BadRequestException(
+        'Selected stylist cannot perform one or more of the selected services',
+      );
+    }
   }
 
   private async fetchNextAvailableByStaff(
@@ -1085,11 +1151,18 @@ export class PublicBookingService {
     );
     await this.assertServiceRulesSatisfied(location.businessId, location.id, services, location.currencyCode);
     const totalDurationMinutes = totalDuration(services);
+    // Fetch WITHOUT the service-eligibility filter on purpose: this lets us tell
+    // "stylist not bookable at this location" apart from "stylist can't perform
+    // the service" and return the precise error for each. The eligibility
+    // hard-block below is the actual gate (the public/staff stylist lists are
+    // already eligibility-filtered upstream in getStylists/getAvailability).
     const staff = await this.fetchBookableStaff(location.businessId, location.id);
     const stylist = staff.find((row) => row.id === input.staffProfileId);
     if (!stylist) {
       throw new BadRequestException('Selected stylist is not available for this location');
     }
+    // Hard-block: the stylist must be eligible for every selected service.
+    await this.assertStaffEligibleForServices(location.businessId, input.staffProfileId, input.serviceIds);
     if (input.staffRequestMode === 'next_available' && !location.allowNextAvailable) {
       throw new BadRequestException('Next available booking is not enabled for this location');
     }

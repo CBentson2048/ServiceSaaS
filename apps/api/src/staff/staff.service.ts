@@ -482,9 +482,13 @@ export class StaffService {
     const profileById = new Map(profiles.map((p) => [p.id, p]));
     const staffProfileByUser = new Map(staffProfiles.map((s) => [s.user_profile_id, s]));
     const locationById = new Map(locations.map((l) => [l.id, l]));
+    const eligibilityByStaffProfile = await this.fetchServiceEligibilityByStaffProfile(
+      actor.businessId,
+      staffProfiles.map((s) => s.id),
+    );
 
     const staff: StaffMember[] = (memberships ?? [])
-      .map((m) => this.toStaffMember(m, profileById, staffProfileByUser, locationById))
+      .map((m) => this.toStaffMember(m, profileById, staffProfileByUser, locationById, eligibilityByStaffProfile))
       .filter((s): s is StaffMember => Boolean(s))
       .sort((a, b) => roleOrder(a.role) - roleOrder(b.role));
 
@@ -540,6 +544,11 @@ export class StaffService {
 
     await this.updateStaffBusinessFields(actor.businessId, targetUserId, input);
 
+    // Replace the stylist's service eligibility when an explicit set was sent.
+    if (input.serviceIds !== undefined) {
+      await this.setStaffServiceEligibility(actor.businessId, targetUserId, input.serviceIds);
+    }
+
     const updated = await this.findStaffMember(actor.businessId, targetUserId);
     if (!updated) throw new NotFoundException('Staff member not found after update');
 
@@ -582,6 +591,87 @@ export class StaffService {
       this.logger.error(`updateStaffBusinessFields failed: ${error.message}`);
       throw new InternalServerErrorException('Unable to update staff business fields');
     }
+  }
+
+  /**
+   * Replaces a stylist's service eligibility (booking.staff_service_eligibility)
+   * with exactly `serviceIds`. Eligibility only applies to staff who have a
+   * staff profile (stylists). The delete + insert run inside a single Postgres
+   * function so the replacement is atomic — no partial state if anything fails.
+   */
+  private async setStaffServiceEligibility(
+    businessId: string,
+    userProfileId: string,
+    serviceIds: string[],
+  ): Promise<void> {
+    const [profile] = await this.fetchStaffProfiles(businessId, [userProfileId]);
+    const staffProfileId = profile?.id;
+    if (!staffProfileId) {
+      if (serviceIds.length === 0) return;
+      throw new BadRequestException('This team member cannot be assigned services');
+    }
+
+    const desired = Array.from(new Set(serviceIds.filter(Boolean)));
+
+    // Validate every service belongs to this business before we touch anything.
+    if (desired.length > 0) {
+      const { data: validRows, error: validError } = await this.admin
+        .schema('booking')
+        .from('services')
+        .select('id')
+        .eq('business_id', businessId)
+        .in('id', desired)
+        .returns<{ id: string }[]>();
+      if (validError) {
+        this.logger.error(`setStaffServiceEligibility validate failed: ${validError.message}`);
+        throw new InternalServerErrorException('Unable to validate services');
+      }
+      const validIds = new Set((validRows ?? []).map((row) => row.id));
+      if (desired.some((id) => !validIds.has(id))) {
+        throw new BadRequestException('One or more services are not valid for this business');
+      }
+    }
+
+    const { error } = await this.admin.schema('booking').rpc('set_staff_service_eligibility', {
+      p_business_id: businessId,
+      p_staff_profile_id: staffProfileId,
+      p_service_ids: desired,
+    });
+    if (error) {
+      this.logger.error(`set_staff_service_eligibility RPC failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to update service eligibility');
+    }
+  }
+
+  /**
+   * Maps each given staff_profile_id to the IDs of services it can perform.
+   * Junction lives in the booking schema while staff live in core, so this is a
+   * separate query (PostgREST cannot embed across schemas).
+   */
+  private async fetchServiceEligibilityByStaffProfile(
+    businessId: string,
+    staffProfileIds: string[],
+  ): Promise<Map<string, string[]>> {
+    const ids = Array.from(new Set(staffProfileIds.filter(Boolean)));
+    if (ids.length === 0) return new Map();
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('staff_service_eligibility')
+      .select('service_id,staff_profile_id')
+      .eq('business_id', businessId)
+      .in('staff_profile_id', ids)
+      .returns<{ service_id: string; staff_profile_id: string }[]>();
+    if (error) {
+      this.logger.error(`fetchServiceEligibilityByStaffProfile failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load service eligibility');
+    }
+    const byStaff = new Map<string, string[]>();
+    for (const row of data ?? []) {
+      const list = byStaff.get(row.staff_profile_id) ?? [];
+      list.push(row.service_id);
+      byStaff.set(row.staff_profile_id, list);
+    }
+    return byStaff;
   }
 
   private assertOwner(actor: AuthUser): void {
@@ -783,7 +873,11 @@ export class StaffService {
     const profileById = new Map(profiles.map((p) => [p.id, p]));
     const staffProfileByUser = new Map(staffProfiles.map((s) => [s.user_profile_id, s]));
     const locationById = new Map(locations.map((l) => [l.id, l]));
-    return this.toStaffMember(membership, profileById, staffProfileByUser, locationById);
+    const eligibilityByStaffProfile = await this.fetchServiceEligibilityByStaffProfile(
+      businessId,
+      staffProfiles.map((s) => s.id),
+    );
+    return this.toStaffMember(membership, profileById, staffProfileByUser, locationById, eligibilityByStaffProfile);
   }
 
   private toStaffMember(
@@ -791,6 +885,7 @@ export class StaffService {
     profileById: Map<string, UserProfileRow>,
     staffProfileByUser: Map<string, StaffProfileRow>,
     locationById: Map<string, BusinessLocationSummary>,
+    eligibilityByStaffProfile: Map<string, string[]>,
   ): StaffMember | null {
     const profile = profileById.get(membership.user_profile_id);
     if (!profile) return null;
@@ -819,6 +914,7 @@ export class StaffService {
             leaveNotes: staffProfile.leave_notes ?? undefined,
             colorHex: staffProfile.color_hex ?? undefined,
             bio: staffProfile.bio ?? undefined,
+            serviceIds: eligibilityByStaffProfile.get(staffProfile.id) ?? [],
           }
         : undefined,
       invitedAt: membership.invited_by_user_profile_id ? membership.created_at : undefined,

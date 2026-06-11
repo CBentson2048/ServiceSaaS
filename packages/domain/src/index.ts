@@ -627,6 +627,12 @@ export interface StaffMember {
     leaveNotes?: string;
     colorHex?: string;
     bio?: string;
+    /**
+     * IDs of the services this stylist is qualified to perform. Empty/undefined
+     * means the stylist has no service eligibility yet. See
+     * booking.staff_service_eligibility.
+     */
+    serviceIds?: string[];
   };
   invitedAt?: string;
   activatedAt?: string;
@@ -652,6 +658,12 @@ export interface UpdateStaffMemberRequest {
   contractedHours?: number;
   averageBillBenchmark?: number;
   leaveNotes?: string | null;
+  /**
+   * Full replacement set of services this stylist can perform. When provided,
+   * the stylist's service eligibility is replaced with exactly these IDs.
+   * Omit to leave eligibility unchanged.
+   */
+  serviceIds?: string[];
 }
 
 export interface UpdateStaffMemberResponse {
@@ -1784,6 +1796,15 @@ export interface ManagedService {
 }
 
 export interface ListManagedServicesResponse {
+  services: ManagedService[];
+}
+
+/**
+ * Active services that currently have no bookable stylist qualified to perform
+ * them. Surfaced as a dashboard warning so owners can assign stylists — an
+ * unassigned service cannot be booked.
+ */
+export interface UnassignedServicesResponse {
   services: ManagedService[];
 }
 

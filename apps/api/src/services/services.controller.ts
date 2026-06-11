@@ -5,6 +5,7 @@ import type {
   ListServiceCategoriesResponse,
   ManagedServiceResponse,
   ServiceCategoryResponse,
+  UnassignedServicesResponse,
 } from '@sheer/domain';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { RequireRoles, RolesGuard } from '../auth/roles.guard';
@@ -61,6 +62,12 @@ export class ServicesController {
   @Get()
   listServices(@CurrentUser() actor: AuthUser, @Query() query: ServiceQueryDto): Promise<ListManagedServicesResponse> {
     return this.services.listServices(actor, query);
+  }
+
+  // Services with no bookable stylist assigned — drives the dashboard warning.
+  @Get('unassigned')
+  listUnassignedServices(@CurrentUser() actor: AuthUser): Promise<UnassignedServicesResponse> {
+    return this.services.listServicesMissingStaff(actor);
   }
 
   @Post()

@@ -1,4 +1,6 @@
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBoolean,
   IsEmail,
   IsHexColor,
@@ -161,4 +163,12 @@ export class UpdateStaffMemberDto {
   @IsString()
   @MaxLength(1000)
   leaveNotes?: string | null;
+
+  // Full replacement set of services this stylist can perform. When present,
+  // eligibility is replaced with exactly these IDs; omit to leave unchanged.
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(500)
+  @IsUUID('all', { each: true })
+  serviceIds?: string[];
 }

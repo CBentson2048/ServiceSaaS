@@ -3,10 +3,11 @@ import { useEffect, useMemo, useState } from 'react';
 import type {
   BusinessLocationSummary,
   InvitableRole,
+  ManagedService,
   StaffMember,
   UpdateStaffMemberRequest,
 } from '@sheer/domain';
-import { ApiRequestError, updateStaffMember } from '../../auth/api';
+import { ApiRequestError, listServices, updateStaffMember } from '../../auth/api';
 import { SelectField, TextField } from '../onboarding/FormField';
 import { Modal } from './Modal';
 
@@ -31,6 +32,7 @@ interface EditForm {
   contractedHours: string;
   averageBillBenchmark: string;
   leaveNotes: string;
+  selectedServiceIds: string[];
 }
 
 export function EditStaffModal({
@@ -45,6 +47,28 @@ export function EditStaffModal({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [services, setServices] = useState<ManagedService[]>([]);
+  const [servicesLoading, setServicesLoading] = useState(false);
+
+  // Load the active service catalogue so a stylist's eligibility can be edited.
+  useEffect(() => {
+    if (!open || !accessToken) return;
+    let cancelled = false;
+    setServicesLoading(true);
+    listServices(accessToken, {})
+      .then((result) => {
+        if (!cancelled) setServices(result.services);
+      })
+      .catch(() => {
+        if (!cancelled) setServices([]);
+      })
+      .finally(() => {
+        if (!cancelled) setServicesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, accessToken]);
 
   useEffect(() => {
     if (!open || !staff) {
@@ -72,6 +96,7 @@ export function EditStaffModal({
           ? String(staff.staffProfile.averageBillBenchmark)
           : '0',
       leaveNotes: staff.staffProfile?.leaveNotes ?? '',
+      selectedServiceIds: staff.staffProfile?.serviceIds ?? [],
     });
     setErrors({});
     setSubmitError(null);
@@ -85,6 +110,18 @@ export function EditStaffModal({
       })),
     [locations],
   );
+
+  // Services grouped by category for the eligibility picker.
+  const serviceGroups = useMemo(() => {
+    const groups = new Map<string, ManagedService[]>();
+    for (const service of services) {
+      const key = service.category?.trim() || 'Uncategorised';
+      const list = groups.get(key) ?? [];
+      list.push(service);
+      groups.set(key, list);
+    }
+    return Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [services]);
 
   if (!staff || !form) {
     return (
@@ -129,6 +166,7 @@ export function EditStaffModal({
       contractedHours: form.role === 'stylist' ? Number(form.contractedHours) : undefined,
       averageBillBenchmark: form.role === 'stylist' ? Number(form.averageBillBenchmark) : undefined,
       leaveNotes: form.role === 'stylist' ? form.leaveNotes.trim() || null : undefined,
+      serviceIds: form.role === 'stylist' ? form.selectedServiceIds : undefined,
     };
     try {
       const result = await updateStaffMember(accessToken, staff.userProfileId, payload);
@@ -260,6 +298,87 @@ export function EditStaffModal({
               />
               Bookable on the schedule
             </label>
+
+            <div className="sm:col-span-2">
+              <div className="mb-1.5 flex items-center justify-between gap-2">
+                <span className="text-[12px] font-medium text-text-secondary">
+                  Services this stylist can perform
+                </span>
+                {services.length > 0 ? (
+                  <div className="flex items-center gap-2 text-[12px]">
+                    <span className="text-text-secondary">
+                      {form.selectedServiceIds.length} selected
+                    </span>
+                    <button
+                      type="button"
+                      className="font-medium text-primary hover:text-primary-deep"
+                      onClick={() =>
+                        setForm({ ...form, selectedServiceIds: services.map((s) => s.id) })
+                      }
+                    >
+                      Select all
+                    </button>
+                    <button
+                      type="button"
+                      className="font-medium text-text-secondary hover:text-text-primary"
+                      onClick={() => setForm({ ...form, selectedServiceIds: [] })}
+                    >
+                      Clear
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+
+              {servicesLoading ? (
+                <div className="rounded-input-lg border border-border bg-surface-alt px-3 py-4 text-[13px] text-text-secondary">
+                  Loading services…
+                </div>
+              ) : services.length === 0 ? (
+                <div className="rounded-input-lg border border-border bg-surface-alt px-3 py-4 text-[13px] text-text-secondary">
+                  No active services yet. Create services first, then assign them here.
+                </div>
+              ) : (
+                <div className="max-h-56 overflow-y-auto rounded-input-lg border border-border-strong bg-surface">
+                  {serviceGroups.map(([category, groupServices]) => (
+                    <div key={category} className="border-b border-border last:border-b-0">
+                      <div className="bg-surface-alt px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-secondary">
+                        {category}
+                      </div>
+                      {groupServices.map((service) => {
+                        const checked = form.selectedServiceIds.includes(service.id);
+                        return (
+                          <label
+                            key={service.id}
+                            className="flex cursor-pointer items-center gap-2 px-3 py-2 text-[13px] text-text-primary transition hover:bg-surface-alt"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(event) =>
+                                setForm({
+                                  ...form,
+                                  selectedServiceIds: event.target.checked
+                                    ? [...form.selectedServiceIds, service.id]
+                                    : form.selectedServiceIds.filter((id) => id !== service.id),
+                                })
+                              }
+                              className="h-4 w-4 rounded border-border-strong text-primary focus:ring-primary"
+                            />
+                            <span className="flex-1">{service.name}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {!servicesLoading && services.length > 0 && form.selectedServiceIds.length === 0 ? (
+                <p className="mt-1.5 text-[12px] text-warning">
+                  No services selected — this stylist won&apos;t be bookable for anything until you pick at least one.
+                </p>
+              ) : null}
+            </div>
           </div>
         ) : null}
 

@@ -7,6 +7,7 @@ import {
   createService,
   listServiceCategories,
   listServices,
+  listUnassignedServices,
   updateService,
 } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
@@ -46,6 +47,7 @@ export function ServicesPage() {
   const isOwner = role === 'owner';
   const canManage = role === 'owner' || role === 'manager';
   const [services, setServices] = useState<ManagedService[]>([]);
+  const [unassignedServices, setUnassignedServices] = useState<ManagedService[]>([]);
   const [categories, setCategories] = useState<ServiceCategory[]>([]);
   const [search, setSearch] = useState('');
   const [includeInactive, setIncludeInactive] = useState(false);
@@ -61,12 +63,14 @@ export function ServicesPage() {
     setLoading(true);
     setError(null);
     try {
-      const [serviceResult, categoryResult] = await Promise.all([
+      const [serviceResult, categoryResult, unassignedResult] = await Promise.all([
         listServices(accessToken, { includeInactive }),
         listServiceCategories(accessToken, {}),
+        listUnassignedServices(accessToken),
       ]);
       setServices(serviceResult.services);
       setCategories(categoryResult.categories);
+      setUnassignedServices(unassignedResult.services);
     } catch (err: unknown) {
       if (err instanceof ApiRequestError) setError(err.message);
       else if (err instanceof Error) setError(err.message);
@@ -75,6 +79,18 @@ export function ServicesPage() {
       setLoading(false);
     }
   }, [accessToken, includeInactive]);
+
+  // Refresh just the unassigned-services warning (cheaper than a full reload) —
+  // a newly created service is always unassigned, and archiving can clear one.
+  const refreshUnassigned = useCallback(async () => {
+    if (!accessToken) return;
+    try {
+      const result = await listUnassignedServices(accessToken);
+      setUnassignedServices(result.services);
+    } catch {
+      // Non-critical; the banner just keeps its previous state.
+    }
+  }, [accessToken]);
 
   useEffect(() => {
     void reload();
@@ -164,6 +180,7 @@ export function ServicesPage() {
         ? await updateService(accessToken, form.id, payload)
         : await createService(accessToken, payload);
       setServices((current) => upsertService(current, result.service, includeInactive));
+      void refreshUnassigned();
       setActionMessage(`${result.service.name} ${form.id ? 'updated' : 'created'}.`);
       closeForm();
     } catch (err: unknown) {
@@ -181,6 +198,7 @@ export function ServicesPage() {
     try {
       const result = await archiveService(accessToken, service.id);
       setServices((current) => upsertService(current, result.service, includeInactive));
+      void refreshUnassigned();
       setActionMessage(`${service.name} archived.`);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not archive service');
@@ -208,6 +226,39 @@ export function ServicesPage() {
           </button>
         ) : null}
       </header>
+
+      {unassignedServices.length > 0 ? (
+        (() => {
+          const count = unassignedServices.length;
+          const names = unassignedServices.slice(0, 3).map((s) => s.name).join(', ');
+          const extra = count > 3 ? `, +${count - 3} more` : '';
+          const lead = (
+            <>
+              <span className="font-semibold">
+                {count} unassigned service{count === 1 ? '' : 's'}
+              </span>{' '}
+              — no bookable stylist can perform {count === 1 ? 'it' : 'them'}, so{' '}
+              {count === 1 ? 'it is' : 'they are'} not bookable ({names}
+              {extra}).
+            </>
+          );
+          const banner =
+            'mb-4 flex items-start gap-3 rounded-input-lg border border-warning-border bg-warning-soft px-4 py-3 text-[13px] text-warning';
+          // /team is owner-only, so only owners get the actionable link; managers
+          // get an FYI pointing them at an owner.
+          return isOwner ? (
+            <Link to="/team" className={`${banner} transition hover:brightness-95`}>
+              <span aria-hidden className="mt-0.5 text-[15px] leading-none">⚠</span>
+              <span>{lead} Assign stylists in Team →</span>
+            </Link>
+          ) : (
+            <div className={banner}>
+              <span aria-hidden className="mt-0.5 text-[15px] leading-none">⚠</span>
+              <span>{lead} Ask an owner to assign stylists.</span>
+            </div>
+          );
+        })()
+      ) : null}
 
       {actionMessage ? (
         <div className="mb-4 rounded-input-lg border border-success-border bg-success-soft px-4 py-3 text-[13px] text-success">

@@ -49,6 +49,7 @@ import type {
   ListInventoryStockResponse,
   ListManagedServicesResponse,
   ManagedServiceResponse,
+  UnassignedServicesResponse,
   ListServiceCategoriesResponse,
   ServiceCategoryResponse,
   CreateServiceCategoryRequest,
@@ -844,6 +845,13 @@ export async function listServices(
   if (params.includeInactive) search.set('includeInactive', 'true');
   const query = search.toString();
   return request<ListManagedServicesResponse>(`/services${query ? `?${query}` : ''}`, { accessToken });
+}
+
+/** Active services with no bookable stylist assigned — drives the dashboard warning. */
+export async function listUnassignedServices(
+  accessToken: string,
+): Promise<UnassignedServicesResponse> {
+  return request<UnassignedServicesResponse>('/services/unassigned', { accessToken });
 }
 
 export async function createService(

@@ -17,6 +17,7 @@ import type {
   ManagedServiceResponse,
   ServiceCategory,
   ServiceCategoryResponse,
+  UnassignedServicesResponse,
 } from '@sheer/domain';
 import type {
   CreateServiceCategoryDto,
@@ -288,6 +289,73 @@ export class ServicesService {
     }
     if (!data) throw new NotFoundException('Service not found');
     return this.respondWithService(actor.businessId, data);
+  }
+
+  /**
+   * Active services that have no bookable stylist qualified to perform them.
+   * Surfaced as a dashboard warning so owners can assign stylists — a service
+   * with no eligible stylist cannot be booked. A service counts as "covered"
+   * only when at least one of its eligible stylists is currently bookable.
+   */
+  async listServicesMissingStaff(actor: AuthUser): Promise<UnassignedServicesResponse> {
+    this.assertManagerOrOwner(actor);
+
+    const { data: serviceRows, error: serviceError } = await this.admin
+      .schema('booking')
+      .from('services')
+      .select(SERVICE_COLUMNS)
+      .eq('business_id', actor.businessId)
+      .eq('is_active', true)
+      .order('sort_order', { ascending: true })
+      .order('name', { ascending: true })
+      .returns<ServiceRow[]>();
+    if (serviceError) {
+      this.logger.error(`listServicesMissingStaff services failed: ${serviceError.message}`);
+      throw new InternalServerErrorException('Unable to load services');
+    }
+    const rows = serviceRows ?? [];
+    if (rows.length === 0) return { services: [] };
+
+    const [{ data: staffRows, error: staffError }, { data: eligibilityRows, error: eligibilityError }] =
+      await Promise.all([
+        this.admin
+          .schema('core')
+          .from('staff_profiles')
+          .select('id')
+          .eq('business_id', actor.businessId)
+          .eq('is_bookable', true)
+          .neq('employment_status', 'terminated')
+          .returns<{ id: string }[]>(),
+        this.admin
+          .schema('booking')
+          .from('staff_service_eligibility')
+          .select('service_id,staff_profile_id')
+          .eq('business_id', actor.businessId)
+          .returns<{ service_id: string; staff_profile_id: string }[]>(),
+      ]);
+    if (staffError) {
+      this.logger.error(`listServicesMissingStaff staff failed: ${staffError.message}`);
+      throw new InternalServerErrorException('Unable to load stylists');
+    }
+    if (eligibilityError) {
+      this.logger.error(`listServicesMissingStaff eligibility failed: ${eligibilityError.message}`);
+      throw new InternalServerErrorException('Unable to load stylist eligibility');
+    }
+
+    const bookableStaffIds = new Set((staffRows ?? []).map((row) => row.id));
+    const coveredServiceIds = new Set<string>();
+    for (const row of eligibilityRows ?? []) {
+      if (bookableStaffIds.has(row.staff_profile_id)) coveredServiceIds.add(row.service_id);
+    }
+
+    const missing = rows.filter((row) => !coveredServiceIds.has(row.id));
+    if (missing.length === 0) return { services: [] };
+
+    const [currencyCode, categoryNames] = await Promise.all([
+      this.fetchBusinessCurrency(actor.businessId),
+      this.fetchCategoryNames(actor.businessId, missing.map((row) => row.service_category_id)),
+    ]);
+    return { services: missing.map((row) => toService(row, currencyCode, categoryNames)) };
   }
 
   // --- Helpers --------------------------------------------------------------
