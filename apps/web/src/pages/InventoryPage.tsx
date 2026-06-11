@@ -278,14 +278,12 @@ export function InventoryPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-7xl px-4 py-6 lg:px-8">
-      <header className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-[22px] font-semibold leading-7 text-text-primary">Inventory</h1>
-          <p className="mt-1 text-[13px] text-text-secondary">
-            Manage catalogue products, location stock, low-stock thresholds, and auditable movements.
-          </p>
-        </div>
+    <>
+      <h2 className="sr-only">Products</h2>
+      <header className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-[13px] text-text-secondary">
+          Manage catalogue products, location stock, low-stock thresholds, and auditable movements.
+        </p>
         <button
           type="button"
           className="inline-flex h-10 items-center gap-2 rounded-pill border border-border-strong bg-surface px-5 text-[13px] font-semibold text-text-primary transition hover:bg-surface-alt disabled:opacity-50"
@@ -680,7 +678,7 @@ export function InventoryPage() {
           </div>
         </section>
       ) : null}
-    </div>
+    </>
   );
 }
 

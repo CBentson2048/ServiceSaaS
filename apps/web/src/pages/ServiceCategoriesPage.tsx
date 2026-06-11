@@ -133,14 +133,12 @@ export function ServiceCategoriesPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-4 py-6 lg:px-8">
-      <header className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-[22px] font-semibold leading-7 text-text-primary">Service categories</h1>
-          <p className="mt-1 text-[13px] text-text-secondary">
-            Organise your bookable services (e.g. Hair Colour, Barbering). Separate from product categories.
-          </p>
-        </div>
+    <>
+      <h2 className="sr-only">Service categories</h2>
+      <header className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-[13px] text-text-secondary">
+          Organise your bookable services (e.g. Hair Colour, Barbering). Separate from product categories.
+        </p>
         {canManage ? (
           <button
             type="button"
@@ -297,7 +295,7 @@ export function ServiceCategoriesPage() {
           </table>
         )}
       </section>
-    </div>
+    </>
   );
 }
 

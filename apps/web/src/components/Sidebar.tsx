@@ -20,12 +20,10 @@ const NAV: NavEntry[] = [
   { to: '/dashboard', label: 'Dashboard', icon: DashboardIcon, end: true },
   { to: '/bookings', label: 'Appointment Book', icon: CalendarIcon, end: true },
   { to: '/bookings/new', label: 'New booking', icon: PlusIcon, allowedRoles: ['owner', 'manager'] },
-  { to: '/services', label: 'Services', icon: ScissorsIcon, end: true, allowedRoles: ['owner', 'manager'] },
-  { to: '/services/categories', label: 'Service categories', icon: TagIcon, allowedRoles: ['owner', 'manager'] },
+  { to: '/services', label: 'Service management', icon: ScissorsIcon, allowedRoles: ['owner', 'manager'] },
   { to: '/crm', label: 'Client Hub', icon: CrmIcon },
   { to: '/rota', label: 'Rota', icon: ClockIcon },
-  { to: '/inventory', label: 'Inventory', icon: BoxIcon, end: true, allowedRoles: ['owner', 'manager'] },
-  { to: '/inventory/categories', label: 'Product categories', icon: TagIcon, allowedRoles: ['owner', 'manager'] },
+  { to: '/inventory', label: 'Product management', icon: BoxIcon, allowedRoles: ['owner', 'manager'] },
   { to: '/sheer-lab', label: 'Sheer Lab', icon: BeakerIcon },
   { to: '/performance', label: 'Performance', icon: ChartIcon, allowedRoles: ['owner', 'manager'] },
   { to: '/commission', label: 'Commission', icon: PercentIcon },
@@ -299,15 +297,6 @@ function BoxIcon(props: SVGProps<SVGSVGElement>) {
     <Svg {...props}>
       <path d="M3.5 6.5 10 3l6.5 3.5v7L10 17l-6.5-3.5v-7Z" />
       <path d="M3.5 6.5 10 10l6.5-3.5M10 10v7" />
-    </Svg>
-  );
-}
-
-function TagIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <Svg {...props}>
-      <path d="M3.5 3.5h6l7 7-6 6-7-7v-6Z" />
-      <circle cx="6.75" cy="6.75" r="1" />
     </Svg>
   );
 }

@@ -1,7 +1,6 @@
 import { Redirect } from 'expo-router';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
-import { palette, spacing } from '@sheer/design-tokens';
 import type { UserRole } from '@sheer/domain';
+import { AppLoadingScreen } from '../components/AppLoadingScreen';
 import { useAuth } from './AuthProvider';
 
 export function ProtectedScreen({
@@ -14,12 +13,7 @@ export function ProtectedScreen({
   const auth = useAuth();
 
   if (auth.status === 'bootstrapping') {
-    return (
-      <View style={styles.loading}>
-        <ActivityIndicator color={palette.brand[300]} />
-        <Text style={styles.loadingText}>Restoring your QLOOQO session...</Text>
-      </View>
-    );
+    return <AppLoadingScreen />;
   }
 
   if (!auth.user) {
@@ -32,16 +26,3 @@ export function ProtectedScreen({
 
   return <>{children}</>;
 }
-
-const styles = StyleSheet.create({
-  loading: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.sm,
-    backgroundColor: palette.ink[950],
-  },
-  loadingText: {
-    color: 'rgba(255,255,255,0.72)',
-  },
-});

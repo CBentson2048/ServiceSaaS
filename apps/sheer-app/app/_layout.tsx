@@ -26,7 +26,7 @@ export default function RootLayout() {
               headerTitleStyle: { fontWeight: '600' },
             }}
           >
-            <Stack.Screen name="index" options={{ title: 'QLOOQO' }} />
+            <Stack.Screen name="index" options={{ headerShown: false }} />
             <Stack.Screen name="login" options={{ title: 'Sign in' }} />
             <Stack.Screen name="dashboard" options={{ headerShown: false }} />
             <Stack.Screen name="client/visits" options={{ headerShown: false }} />

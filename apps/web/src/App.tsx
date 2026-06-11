@@ -19,6 +19,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { EditLocationPage } from './pages/EditLocationPage';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
 import { InventoryCategoriesPage } from './pages/InventoryCategoriesPage';
+import { InventoryManagementPage } from './pages/InventoryManagementPage';
 import { InventoryPage } from './pages/InventoryPage';
 import { LandingPage } from './pages/LandingPage';
 import { LocationDetailPage } from './pages/LocationDetailPage';
@@ -34,6 +35,7 @@ import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { RotaPage } from './pages/RotaPage';
 import { NewWeekRotaPage } from './pages/NewWeekRotaPage';
 import { ServiceCategoriesPage } from './pages/ServiceCategoriesPage';
+import { ServiceManagementPage } from './pages/ServiceManagementPage';
 import { ServicesPage } from './pages/ServicesPage';
 import { SheerLabPage } from './pages/SheerLabPage';
 import { TeamPage } from './pages/TeamPage';
@@ -81,10 +83,14 @@ export function App() {
           <Route path="/crm/clients/:id" element={<CrmClientDetailPage />} />
           <Route path="/rota" element={<RotaPage />} />
           <Route path="/rota/new-week" element={<NewWeekRotaPage />} />
-          <Route path="/services" element={<ServicesPage />} />
-          <Route path="/services/categories" element={<ServiceCategoriesPage />} />
-          <Route path="/inventory" element={<InventoryPage />} />
-          <Route path="/inventory/categories" element={<InventoryCategoriesPage />} />
+          <Route path="/services" element={<ServiceManagementPage />}>
+            <Route index element={<ServicesPage />} />
+            <Route path="categories" element={<ServiceCategoriesPage />} />
+          </Route>
+          <Route path="/inventory" element={<InventoryManagementPage />}>
+            <Route index element={<InventoryPage />} />
+            <Route path="categories" element={<InventoryCategoriesPage />} />
+          </Route>
           <Route path="/sheer-lab" element={<SheerLabPage />} />
           <Route path="/performance" element={<PerformancePage />} />
           <Route path="/commission" element={<CommissionPage />} />

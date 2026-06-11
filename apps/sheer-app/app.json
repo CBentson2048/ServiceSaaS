@@ -21,7 +21,7 @@
       "package": "com.qlooqo.app",
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon.png",
-        "backgroundColor": "#A020F0"
+        "backgroundColor": "#4A1828"
       }
     },
     "web": {
@@ -35,9 +35,15 @@
         "expo-splash-screen",
         {
           "image": "./assets/icon.png",
-          "imageWidth": 200,
+          "imageWidth": 300,
           "resizeMode": "contain",
-          "backgroundColor": "#A020F0"
+          "backgroundColor": "#4A1828",
+          "dark": {
+            "image": "./assets/icon.png",
+            "imageWidth": 300,
+            "resizeMode": "contain",
+            "backgroundColor": "#3A1320"
+          }
         }
       ],
       [

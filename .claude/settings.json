@@ -190,7 +190,19 @@
       "Bash(node /tmp/flatten-icon.js)",
       "Bash(sips -g pixelWidth -g pixelHeight -g hasAlpha apps/sheer-app/assets/icon.png)",
       "Bash(NODE_PATH=/Users/shiny/Documents/Sheer/sheer-platform/node_modules node /tmp/flatten-icon.js)",
-      "Bash(sips -g pixelWidth -g pixelHeight -g hasAlpha -g format /Users/shiny/Documents/Sheer/sheer-platform/apps/sheer-app/assets/icon.png)"
+      "Bash(sips -g pixelWidth -g pixelHeight -g hasAlpha -g format /Users/shiny/Documents/Sheer/sheer-platform/apps/sheer-app/assets/icon.png)",
+      "Bash(node -e \"const c=require\\('./app.json'\\); const s=c.expo.plugins.find\\(p=>Array.isArray\\(p\\)&&p[0]==='expo-splash-screen'\\)[1]; console.log\\('app.json: valid ✓'\\); console.log\\('splash bg:', s.backgroundColor, '| imageWidth:', s.imageWidth, '| dark bg:', s.dark.backgroundColor\\); console.log\\('adaptiveIcon bg:', c.expo.android.adaptiveIcon.backgroundColor\\);\")",
+      "Bash(echo \"=== tsc exit: $? ===\")",
+      "Bash(echo \"=== eslint exit: $? ===\")",
+      "Bash(pnpm --filter @sheer/sheer-app exec eslint app/index.tsx src/auth/ProtectedScreen.tsx src/components/AppLoadingScreen.tsx)",
+      "Bash(sed -n '280,300p' src/pages/InventoryPage.tsx)",
+      "Bash(sed -n '135,160p' src/pages/InventoryCategoriesPage.tsx)",
+      "Bash(node -e \"console.log\\(require\\('/Users/shiny/Documents/Sheer/sheer-platform/apps/web/node_modules/react-router-dom/package.json'\\).version\\)\")",
+      "Bash(node -e \"console.log\\('react-router-dom', require\\('/Users/shiny/Documents/Sheer/sheer-platform/node_modules/react-router-dom/package.json'\\).version\\); console.log\\('react-router', require\\('/Users/shiny/Documents/Sheer/sheer-platform/node_modules/react-router/package.json'\\).version\\)\")",
+      "Bash(python3 -)",
+      "Bash(echo \"exit=$?\")",
+      "Bash(gh pr *)",
+      "Bash(echo \"typecheck exit=$?\")"
     ],
     "additionalDirectories": [
       "/Users/shiny/Documents/Sheer/sheer-platform/apps/web/src/auth",
