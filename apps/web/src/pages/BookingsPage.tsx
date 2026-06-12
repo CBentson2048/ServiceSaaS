@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState, type SVGProps } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode, type SVGProps } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type {
   AppointmentBillingTax,
   AppointmentCompletionResponse,
   CreateStylistRebookingRequest,
+  RotaStaffSummary,
   StaffBookingSummary,
   WeeklyRotaResponse,
 } from '@sheer/domain';
@@ -11,6 +12,8 @@ import { AppButton, AppCard, Pill, StatusBadge } from '../design';
 import {
   acceptBooking,
   ApiRequestError,
+  cancelBooking,
+  checkInBooking,
   completeBooking,
   confirmBookingPayment,
   createStylistRebooking,
@@ -18,6 +21,7 @@ import {
   listBookings,
   markRotaAbsence,
   rejectBooking,
+  rescheduleBooking,
 } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
 import { useLocationScope } from '../components/LocationScopeContext';
@@ -29,8 +33,6 @@ import {
 import { WeekStrip } from '../components/bookings/WeekStrip';
 import type { CalendarToolbarKey, CalendarToolbarState } from '../components/bookings/CalendarToolbar';
 import { isSameLocalDay, snapToMonday, toIsoDate } from '../components/rota/dateUtils';
-
-type StatusTone = 'success' | 'warning' | 'danger' | 'neutral';
 
 export function BookingsPage() {
   const auth = useAuth();
@@ -51,6 +53,9 @@ export function BookingsPage() {
   const [rebookingLoading, setRebookingLoading] = useState(false);
   const [rebookingSkipped, setRebookingSkipped] = useState<Record<string, boolean>>({});
   const [reviewLoadingId, setReviewLoadingId] = useState<string | null>(null);
+  const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
+  const [rescheduleTarget, setRescheduleTarget] = useState<StaffBookingSummary | null>(null);
+  const [rescheduleLoading, setRescheduleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const isReviewer = auth.user?.role === 'owner' || auth.user?.role === 'manager';
@@ -114,6 +119,88 @@ export function BookingsPage() {
         else setError('Could not complete booking');
       } finally {
         setCompletionLoadingId(null);
+      }
+    },
+    [accessToken],
+  );
+
+  const handleCheckIn = useCallback(
+    async (booking: StaffBookingSummary) => {
+      if (!accessToken || actionLoadingId) return;
+      setActionLoadingId(booking.id);
+      setCheckoutMessage(null);
+      setError(null);
+      try {
+        const result = await checkInBooking(accessToken, booking.id);
+        setBookings((current) =>
+          current.map((entry) => (entry.id === booking.id ? { ...entry, ...result.appointment } : entry)),
+        );
+        setCheckoutMessage(
+          `${result.appointment.clientDisplayName} is checked in. Their stylist will see them marked as arrived on the book.`,
+        );
+      } catch (err: unknown) {
+        if (err instanceof ApiRequestError) setError(err.message);
+        else if (err instanceof Error) setError(err.message);
+        else setError('Could not check in the client');
+      } finally {
+        setActionLoadingId(null);
+      }
+    },
+    [accessToken, actionLoadingId],
+  );
+
+  const handleCancelBooking = useCallback(
+    async (booking: StaffBookingSummary) => {
+      if (!accessToken || actionLoadingId) return;
+      const reason = window.prompt(
+        `Cancel ${booking.clientDisplayName}'s appointment? Add an optional reason (the client will be notified and any deposit refunded):`,
+        '',
+      );
+      // `null` means the prompt was dismissed — abort. An empty string is a valid "no reason".
+      if (reason === null) return;
+      setActionLoadingId(booking.id);
+      setCheckoutMessage(null);
+      setError(null);
+      try {
+        const result = await cancelBooking(accessToken, booking.id, { reason: reason.trim() || undefined });
+        setBookings((current) =>
+          current.map((entry) => (entry.id === booking.id ? { ...entry, ...result.appointment } : entry)),
+        );
+        const refundNote = result.depositRefunded
+          ? ' Deposit refunded.'
+          : result.refundError
+            ? ` Deposit refund failed: ${result.refundError}`
+            : '';
+        setCheckoutMessage(`Cancelled ${result.appointment.clientDisplayName}'s appointment.${refundNote}`);
+      } catch (err: unknown) {
+        if (err instanceof ApiRequestError) setError(err.message);
+        else if (err instanceof Error) setError(err.message);
+        else setError('Could not cancel the appointment');
+      } finally {
+        setActionLoadingId(null);
+      }
+    },
+    [accessToken, actionLoadingId],
+  );
+
+  const handleReschedule = useCallback(
+    async (booking: StaffBookingSummary, scheduledStartAt: string, staffProfileId?: string) => {
+      if (!accessToken) return;
+      setRescheduleLoading(true);
+      setError(null);
+      try {
+        const result = await rescheduleBooking(accessToken, booking.id, { scheduledStartAt, staffProfileId });
+        setBookings((current) =>
+          current.map((entry) => (entry.id === booking.id ? { ...entry, ...result.appointment } : entry)),
+        );
+        setRescheduleTarget(null);
+        setCheckoutMessage(`Moved ${result.appointment.clientDisplayName}'s appointment to ${formatDateTime(result.appointment.startsAt)}.`);
+      } catch (err: unknown) {
+        if (err instanceof ApiRequestError) setError(err.message);
+        else if (err instanceof Error) setError(err.message);
+        else setError('Could not reschedule the appointment');
+      } finally {
+        setRescheduleLoading(false);
       }
     },
     [accessToken],
@@ -327,14 +414,6 @@ export function BookingsPage() {
     [bookings],
   );
 
-  const selectedBooking = useMemo(
-    () => (selectedBookingId ? bookings.find((booking) => booking.id === selectedBookingId) ?? null : null),
-    [bookings, selectedBookingId],
-  );
-
-  const showSelectedStrip =
-    selectedBooking && (!checkoutSummary || checkoutSummary.appointment.id !== selectedBooking.id);
-
   // The location picker now lives at the bottom of the nav sidebar; only the
   // refresh control is docked to the calendar toolbar.
   const calendarControls = (
@@ -371,26 +450,56 @@ export function BookingsPage() {
         />
       ) : null}
 
-      {checkoutSummary ? (
-        <CheckoutPanel
-          summary={checkoutSummary}
-          paymentMethod={paymentMethod}
-          paymentLoading={paymentLoadingId === checkoutSummary.appointment.id}
-          onPaymentMethodChange={setPaymentMethod}
-          onConfirmPayment={() => void handleConfirmPayment(checkoutSummary)}
-          rebookingLoading={rebookingLoading}
-          rebookingSkipped={Boolean(rebookingSkipped[checkoutSummary.appointment.id])}
-          onSkipRebooking={() =>
-            setRebookingSkipped((current) => ({ ...current, [checkoutSummary.appointment.id]: true }))
-          }
-          onCreateRebooking={(payload) => void handleCreateRebooking(checkoutSummary, payload)}
-          onClose={handleCloseCheckout}
-        />
+      {completionLoadingId && !checkoutSummary ? (
+        <ModalScrim label="Opening checkout">
+          <AppCard elevation="hero" padding="lg" className="rounded-card-lg">
+            <div className="flex items-center justify-center gap-3 py-4 text-[14px] font-medium text-text-secondary">
+              <span
+                className="h-4 w-4 animate-spin rounded-full border-2 border-border border-t-primary"
+                aria-hidden
+              />
+              Preparing checkout…
+            </div>
+          </AppCard>
+        </ModalScrim>
       ) : null}
 
-      {/* Calendar + timetable claim the full page width. The day agenda panel
-          was removed; appointments are selected directly on the board, and the
-          location picker / refresh now live in the calendar toolbar. */}
+      {checkoutSummary ? (
+        <ModalScrim onClose={handleCloseCheckout} label="Checkout">
+          <CheckoutPanel
+            summary={checkoutSummary}
+            paymentMethod={paymentMethod}
+            paymentLoading={paymentLoadingId === checkoutSummary.appointment.id}
+            onPaymentMethodChange={setPaymentMethod}
+            onConfirmPayment={() => void handleConfirmPayment(checkoutSummary)}
+            rebookingLoading={rebookingLoading}
+            rebookingSkipped={Boolean(rebookingSkipped[checkoutSummary.appointment.id])}
+            onSkipRebooking={() =>
+              setRebookingSkipped((current) => ({ ...current, [checkoutSummary.appointment.id]: true }))
+            }
+            onCreateRebooking={(payload) => void handleCreateRebooking(checkoutSummary, payload)}
+            onClose={handleCloseCheckout}
+          />
+        </ModalScrim>
+      ) : null}
+
+      {rescheduleTarget ? (
+        <ModalScrim onClose={() => setRescheduleTarget(null)} label="Reschedule appointment">
+          <RescheduleModal
+            booking={rescheduleTarget}
+            staff={rota?.staff ?? []}
+            loading={rescheduleLoading}
+            onSubmit={(scheduledStartAt, staffProfileId) =>
+              void handleReschedule(rescheduleTarget, scheduledStartAt, staffProfileId)
+            }
+            onClose={() => setRescheduleTarget(null)}
+          />
+        </ModalScrim>
+      ) : null}
+
+      {/* Calendar + timetable claim the full page width. Appointments are acted
+          on directly from the board: clicking a tile opens an action menu (check
+          in / out, edit, cancel). The location picker / refresh live in the toolbar. */}
       <div className="flex flex-col gap-4">
         <WeekStrip
           day={day}
@@ -399,15 +508,6 @@ export function BookingsPage() {
           onToggleToolbar={toggleToolbar}
           toolbarTrailing={calendarControls}
         />
-
-        {showSelectedStrip && selectedBooking ? (
-          <SelectedBookingStrip
-            booking={selectedBooking}
-            completing={completionLoadingId === selectedBooking.id}
-            onComplete={() => void handleComplete(selectedBooking)}
-            onClose={() => setSelectedBookingId(null)}
-          />
-        ) : null}
 
         {!selectedLocationId ? (
           <AppCard padding="none" elevation="card">
@@ -431,6 +531,11 @@ export function BookingsPage() {
             bookings={calendarBookings}
             selectedBookingId={selectedBookingId}
             onSelectBooking={(booking) => setSelectedBookingId(booking.id)}
+            onCheckIn={(booking) => void handleCheckIn(booking)}
+            onCheckOut={(booking) => void handleComplete(booking)}
+            onEditBooking={(booking) => setRescheduleTarget(booking)}
+            // Cancelling refunds the deposit, so it's an owner/manager action (mirrors reject).
+            onCancelBooking={isReviewer ? (booking) => void handleCancelBooking(booking) : undefined}
             showAllTeamMembers={toolbar.showAllTeamMembers}
             showTimeline={toolbar.showTimeline}
             onAddAppointment={handleAddAppointment}
@@ -497,69 +602,129 @@ function PendingRequestsPanel({
   );
 }
 
-function SelectedBookingStrip({
-  booking,
-  completing,
-  onComplete,
-  onClose,
-}: {
-  booking: StaffBookingSummary;
-  completing: boolean;
-  onComplete: () => void;
-  onClose: () => void;
-}) {
+// Centered modal scaffold used for the checkout "payment screen" and the
+// reschedule editor. Clicking the dimmed backdrop closes it; clicks inside the
+// card are kept. Tall content scrolls within the overlay rather than the page.
+function ModalScrim({ onClose, label, children }: { onClose?: () => void; label: string; children: ReactNode }) {
   return (
-    <AppCard elevation="card" className="mb-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="truncate text-[14px] font-medium text-text-primary">{booking.clientDisplayName}</span>
-            <StatusBadge label={formatStatus(booking.status)} tone={statusTone(booking.status)} />
-          </div>
-          <div className="mt-0.5 truncate text-[12px] text-text-secondary">
-            {(booking.serviceNames.join(', ') || 'Service')} · {formatTime(booking.startsAt)} – {formatTime(booking.endsAt)}
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <CompleteButton booking={booking} completing={completing} onComplete={onComplete} />
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Clear selection"
-            className="inline-flex h-8 w-8 items-center justify-center rounded-pill border border-border text-text-secondary transition hover:bg-surface-alt hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
-          >
-            <CloseIcon className="h-4 w-4" />
-          </button>
+    <div
+      className="fixed inset-0 z-50 overflow-y-auto bg-black/40"
+      role="dialog"
+      aria-modal="true"
+      aria-label={label}
+      onClick={onClose}
+    >
+      <div className="flex min-h-full items-start justify-center p-4 sm:items-center">
+        <div className="relative z-10 my-4 w-full max-w-2xl" onClick={(event) => event.stopPropagation()}>
+          {children}
         </div>
       </div>
-    </AppCard>
+    </div>
   );
 }
 
-function CompleteButton({
+// Reschedule / reassign editor: pick a new start time and (optionally) move the
+// appointment to another stylist. Services and price are unchanged here (V2).
+function RescheduleModal({
   booking,
-  completing,
-  onComplete,
-  fullWidth = false,
+  staff,
+  loading,
+  onSubmit,
+  onClose,
 }: {
   booking: StaffBookingSummary;
-  completing: boolean;
-  onComplete: () => void;
-  fullWidth?: boolean;
+  staff: RotaStaffSummary[];
+  loading: boolean;
+  onSubmit: (scheduledStartAt: string, staffProfileId?: string) => void;
+  onClose: () => void;
 }) {
-  const completionLocked = isCompletionLocked(booking.status);
-  const label = booking.status === 'awaiting_payment' ? 'Open checkout' : booking.status === 'paid' ? 'Paid' : 'Complete';
+  const [startAt, setStartAt] = useState(() => toDatetimeLocalValue(new Date(booking.startsAt)));
+  const [staffProfileId, setStaffProfileId] = useState(booking.assignedStaffProfileId ?? '');
+
+  // Build options so the controlled <select> value always has a matching <option>
+  // (otherwise the browser shows the first stylist while state stays '' and the
+  // manager's pick is silently dropped). An unassigned booking keeps a real ''
+  // "Unassigned" option; an off-rota assigned stylist stays selectable so a pure
+  // time change never reassigns the booking.
+  const options = useMemo(() => {
+    const list = staff.map((member) => ({
+      id: member.staffProfileId,
+      name: member.displayName || member.fullName || 'Stylist',
+    }));
+    if (booking.assignedStaffProfileId && !list.some((option) => option.id === booking.assignedStaffProfileId)) {
+      list.unshift({ id: booking.assignedStaffProfileId, name: 'Current stylist' });
+    }
+    if (!booking.assignedStaffProfileId) {
+      list.unshift({ id: '', name: 'Unassigned' });
+    }
+    return list;
+  }, [staff, booking.assignedStaffProfileId]);
+
+  function submit() {
+    const iso = toIsoFromLocalInput(startAt);
+    if (!iso) return;
+    onSubmit(iso, staffProfileId || undefined);
+  }
+
   return (
-    <AppButton
-      size="sm"
-      variant={booking.status === 'awaiting_payment' ? 'primary' : 'secondary'}
-      fullWidth={fullWidth}
-      loading={completing}
-      disabled={completionLocked}
-      onClick={onComplete}
-    >
-      {label}
-    </AppButton>
+    <AppCard elevation="hero" padding="lg" className="rounded-card-lg">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[15px] font-semibold text-text-primary">Edit appointment</div>
+          <div className="mt-1 truncate text-[13px] text-text-secondary">
+            {booking.clientDisplayName} · {booking.serviceNames.join(', ') || 'Service'}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-pill border border-border text-text-secondary transition hover:bg-surface-alt hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+        >
+          <CloseIcon className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <label className="block text-[12px] font-medium text-text-secondary">
+          New date &amp; time
+          <input
+            type="datetime-local"
+            value={startAt}
+            onChange={(event) => setStartAt(event.target.value)}
+            className="mt-1 h-10 w-full rounded-input border border-border bg-surface px-3 text-[13px] text-text-primary outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+          />
+        </label>
+        <label className="block text-[12px] font-medium text-text-secondary">
+          Stylist
+          <select
+            value={staffProfileId}
+            onChange={(event) => setStaffProfileId(event.target.value)}
+            className="mt-1 h-10 w-full rounded-input border border-border bg-surface px-3 text-[13px] text-text-primary outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+          >
+            {options.length === 0 ? <option value="">Keep current stylist</option> : null}
+            {options.map((option) => (
+              <option key={option.id || 'unassigned'} value={option.id}>
+                {option.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <div className="mt-3 text-[12px] text-text-muted">
+        The service list and price stay the same — this just moves the time and stylist.
+      </div>
+
+      <div className="mt-4 flex items-center justify-end gap-2">
+        <AppButton variant="secondary" onClick={onClose}>
+          Cancel
+        </AppButton>
+        <AppButton variant="primary" loading={loading} disabled={!startAt} onClick={submit}>
+          Save changes
+        </AppButton>
+      </div>
+    </AppCard>
   );
 }
 
@@ -588,11 +753,11 @@ function CheckoutPanel({
 }) {
   const isPaid = summary.checkout.status === 'paid';
   return (
-    <AppCard elevation="hero" padding="lg" className="mb-4 rounded-card-lg">
+    <AppCard elevation="hero" padding="lg" className="rounded-card-lg">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <div className="text-[15px] font-semibold text-text-primary">
-            {isPaid ? 'Payment confirmed' : 'Awaiting in-salon payment'}
+            {isPaid ? 'Payment confirmed' : 'Checkout'}
           </div>
           <div className="mt-1 text-[13px] text-text-secondary">
             {summary.appointment.clientDisplayName} · {summary.checkout.message}
@@ -611,17 +776,7 @@ function CheckoutPanel({
         </div>
       </div>
 
-      <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-        <BillMetric label="Services" value={formatMoney(summary.billing.serviceTotalCents, summary.billing.currencyCode)} />
-        <BillMetric label="Product usage" value={formatMoney(summary.billing.productUsageTotalCents, summary.billing.currencyCode)} />
-        <BillMetric label="Gross total" value={formatMoney(summary.billing.totalCents, summary.billing.currencyCode)} />
-        <BillMetric label="Deposit paid" value={formatMoney(summary.billing.depositPaidCents, summary.billing.currencyCode)} />
-        <BillMetric label="Balance due" value={formatMoney(summary.billing.balanceDueCents, summary.billing.currencyCode)} strong />
-      </div>
-
-      {summary.billing.tax?.enabled ? (
-        <TaxSummaryLine tax={summary.billing.tax} currencyCode={summary.billing.currencyCode} />
-      ) : null}
+      <ItemisedBill billing={summary.billing} />
 
       <RebookingPanel
         summary={summary}
@@ -685,38 +840,39 @@ function RebookingPanel({
     });
   }
 
+  const clientName = summary.appointment.clientDisplayName;
   return (
     <div className="mt-4 rounded-input-lg border border-border bg-surface-alt p-3">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <div className="text-[13px] font-semibold text-text-primary">Rebooking</div>
+          <div className="text-[13px] font-semibold text-text-primary">Book the next visit</div>
           <div className="mt-1 text-[12px] text-text-secondary">
             {rebooked
-              ? `Linked follow-up appointment ${summary.visit.rebookedAppointmentId ?? ''}.`
+              ? `${clientName}'s next visit is booked in — they're all set.`
               : skipped
-                ? 'Skipped for this checkout. This visit is not counted as rebooked.'
-                : 'Create a real follow-up appointment before this visit counts as rebooked.'}
+                ? 'No next visit booked. You can still book one before they leave.'
+                : `Book ${clientName}'s next visit now so they leave with their next appointment in the diary.`}
           </div>
         </div>
         <StatusBadge
-          label={rebooked ? 'Rebooked' : skipped ? 'Skipped' : 'Not rebooked'}
+          label={rebooked ? 'Next visit booked' : skipped ? 'Skipped' : 'Not booked yet'}
           tone={rebooked ? 'success' : skipped ? 'neutral' : 'warning'}
         />
       </div>
       {!rebooked && !skipped ? (
         <div className="mt-3 flex flex-wrap gap-2">
           <AppButton size="sm" variant="primary" onClick={() => setOpen(true)}>
-            Rebook now
+            Book next visit
           </AppButton>
           <AppButton size="sm" variant="secondary" onClick={onSkip}>
-            Skip rebooking
+            Not today
           </AppButton>
         </div>
       ) : null}
       {open && !rebooked && !skipped ? (
         <div className="mt-3 grid gap-3 rounded-input-lg border border-border bg-surface p-3 lg:grid-cols-[1fr_1fr_auto] lg:items-end">
           <label className="block text-[12px] font-medium text-text-secondary">
-            Follow-up time
+            Next visit date &amp; time
             <input
               type="datetime-local"
               value={selectedStartAt}
@@ -725,7 +881,7 @@ function RebookingPanel({
             />
           </label>
           <label className="block text-[12px] font-medium text-text-secondary">
-            Optional note
+            Note for the visit (optional)
             <input
               value={clientNote}
               onChange={(event) => setClientNote(event.target.value)}
@@ -734,7 +890,7 @@ function RebookingPanel({
             />
           </label>
           <AppButton variant="primary" loading={loading} disabled={!selectedStartAt} onClick={submit}>
-            Create rebooking
+            Book it in
           </AppButton>
         </div>
       ) : null}
@@ -742,39 +898,82 @@ function RebookingPanel({
   );
 }
 
-function BillMetric({ label, value, strong = false }: { label: string; value: string; strong?: boolean }) {
+// Itemised checkout bill. Maps the API billing rollup to salon-readable lines:
+// services, colour charges (product usage), plus VAT and the running total.
+// Retail products and discounts are placeholders until V2 wires up their data.
+function ItemisedBill({ billing }: { billing: AppointmentCompletionResponse['billing'] }) {
+  const cc = billing.currencyCode;
+  const tax = billing.tax;
   return (
-    <div className="rounded-input-lg border border-border bg-surface-alt px-3 py-2">
-      <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-text-secondary">{label}</div>
-      <div className={`mt-1 ${strong ? 'text-[16px] font-semibold text-text-primary' : 'text-text-secondary'}`}>{value}</div>
+    <div className="mt-4 rounded-input-lg border border-border bg-surface-alt/40 px-4 py-3">
+      <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-text-muted">Itemised bill</div>
+      <dl className="mt-2 flex flex-col gap-1.5 text-[13px]">
+        <BillRow label="Services" value={formatMoney(billing.serviceTotalCents, cc)} />
+        <BillRow label="Colour charges" value={formatMoney(billing.productUsageTotalCents, cc)} />
+        <BillRow label="Retail products" value="—" muted hint="Coming in V2" />
+        <BillRow label="Discounts" value="—" muted hint="Coming in V2" />
+        <div className="my-1 border-t border-border/60" />
+        <BillRow label="Total" value={formatMoney(billing.totalCents, cc)} strong />
+        {billing.depositPaidCents > 0 ? (
+          <BillRow label="Deposit paid" value={`− ${formatMoney(billing.depositPaidCents, cc)}`} />
+        ) : null}
+      </dl>
+      <div className="mt-2 flex items-center justify-between border-t border-border/60 pt-2">
+        <span className="text-[13px] font-semibold text-text-primary">Balance due</span>
+        <span className="text-[18px] font-semibold text-text-primary">{formatMoney(billing.balanceDueCents, cc)}</span>
+      </div>
+      {/* VAT is informational and mode-aware. The Total/Balance due above are the
+          tax-exclusive figures the salon actually collects, so VAT is shown as its
+          own line (net / tax / inc-VAT) rather than added into the running total. */}
+      {tax?.enabled ? (
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-[12px]">
+          <span className="font-medium text-text-primary">
+            {(tax.label?.trim() || 'VAT')} ({tax.ratePercent}%)
+          </span>
+          <span className="text-text-secondary">{taxSummaryDetail(tax, cc)}</span>
+        </div>
+      ) : null}
     </div>
   );
 }
 
-// Renders the bill's tax rollup according to the location's configured display
-// mode (inc-tax / ex-tax / both), using the API-provided AppointmentBillingTax.
-function TaxSummaryLine({ tax, currencyCode }: { tax: AppointmentBillingTax; currencyCode: string }) {
-  const label = tax.label?.trim() || 'Tax';
-  const rate = `${tax.ratePercent}%`;
+function BillRow({
+  label,
+  value,
+  strong = false,
+  muted = false,
+  hint,
+}: {
+  label: string;
+  value: string;
+  strong?: boolean;
+  muted?: boolean;
+  hint?: string;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <dt className={muted ? 'text-text-muted' : strong ? 'font-semibold text-text-primary' : 'text-text-secondary'}>
+        {label}
+        {hint ? <span className="ml-1.5 text-[11px] text-text-muted">· {hint}</span> : null}
+      </dt>
+      <dd className={`tabular-nums ${muted ? 'text-text-muted' : strong ? 'font-semibold text-text-primary' : 'text-text-primary'}`}>
+        {value}
+      </dd>
+    </div>
+  );
+}
+
+// Mode-aware VAT summary. Uses the API-provided net/tax/gross so the figure is
+// never misrepresented: 'ex_tax' surfaces the inc-VAT gross as the "would be"
+// total, 'inc_tax' clarifies the VAT already baked into the prices.
+function taxSummaryDetail(tax: AppointmentBillingTax, currencyCode: string): string {
+  const label = tax.label?.trim() || 'VAT';
   const net = formatMoney(tax.netCents, currencyCode);
   const taxAmt = formatMoney(tax.taxCents, currencyCode);
   const gross = formatMoney(tax.grossCents, currencyCode);
-
-  let detail: string;
-  if (tax.displayMode === 'inc_tax') {
-    detail = `Tax-inclusive — includes ${taxAmt} ${label} (net ${net})`;
-  } else if (tax.displayMode === 'ex_tax') {
-    detail = `Tax-exclusive — ${taxAmt} ${label} added → ${gross} inc. tax`;
-  } else {
-    detail = `Net ${net} · ${taxAmt} ${label} · ${gross} inc. tax`;
-  }
-
-  return (
-    <div className="mt-2 flex items-center justify-between gap-3 rounded-input-lg border border-border bg-surface-alt/40 px-4 py-2.5 text-[12px]">
-      <span className="font-medium text-text-primary">{label} ({rate})</span>
-      <span className="text-text-secondary">{detail}</span>
-    </div>
-  );
+  if (tax.displayMode === 'inc_tax') return `${taxAmt} ${label} included (net ${net})`;
+  if (tax.displayMode === 'ex_tax') return `${taxAmt} ${label} on top → ${gross} inc. ${label}`;
+  return `Net ${net} · ${taxAmt} ${label} · ${gross} inc. ${label}`;
 }
 
 function EmptyState({ title, body }: { title: string; body: string }) {
@@ -851,34 +1050,6 @@ function formatDateTime(iso: string): string {
     minute: '2-digit',
   });
 }
-
-function formatStatus(status: string): string {
-  return status
-    .split('_')
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
-}
-
-function statusTone(status: StaffBookingSummary['status']): StatusTone {
-  switch (status) {
-    case 'confirmed':
-    case 'checked_in':
-    case 'in_progress':
-    case 'in_service':
-      return 'success';
-    case 'awaiting_acceptance':
-    case 'pending':
-    case 'draft':
-    case 'booked':
-      return 'warning';
-    case 'cancelled':
-    case 'no_show':
-      return 'danger';
-    default:
-      return 'neutral';
-  }
-}
-
 
 function isCompletionLocked(status: StaffBookingSummary['status']): boolean {
   return (

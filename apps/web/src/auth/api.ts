@@ -1,6 +1,11 @@
 import type {
   AbsenceMutationResponse,
   AcceptBookingResponse,
+  CancelAppointmentRequest,
+  CancelAppointmentResponse,
+  CheckInAppointmentResponse,
+  RescheduleAppointmentRequest,
+  RescheduleAppointmentResponse,
   AcceptStaffInvitationRequest,
   AcceptStaffInvitationResponse,
   AppointmentCompletionResponse,
@@ -437,6 +442,38 @@ export async function completeBooking(
       method: 'POST',
       accessToken,
     },
+  );
+}
+
+export async function checkInBooking(
+  accessToken: string,
+  bookingId: string,
+): Promise<CheckInAppointmentResponse> {
+  return request<CheckInAppointmentResponse>(
+    `/lab/appointments/${encodeURIComponent(bookingId)}/check-in`,
+    { method: 'POST', accessToken },
+  );
+}
+
+export async function cancelBooking(
+  accessToken: string,
+  bookingId: string,
+  payload: CancelAppointmentRequest = {},
+): Promise<CancelAppointmentResponse> {
+  return request<CancelAppointmentResponse>(
+    `/lab/appointments/${encodeURIComponent(bookingId)}/cancel`,
+    { method: 'POST', accessToken, body: payload },
+  );
+}
+
+export async function rescheduleBooking(
+  accessToken: string,
+  bookingId: string,
+  payload: RescheduleAppointmentRequest,
+): Promise<RescheduleAppointmentResponse> {
+  return request<RescheduleAppointmentResponse>(
+    `/lab/appointments/${encodeURIComponent(bookingId)}/reschedule`,
+    { method: 'POST', accessToken, body: payload },
   );
 }
 
