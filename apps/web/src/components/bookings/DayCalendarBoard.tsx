@@ -76,6 +76,14 @@ interface DayCalendarBoardProps {
   bookings: StaffBookingSummary[];
   selectedBookingId?: string | null;
   onSelectBooking: (booking: StaffBookingSummary) => void;
+  /** Tile action menu: mark the client arrived (confirmed → checked in). */
+  onCheckIn?: (booking: StaffBookingSummary) => void;
+  /** Tile action menu: open the checkout / payment screen (complete the service). */
+  onCheckOut?: (booking: StaffBookingSummary) => void;
+  /** Tile action menu: open the reschedule / reassign editor. */
+  onEditBooking?: (booking: StaffBookingSummary) => void;
+  /** Tile action menu: cancel the appointment. */
+  onCancelBooking?: (booking: StaffBookingSummary) => void;
   /** When false, stylists with no appointments on this day are hidden. */
   showAllTeamMembers?: boolean;
   /** When true, a red "now" line is drawn at the current time (today only). */
@@ -84,6 +92,15 @@ interface DayCalendarBoardProps {
   onAddAppointment?: (input: AddAppointmentInput) => void;
   /** Clicking an empty slot → "Add bookout" (blocks the stylist's time). */
   onAddBookout?: (input: AddBookoutInput) => void;
+}
+
+interface BookingMenuState {
+  booking: StaffBookingSummary;
+  /** Click position relative to the board's positioned container. */
+  x: number;
+  y: number;
+  boardWidth: number;
+  boardHeight: number;
 }
 
 /**
@@ -109,6 +126,10 @@ export function DayCalendarBoard({
   bookings,
   selectedBookingId,
   onSelectBooking,
+  onCheckIn,
+  onCheckOut,
+  onEditBooking,
+  onCancelBooking,
   showAllTeamMembers = true,
   showTimeline = true,
   onAddAppointment,
@@ -126,7 +147,26 @@ export function DayCalendarBoard({
   // menu (Add appointment / Add bookout), the primary way to add appointments.
   const boardRef = useRef<HTMLDivElement>(null);
   const [slotMenu, setSlotMenu] = useState<SlotMenuState | null>(null);
+  // Click an appointment block → an action menu (Check in / Check out / Edit /
+  // Cancel) opens right at the tile, so no scrolling is needed to act on it.
+  const [bookingMenu, setBookingMenu] = useState<BookingMenuState | null>(null);
   const createEnabled = Boolean(onAddAppointment || onAddBookout);
+  const bookingActionsEnabled = Boolean(onCheckIn || onCheckOut || onEditBooking || onCancelBooking);
+
+  function openBookingMenu(event: React.MouseEvent<HTMLButtonElement>, booking: StaffBookingSummary) {
+    onSelectBooking(booking);
+    const board = boardRef.current;
+    if (!board || !bookingActionsEnabled) return;
+    const boardRect = board.getBoundingClientRect();
+    setSlotMenu(null);
+    setBookingMenu({
+      booking,
+      x: event.clientX - boardRect.left,
+      y: event.clientY - boardRect.top,
+      boardWidth: boardRect.width,
+      boardHeight: boardRect.height,
+    });
+  }
 
   const dayIso = toIsoDate(day);
   const dayStart = new Date(day.getFullYear(), day.getMonth(), day.getDate());
@@ -340,6 +380,7 @@ export function DayCalendarBoard({
                 const accent = statusAccent(tone);
                 const muted = booking.status === 'cancelled' || booking.status === 'no_show';
                 const selected = selectedBookingId === booking.id;
+                const arrived = booking.status === 'checked_in';
                 const widthPct = 100 / laneCount;
                 return (
                   <button
@@ -348,7 +389,7 @@ export function DayCalendarBoard({
                     onClick={(event) => {
                       // Don't let a block click also open the empty-slot create menu.
                       event.stopPropagation();
-                      onSelectBooking(booking);
+                      openBookingMenu(event, booking);
                     }}
                     style={{
                       top,
@@ -364,8 +405,18 @@ export function DayCalendarBoard({
                   >
                     <span className={`absolute inset-y-0 left-0 w-[3px] rounded-l-lg ${accent.bar}`} aria-hidden />
                     <span className="block py-1.5 pl-3 pr-1.5">
-                      <span className="block truncate text-[11px] font-semibold text-text-primary">
-                        {formatTime(booking.startsAt)} · {booking.clientDisplayName}
+                      <span className="flex items-center gap-1 truncate text-[11px] font-semibold text-text-primary">
+                        {arrived ? (
+                          <span
+                            className="inline-flex shrink-0 items-center rounded-pill bg-success-soft px-1.5 text-[9px] font-bold uppercase tracking-[0.05em] text-success"
+                            title="Client has arrived"
+                          >
+                            Arrived
+                          </span>
+                        ) : null}
+                        <span className="truncate">
+                          {formatTime(booking.startsAt)} · {booking.clientDisplayName}
+                        </span>
                       </span>
                       <span className="block truncate text-[10px] text-text-muted">
                         {booking.serviceNames.join(', ') || 'Service'}
@@ -396,6 +447,17 @@ export function DayCalendarBoard({
               </span>
             </div>
           </div>
+        ) : null}
+
+        {bookingMenu ? (
+          <BookingActionMenu
+            state={bookingMenu}
+            onClose={() => setBookingMenu(null)}
+            onCheckIn={onCheckIn ? () => { onCheckIn(bookingMenu.booking); setBookingMenu(null); } : undefined}
+            onCheckOut={onCheckOut ? () => { onCheckOut(bookingMenu.booking); setBookingMenu(null); } : undefined}
+            onEdit={onEditBooking ? () => { onEditBooking(bookingMenu.booking); setBookingMenu(null); } : undefined}
+            onCancel={onCancelBooking ? () => { onCancelBooking(bookingMenu.booking); setBookingMenu(null); } : undefined}
+          />
         ) : null}
 
         {slotMenu ? (
@@ -541,6 +603,186 @@ function SlotMenu({
         )}
       </div>
     </>
+  );
+}
+
+/** Which tile actions apply to a booking, given its status. */
+function bookingActionAvailability(status: StaffBookingSummary['status']): {
+  canCheckIn: boolean;
+  canCheckOut: boolean;
+  canEdit: boolean;
+  canCancel: boolean;
+  checkOutLabel: string;
+} {
+  return {
+    canCheckIn: status === 'confirmed',
+    canCheckOut: ['confirmed', 'checked_in', 'in_progress', 'in_service', 'awaiting_payment'].includes(status),
+    canEdit: ['pending', 'confirmed', 'checked_in'].includes(status),
+    canCancel: ['pending', 'confirmed', 'checked_in', 'in_progress', 'in_service'].includes(status),
+    checkOutLabel: status === 'awaiting_payment' ? 'Open checkout' : 'Check out',
+  };
+}
+
+// Action menu anchored at the clicked appointment tile. Mirrors SlotMenu's
+// click-away + clamped positioning so it stays inside the board with no scroll.
+function BookingActionMenu({
+  state,
+  onClose,
+  onCheckIn,
+  onCheckOut,
+  onEdit,
+  onCancel,
+}: {
+  state: BookingMenuState;
+  onClose: () => void;
+  onCheckIn?: () => void;
+  onCheckOut?: () => void;
+  onEdit?: () => void;
+  onCancel?: () => void;
+}) {
+  const { booking } = state;
+  const availability = bookingActionAvailability(booking.status);
+  const arrived = booking.status === 'checked_in';
+
+  const PANEL_WIDTH = 240;
+  const PANEL_HEIGHT = 252;
+  const left = Math.max(8, Math.min(state.x, state.boardWidth - PANEL_WIDTH - 8));
+  const top = Math.max(8, Math.min(state.y, state.boardHeight - PANEL_HEIGHT - 8));
+
+  return (
+    <>
+      {/* Click-away backdrop */}
+      <div className="absolute inset-0 z-40" onClick={onClose} aria-hidden />
+      <div
+        className="absolute z-50 rounded-card-lg border border-border bg-surface p-3 shadow-lg"
+        style={{ top, left, width: PANEL_WIDTH }}
+        role="dialog"
+        aria-label="Appointment actions"
+      >
+        <div className="mb-2 flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="truncate text-[13px] font-semibold text-text-primary">{booking.clientDisplayName}</div>
+            <div className="truncate text-[11px] text-text-secondary">
+              {formatTime(booking.startsAt)} · {booking.serviceNames.join(', ') || 'Service'}
+            </div>
+            {arrived ? (
+              <div className="mt-0.5 text-[11px] font-semibold text-success">Arrived — checked in</div>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-text-secondary transition hover:bg-surface-alt hover:text-text-primary"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          {onCheckIn ? (
+            <BookingMenuButton
+              label={arrived ? 'Checked in' : 'Check in'}
+              onClick={onCheckIn}
+              disabled={!availability.canCheckIn}
+              icon={<CheckIcon className="h-4 w-4" />}
+            />
+          ) : null}
+          {onCheckOut ? (
+            <BookingMenuButton
+              label={availability.checkOutLabel}
+              onClick={onCheckOut}
+              disabled={!availability.canCheckOut}
+              variant="primary"
+              icon={<CardIcon className="h-4 w-4" />}
+            />
+          ) : null}
+          {onEdit ? (
+            <BookingMenuButton
+              label="Edit appointment"
+              onClick={onEdit}
+              disabled={!availability.canEdit}
+              icon={<PencilIcon className="h-4 w-4" />}
+            />
+          ) : null}
+          {onCancel ? (
+            <BookingMenuButton
+              label="Cancel appointment"
+              onClick={onCancel}
+              disabled={!availability.canCancel}
+              variant="danger"
+              icon={<BanIcon className="h-4 w-4" />}
+            />
+          ) : null}
+        </div>
+      </div>
+    </>
+  );
+}
+
+function BookingMenuButton({
+  label,
+  onClick,
+  disabled = false,
+  variant = 'default',
+  icon,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  variant?: 'default' | 'primary' | 'danger';
+  icon?: React.ReactNode;
+}) {
+  const tone =
+    variant === 'primary'
+      ? 'bg-primary text-text-on-primary hover:bg-primary-deep border-transparent'
+      : variant === 'danger'
+        ? 'bg-surface text-danger border-danger-border hover:bg-danger-soft'
+        : 'bg-surface text-text-primary border-border-strong hover:bg-surface-alt';
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`flex h-10 w-full items-center gap-2 rounded-pill border px-3.5 text-[13px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${tone}`}
+    >
+      {icon ? <span className="shrink-0" aria-hidden>{icon}</span> : null}
+      <span className="truncate">{label}</span>
+    </button>
+  );
+}
+
+function CheckIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden {...props}>
+      <path d="m4 10.5 4 4 8-9" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function CardIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.6} aria-hidden {...props}>
+      <rect x="2.5" y="5" width="15" height="10" rx="2" />
+      <path d="M2.5 8.5h15" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function PencilIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.6} aria-hidden {...props}>
+      <path d="M13.5 4 16 6.5 7.5 15H5v-2.5L13.5 4Z" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function BanIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.6} aria-hidden {...props}>
+      <circle cx="10" cy="10" r="6.5" />
+      <path d="m5.5 5.5 9 9" strokeLinecap="round" />
+    </svg>
   );
 }
 

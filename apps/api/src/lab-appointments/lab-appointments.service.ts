@@ -17,11 +17,15 @@ import type {
   AppointmentPaymentRecord,
   AppointmentStatus,
   AuthUser,
+  CancelAppointmentResponse,
+  CheckInAppointmentResponse,
   CreateStylistRebookingRequest,
   CrmVisitSummary,
   ListStaffBookingsResponse,
   ProductBillingRule,
   RejectBookingResponse,
+  RescheduleAppointmentRequest,
+  RescheduleAppointmentResponse,
   StaffBookingPatchTestSummary,
   StaffBookingDetail,
   StaffBookingSummary,
@@ -173,6 +177,27 @@ const ACTIVE_BOOKING_STATUSES: AppointmentStatus[] = [
 ];
 const COMPLETABLE_BOOKING_STATUSES: AppointmentStatus[] = ['confirmed', 'checked_in', 'in_progress'];
 const PAYABLE_BOOKING_STATUSES: AppointmentStatus[] = ['awaiting_payment'];
+// A confirmed booking checks in to 'checked_in'. These statuses mean the client
+// has already arrived (or moved past arrival), so a check-in is a no-op.
+const CHECKED_IN_OR_LATER_STATUSES: AppointmentStatus[] = [
+  'checked_in',
+  'in_progress',
+  'awaiting_payment',
+  'paid',
+  'completed',
+];
+// Statuses a booking can be cancelled from via the book. 'awaiting_acceptance'
+// is handled by reject; 'awaiting_payment'/'paid'/'completed' already have a visit
+// in flight; 'cancelled'/'no_show' are terminal. (DB-enum-valid values only.)
+const CANCELLABLE_BOOKING_STATUSES: AppointmentStatus[] = [
+  'pending',
+  'confirmed',
+  'checked_in',
+  'in_progress',
+];
+// Statuses a booking can be moved/reassigned from. Once a visit exists
+// (awaiting_payment onwards) the time is locked. (DB-enum-valid values only.)
+const RESCHEDULABLE_BOOKING_STATUSES: AppointmentStatus[] = ['pending', 'confirmed', 'checked_in'];
 
 const LIST_COLUMNS =
   'id,business_id,location_id,client_profile_id,assigned_staff_profile_id,requested_staff_profile_id,status,scheduled_start_at,scheduled_end_at,check_in_at,client_note,completed_at,completed_by_user_profile_id,completed_by_staff_profile_id,appointment_services(service_name_snapshot,duration_minutes,deposit_required_amount,price_amount),deposits(status,amount,currency_code)';
@@ -519,6 +544,277 @@ export class LabAppointmentsService {
   private assertOwnerOrManager(actor: AuthUser): void {
     if (actor.role !== 'owner' && actor.role !== 'manager') {
       throw new ForbiddenException('Only an owner or manager can review booking requests');
+    }
+  }
+
+  /**
+   * Mark a confirmed appointment as arrived (client checked in at the desk).
+   * Moves 'confirmed' → 'checked_in' and stamps check_in_at. The status change is
+   * itself the in-app signal to the assigned stylist — their book shows the client
+   * as arrived. Idempotent: a booking already arrived (or further along) is returned
+   * unchanged so a double-tap never errors.
+   */
+  async checkIn(actor: AuthUser, id: string): Promise<CheckInAppointmentResponse> {
+    const appointment = await this.fetchAppointmentForActor(actor, id);
+
+    if (CHECKED_IN_OR_LATER_STATUSES.includes(appointment.status)) {
+      const clientsById = await this.fetchClientProfiles(actor.businessId, [appointment.client_profile_id]);
+      return { appointment: toBookingDetail(appointment, clientsById.get(appointment.client_profile_id)) };
+    }
+    if (appointment.status !== 'confirmed') {
+      throw new ConflictException(`Appointment cannot be checked in from ${appointment.status}`);
+    }
+
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('appointments')
+      .update({ status: 'checked_in', check_in_at: new Date().toISOString() })
+      .eq('id', appointment.id)
+      .eq('business_id', appointment.business_id)
+      .eq('status', 'confirmed')
+      .select(DETAIL_COLUMNS)
+      .maybeSingle<AppointmentRow>();
+    if (error) {
+      this.logger.error(`checkIn failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to check in appointment');
+    }
+    const checkedIn = data ?? (await this.fetchAppointmentById(id, actor.businessId));
+    if (!CHECKED_IN_OR_LATER_STATUSES.includes(checkedIn.status)) {
+      throw new ConflictException('Appointment was updated before it could be checked in');
+    }
+
+    const clientsById = await this.fetchClientProfiles(actor.businessId, [checkedIn.client_profile_id]);
+    return { appointment: toBookingDetail(checkedIn, clientsById.get(checkedIn.client_profile_id)) };
+  }
+
+  /**
+   * Cancel a confirmed/checked-in appointment straight from the book. Like reject,
+   * this is an owner/manager decision because it refunds the client's paid deposit
+   * via Stripe. It claims the 'cancelled' transition FIRST (a conditional update),
+   * and only the request that wins that claim performs the refund + notification
+   * re-sync — so concurrent front-desk cancels can never double-refund. 'reject'
+   * stays the path for client requests still awaiting acceptance.
+   */
+  async cancel(actor: AuthUser, id: string, reason?: string): Promise<CancelAppointmentResponse> {
+    this.assertOwnerOrManager(actor);
+    const appointment = await this.fetchAppointmentForActor(actor, id);
+
+    if (appointment.status === 'cancelled') {
+      const clientsById = await this.fetchClientProfiles(actor.businessId, [appointment.client_profile_id]);
+      return {
+        appointment: toBookingDetail(appointment, clientsById.get(appointment.client_profile_id)),
+        depositRefunded: false,
+      };
+    }
+    if (!CANCELLABLE_BOOKING_STATUSES.includes(appointment.status)) {
+      throw new ConflictException(`Appointment cannot be cancelled from ${appointment.status}`);
+    }
+
+    // Claim the cancellation atomically. The `.in(status, CANCELLABLE)` guard means
+    // only one of two racing requests gets a row back; the loser refunds nothing.
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('appointments')
+      .update({
+        status: 'cancelled',
+        cancelled_at: new Date().toISOString(),
+        cancellation_reason: reason?.trim() || 'Cancelled by salon',
+      })
+      .eq('id', appointment.id)
+      .eq('business_id', appointment.business_id)
+      .in('status', CANCELLABLE_BOOKING_STATUSES)
+      .select(DETAIL_COLUMNS)
+      .maybeSingle<AppointmentRow>();
+    if (error) {
+      this.logger.error(`cancel failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to cancel appointment');
+    }
+
+    if (!data) {
+      // Lost the race (someone else already cancelled it) — do NOT refund again.
+      const replayed = await this.fetchAppointmentById(id, actor.businessId);
+      if (replayed.status !== 'cancelled') {
+        throw new ConflictException('Appointment was updated before it could be cancelled');
+      }
+      const clientsById = await this.fetchClientProfiles(actor.businessId, [replayed.client_profile_id]);
+      return {
+        appointment: toBookingDetail(replayed, clientsById.get(replayed.client_profile_id)),
+        depositRefunded: false,
+      };
+    }
+
+    // We own the cancellation → refund the paid deposit (best-effort; a failure
+    // leaves the deposit 'paid' so it can be refunded manually) and stop the
+    // client's pending confirmations/reminders. Fail-soft on the notification sync.
+    const refund = await this.refundPaidDeposit(data);
+    await this.bookingNotifications.syncBookingNotificationsSafe(data.id);
+
+    const clientsById = await this.fetchClientProfiles(actor.businessId, [data.client_profile_id]);
+    return {
+      appointment: toBookingDetail(data, clientsById.get(data.client_profile_id)),
+      depositRefunded: refund.refunded,
+      refundError: refund.error,
+    };
+  }
+
+  /**
+   * Move a booking to a new time and/or reassign its stylist from the book.
+   * Preserves the service list and total duration, re-sequencing each service's
+   * times from the new start, then re-syncs the client's reminders to the new time.
+   * Editing the services/price is out of scope here (V2).
+   */
+  async reschedule(
+    actor: AuthUser,
+    id: string,
+    input: RescheduleAppointmentRequest,
+  ): Promise<RescheduleAppointmentResponse> {
+    const appointment = await this.fetchAppointmentForActor(actor, id);
+    if (!RESCHEDULABLE_BOOKING_STATUSES.includes(appointment.status)) {
+      throw new ConflictException(`Appointment cannot be rescheduled from ${appointment.status}`);
+    }
+
+    // Edit Appointment is a day-of tool, so (unlike rebooking) it allows moving to
+    // an earlier slot today — only the date itself must be valid, not in the future.
+    const newStart = parseValidDate(input.scheduledStartAt);
+    const services = arrayOf(appointment.appointment_services);
+    const durationMinutes =
+      services.reduce((sum, service) => sum + Number(service.duration_minutes ?? 0), 0) ||
+      minutesBetween(appointment.scheduled_start_at, appointment.scheduled_end_at) ||
+      30;
+    const newEnd = new Date(newStart.getTime() + durationMinutes * 60_000);
+
+    const staffProfileId =
+      input.staffProfileId ?? appointment.assigned_staff_profile_id ?? actor.staffProfileId ?? undefined;
+    const staffChanged = Boolean(staffProfileId) && staffProfileId !== appointment.assigned_staff_profile_id;
+    if (staffProfileId && staffChanged) {
+      this.assertCanAssignRebookingStaff(actor, staffProfileId, appointment.location_id);
+      await this.assertStaffBookable(actor.businessId, appointment.location_id, staffProfileId);
+    }
+    if (staffProfileId) {
+      await this.assertStaffAvailableForRebooking({
+        businessId: actor.businessId,
+        locationId: appointment.location_id,
+        staffProfileId,
+        selectedStart: newStart,
+        selectedEnd: newEnd,
+        excludeAppointmentId: appointment.id,
+      });
+    }
+
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('appointments')
+      .update({
+        scheduled_start_at: newStart.toISOString(),
+        scheduled_end_at: newEnd.toISOString(),
+        assigned_staff_profile_id: staffProfileId ?? appointment.assigned_staff_profile_id,
+      })
+      .eq('id', appointment.id)
+      .eq('business_id', appointment.business_id)
+      .in('status', RESCHEDULABLE_BOOKING_STATUSES)
+      .select(DETAIL_COLUMNS)
+      .maybeSingle<AppointmentRow>();
+    if (error) {
+      const message = error.message ?? '';
+      if (message.toLowerCase().includes('booking_appointments_staff_no_overlap')) {
+        throw new ConflictException('Selected time overlaps an existing appointment');
+      }
+      this.logger.error(`reschedule failed: ${message}`);
+      throw new InternalServerErrorException('Unable to reschedule appointment');
+    }
+    const rescheduled = data ?? (await this.fetchAppointmentById(id, actor.businessId));
+
+    // PostgREST has no multi-statement transaction here, so the header and its
+    // service rows are written separately. If re-sequencing the service rows fails,
+    // revert the header to its prior time/stylist so the booking is never left
+    // half-moved (header updated, per-service times stale).
+    try {
+      await this.rescheduleAppointmentServices(
+        rescheduled,
+        newStart,
+        staffProfileId ?? rescheduled.assigned_staff_profile_id,
+      );
+    } catch (err) {
+      await this.revertAppointmentSchedule(appointment);
+      throw err;
+    }
+
+    // The reminder schedule must follow the new time. Fail-soft.
+    await this.bookingNotifications.syncBookingNotificationsSafe(rescheduled.id);
+
+    const clientsById = await this.fetchClientProfiles(actor.businessId, [rescheduled.client_profile_id]);
+    return { appointment: toBookingDetail(rescheduled, clientsById.get(rescheduled.client_profile_id)) };
+  }
+
+  // Best-effort restore of the appointment (header + service rows) to its
+  // pre-reschedule time/stylist, used to compensate when the per-service
+  // re-sequencing fails partway. Never throws — the original failure is what the
+  // caller should surface. Service times are rebuilt as a contiguous sequence from
+  // the original start, matching how the booking flow lays them out.
+  private async revertAppointmentSchedule(prior: AppointmentRow): Promise<void> {
+    const { error } = await this.admin
+      .schema('booking')
+      .from('appointments')
+      .update({
+        scheduled_start_at: prior.scheduled_start_at,
+        scheduled_end_at: prior.scheduled_end_at,
+        assigned_staff_profile_id: prior.assigned_staff_profile_id,
+      })
+      .eq('id', prior.id)
+      .eq('business_id', prior.business_id);
+    if (error) {
+      this.logger.error(`revertAppointmentSchedule header failed for ${prior.id}: ${error.message}`);
+    }
+    try {
+      await this.rescheduleAppointmentServices(
+        prior,
+        new Date(prior.scheduled_start_at),
+        prior.assigned_staff_profile_id,
+      );
+    } catch (err) {
+      this.logger.error(`revertAppointmentSchedule services failed for ${prior.id}: ${(err as Error).message}`);
+    }
+  }
+
+  // Re-sequence the appointment's service rows from the new start so per-service
+  // scheduled times (and any reassigned stylist) stay consistent with the move.
+  private async rescheduleAppointmentServices(
+    appointment: AppointmentRow,
+    newStart: Date,
+    staffProfileId: string | null,
+  ): Promise<void> {
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('appointment_services')
+      .select('id,duration_minutes,sequence_no')
+      .eq('appointment_id', appointment.id)
+      .eq('business_id', appointment.business_id)
+      .order('sequence_no', { ascending: true })
+      .returns<Array<{ id: string; duration_minutes: number | null; sequence_no: number | null }>>();
+    if (error) {
+      this.logger.error(`rescheduleAppointmentServices load failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to reschedule appointment services');
+    }
+
+    let cursor = newStart;
+    for (const row of data ?? []) {
+      const start = cursor;
+      const end = new Date(start.getTime() + Number(row.duration_minutes ?? 0) * 60_000);
+      cursor = end;
+      const { error: updateError } = await this.admin
+        .schema('booking')
+        .from('appointment_services')
+        .update({
+          scheduled_start_at: start.toISOString(),
+          scheduled_end_at: end.toISOString(),
+          assigned_staff_profile_id: staffProfileId,
+        })
+        .eq('id', row.id)
+        .eq('business_id', appointment.business_id);
+      if (updateError) {
+        this.logger.error(`rescheduleAppointmentServices update failed: ${updateError.message}`);
+        throw new InternalServerErrorException('Unable to reschedule appointment services');
+      }
     }
   }
 
@@ -875,8 +1171,10 @@ export class LabAppointmentsService {
     staffProfileId: string;
     selectedStart: Date;
     selectedEnd: Date;
+    /** When set (a reschedule), this appointment is excluded so it can't clash with itself. */
+    excludeAppointmentId?: string;
   }): Promise<void> {
-    const { data, error } = await this.admin
+    let query = this.admin
       .schema('booking')
       .from('appointments')
       .select('id')
@@ -886,15 +1184,18 @@ export class LabAppointmentsService {
       .in('status', ACTIVE_BOOKING_STATUSES)
       .lt('scheduled_start_at', input.selectedEnd.toISOString())
       .gt('scheduled_end_at', input.selectedStart.toISOString())
-      .limit(1)
-      .returns<Array<{ id: string }>>();
+      .limit(1);
+    if (input.excludeAppointmentId) {
+      query = query.neq('id', input.excludeAppointmentId);
+    }
+    const { data, error } = await query.returns<Array<{ id: string }>>();
 
     if (error) {
       this.logger.error(`assertStaffAvailableForRebooking failed: ${error.message}`);
       throw new InternalServerErrorException('Unable to validate rebooking slot');
     }
     if ((data ?? []).length > 0) {
-      throw new ConflictException('Selected rebooking time overlaps an existing appointment');
+      throw new ConflictException('Selected time overlaps an existing appointment');
     }
   }
 
@@ -1448,12 +1749,17 @@ function todayRange(): { rangeStart: string; rangeEnd: string } {
 }
 
 function parseFutureDate(value: string): Date {
+  const parsed = parseValidDate(value);
+  if (parsed.getTime() <= Date.now()) {
+    throw new ConflictException('Selected time must be in the future');
+  }
+  return parsed;
+}
+
+function parseValidDate(value: string): Date {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
-    throw new ConflictException('Rebooking time must be a valid date');
-  }
-  if (parsed.getTime() <= Date.now()) {
-    throw new ConflictException('Rebooking time must be in the future');
+    throw new ConflictException('Selected time must be a valid date');
   }
   return parsed;
 }

@@ -5,15 +5,24 @@ import type {
   AppointmentPaymentConfirmationRequest,
   AppointmentPaymentConfirmationResponse,
   AuthUser,
+  CancelAppointmentResponse,
+  CheckInAppointmentResponse,
   ListStaffBookingsResponse,
   RejectBookingResponse,
+  RescheduleAppointmentResponse,
   StaffBookingDetail,
 } from '@sheer/domain';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { RequireRoles, RolesGuard } from '../auth/roles.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { LabSessionService } from '../lab-session/lab-session.service';
-import { CreateStylistRebookingDto, LinkStylistRebookingDto, RejectBookingDto } from './dto';
+import {
+  CancelAppointmentDto,
+  CreateStylistRebookingDto,
+  LinkStylistRebookingDto,
+  RejectBookingDto,
+  RescheduleAppointmentDto,
+} from './dto';
 import { LabAppointmentsService } from './lab-appointments.service';
 
 @Controller('lab/appointments')
@@ -64,6 +73,32 @@ export class LabAppointmentsController {
     @Body() body: RejectBookingDto,
   ): Promise<RejectBookingResponse> {
     return this.labAppointmentsService.reject(actor, id, body.reason);
+  }
+
+  @Post(':id/check-in')
+  checkIn(
+    @CurrentUser() actor: AuthUser,
+    @Param('id') id: string,
+  ): Promise<CheckInAppointmentResponse> {
+    return this.labAppointmentsService.checkIn(actor, id);
+  }
+
+  @Post(':id/cancel')
+  cancel(
+    @CurrentUser() actor: AuthUser,
+    @Param('id') id: string,
+    @Body() body: CancelAppointmentDto,
+  ): Promise<CancelAppointmentResponse> {
+    return this.labAppointmentsService.cancel(actor, id, body.reason);
+  }
+
+  @Post(':id/reschedule')
+  reschedule(
+    @CurrentUser() actor: AuthUser,
+    @Param('id') id: string,
+    @Body() body: RescheduleAppointmentDto,
+  ): Promise<RescheduleAppointmentResponse> {
+    return this.labAppointmentsService.reschedule(actor, id, body);
   }
 
   @Post(':id/complete')

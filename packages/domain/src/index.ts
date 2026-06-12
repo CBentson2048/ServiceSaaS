@@ -910,6 +910,38 @@ export interface CreateStylistRebookingRequest {
   clientNote?: string;
 }
 
+// --- Appointment book actions (staff-facing day calendar) ---
+// Surfaced from the tile action menu: arrive a client (check-in), cancel a
+// confirmed booking, or reschedule/reassign it. Check-out reuses the existing
+// complete → confirm-payment flow above.
+
+export interface CheckInAppointmentResponse {
+  appointment: StaffBookingDetail;
+}
+
+export interface CancelAppointmentRequest {
+  reason?: string;
+}
+
+export interface CancelAppointmentResponse {
+  appointment: StaffBookingDetail;
+  /** True when a paid deposit was refunded via Stripe as part of the cancellation. */
+  depositRefunded: boolean;
+  /** Set when a refund was attempted but failed — the appointment is still cancelled. */
+  refundError?: string;
+}
+
+export interface RescheduleAppointmentRequest {
+  /** New ISO start time for the appointment. Duration is preserved. */
+  scheduledStartAt: string;
+  /** Optional new assigned stylist. Omit to keep the current stylist. */
+  staffProfileId?: string;
+}
+
+export interface RescheduleAppointmentResponse {
+  appointment: StaffBookingDetail;
+}
+
 export interface StaffBookingPatchTestSummary {
   status: 'unknown' | 'pending' | 'passed' | 'failed' | 'expired';
   performedAt?: string;

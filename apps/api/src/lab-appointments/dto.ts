@@ -32,3 +32,19 @@ export class CreateStylistRebookingDto {
   @MaxLength(500)
   clientNote?: string;
 }
+
+export class CancelAppointmentDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
+}
+
+export class RescheduleAppointmentDto {
+  @IsISO8601()
+  scheduledStartAt!: string;
+
+  @IsOptional()
+  @IsUUID()
+  staffProfileId?: string;
+}
