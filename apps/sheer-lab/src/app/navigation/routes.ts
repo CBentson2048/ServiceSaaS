@@ -2,11 +2,13 @@ import type { StaffBookingPatchTestSummary } from '@sheer/domain';
 
 export interface FormulaEntryContext {
   labSessionId: string;
-  appointmentId: string;
-  clientProfileId: string;
+  // Optional so a walk-in session (no booking / no client profile yet) can
+  // start a formula. Appointment-backed mixes still pass these.
+  appointmentId?: string;
+  clientProfileId?: string;
   clientName: string;
   serviceType: string;
-  startsAt: string;
+  startsAt?: string;
   patchTest?: StaffBookingPatchTestSummary;
 }
 
@@ -16,6 +18,7 @@ export type RootStackParamList = {
   DeviceBlocked: undefined;
   Auth: undefined;
   Home: undefined;
+  NewMix: undefined;
   DevicePairing: undefined;
   Formula: { entryContext?: FormulaEntryContext } | undefined;
   FormulaHistory: undefined;
@@ -30,6 +33,7 @@ export const routes = {
   deviceBlocked: 'DeviceBlocked',
   auth: 'Auth',
   home: 'Home',
+  newMix: 'NewMix',
   devicePairing: 'DevicePairing',
   formula: 'Formula',
   formulaHistory: 'FormulaHistory',

@@ -207,7 +207,7 @@ export const formulaDraftStore = {
   },
   startFromAppointmentContext(input: {
     labSessionId: string;
-    appointmentId: string;
+    appointmentId?: string;
     client: FormulaClientContext;
     visit: FormulaVisitContext;
     patchTest?: FormulaPatchTestContext;

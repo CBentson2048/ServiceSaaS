@@ -1,6 +1,6 @@
 import type React from 'react';
 import { useState } from 'react';
-import { StyleSheet, Text, TextInput } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { useDeviceSession } from '../../features/sheer-lab/DeviceSessionProvider';
 import { registerDeviceWithToken } from '../../features/sheer-lab/deviceSession';
@@ -8,22 +8,38 @@ import { labTheme } from '../../theme/labTheme';
 import { LabButton } from '../shared/LabButton';
 import { LabScreen } from '../shared/LabScreen';
 
+/** Keeps the setup card readable and centered on every iPad, portrait or landscape. */
+const CONTENT_WIDTH = 540;
+
+const MONOSPACE = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' });
+
 export function DeviceRegistrationScreen(): React.JSX.Element {
   const { refreshDeviceSession } = useDeviceSession();
   const [token, setToken] = useState('');
   const [busy, setBusy] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const [revealed, setRevealed] = useState(false);
   const [message, setMessage] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
 
+  const trimmed = token.trim();
+  const canSubmit = trimmed.length > 0 && !busy;
+
+  function handleChangeToken(next: string): void {
+    setToken(next);
+    if (message) setMessage(undefined);
+    if (error) setError(undefined);
+  }
+
   async function handleRegister(): Promise<void> {
-    const nextToken = token.trim();
-    if (!nextToken || busy) return;
+    if (!canSubmit) return;
 
     setBusy(true);
     setError(undefined);
     setMessage(undefined);
     try {
-      const context = await registerDeviceWithToken(nextToken);
+      const context = await registerDeviceWithToken(trimmed);
       setToken('');
       setMessage(`Registered ${context.device.deviceName} at ${context.location.name}.`);
       await refreshDeviceSession();
@@ -34,27 +50,80 @@ export function DeviceRegistrationScreen(): React.JSX.Element {
     }
   }
 
+  async function handleCheck(): Promise<void> {
+    if (busy || checking) return;
+    setChecking(true);
+    try {
+      await refreshDeviceSession();
+    } finally {
+      setChecking(false);
+    }
+  }
+
   return (
-    <LabScreen title="Register this iPad" eyebrow="Sheer Lab device setup">
-      <Text style={styles.copy}>
-        Ask an owner or manager to register this iPad from the web app, then paste the one-time token here.
-      </Text>
-      <TextInput
-        autoCapitalize="none"
-        autoCorrect={false}
-        editable={!busy}
-        multiline
-        onChangeText={setToken}
-        placeholder="Paste device registration token"
-        placeholderTextColor={labTheme.colors.textMuted}
-        secureTextEntry
-        style={styles.input}
-        value={token}
-      />
-      {message ? <Text style={styles.success}>{message}</Text> : null}
-      {error ? <Text style={styles.error}>{error}</Text> : null}
-      <LabButton label="Register device" onPress={() => void handleRegister()} disabled={busy || token.trim().length === 0} />
-      <LabButton label="Check registration" onPress={() => void refreshDeviceSession()} variant="secondary" disabled={busy} />
+    <LabScreen
+      eyebrow="Sheer Lab device setup"
+      title="Register this iPad"
+      subtitle="Ask an owner or manager to register this iPad from the web app, then paste the one-time token below."
+      maxContentWidth={CONTENT_WIDTH}
+      align="center"
+    >
+      <View style={styles.field}>
+        <Text style={styles.label}>Device registration token</Text>
+        <View style={[styles.inputRow, focused && styles.inputRowFocused]}>
+          <TextInput
+            autoCapitalize="none"
+            autoCorrect={false}
+            editable={!busy}
+            onBlur={() => setFocused(false)}
+            onChangeText={handleChangeToken}
+            onFocus={() => setFocused(true)}
+            placeholder="Paste device registration token"
+            placeholderTextColor={labTheme.colors.textMuted}
+            secureTextEntry={!revealed}
+            spellCheck={false}
+            style={styles.input}
+            value={token}
+          />
+          {trimmed.length > 0 ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={revealed ? 'Hide token' : 'Show token'}
+              hitSlop={8}
+              onPress={() => setRevealed((prev) => !prev)}
+              style={styles.reveal}
+            >
+              <Text style={styles.revealLabel}>{revealed ? 'Hide' : 'Show'}</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      </View>
+
+      {message ? (
+        <View style={[styles.alert, styles.alertSuccess]}>
+          <View style={[styles.alertDot, styles.alertDotSuccess]} />
+          <Text style={[styles.alertText, styles.alertTextSuccess]}>{message}</Text>
+        </View>
+      ) : null}
+
+      {error ? (
+        <View style={[styles.alert, styles.alertError]}>
+          <View style={[styles.alertDot, styles.alertDotError]} />
+          <Text style={[styles.alertText, styles.alertTextError]}>{error}</Text>
+        </View>
+      ) : null}
+
+      <View style={styles.actions}>
+        <LabButton label="Register device" onPress={() => void handleRegister()} disabled={!canSubmit} loading={busy} />
+        <LabButton
+          label="Check registration"
+          onPress={() => void handleCheck()}
+          variant="secondary"
+          disabled={busy}
+          loading={checking}
+        />
+      </View>
+
       <Text style={styles.meta}>
         The token is stored only in Keychain or Keystore-backed storage. Stylist PINs are never stored on this iPad.
       </Text>
@@ -63,35 +132,94 @@ export function DeviceRegistrationScreen(): React.JSX.Element {
 }
 
 const styles = StyleSheet.create({
-  copy: {
+  field: {
+    gap: labTheme.spacing.sm,
+  },
+  label: {
     color: labTheme.colors.textSecondary,
-    fontSize: 16,
-    lineHeight: 22,
+    fontSize: labTheme.typography.fontSize.small,
+    fontWeight: '700',
+    letterSpacing: labTheme.typography.letterSpacing.wide,
+    textTransform: 'uppercase',
+  },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: labTheme.spacing.sm,
+    minHeight: 56,
+    paddingHorizontal: labTheme.spacing.base,
+    borderWidth: 1,
+    borderColor: labTheme.colors.inputBorder,
+    borderRadius: labTheme.radius.inputLg,
+    backgroundColor: labTheme.colors.card,
+  },
+  inputRowFocused: {
+    borderColor: labTheme.colors.primary,
   },
   input: {
-    minHeight: 76,
-    borderWidth: 1,
-    borderColor: labTheme.colors.border,
-    borderRadius: labTheme.radius.card,
-    paddingHorizontal: labTheme.spacing.md,
-    paddingVertical: labTheme.spacing.sm,
-    backgroundColor: labTheme.colors.card,
+    flex: 1,
+    paddingVertical: labTheme.spacing.md,
     color: labTheme.colors.textPrimary,
-    fontSize: 14,
+    fontFamily: MONOSPACE,
+    fontSize: labTheme.typography.fontSize.bodyLg,
   },
-  success: {
-    color: '#86efac',
-    fontSize: 14,
+  reveal: {
+    paddingVertical: labTheme.spacing.xs,
+    paddingHorizontal: labTheme.spacing.sm,
+    borderRadius: labTheme.radius.input,
+  },
+  revealLabel: {
+    color: labTheme.colors.primary,
+    fontSize: labTheme.typography.fontSize.small,
     fontWeight: '700',
   },
-  error: {
-    color: '#fca5a5',
-    fontSize: 14,
-    fontWeight: '700',
+  alert: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: labTheme.spacing.sm,
+    padding: labTheme.spacing.md,
+    borderWidth: 1,
+    borderRadius: labTheme.radius.card,
+  },
+  alertDot: {
+    width: 8,
+    height: 8,
+    marginTop: 6,
+    borderRadius: labTheme.radius.full,
+  },
+  alertText: {
+    flex: 1,
+    fontSize: labTheme.typography.fontSize.body,
+    lineHeight: labTheme.typography.lineHeight.body,
+    fontWeight: '500',
+  },
+  alertSuccess: {
+    backgroundColor: labTheme.colors.success.bg,
+    borderColor: labTheme.colors.success.border,
+  },
+  alertDotSuccess: {
+    backgroundColor: labTheme.colors.success.text,
+  },
+  alertTextSuccess: {
+    color: labTheme.colors.success.text,
+  },
+  alertError: {
+    backgroundColor: labTheme.colors.danger.bg,
+    borderColor: labTheme.colors.danger.border,
+  },
+  alertDotError: {
+    backgroundColor: labTheme.colors.danger.text,
+  },
+  alertTextError: {
+    color: labTheme.colors.danger.text,
+  },
+  actions: {
+    gap: labTheme.spacing.sm,
+    marginTop: labTheme.spacing.xs,
   },
   meta: {
     color: labTheme.colors.textMuted,
-    fontSize: 12,
-    lineHeight: 18,
+    fontSize: labTheme.typography.fontSize.caption,
+    lineHeight: labTheme.typography.lineHeight.caption,
   },
 });

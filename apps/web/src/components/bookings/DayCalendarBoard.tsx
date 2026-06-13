@@ -238,8 +238,8 @@ export function DayCalendarBoard({
 
   if (columns.length === 0) {
     return (
-      <div className="rounded-2xl border border-border bg-surface px-4 py-16 text-center">
-        <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-surface-alt text-text-muted">
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center rounded-2xl border border-border bg-surface px-4 py-16 text-center">
+        <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-surface-alt text-text-muted">
           <CalendarEmptyIcon className="h-5 w-5" />
         </div>
         <div className="text-[14px] font-semibold text-text-primary">
@@ -257,7 +257,7 @@ export function DayCalendarBoard({
   const minBoardWidth = columns.length * COLUMN_WIDTH + 64;
 
   return (
-    <div className="overflow-x-auto rounded-2xl border border-border bg-surface shadow-sm">
+    <div className="min-h-0 flex-1 overflow-auto rounded-2xl border border-border bg-surface shadow-sm">
       <div ref={boardRef} className="relative flex" style={{ minWidth: minBoardWidth }}>
         {/* Time axis */}
         <div className="sticky left-0 z-30 w-16 shrink-0 border-r border-border/60 bg-surface">

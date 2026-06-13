@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import { createClient } from '@supabase/supabase-js';
 import type { AuthUser } from '@sheer/domain';
@@ -15,7 +15,10 @@ type QueryCall =
   | { method: 'update'; args: unknown[] }
   | { method: 'insert'; args: unknown[] }
   | { method: 'upsert'; args: unknown[] }
+  | { method: 'delete'; args: unknown[] }
   | { method: 'eq'; args: unknown[] }
+  | { method: 'neq'; args: unknown[] }
+  | { method: 'or'; args: unknown[] }
   | { method: 'gte'; args: unknown[] }
   | { method: 'lt'; args: unknown[] }
   | { method: 'gt'; args: unknown[] }
@@ -40,7 +43,10 @@ interface MockQuery {
   update: jest.Mock;
   insert: jest.Mock;
   upsert: jest.Mock;
+  delete: jest.Mock;
   eq: jest.Mock;
+  neq: jest.Mock;
+  or: jest.Mock;
   gte: jest.Mock;
   lt: jest.Mock;
   gt: jest.Mock;
@@ -181,6 +187,91 @@ describe('LabAppointmentsService — appointment completion', () => {
     expect(client.queries[1].calls).toContainEqual({ method: 'in', args: ['status', ['confirmed', 'checked_in', 'in_progress']] });
   });
 
+  it('itemises each booked service as its own bill line', async () => {
+    const services = [
+      { service_name_snapshot: 'Consultation', duration_minutes: 15, deposit_required_amount: 0, price_amount: 20 },
+      { service_name_snapshot: 'Cut and blow dry', duration_minutes: 60, deposit_required_amount: 0, price_amount: 50 },
+    ];
+    const awaitingPayment = appointmentRow({
+      status: 'awaiting_payment',
+      completed_at: '2026-05-13T10:01:00.000Z',
+      appointment_services: services,
+    });
+    // The service charge persists as a single rolled-up line (£20 + £50 = £70);
+    // the bill should split it back into the two booked services.
+    const aggregatedServiceLine = [
+      { line_type: 'service', description: 'Consultation, Cut and blow dry', amount_cents: 7000, currency_code: 'GBP' },
+    ];
+    const client = createMockSupabaseClient([
+      { data: appointmentRow({ appointment_services: services }), error: null },
+      { data: awaitingPayment, error: null },
+      { error: null },
+      { data: null, error: null },
+      { data: visitRow(), error: null },
+      { error: null },
+      { data: [], error: null },
+      { data: aggregatedServiceLine, error: null },
+      { data: [clientProfileRow()], error: null },
+    ]);
+    const service = createService(client);
+
+    const result = await service.complete(stylistActor(), 'appointment_1');
+
+    const serviceLines = result.billing.lineItems.filter((item) => item.lineType === 'service');
+    expect(serviceLines).toHaveLength(2);
+    expect(serviceLines.map((item) => item.description)).toEqual(['Consultation', 'Cut and blow dry']);
+    expect(serviceLines.map((item) => item.amountCents)).toEqual([2000, 5000]);
+    // Totals stay identical — per-service prices reconcile to the rolled-up charge.
+    expect(result.billing.serviceTotalCents).toBe(7000);
+    expect(result.billing.totalCents).toBe(7000);
+    expect(result.billing.balanceDueCents).toBe(7000);
+  });
+
+  it('shows tax-inclusive prices per service when the location charges tax', async () => {
+    const services = [
+      { service_name_snapshot: 'Consultation', duration_minutes: 15, deposit_required_amount: 0, price_amount: 20 },
+      { service_name_snapshot: 'Cut and blow dry', duration_minutes: 60, deposit_required_amount: 0, price_amount: 50 },
+    ];
+    const awaitingPayment = appointmentRow({
+      status: 'awaiting_payment',
+      completed_at: '2026-05-13T10:01:00.000Z',
+      appointment_services: services,
+    });
+    // Persisted line is net (£20 + £50 = £70); with 20% tax the bill shows each
+    // service inclusive of tax (£24, £60) and collects the £84 gross balance.
+    const aggregatedServiceLine = [
+      { line_type: 'service', description: 'Consultation, Cut and blow dry', amount_cents: 7000, currency_code: 'GBP' },
+    ];
+    const client = createMockSupabaseClient([
+      { data: appointmentRow({ appointment_services: services }), error: null },
+      { data: awaitingPayment, error: null },
+      { error: null },
+      { data: null, error: null },
+      { data: visitRow(), error: null },
+      { error: null },
+      { data: [], error: null },
+      { data: aggregatedServiceLine, error: null },
+      { data: [clientProfileRow()], error: null },
+    ]);
+    const service = createService(client, {
+      locationId: 'loc',
+      taxEnabled: true,
+      taxLabel: 'VAT',
+      taxRatePercent: 20,
+      appliesTo: 'both',
+      displayMode: 'ex_tax',
+    });
+
+    const result = await service.complete(stylistActor(), 'appointment_1');
+
+    const serviceLines = result.billing.lineItems.filter((item) => item.lineType === 'service');
+    expect(serviceLines.map((item) => item.amountCents)).toEqual([2400, 6000]);
+    expect(result.billing.serviceTotalCents).toBe(8400);
+    expect(result.billing.totalCents).toBe(8400);
+    // The till collects the tax-inclusive figure — confirm-payment validates this.
+    expect(result.billing.balanceDueCents).toBe(8400);
+  });
+
   it('replays awaiting-payment appointments without re-running the status transition', async () => {
     const awaitingPayment = appointmentRow({ status: 'awaiting_payment', completed_at: '2026-05-13T10:01:00.000Z' });
     const client = createMockSupabaseClient([
@@ -302,7 +393,209 @@ describe('LabAppointmentsService — manager and owner booking visibility', () =
   });
 });
 
-function createService(client: MockSupabaseClient): LabAppointmentsService {
+describe('LabAppointmentsService — edit appointment services', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  function ownerActor(): AuthUser {
+    return {
+      ...stylistActor(),
+      role: 'owner',
+      staffProfileId: undefined,
+      locationScope: { kind: 'all', locationIds: ['location_1', 'location_2'] },
+    };
+  }
+
+  function appointmentWithService(serviceId: string) {
+    return appointmentRow({
+      appointment_services: [
+        {
+          id: 'as_1',
+          service_id: serviceId,
+          service_name_snapshot: 'Old service',
+          duration_minutes: 30,
+          deposit_required_amount: 0,
+          price_amount: 40,
+        },
+      ],
+    });
+  }
+
+  const catalogService = {
+    id: 'svc_new',
+    name: 'Balayage',
+    estimated_duration_minutes: 90,
+    base_price: 120,
+    deposit_type: 'none',
+    deposit_value: 0,
+    is_active: true,
+    location_id: null,
+  };
+
+  it('replaces the services, recomputing duration/price from the catalogue', async () => {
+    const client = createMockSupabaseClient([
+      { data: appointmentWithService('svc_old'), error: null }, // fetchAppointmentForActor
+      { data: [catalogService], error: null }, // fetchCatalogServices
+      { data: [{ staff_profile_id: 'staff_1', service_id: 'svc_new' }], error: null }, // eligibility
+      { data: [], error: null }, // availability (no overlap)
+      { data: appointmentWithService('svc_old'), error: null }, // header update (old projection)
+      { data: [{ id: 'as_1', service_id: 'svc_old' }], error: null }, // prior services snapshot
+      { data: null, error: null }, // delete old service rows
+      { data: null, error: null }, // insert new service rows
+      {
+        data: appointmentRow({
+          scheduled_end_at: '2026-05-13T10:30:00.000Z',
+          appointment_services: [
+            {
+              id: 'as_2',
+              service_id: 'svc_new',
+              service_name_snapshot: 'Balayage',
+              duration_minutes: 90,
+              deposit_required_amount: 0,
+              price_amount: 120,
+            },
+          ],
+        }),
+        error: null,
+      }, // finalRow re-fetch
+      { data: [clientProfileRow()], error: null }, // fetchClientProfiles
+    ]);
+    const service = createService(client);
+
+    const result = await service.reschedule(ownerActor(), 'appointment_1', {
+      scheduledStartAt: '2026-05-13T09:00:00.000Z',
+      serviceIds: ['svc_new'],
+    });
+
+    expect(result.appointment.serviceIds).toEqual(['svc_new']);
+    expect(result.appointment.serviceNames).toEqual(['Balayage']);
+    expect(result.appointment.durationMinutes).toBe(90);
+
+    // The old service rows are removed and the new ones inserted with fresh snapshots.
+    const deletedServices = client.queries.some(
+      (query) =>
+        query.calls.some((call) => call.method === 'from' && call.args[0] === 'appointment_services') &&
+        query.calls.some((call) => call.method === 'delete'),
+    );
+    expect(deletedServices).toBe(true);
+
+    const insertQuery = client.queries.find(
+      (query) =>
+        query.calls.some((call) => call.method === 'from' && call.args[0] === 'appointment_services') &&
+        query.calls.some((call) => call.method === 'insert'),
+    );
+    expect(insertQuery).toBeDefined();
+    const insertedRows = insertQuery?.calls.find((call) => call.method === 'insert')?.args[0] as Array<
+      Record<string, unknown>
+    >;
+    expect(insertedRows).toHaveLength(1);
+    expect(insertedRows[0]).toMatchObject({
+      service_id: 'svc_new',
+      service_name_snapshot: 'Balayage',
+      duration_minutes: 90,
+      price_amount: 120,
+      sequence_no: 1,
+      status: 'scheduled',
+    });
+  });
+
+  it('rejects the edit when the assigned stylist is not eligible for a selected service', async () => {
+    const client = createMockSupabaseClient([
+      { data: appointmentWithService('svc_old'), error: null }, // fetchAppointmentForActor
+      { data: [catalogService], error: null }, // fetchCatalogServices
+      { data: [], error: null }, // eligibility — stylist offers nothing
+    ]);
+    const service = createService(client);
+
+    await expect(
+      service.reschedule(ownerActor(), 'appointment_1', {
+        scheduledStartAt: '2026-05-13T09:00:00.000Z',
+        serviceIds: ['svc_new'],
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    // It must not have deleted/replaced the existing services after failing validation.
+    const deleted = client.queries.some((query) => query.calls.some((call) => call.method === 'delete'));
+    expect(deleted).toBe(false);
+  });
+
+  it('rejects the edit when a selected service is missing from the catalogue', async () => {
+    const client = createMockSupabaseClient([
+      { data: appointmentWithService('svc_old'), error: null }, // fetchAppointmentForActor
+      { data: [], error: null }, // fetchCatalogServices finds nothing for svc_new
+    ]);
+    const service = createService(client);
+
+    await expect(
+      service.reschedule(ownerActor(), 'appointment_1', {
+        scheduledStartAt: '2026-05-13T09:00:00.000Z',
+        serviceIds: ['svc_new'],
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('leaves services untouched when no serviceIds are supplied (pure time move)', async () => {
+    const client = createMockSupabaseClient([
+      { data: appointmentWithService('svc_old'), error: null }, // fetchAppointmentForActor
+      { data: [], error: null }, // availability
+      { data: appointmentWithService('svc_old'), error: null }, // header update
+      { data: [{ id: 'as_1', duration_minutes: 30, sequence_no: 1 }], error: null }, // re-sequence load
+      { data: null, error: null }, // re-sequence update (1 row)
+      { data: [clientProfileRow()], error: null }, // fetchClientProfiles
+    ]);
+    const service = createService(client);
+
+    await service.reschedule(ownerActor(), 'appointment_1', {
+      scheduledStartAt: '2026-05-13T11:00:00.000Z',
+    });
+
+    const touchedCatalog = client.queries.some((query) =>
+      query.calls.some((call) => call.method === 'from' && call.args[0] === 'services'),
+    );
+    const checkedEligibility = client.queries.some((query) =>
+      query.calls.some((call) => call.method === 'from' && call.args[0] === 'staff_service_eligibility'),
+    );
+    const deleted = client.queries.some((query) => query.calls.some((call) => call.method === 'delete'));
+    expect(touchedCatalog).toBe(false);
+    expect(checkedEligibility).toBe(false);
+    expect(deleted).toBe(false);
+  });
+
+  it('treats an unchanged service set as a no-op (no catalogue lookup or replacement)', async () => {
+    const client = createMockSupabaseClient([
+      { data: appointmentWithService('svc_old'), error: null }, // fetchAppointmentForActor
+      { data: [], error: null }, // availability
+      { data: appointmentWithService('svc_old'), error: null }, // header update
+      { data: [{ id: 'as_1', duration_minutes: 30, sequence_no: 1 }], error: null }, // re-sequence load
+      { data: null, error: null }, // re-sequence update
+      { data: [clientProfileRow()], error: null }, // fetchClientProfiles
+    ]);
+    const service = createService(client);
+
+    await service.reschedule(ownerActor(), 'appointment_1', {
+      scheduledStartAt: '2026-05-13T11:00:00.000Z',
+      serviceIds: ['svc_old'],
+    });
+
+    const touchedCatalog = client.queries.some((query) =>
+      query.calls.some((call) => call.method === 'from' && call.args[0] === 'services'),
+    );
+    expect(touchedCatalog).toBe(false);
+  });
+});
+
+function createService(
+  client: MockSupabaseClient,
+  taxSettings: Record<string, unknown> = {
+    locationId: 'loc',
+    taxEnabled: false,
+    taxLabel: null,
+    taxRatePercent: 0,
+    appliesTo: 'both',
+    displayMode: 'ex_tax',
+  },
+): LabAppointmentsService {
   mockedCreateClient.mockReturnValue(client as never);
   return new LabAppointmentsService(
     {
@@ -312,14 +605,7 @@ function createService(client: MockSupabaseClient): LabAppointmentsService {
       linkPersistedAppointment: jest.fn(),
     } as never,
     {
-      resolveLocationTaxSettings: jest.fn().mockResolvedValue({
-        locationId: 'loc',
-        taxEnabled: false,
-        taxLabel: null,
-        taxRatePercent: 0,
-        appliesTo: 'both',
-        displayMode: 'ex_tax',
-      }),
+      resolveLocationTaxSettings: jest.fn().mockResolvedValue(taxSettings),
     } as never,
     {
       syncBookingNotificationsSafe: jest.fn().mockResolvedValue(undefined),
@@ -364,7 +650,10 @@ function createMockQuery(result: unknown): MockQuery {
   query.update = chain('update');
   query.insert = chain('insert');
   query.upsert = chain('upsert');
+  query.delete = chain('delete');
   query.eq = chain('eq');
+  query.neq = chain('neq');
+  query.or = chain('or');
   query.gte = chain('gte');
   query.lt = chain('lt');
   query.gt = chain('gt');

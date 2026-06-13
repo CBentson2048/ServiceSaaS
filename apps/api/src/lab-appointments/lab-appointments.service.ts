@@ -30,7 +30,12 @@ import type {
   StaffBookingDetail,
   StaffBookingSummary,
 } from '@sheer/domain';
-import { calculateAppointmentBillingTax, type LocationTaxSettings } from '@sheer/domain';
+import {
+  calculateAppointmentBillingTax,
+  calculateTaxForCategory,
+  type LocationTaxSettings,
+  type TaxableCategory,
+} from '@sheer/domain';
 import { buildProductBillingSnapshot } from '../common/product-billing.helper';
 import { BookingNotificationService } from '../communications/booking-notification.service';
 import type { LabRuntimeSession } from '../lab-session/lab-session.service';
@@ -51,6 +56,28 @@ interface DepositRow {
   status: string;
   amount: number | string;
   currency_code?: string | null;
+}
+
+// A row from the booking.services catalogue, used when editing an appointment's
+// services. Mirrors the columns the booking flow reads to snapshot price/duration.
+interface ServiceCatalogRow {
+  id: string;
+  name: string;
+  estimated_duration_minutes: number;
+  base_price: number | string;
+  deposit_type: 'none' | 'fixed_amount' | 'percentage';
+  deposit_value: number | string;
+  is_active?: boolean | null;
+  location_id?: string | null;
+}
+
+// A catalogue service resolved into the figures we snapshot onto appointment_services.
+interface ResolvedCatalogService {
+  id: string;
+  name: string;
+  durationMinutes: number;
+  priceAmount: number;
+  depositAmount: number;
 }
 
 interface StaffProfileRow {
@@ -200,7 +227,7 @@ const CANCELLABLE_BOOKING_STATUSES: AppointmentStatus[] = [
 const RESCHEDULABLE_BOOKING_STATUSES: AppointmentStatus[] = ['pending', 'confirmed', 'checked_in'];
 
 const LIST_COLUMNS =
-  'id,business_id,location_id,client_profile_id,assigned_staff_profile_id,requested_staff_profile_id,status,scheduled_start_at,scheduled_end_at,check_in_at,client_note,completed_at,completed_by_user_profile_id,completed_by_staff_profile_id,appointment_services(service_name_snapshot,duration_minutes,deposit_required_amount,price_amount),deposits(status,amount,currency_code)';
+  'id,business_id,location_id,client_profile_id,assigned_staff_profile_id,requested_staff_profile_id,status,scheduled_start_at,scheduled_end_at,check_in_at,client_note,completed_at,completed_by_user_profile_id,completed_by_staff_profile_id,appointment_services(service_id,service_name_snapshot,duration_minutes,deposit_required_amount,price_amount),deposits(status,amount,currency_code)';
 
 const DETAIL_COLUMNS =
   'id,business_id,location_id,client_profile_id,assigned_staff_profile_id,requested_staff_profile_id,status,scheduled_start_at,scheduled_end_at,check_in_at,communication_preference,client_note,internal_note,completed_at,completed_by_user_profile_id,completed_by_staff_profile_id,appointment_services(id,service_id,service_name_snapshot,duration_minutes,deposit_required_amount,price_amount),deposits(status,amount,currency_code)';
@@ -658,10 +685,11 @@ export class LabAppointmentsService {
   }
 
   /**
-   * Move a booking to a new time and/or reassign its stylist from the book.
-   * Preserves the service list and total duration, re-sequencing each service's
-   * times from the new start, then re-syncs the client's reminders to the new time.
-   * Editing the services/price is out of scope here (V2).
+   * Move a booking to a new time and/or reassign its stylist from the book, and
+   * optionally replace the services on it. With no `serviceIds` the service list and
+   * total duration are preserved and only the per-service times are re-sequenced.
+   * With `serviceIds`, the services (and therefore price/deposit/duration) are
+   * swapped for the new selection. Either way the client's reminders are re-synced.
    */
   async reschedule(
     actor: AuthUser,
@@ -676,13 +704,22 @@ export class LabAppointmentsService {
     // Edit Appointment is a day-of tool, so (unlike rebooking) it allows moving to
     // an earlier slot today — only the date itself must be valid, not in the future.
     const newStart = parseValidDate(input.scheduledStartAt);
-    const services = arrayOf(appointment.appointment_services);
-    const durationMinutes =
-      services.reduce((sum, service) => sum + Number(service.duration_minutes ?? 0), 0) ||
-      minutesBetween(appointment.scheduled_start_at, appointment.scheduled_end_at) ||
-      30;
-    const newEnd = new Date(newStart.getTime() + durationMinutes * 60_000);
+    const currentServices = arrayOf(appointment.appointment_services);
 
+    // Compare the requested services to the current set so a no-op resubmit (same
+    // services) skips the catalogue lookup + row replacement and behaves exactly
+    // like a plain time/stylist move. Order changes alone are not a service edit.
+    const currentServiceIds = currentServices
+      .map((service) => service.service_id)
+      .filter((sid): sid is string => Boolean(sid));
+    const requestedServiceIds = input.serviceIds
+      ? Array.from(new Set(input.serviceIds.filter(Boolean)))
+      : undefined;
+    const servicesChanged =
+      requestedServiceIds !== undefined && !sameStringSet(requestedServiceIds, currentServiceIds);
+
+    // Resolve the assigned stylist first — both the eligibility check and the new
+    // service rows hang off it.
     const staffProfileId =
       input.staffProfileId ?? appointment.assigned_staff_profile_id ?? actor.staffProfileId ?? undefined;
     const staffChanged = Boolean(staffProfileId) && staffProfileId !== appointment.assigned_staff_profile_id;
@@ -690,6 +727,33 @@ export class LabAppointmentsService {
       this.assertCanAssignRebookingStaff(actor, staffProfileId, appointment.location_id);
       await this.assertStaffBookable(actor.businessId, appointment.location_id, staffProfileId);
     }
+
+    // When the services change, load them from the catalogue (active + in scope),
+    // and require the assigned stylist to be eligible for every one — mirroring the
+    // hard block the booking flow enforces. Duration is then recomputed from them.
+    let resolvedServices: ResolvedCatalogService[] | null = null;
+    if (servicesChanged) {
+      resolvedServices = await this.fetchCatalogServices(
+        actor.businessId,
+        appointment.location_id,
+        requestedServiceIds as string[],
+      );
+      if (staffProfileId) {
+        await this.assertStaffEligibleForServices(
+          actor.businessId,
+          staffProfileId,
+          requestedServiceIds as string[],
+        );
+      }
+    }
+
+    const durationMinutes = resolvedServices
+      ? resolvedServices.reduce((sum, service) => sum + service.durationMinutes, 0) || 30
+      : currentServices.reduce((sum, service) => sum + Number(service.duration_minutes ?? 0), 0) ||
+        minutesBetween(appointment.scheduled_start_at, appointment.scheduled_end_at) ||
+        30;
+    const newEnd = new Date(newStart.getTime() + durationMinutes * 60_000);
+
     if (staffProfileId) {
       await this.assertStaffAvailableForRebooking({
         businessId: actor.businessId,
@@ -725,15 +789,24 @@ export class LabAppointmentsService {
     const rescheduled = data ?? (await this.fetchAppointmentById(id, actor.businessId));
 
     // PostgREST has no multi-statement transaction here, so the header and its
-    // service rows are written separately. If re-sequencing the service rows fails,
-    // revert the header to its prior time/stylist so the booking is never left
-    // half-moved (header updated, per-service times stale).
+    // service rows are written separately. If the service write fails, revert the
+    // header to its prior time/stylist so the booking is never left half-moved
+    // (header updated, per-service rows stale or missing).
     try {
-      await this.rescheduleAppointmentServices(
-        rescheduled,
-        newStart,
-        staffProfileId ?? rescheduled.assigned_staff_profile_id,
-      );
+      if (resolvedServices) {
+        await this.replaceAppointmentServices(
+          rescheduled,
+          resolvedServices,
+          newStart,
+          staffProfileId ?? rescheduled.assigned_staff_profile_id,
+        );
+      } else {
+        await this.rescheduleAppointmentServices(
+          rescheduled,
+          newStart,
+          staffProfileId ?? rescheduled.assigned_staff_profile_id,
+        );
+      }
     } catch (err) {
       await this.revertAppointmentSchedule(appointment);
       throw err;
@@ -742,8 +815,15 @@ export class LabAppointmentsService {
     // The reminder schedule must follow the new time. Fail-soft.
     await this.bookingNotifications.syncBookingNotificationsSafe(rescheduled.id);
 
-    const clientsById = await this.fetchClientProfiles(actor.businessId, [rescheduled.client_profile_id]);
-    return { appointment: toBookingDetail(rescheduled, clientsById.get(rescheduled.client_profile_id)) };
+    // The header-update projection was captured before the services were replaced,
+    // so it still carries the OLD nested service rows. Re-fetch when the services
+    // changed so the response reflects the new services/price/duration.
+    const finalRow = resolvedServices
+      ? await this.fetchAppointmentById(id, actor.businessId)
+      : rescheduled;
+
+    const clientsById = await this.fetchClientProfiles(actor.businessId, [finalRow.client_profile_id]);
+    return { appointment: toBookingDetail(finalRow, clientsById.get(finalRow.client_profile_id)) };
   }
 
   // Best-effort restore of the appointment (header + service rows) to its
@@ -815,6 +895,148 @@ export class LabAppointmentsService {
         this.logger.error(`rescheduleAppointmentServices update failed: ${updateError.message}`);
         throw new InternalServerErrorException('Unable to reschedule appointment services');
       }
+    }
+  }
+
+  // Load the requested services from the catalogue, enforcing the same rules as the
+  // booking flow: active, belonging to the business, and either salon-wide
+  // (location_id IS NULL) or scoped to this appointment's location. Returns them in
+  // the requested order and throws if any id doesn't resolve.
+  private async fetchCatalogServices(
+    businessId: string,
+    locationId: string,
+    serviceIds: string[],
+  ): Promise<ResolvedCatalogService[]> {
+    const uniqueIds = Array.from(new Set(serviceIds.filter(Boolean)));
+    if (uniqueIds.length === 0) {
+      throw new ConflictException('An appointment needs at least one service');
+    }
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('services')
+      .select('id,name,estimated_duration_minutes,base_price,deposit_type,deposit_value,is_active,location_id')
+      .eq('business_id', businessId)
+      .eq('is_active', true)
+      .or(`location_id.is.null,location_id.eq.${locationId}`)
+      .in('id', uniqueIds)
+      .returns<ServiceCatalogRow[]>();
+    if (error) {
+      this.logger.error(`fetchCatalogServices failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load services');
+    }
+    const byId = new Map((data ?? []).map((row) => [row.id, resolveCatalogService(row)]));
+    const ordered = uniqueIds
+      .map((sid) => byId.get(sid))
+      .filter((service): service is ResolvedCatalogService => Boolean(service));
+    if (ordered.length !== uniqueIds.length) {
+      throw new NotFoundException('One or more selected services were not found');
+    }
+    return ordered;
+  }
+
+  // Hard-block: the assigned stylist must be eligible for every selected service
+  // (a stylist is eligible only for services explicitly assigned to them in
+  // booking.staff_service_eligibility). Mirrors the public booking flow.
+  private async assertStaffEligibleForServices(
+    businessId: string,
+    staffProfileId: string,
+    serviceIds: string[],
+  ): Promise<void> {
+    const required = Array.from(new Set(serviceIds.filter(Boolean)));
+    if (required.length === 0) return;
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('staff_service_eligibility')
+      .select('staff_profile_id,service_id')
+      .eq('business_id', businessId)
+      .in('service_id', required)
+      .returns<Array<{ staff_profile_id: string; service_id: string }>>();
+    if (error) {
+      this.logger.error(`assertStaffEligibleForServices failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load stylist eligibility');
+    }
+    const offered = new Set(
+      (data ?? []).filter((row) => row.staff_profile_id === staffProfileId).map((row) => row.service_id),
+    );
+    if (!required.every((sid) => offered.has(sid))) {
+      throw new ConflictException('Selected stylist cannot perform one or more of the selected services');
+    }
+  }
+
+  // Swap the appointment's services for a new selection. PostgREST gives us no
+  // transaction across the delete + insert, so we snapshot the prior rows and
+  // re-insert them if the new insert fails, leaving the booking untouched. The new
+  // rows mirror the booking flow's shape (price/duration/deposit snapshots) and are
+  // sequenced contiguously from the new start.
+  private async replaceAppointmentServices(
+    appointment: AppointmentRow,
+    services: ResolvedCatalogService[],
+    newStart: Date,
+    staffProfileId: string | null,
+  ): Promise<void> {
+    const { data: prior, error: loadError } = await this.admin
+      .schema('booking')
+      .from('appointment_services')
+      .select('*')
+      .eq('appointment_id', appointment.id)
+      .eq('business_id', appointment.business_id)
+      .returns<Array<Record<string, unknown>>>();
+    if (loadError) {
+      this.logger.error(`replaceAppointmentServices load failed: ${loadError.message}`);
+      throw new InternalServerErrorException('Unable to update appointment services');
+    }
+
+    let cursor = newStart;
+    const rows = services.map((service, index) => {
+      const start = cursor;
+      const end = new Date(start.getTime() + service.durationMinutes * 60_000);
+      cursor = end;
+      return {
+        business_id: appointment.business_id,
+        location_id: appointment.location_id,
+        appointment_id: appointment.id,
+        service_id: service.id,
+        assigned_staff_profile_id: staffProfileId,
+        sequence_no: index + 1,
+        service_name_snapshot: service.name,
+        duration_minutes: service.durationMinutes,
+        price_amount: service.priceAmount,
+        deposit_required_amount: service.depositAmount,
+        status: 'scheduled',
+        scheduled_start_at: start.toISOString(),
+        scheduled_end_at: end.toISOString(),
+      };
+    });
+
+    const { error: deleteError } = await this.admin
+      .schema('booking')
+      .from('appointment_services')
+      .delete()
+      .eq('appointment_id', appointment.id)
+      .eq('business_id', appointment.business_id);
+    if (deleteError) {
+      this.logger.error(`replaceAppointmentServices delete failed: ${deleteError.message}`);
+      throw new InternalServerErrorException('Unable to update appointment services');
+    }
+
+    const { error: insertError } = await this.admin
+      .schema('booking')
+      .from('appointment_services')
+      .insert(rows);
+    if (insertError) {
+      this.logger.error(`replaceAppointmentServices insert failed: ${insertError.message}`);
+      // Best-effort restore of the rows we just deleted so the booking isn't left
+      // with no services. The outer caller still reverts the header time/stylist.
+      if (prior && prior.length > 0) {
+        const { error: restoreError } = await this.admin
+          .schema('booking')
+          .from('appointment_services')
+          .insert(prior);
+        if (restoreError) {
+          this.logger.error(`replaceAppointmentServices restore failed: ${restoreError.message}`);
+        }
+      }
+      throw new InternalServerErrorException('Unable to update appointment services');
     }
   }
 
@@ -1764,6 +1986,38 @@ function parseValidDate(value: string): Date {
   return parsed;
 }
 
+// True when both lists contain the same ids (ignoring order and duplicates). Used
+// to detect whether an edit actually changes the appointment's service list.
+function sameStringSet(a: string[], b: string[]): boolean {
+  const setA = new Set(a);
+  const setB = new Set(b);
+  if (setA.size !== setB.size) return false;
+  for (const value of setA) {
+    if (!setB.has(value)) return false;
+  }
+  return true;
+}
+
+function resolveCatalogService(row: ServiceCatalogRow): ResolvedCatalogService {
+  return {
+    id: row.id,
+    name: row.name,
+    durationMinutes: Number(row.estimated_duration_minutes ?? 0),
+    priceAmount: Number(row.base_price ?? 0),
+    depositAmount: calculateServiceDeposit(row),
+  };
+}
+
+// Deposit due for a service, derived the same way as the booking flow:
+// a fixed amount, a percentage of the base price, or nothing.
+function calculateServiceDeposit(row: ServiceCatalogRow): number {
+  const price = Number(row.base_price);
+  const value = Number(row.deposit_value);
+  if (row.deposit_type === 'fixed_amount') return Math.max(0, value);
+  if (row.deposit_type === 'percentage') return Math.max(0, Math.round((price * value) / 100));
+  return 0;
+}
+
 function toBookingSummary(
   row: AppointmentRow,
   client?: ClientProfileRow,
@@ -1792,6 +2046,9 @@ function toBookingSummary(
     endsAt: row.scheduled_end_at,
     clientDisplayName: clientName(client),
     serviceNames: services.map((service) => service.service_name_snapshot),
+    serviceIds: services
+      .map((service) => service.service_id)
+      .filter((id): id is string => Boolean(id)),
     durationMinutes: durationMinutes || minutesBetween(row.scheduled_start_at, row.scheduled_end_at),
     depositRequiredAmount: depositRequiredAmount || undefined,
     depositStatus: deposits[0]?.status,
@@ -1856,35 +2113,97 @@ function toPaymentRecord(row: SalonPaymentRow): AppointmentPaymentRecord {
   };
 }
 
+// The service charge is persisted as a single rolled-up visit_line_items row
+// (the table is uniquely keyed by visit_id + line_type), but checkout itemises
+// each booked service with its own price. Expand that one row into per-service
+// display lines from appointment_services — the per-service prices are exactly
+// what the rolled-up amount was summed from. We only itemise when they reconcile
+// to the penny, so every total (and the balance the till collects) is unchanged;
+// otherwise the persisted line is kept so the bill always foots.
+function expandServiceLineItems(
+  appointment: AppointmentRow,
+  lineItems: AppointmentCompletionLineItem[],
+): AppointmentCompletionLineItem[] {
+  const services = arrayOf(appointment.appointment_services);
+  const serviceLines = lineItems.filter((item) => item.lineType === 'service');
+  if (services.length === 0 || serviceLines.length === 0) return lineItems;
+
+  const currencyCode = serviceLines[0].currencyCode;
+  const perServiceLines: AppointmentCompletionLineItem[] = services.map((service) => ({
+    lineType: 'service',
+    description: service.service_name_snapshot || 'Service',
+    amountCents: toCents(service.price_amount),
+    currencyCode,
+  }));
+
+  const persistedTotal = serviceLines.reduce((sum, item) => sum + item.amountCents, 0);
+  const perServiceTotal = perServiceLines.reduce((sum, item) => sum + item.amountCents, 0);
+  if (perServiceTotal !== persistedTotal) return lineItems;
+
+  const nonServiceLines = lineItems.filter((item) => item.lineType !== 'service');
+  return [...perServiceLines, ...nonServiceLines];
+}
+
+// Map a visit line type to the tax category that gates it (services vs retail).
+// Anything else (legacy/uncategorised rows) is left untaxed and untouched.
+function taxCategoryForLineType(lineType: string): TaxableCategory | null {
+  if (lineType === 'service') return 'service';
+  if (lineType === 'product_usage') return 'retail';
+  return null;
+}
+
+function sumLineItemsByType(items: AppointmentCompletionLineItem[], lineType: string): number {
+  return items
+    .filter((item) => item.lineType === lineType)
+    .reduce((sum, item) => sum + item.amountCents, 0);
+}
+
 function buildBillingSummary(
   appointment: AppointmentRow,
   lineItems: AppointmentCompletionLineItem[],
   taxSettings: LocationTaxSettings,
 ): AppointmentCompletionResponse['billing'] {
-  const currencyCode = lineItems[0]?.currencyCode ?? first(arrayOf(appointment.deposits))?.currency_code ?? 'GBP';
-  const serviceTotalCents = lineItems
-    .filter((item) => item.lineType === 'service')
-    .reduce((sum, item) => sum + item.amountCents, 0);
-  const productUsageTotalCents = lineItems
-    .filter((item) => item.lineType === 'product_usage')
-    .reduce((sum, item) => sum + item.amountCents, 0);
-  // Gross total is the sum of the billable components shown in the breakdown
-  // (services + product usage), not a blanket sum of every visit line item, so
-  // stray/legacy rows (e.g. retired formula_colour) can never inflate the total.
+  // Itemise services for display; totals are derived from the same set so they
+  // always foot to the lines shown (see expandServiceLineItems).
+  const itemisedLineItems = expandServiceLineItems(appointment, lineItems);
+  const currencyCode =
+    itemisedLineItems[0]?.currencyCode ?? first(arrayOf(appointment.deposits))?.currency_code ?? 'GBP';
+
+  // Net (tax-exclusive) subtotals feed the tax rollup we keep for records.
+  const netServiceTotalCents = sumLineItemsByType(itemisedLineItems, 'service');
+  const netProductUsageTotalCents = sumLineItemsByType(itemisedLineItems, 'product_usage');
+
+  // Every price shown and collected is tax-inclusive: convert each billable line
+  // to its gross amount through the shared tax layer, honouring the location's rate
+  // and appliesTo gating. VAT is baked into the price automatically and never shown
+  // as its own line. Tax-disabled locations get gross == net, so this is a no-op
+  // for them. Per-line gross figures sum to the totals below, so the bill always
+  // foots and `balanceDueCents` (the only amount confirm-payment accepts) is the
+  // tax-inclusive figure the till collects.
+  const grossLineItems = itemisedLineItems.map((item) => {
+    const category = taxCategoryForLineType(item.lineType);
+    if (!category) return item;
+    return { ...item, amountCents: calculateTaxForCategory(item.amountCents, category, taxSettings).grossCents };
+  });
+
+  const serviceTotalCents = sumLineItemsByType(grossLineItems, 'service');
+  const productUsageTotalCents = sumLineItemsByType(grossLineItems, 'product_usage');
+  // Total is the sum of the billable components shown in the breakdown (services +
+  // product usage), not a blanket sum of every visit line item, so stray/legacy
+  // rows (e.g. retired formula_colour) can never inflate the total.
   const totalCents = serviceTotalCents + productUsageTotalCents;
   const depositPaidCents = arrayOf(appointment.deposits)
     .filter((deposit) => deposit.status === 'paid')
     .reduce((sum, deposit) => sum + toCents(deposit.amount), 0);
-  // Tax rollup via the single shared tax layer. serviceTotalCents/productUsageTotalCents
-  // are gated by the location's appliesTo rule (services / retail / both). Existing
-  // totals stay tax-exclusive for backward compatibility; clients read `tax` to render
-  // inc/ex figures per the configured display mode.
+
+  // Tax rollup retained for records/reporting (computed from the net subtotals);
+  // the checkout itself no longer renders a separate VAT line.
   const tax = calculateAppointmentBillingTax(
-    { serviceTotalCents, productUsageTotalCents },
+    { serviceTotalCents: netServiceTotalCents, productUsageTotalCents: netProductUsageTotalCents },
     taxSettings,
   );
   return {
-    lineItems,
+    lineItems: grossLineItems,
     serviceTotalCents,
     productUsageTotalCents,
     depositPaidCents,

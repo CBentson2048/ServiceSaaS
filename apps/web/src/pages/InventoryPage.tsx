@@ -97,7 +97,7 @@ export function InventoryPage() {
       const [productResult, categoryResult, stockResult, movementResult, lowStockResult] = await Promise.all([
         listInventoryProducts(accessToken),
         listInventoryCategories(accessToken),
-        listInventoryStock(accessToken, { locationId: listingLocationId, q: search, lowStockOnly }),
+        listInventoryStock(accessToken, { locationId: listingLocationId, q: search.trim() || undefined, lowStockOnly }),
         listInventoryMovements(accessToken, { locationId: listingLocationId, limit: 20 }),
         listInventoryLowStock(accessToken, { locationId: listingLocationId }),
       ]);
@@ -114,8 +114,13 @@ export function InventoryPage() {
     }
   }, [accessToken, lowStockOnly, search, scopeLocationId, isAllLocations]);
 
+  // Debounced so typing in the SKU/name search fires one request after the
+  // user pauses rather than one per keystroke.
   useEffect(() => {
-    void reload();
+    const handle = setTimeout(() => {
+      void reload();
+    }, 250);
+    return () => clearTimeout(handle);
   }, [reload]);
 
   // Keep the mutation target sensible: follow the sidebar when it names a

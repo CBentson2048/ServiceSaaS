@@ -1,5 +1,5 @@
 import { useState, type ReactElement, type ReactNode, type SVGProps } from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import type { UserRole } from '@sheer/domain';
 import { cn } from '@sheer/utils';
 import { useAuth } from '../auth/AuthProvider';
@@ -16,30 +16,72 @@ interface NavEntry {
   allowedRoles?: UserRole[];
 }
 
-const NAV: NavEntry[] = [
+interface NavGroup {
+  group: string;
+  icon: IconComponent;
+  children: NavEntry[];
+}
+
+type NavItem = NavEntry | NavGroup;
+
+function isGroup(item: NavItem): item is NavGroup {
+  return 'children' in item;
+}
+
+const NAV: NavItem[] = [
   { to: '/dashboard', label: 'Dashboard', icon: DashboardIcon, end: true },
   { to: '/bookings', label: 'Appointment Book', icon: CalendarIcon, end: true },
   { to: '/bookings/new', label: 'New booking', icon: PlusIcon, allowedRoles: ['owner', 'manager'] },
   { to: '/services', label: 'Service management', icon: ScissorsIcon, allowedRoles: ['owner', 'manager'] },
   { to: '/crm', label: 'Client Hub', icon: CrmIcon },
-  { to: '/rota', label: 'Rota', icon: ClockIcon },
   { to: '/inventory', label: 'Product management', icon: BoxIcon, allowedRoles: ['owner', 'manager'] },
   { to: '/sheer-lab', label: 'Sheer Lab', icon: BeakerIcon },
-  { to: '/performance', label: 'Performance', icon: ChartIcon, allowedRoles: ['owner', 'manager'] },
-  { to: '/commission', label: 'Commission', icon: PercentIcon },
-  { to: '/team', label: 'Team', icon: TeamIcon, allowedRoles: ['owner'] },
+  {
+    group: 'Team Hub',
+    icon: TeamIcon,
+    children: [
+      { to: '/team', label: 'Team', icon: TeamIcon, allowedRoles: ['owner'] },
+      { to: '/rota', label: 'Rota', icon: ClockIcon },
+      { to: '/performance', label: 'Performance', icon: ChartIcon, allowedRoles: ['owner', 'manager'] },
+      { to: '/commission', label: 'Commission', icon: PercentIcon },
+    ],
+  },
   { to: '/locations', label: 'Locations', icon: PinIcon, allowedRoles: ['owner', 'manager'] },
   { to: '/settings/booking', label: 'Booking settings', icon: GearIcon, allowedRoles: ['owner'] },
 ];
+
+// Keeps leaf entries and any group that still has at least one role-visible child.
+function filterNav(items: NavItem[], role?: UserRole): NavItem[] {
+  const allowed = (entry: NavEntry) =>
+    !entry.allowedRoles || (role !== undefined && entry.allowedRoles.includes(role));
+  return items.reduce<NavItem[]>((acc, item) => {
+    if (isGroup(item)) {
+      const children = item.children.filter(allowed);
+      if (children.length > 0) acc.push({ ...item, children });
+    } else if (allowed(item)) {
+      acc.push(item);
+    }
+    return acc;
+  }, []);
+}
 
 const STORAGE_KEY = 'sheer.web.sidebarCollapsed';
 
 export function Sidebar() {
   const { user } = useAuth();
   const role = user?.role;
-  const visible = NAV.filter(
-    (entry) => !entry.allowedRoles || (role && entry.allowedRoles.includes(role)),
-  );
+  const location = useLocation();
+  const visible = filterNav(NAV, role);
+
+  const isPathActive = (to: string) =>
+    location.pathname === to || location.pathname.startsWith(`${to}/`);
+  const isGroupActive = (group: NavGroup) => group.children.some((child) => isPathActive(child.to));
+
+  // Groups auto-open when they contain the active route; an explicit toggle overrides that.
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  const isGroupOpen = (group: NavGroup) => openGroups[group.group] ?? isGroupActive(group);
+  const toggleGroup = (group: NavGroup) =>
+    setOpenGroups((prev) => ({ ...prev, [group.group]: !isGroupOpen(group) }));
 
   // Collapsed state is a per-user preference, persisted across sessions.
   // Defaults to collapsed; only an explicit '0' (user expanded it) keeps it open.
@@ -110,33 +152,26 @@ export function Sidebar() {
         </button>
       </div>
 
-      <nav className={cn('flex-1 py-2', collapsed ? 'px-2' : 'px-3')}>
+      <nav className={cn('min-h-0 flex-1 overflow-y-auto py-2', collapsed ? 'px-2' : 'px-3')}>
         <ul className="space-y-1">
-          {visible.map((item) => {
-            const Icon = item.icon;
-            return (
-              <li key={item.to}>
-                <NavLink
-                  to={item.to}
-                  end={item.end}
-                  title={collapsed ? item.label : undefined}
-                  aria-label={collapsed ? item.label : undefined}
-                  className={({ isActive }) =>
-                    cn(
-                      'flex items-center rounded-input-lg py-2 text-[14px] font-medium transition-colors',
-                      collapsed ? 'justify-center px-0' : 'gap-3 px-3',
-                      isActive
-                        ? 'bg-white/10 text-text-on-primary'
-                        : 'text-white/60 hover:bg-white/5 hover:text-text-on-primary',
-                    )
-                  }
-                >
-                  <Icon className="h-5 w-5 shrink-0" />
-                  {collapsed ? null : <span className="truncate">{item.label}</span>}
-                </NavLink>
-              </li>
-            );
-          })}
+          {visible.map((item) =>
+            isGroup(item) ? (
+              <NavGroupItem
+                key={item.group}
+                group={item}
+                collapsed={collapsed}
+                open={isGroupOpen(item)}
+                active={isGroupActive(item)}
+                onToggle={() => toggleGroup(item)}
+                onExpand={() => {
+                  setCollapsed(false);
+                  setOpenGroups((prev) => ({ ...prev, [item.group]: true }));
+                }}
+              />
+            ) : (
+              <NavLeaf key={item.to} item={item} collapsed={collapsed} />
+            ),
+          )}
         </ul>
       </nav>
 
@@ -151,6 +186,110 @@ export function Sidebar() {
         </div>
       )}
     </aside>
+  );
+}
+
+// A single navigable row. `indented` drops the icon and shifts the label so the
+// row reads as a child of a group; only used when the sidebar is expanded.
+function NavLeaf({
+  item,
+  collapsed = false,
+  indented = false,
+}: {
+  item: NavEntry;
+  collapsed?: boolean;
+  indented?: boolean;
+}) {
+  const Icon = item.icon;
+  return (
+    <li>
+      <NavLink
+        to={item.to}
+        end={item.end}
+        title={collapsed ? item.label : undefined}
+        aria-label={collapsed ? item.label : undefined}
+        className={({ isActive }) =>
+          cn(
+            'flex items-center rounded-input-lg py-2 text-[14px] font-medium transition-colors',
+            collapsed ? 'justify-center px-0' : indented ? 'gap-3 pl-11 pr-3' : 'gap-3 px-3',
+            isActive
+              ? 'bg-white/10 text-text-on-primary'
+              : 'text-white/60 hover:bg-white/5 hover:text-text-on-primary',
+          )
+        }
+      >
+        {indented && !collapsed ? null : <Icon className="h-5 w-5 shrink-0" />}
+        {collapsed ? null : <span className="truncate">{item.label}</span>}
+      </NavLink>
+    </li>
+  );
+}
+
+// A collapsible group header with its child rows. When the sidebar itself is
+// collapsed the header is a single icon that re-expands the sidebar and opens it.
+function NavGroupItem({
+  group,
+  collapsed,
+  open,
+  active,
+  onToggle,
+  onExpand,
+}: {
+  group: NavGroup;
+  collapsed: boolean;
+  open: boolean;
+  active: boolean;
+  onToggle: () => void;
+  onExpand: () => void;
+}) {
+  const Icon = group.icon;
+
+  if (collapsed) {
+    return (
+      <li>
+        <button
+          type="button"
+          onClick={onExpand}
+          title={group.group}
+          aria-label={`${group.group}. Expand the sidebar to open it.`}
+          className={cn(
+            'flex w-full items-center justify-center rounded-input-lg py-2 transition-colors',
+            active
+              ? 'bg-white/10 text-text-on-primary'
+              : 'text-white/60 hover:bg-white/5 hover:text-text-on-primary',
+          )}
+        >
+          <Icon className="h-5 w-5 shrink-0" />
+        </button>
+      </li>
+    );
+  }
+
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className={cn(
+          'flex w-full items-center gap-3 rounded-input-lg px-3 py-2 text-[14px] font-medium transition-colors',
+          active && !open
+            ? 'bg-white/10 text-text-on-primary'
+            : 'text-white/60 hover:bg-white/5 hover:text-text-on-primary',
+        )}
+      >
+        <Icon className="h-5 w-5 shrink-0" />
+        <span className="flex-1 truncate text-left">{group.group}</span>
+        <ChevronDownIcon className={cn('h-4 w-4 shrink-0 transition-transform', open ? '' : '-rotate-90')} />
+      </button>
+      {open ? (
+        <ul className="mt-1 space-y-1">
+          {group.children.map((child) => (
+            <NavLeaf key={child.to} item={child} indented />
+          ))}
+        </ul>
+      ) : null}
+    </li>
   );
 }
 
@@ -239,6 +378,14 @@ function ChevronRightIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Svg {...props}>
       <path d="m8 5 5 5-5 5" />
+    </Svg>
+  );
+}
+
+function ChevronDownIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Svg {...props}>
+      <path d="m5 8 5 5 5-5" />
     </Svg>
   );
 }

@@ -1,5 +1,5 @@
 import type React from 'react';
-import { Pressable, StyleSheet, Text } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { labTheme } from '../../theme/labTheme';
 
@@ -8,6 +8,8 @@ interface LabButtonProps {
   onPress: () => void;
   variant?: 'primary' | 'secondary';
   disabled?: boolean;
+  /** Shows an inline spinner and blocks presses while a task is running. */
+  loading?: boolean;
 }
 
 export function LabButton({
@@ -15,20 +17,29 @@ export function LabButton({
   onPress,
   variant = 'primary',
   disabled = false,
+  loading = false,
 }: LabButtonProps): React.JSX.Element {
+  const isDisabled = disabled || loading;
+  const spinnerColor =
+    variant === 'secondary' ? labTheme.colors.textPrimary : labTheme.colors.textOnPrimary;
+
   return (
     <Pressable
       accessibilityRole="button"
-      disabled={disabled}
+      accessibilityState={{ disabled: isDisabled, busy: loading }}
+      disabled={isDisabled}
       onPress={onPress}
       style={({ pressed }) => [
         styles.button,
         variant === 'secondary' && styles.secondary,
-        disabled && styles.disabled,
-        pressed && styles.pressed,
+        isDisabled && styles.disabled,
+        pressed && !isDisabled && styles.pressed,
       ]}
     >
-      <Text style={[styles.label, variant === 'secondary' && styles.secondaryLabel]}>{label}</Text>
+      <View style={styles.inner}>
+        {loading ? <ActivityIndicator size="small" color={spinnerColor} /> : null}
+        <Text style={[styles.label, variant === 'secondary' && styles.secondaryLabel]}>{label}</Text>
+      </View>
     </Pressable>
   );
 }
@@ -36,10 +47,17 @@ export function LabButton({
 const styles = StyleSheet.create({
   button: {
     alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 52,
     paddingVertical: labTheme.spacing.md,
     paddingHorizontal: labTheme.spacing.lg,
     borderRadius: labTheme.radius.full,
     backgroundColor: labTheme.colors.primary,
+  },
+  inner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: labTheme.spacing.sm,
   },
   secondary: {
     borderWidth: 1,
@@ -54,7 +72,7 @@ const styles = StyleSheet.create({
   },
   label: {
     color: labTheme.colors.textOnPrimary,
-    fontSize: 16,
+    fontSize: labTheme.typography.fontSize.subtitle,
     fontWeight: '800',
   },
   secondaryLabel: {

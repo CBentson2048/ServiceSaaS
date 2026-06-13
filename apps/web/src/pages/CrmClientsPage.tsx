@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import type { CrmClientSummary } from '@sheer/domain';
 import { ApiRequestError, createCrmClient, listCrmClients } from '../auth/api';
@@ -9,7 +9,6 @@ export function CrmClientsPage() {
   const accessToken = auth.session?.accessToken;
   const [clients, setClients] = useState<CrmClientSummary[]>([]);
   const [search, setSearch] = useState('');
-  const [submittedSearch, setSubmittedSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
@@ -23,42 +22,36 @@ export function CrmClientsPage() {
     communicationPreference: 'email' as 'email' | 'sms' | 'whatsapp',
   });
 
-  const reload = useCallback(async () => {
-    if (!accessToken) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await listCrmClients(accessToken, { q: submittedSearch || undefined });
-      setClients(result.clients);
-    } catch (err: unknown) {
-      if (err instanceof ApiRequestError) setError(err.message);
-      else if (err instanceof Error) setError(err.message);
-      else setError('Could not load clients');
-    } finally {
-      setLoading(false);
-    }
-  }, [accessToken, submittedSearch]);
+  const reload = useCallback(
+    async (term: string) => {
+      if (!accessToken) return;
+      setLoading(true);
+      setError(null);
+      try {
+        const result = await listCrmClients(accessToken, { q: term || undefined });
+        setClients(result.clients);
+      } catch (err: unknown) {
+        if (err instanceof ApiRequestError) setError(err.message);
+        else if (err instanceof Error) setError(err.message);
+        else setError('Could not load clients');
+      } finally {
+        setLoading(false);
+      }
+    },
+    [accessToken],
+  );
 
+  // Query the backend as the user types (debounced + trimmed) so any client is
+  // found — not just the recently-updated page held in memory. Trimming keeps
+  // "Luke" and "Luke " equivalent so a trailing space never changes results.
   useEffect(() => {
-    void reload();
-  }, [reload]);
-
-  const visibleClients = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    if (!term || term === submittedSearch.trim().toLowerCase()) return clients;
-    return clients.filter((client) =>
-      [
-        client.displayName,
-        client.clientCode,
-        client.email ?? '',
-        client.phone ?? '',
-        client.communicationPreference ?? '',
-      ]
-        .join(' ')
-        .toLowerCase()
-        .includes(term),
-    );
-  }, [clients, search, submittedSearch]);
+    if (!accessToken) return;
+    const term = search.trim();
+    const handle = setTimeout(() => {
+      void reload(term);
+    }, 250);
+    return () => clearTimeout(handle);
+  }, [accessToken, search, reload]);
 
   if (auth.status === 'authenticated' && auth.user?.role === 'client') {
     return <Navigate to="/unauthorized" replace />;
@@ -188,7 +181,7 @@ export function CrmClientsPage() {
         className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center"
         onSubmit={(event) => {
           event.preventDefault();
-          setSubmittedSearch(search.trim());
+          void reload(search.trim());
         }}
       >
         <input
@@ -209,13 +202,13 @@ export function CrmClientsPage() {
       <section className="overflow-hidden rounded-card-lg border border-border bg-surface">
         {loading ? (
           <EmptyState title="Loading clients…" body="Fetching client records." />
-        ) : visibleClients.length === 0 ? (
+        ) : clients.length === 0 ? (
           <EmptyState
-            title={clients.length === 0 ? 'No clients yet' : 'No clients match this search'}
+            title={search.trim() ? 'No clients match this search' : 'No clients yet'}
             body={
-              clients.length === 0
-                ? 'Client records will appear after bookings or manual staff-side creation.'
-                : 'Try searching by a different name, phone, or email.'
+              search.trim()
+                ? 'Try searching by a different name, phone, or email.'
+                : 'Client records will appear after bookings or manual staff-side creation.'
             }
           />
         ) : (
@@ -230,7 +223,7 @@ export function CrmClientsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {visibleClients.map((client) => (
+              {clients.map((client) => (
                 <ClientRow key={client.id} client={client} />
               ))}
             </tbody>

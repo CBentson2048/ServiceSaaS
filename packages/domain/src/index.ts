@@ -801,6 +801,13 @@ export interface StaffBookingSummary {
   endsAt: string;
   clientDisplayName: string;
   serviceNames: string[];
+  /**
+   * Catalogue service IDs backing this appointment, in booking order. Lets the
+   * book's "Edit appointment" editor pre-select the current services (names alone
+   * can't be mapped back to IDs reliably). Optional — not every summary builder
+   * populates it.
+   */
+  serviceIds?: string[];
   durationMinutes?: number;
   depositRequiredAmount?: number;
   depositStatus?: string;
@@ -932,10 +939,21 @@ export interface CancelAppointmentResponse {
 }
 
 export interface RescheduleAppointmentRequest {
-  /** New ISO start time for the appointment. Duration is preserved. */
+  /**
+   * New ISO start time for the appointment. Duration is preserved unless
+   * `serviceIds` changes the service list (then it's recomputed from the new
+   * services).
+   */
   scheduledStartAt: string;
   /** Optional new assigned stylist. Omit to keep the current stylist. */
   staffProfileId?: string;
+  /**
+   * Optional replacement service list (catalogue service IDs). When provided, the
+   * appointment's services — and therefore its price, deposit and total duration —
+   * are replaced with these. Omit to keep the current services unchanged. The
+   * assigned stylist must be eligible for every service in the list.
+   */
+  serviceIds?: string[];
 }
 
 export interface RescheduleAppointmentResponse {

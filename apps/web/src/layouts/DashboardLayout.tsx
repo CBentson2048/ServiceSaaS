@@ -8,9 +8,9 @@ export function DashboardLayout() {
     <LocationScopeProvider>
       <div className="flex h-full min-h-screen bg-bg text-text-primary">
         <Sidebar />
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <TopBar />
-          <main className="flex-1 overflow-y-auto">
+          <main className="min-h-0 flex-1 overflow-y-auto">
             <Outlet />
           </main>
         </div>

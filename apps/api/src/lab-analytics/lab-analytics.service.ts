@@ -11,6 +11,7 @@ import type {
   SheerLabServiceTypeMetric,
   SheerLabStylistMetric,
 } from '@sheer/domain';
+import type { LabRuntimeSession } from '../lab-session/lab-session.service';
 
 interface FormulaAnalyticsRow {
   id: string;
@@ -115,11 +116,47 @@ export class LabAnalyticsService {
     const normalizedRange: SheerLabAnalyticsRange = customWindow ? 'custom' : normalizeRange(range);
     const { rangeStart, rangeEnd } = customWindow ?? rangeWindow(normalizedRange);
     const locationIds = this.resolveLocationScope(actor, requestedLocationId);
+    const scope: 'owner' | 'manager' = actor.role === 'owner' ? 'owner' : 'manager';
 
+    return this.buildAnalyticsResponse(actor.businessId, locationIds, scope, normalizedRange, rangeStart, rangeEnd);
+  }
+
+  // Lab-session-scoped variant: the active station's location is fixed by the
+  // session, so there is no caller-supplied location scope. Gated to owner /
+  // manager sessions to mirror the JWT analytics permission.
+  async summaryForLabSession(
+    session: LabRuntimeSession,
+    range: SheerLabAnalyticsRange,
+  ): Promise<SheerLabAnalyticsResponse> {
+    if (session.role !== 'owner' && session.role !== 'manager') {
+      throw new ForbiddenException('Sheer Lab analytics are limited to owners and managers');
+    }
+    const normalizedRange = normalizeRange(range);
+    const { rangeStart, rangeEnd } = rangeWindow(normalizedRange);
+    const scope: 'owner' | 'manager' = session.role === 'owner' ? 'owner' : 'manager';
+
+    return this.buildAnalyticsResponse(
+      session.businessId,
+      [session.locationId],
+      scope,
+      normalizedRange,
+      rangeStart,
+      rangeEnd,
+    );
+  }
+
+  private async buildAnalyticsResponse(
+    businessId: string,
+    locationIds: string[],
+    scope: 'owner' | 'manager',
+    normalizedRange: SheerLabAnalyticsRange,
+    rangeStart: string,
+    rangeEnd: string,
+  ): Promise<SheerLabAnalyticsResponse> {
     const [locations, formulas, lowStockAlerts] = await Promise.all([
-      this.fetchLocations(actor.businessId, locationIds),
-      this.fetchFormulas(actor.businessId, locationIds, rangeStart, rangeEnd),
-      this.fetchLowStockAlerts(actor.businessId, locationIds),
+      this.fetchLocations(businessId, locationIds),
+      this.fetchFormulas(businessId, locationIds, rangeStart, rangeEnd),
+      this.fetchLowStockAlerts(businessId, locationIds),
     ]);
     const locationNames = new Map(locations.map((location) => [location.id, location.name]));
     const formulaIds = formulas.map((formula) => formula.id);
@@ -143,7 +180,7 @@ export class LabAnalyticsService {
       range: normalizedRange,
       rangeStart,
       rangeEnd,
-      scope: actor.role === 'owner' ? 'owner' : 'manager',
+      scope,
       summary,
       byLocation,
       byStylist,

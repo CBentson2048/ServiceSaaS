@@ -207,14 +207,41 @@ export class InventoryService {
   async listStock(actor: AuthUser, query: StockQueryDto): Promise<ListInventoryStockResponse> {
     this.assertManagerOrOwner(actor);
     const locationIds = await this.resolveLocationScope(actor, query.locationId);
-    const locations = await this.fetchLocations(actor.businessId, locationIds);
-    if (locationIds.length === 0) return { stock: [], locations, scope: actor.role === 'owner' ? 'owner' : 'manager' };
+    const { stock, locations } = await this.loadStock(actor.businessId, locationIds, query);
+    return { stock, locations, scope: actor.role === 'owner' ? 'owner' : 'manager' };
+  }
+
+  // Lab-session-scoped variant: stock is restricted to the station's single
+  // location, so no caller-supplied location scope is resolved.
+  //
+  // NOTE: intentionally NOT gated to owner/manager (unlike the JWT `listStock`
+  // and unlike `LabAnalyticsService.summaryForLabSession`). A PIN-unlocked lab
+  // session is a trusted staff member physically at the registered station, and
+  // any role at that station — including a stylist — legitimately needs the
+  // low-stock signal for the products they are mixing with. The data is
+  // location-scoped operational stock (quantities only; no cost/valuation), so
+  // this is a deliberate product decision, not an accidental permission gap.
+  async listStockForLabSession(
+    session: LabRuntimeSession,
+    query: StockQueryDto,
+  ): Promise<ListInventoryStockResponse> {
+    const { stock, locations } = await this.loadStock(session.businessId, [session.locationId], query);
+    return { stock, locations, scope: session.role === 'owner' ? 'owner' : 'manager' };
+  }
+
+  private async loadStock(
+    businessId: string,
+    locationIds: string[],
+    query: StockQueryDto,
+  ): Promise<{ stock: InventoryLocationStock[]; locations: BusinessLocationSummary[] }> {
+    const locations = await this.fetchLocations(businessId, locationIds);
+    if (locationIds.length === 0) return { stock: [], locations };
 
     const request = this.admin
       .schema('inventory')
       .from('location_stock')
       .select(STOCK_COLUMNS)
-      .eq('business_id', actor.businessId)
+      .eq('business_id', businessId)
       .in('location_id', locationIds)
       .order('updated_at', { ascending: false });
 
@@ -224,14 +251,14 @@ export class InventoryService {
       throw new InternalServerErrorException('Unable to load location stock');
     }
 
-    const products = await this.fetchProductsById(actor.businessId, (data ?? []).map((row) => row.product_id));
+    const products = await this.fetchProductsById(businessId, (data ?? []).map((row) => row.product_id));
     let stock = (data ?? []).map((row) => toStock(row, products, locations));
     const term = query.q?.trim().toLowerCase();
     if (term) {
       stock = stock.filter((row) => [row.productName, row.brand ?? '', row.sku ?? '', row.category ?? ''].join(' ').toLowerCase().includes(term));
     }
     if (query.lowStockOnly) stock = stock.filter((row) => row.isLowStock);
-    return { stock, locations, scope: actor.role === 'owner' ? 'owner' : 'manager' };
+    return { stock, locations };
   }
 
   async initializeStock(actor: AuthUser, dto: InitializeInventoryStockDto): Promise<InventoryStockMutationResponse> {

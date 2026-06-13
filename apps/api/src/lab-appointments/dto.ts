@@ -1,4 +1,4 @@
-import { IsISO8601, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsISO8601, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 
 export class LinkStylistRebookingDto {
   @IsOptional()
@@ -47,4 +47,13 @@ export class RescheduleAppointmentDto {
   @IsOptional()
   @IsUUID()
   staffProfileId?: string;
+
+  // Optional replacement service list. When present, the appointment's services
+  // (and its price/deposit/duration) are replaced with these catalogue IDs. Omit
+  // to leave the services untouched. Capped to keep a single edit bounded.
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsUUID('all', { each: true })
+  serviceIds?: string[];
 }

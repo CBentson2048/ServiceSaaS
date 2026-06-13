@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode, type SVGProps } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type {
-  AppointmentBillingTax,
+  AppointmentCompletionLineItem,
   AppointmentCompletionResponse,
   CreateStylistRebookingRequest,
+  PublicBookingServiceSummary,
   RotaStaffSummary,
   StaffBookingSummary,
   WeeklyRotaResponse,
@@ -17,6 +18,7 @@ import {
   completeBooking,
   confirmBookingPayment,
   createStylistRebooking,
+  getStaffBookingSelection,
   getWeeklyRota,
   listBookings,
   markRotaAbsence,
@@ -184,12 +186,21 @@ export function BookingsPage() {
   );
 
   const handleReschedule = useCallback(
-    async (booking: StaffBookingSummary, scheduledStartAt: string, staffProfileId?: string) => {
+    async (
+      booking: StaffBookingSummary,
+      scheduledStartAt: string,
+      staffProfileId?: string,
+      serviceIds?: string[],
+    ) => {
       if (!accessToken) return;
       setRescheduleLoading(true);
       setError(null);
       try {
-        const result = await rescheduleBooking(accessToken, booking.id, { scheduledStartAt, staffProfileId });
+        const result = await rescheduleBooking(accessToken, booking.id, {
+          scheduledStartAt,
+          staffProfileId,
+          serviceIds,
+        });
         setBookings((current) =>
           current.map((entry) => (entry.id === booking.id ? { ...entry, ...result.appointment } : entry)),
         );
@@ -428,15 +439,15 @@ export function BookingsPage() {
   );
 
   return (
-    <div className="w-full px-4 py-5 lg:px-6">
+    <div className="flex h-full min-h-0 w-full flex-col px-4 py-5 lg:px-6">
       {error ? (
-        <div className="mb-4 rounded-input-lg border border-danger-border bg-danger-soft px-4 py-3 text-[13px] text-danger">
+        <div className="mb-4 shrink-0 rounded-input-lg border border-danger-border bg-danger-soft px-4 py-3 text-[13px] text-danger">
           {error}
         </div>
       ) : null}
 
       {checkoutMessage ? (
-        <div className="mb-4 rounded-input-lg border border-success-border bg-success-soft px-4 py-3 text-[13px] text-success">
+        <div className="mb-4 shrink-0 rounded-input-lg border border-success-border bg-success-soft px-4 py-3 text-[13px] text-success">
           {checkoutMessage}
         </div>
       ) : null}
@@ -488,9 +499,10 @@ export function BookingsPage() {
           <RescheduleModal
             booking={rescheduleTarget}
             staff={rota?.staff ?? []}
+            accessToken={accessToken ?? ''}
             loading={rescheduleLoading}
-            onSubmit={(scheduledStartAt, staffProfileId) =>
-              void handleReschedule(rescheduleTarget, scheduledStartAt, staffProfileId)
+            onSubmit={(scheduledStartAt, staffProfileId, serviceIds) =>
+              void handleReschedule(rescheduleTarget, scheduledStartAt, staffProfileId, serviceIds)
             }
             onClose={() => setRescheduleTarget(null)}
           />
@@ -500,25 +512,27 @@ export function BookingsPage() {
       {/* Calendar + timetable claim the full page width. Appointments are acted
           on directly from the board: clicking a tile opens an action menu (check
           in / out, edit, cancel). The location picker / refresh live in the toolbar. */}
-      <div className="flex flex-col gap-4">
-        <WeekStrip
-          day={day}
-          onSelectDay={setDay}
-          toolbar={toolbar}
-          onToggleToolbar={toggleToolbar}
-          toolbarTrailing={calendarControls}
-        />
+      <div className="flex min-h-0 flex-1 flex-col gap-4">
+        <div className="shrink-0">
+          <WeekStrip
+            day={day}
+            onSelectDay={setDay}
+            toolbar={toolbar}
+            onToggleToolbar={toggleToolbar}
+            toolbarTrailing={calendarControls}
+          />
+        </div>
 
         {!selectedLocationId ? (
-          <AppCard padding="none" elevation="card">
+          <AppCard padding="none" elevation="card" className="flex min-h-0 flex-1 items-center justify-center">
             <EmptyState title="No location available" body="A salon location is needed to show the calendar." />
           </AppCard>
         ) : rotaError ? (
-          <div className="rounded-input-lg border border-danger-border bg-danger-soft px-4 py-3 text-[13px] text-danger">
+          <div className="shrink-0 rounded-input-lg border border-danger-border bg-danger-soft px-4 py-3 text-[13px] text-danger">
             {rotaError}
           </div>
         ) : (loading || rotaLoading) && !rota ? (
-          <AppCard padding="none" elevation="card">
+          <AppCard padding="none" elevation="card" className="flex min-h-0 flex-1 items-center justify-center">
             <EmptyState title="Loading calendar…" body="Fetching the rota and appointments for this day." />
           </AppCard>
         ) : (
@@ -623,23 +637,54 @@ function ModalScrim({ onClose, label, children }: { onClose?: () => void; label:
   );
 }
 
-// Reschedule / reassign editor: pick a new start time and (optionally) move the
-// appointment to another stylist. Services and price are unchanged here (V2).
+// Edit-appointment editor: pick a new start time, (optionally) reassign the
+// stylist, and (optionally) change the services on the booking. Changing the
+// services re-prices the appointment and recomputes its duration server-side; the
+// assigned stylist must be able to perform every selected service.
 function RescheduleModal({
   booking,
   staff,
+  accessToken,
   loading,
   onSubmit,
   onClose,
 }: {
   booking: StaffBookingSummary;
   staff: RotaStaffSummary[];
+  accessToken: string;
   loading: boolean;
-  onSubmit: (scheduledStartAt: string, staffProfileId?: string) => void;
+  onSubmit: (scheduledStartAt: string, staffProfileId?: string, serviceIds?: string[]) => void;
   onClose: () => void;
 }) {
   const [startAt, setStartAt] = useState(() => toDatetimeLocalValue(new Date(booking.startsAt)));
   const [staffProfileId, setStaffProfileId] = useState(booking.assignedStaffProfileId ?? '');
+
+  // The service list comes from the location catalogue, loaded lazily. Until it
+  // arrives (or if it fails) the service editor is hidden and the modal behaves
+  // exactly as before — only time/stylist can change.
+  const originalServiceIds = useMemo(() => booking.serviceIds ?? [], [booking.serviceIds]);
+  const [catalog, setCatalog] = useState<PublicBookingServiceSummary[] | null>(null);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>(originalServiceIds);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    let cancelled = false;
+    setCatalogError(null);
+    getStaffBookingSelection(accessToken, { locationId: booking.locationId })
+      .then((response) => {
+        if (cancelled) return;
+        setCatalog(response.services);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCatalogError('Could not load the service list — you can still change the time and stylist.');
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, booking.locationId]);
 
   // Build options so the controlled <select> value always has a matching <option>
   // (otherwise the browser shows the first stylist while state stays '' and the
@@ -660,11 +705,49 @@ function RescheduleModal({
     return list;
   }, [staff, booking.assignedStaffProfileId]);
 
+  const selectedServices = useMemo(
+    () => (catalog ?? []).filter((service) => selectedServiceIds.includes(service.id)),
+    [catalog, selectedServiceIds],
+  );
+  const totalDurationMinutes = useMemo(
+    () => selectedServices.reduce((sum, service) => sum + service.estimatedDurationMinutes, 0),
+    [selectedServices],
+  );
+  const totalPriceAmount = useMemo(
+    () => selectedServices.reduce((sum, service) => sum + service.startingPriceAmount, 0),
+    [selectedServices],
+  );
+  const currencyCode = catalog?.[0]?.currencyCode ?? 'GBP';
+
+  // Whether the chosen services differ from the appointment's current ones. Only
+  // then do we send `serviceIds`, so an unchanged save stays a plain time/stylist
+  // move and skips the server-side re-price/eligibility checks.
+  const servicesChanged = useMemo(() => {
+    if (!catalog) return false;
+    const next = new Set(selectedServiceIds);
+    const current = new Set(originalServiceIds);
+    if (next.size !== current.size) return true;
+    for (const id of next) {
+      if (!current.has(id)) return true;
+    }
+    return false;
+  }, [catalog, selectedServiceIds, originalServiceIds]);
+
+  function toggleService(serviceId: string) {
+    setSelectedServiceIds((current) =>
+      current.includes(serviceId) ? current.filter((id) => id !== serviceId) : [...current, serviceId],
+    );
+  }
+
   function submit() {
     const iso = toIsoFromLocalInput(startAt);
     if (!iso) return;
-    onSubmit(iso, staffProfileId || undefined);
+    onSubmit(iso, staffProfileId || undefined, servicesChanged ? selectedServiceIds : undefined);
   }
+
+  // Block saving an empty service list — an appointment must keep at least one
+  // service. Time/stylist-only edits (catalogue still loading) stay allowed.
+  const canSave = Boolean(startAt) && (catalog === null || selectedServiceIds.length > 0);
 
   return (
     <AppCard elevation="hero" padding="lg" className="rounded-card-lg">
@@ -712,20 +795,84 @@ function RescheduleModal({
         </label>
       </div>
 
+      <div className="mt-4">
+        <div className="flex items-baseline justify-between gap-3">
+          <div className="text-[12px] font-medium text-text-secondary">Services</div>
+          {catalog ? (
+            <div className="text-[12px] text-text-secondary">
+              {selectedServiceIds.length} selected · {totalDurationMinutes} min ·{' '}
+              {formatServicePrice(totalPriceAmount, currencyCode)}
+            </div>
+          ) : null}
+        </div>
+
+        {catalogError ? (
+          <div className="mt-2 rounded-input-lg border border-warning-border bg-warning-soft px-3 py-2 text-[12px] text-warning">
+            {catalogError}
+          </div>
+        ) : !catalog ? (
+          <div className="mt-2 text-[12px] text-text-muted">Loading services…</div>
+        ) : catalog.length === 0 ? (
+          <div className="mt-2 text-[12px] text-text-muted">No bookable services for this location.</div>
+        ) : (
+          <ul className="mt-2 grid max-h-56 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
+            {catalog.map((service) => {
+              const checked = selectedServiceIds.includes(service.id);
+              return (
+                <li key={service.id}>
+                  <label
+                    className={`flex cursor-pointer items-start gap-3 rounded-input-lg border px-3 py-2.5 transition ${
+                      checked
+                        ? 'border-primary bg-primary/5'
+                        : 'border-border-strong bg-surface hover:bg-surface-alt'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleService(service.id)}
+                      className="mt-0.5 h-4 w-4 rounded border-border-strong text-primary focus:ring-primary/20"
+                    />
+                    <span className="flex-1">
+                      <span className="block text-[13px] font-medium text-text-primary">{service.name}</span>
+                      <span className="block text-[12px] text-text-secondary">
+                        {service.estimatedDurationMinutes} min ·{' '}
+                        {formatServicePrice(service.startingPriceAmount, service.currencyCode)}
+                      </span>
+                    </span>
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+
       <div className="mt-3 text-[12px] text-text-muted">
-        The service list and price stay the same — this just moves the time and stylist.
+        {servicesChanged
+          ? 'Services changed — the price and duration update to match, and the stylist must be able to perform every selected service.'
+          : 'Adjust the time, stylist, or services. Changing the services re-prices the appointment.'}
       </div>
 
       <div className="mt-4 flex items-center justify-end gap-2">
         <AppButton variant="secondary" onClick={onClose}>
           Cancel
         </AppButton>
-        <AppButton variant="primary" loading={loading} disabled={!startAt} onClick={submit}>
+        <AppButton variant="primary" loading={loading} disabled={!canSave} onClick={submit}>
           Save changes
         </AppButton>
       </div>
     </AppCard>
   );
+}
+
+// Catalogue prices are in major currency units (e.g. pounds), unlike the cents-based
+// `formatMoney` used for billing totals elsewhere on this page.
+function formatServicePrice(amount: number, currencyCode: string): string {
+  return new Intl.NumberFormat(undefined, {
+    style: 'currency',
+    currency: currencyCode,
+  }).format(amount);
 }
 
 function CheckoutPanel({
@@ -898,41 +1045,116 @@ function RebookingPanel({
   );
 }
 
-// Itemised checkout bill. Maps the API billing rollup to salon-readable lines:
-// services, colour charges (product usage), plus VAT and the running total.
-// Retail products and discounts are placeholders until V2 wires up their data.
+// Itemised checkout bill — a clean, receipt-style summary of what the salon
+// collects at the till. Each service and each colour charge is its own line; a
+// deposit already taken shows as a credit with a running subtotal, then the
+// balance to collect stands alone in the footer.
+//
+// VAT is handled automatically server-side: the API still computes the tax
+// rollup in billing.tax for records/reporting, but it is intentionally not shown
+// here — staff and clients see clean, all-in prices, never a tax breakdown. The
+// headline stays exactly billing.balanceDueCents, the only amount the
+// confirm-payment endpoint accepts, so the bill and the charge can never diverge.
 function ItemisedBill({ billing }: { billing: AppointmentCompletionResponse['billing'] }) {
   const cc = billing.currencyCode;
-  const tax = billing.tax;
+  const hasDeposit = billing.depositPaidCents > 0;
+
+  // Group the API line items into the bill's sections. Anything that isn't a
+  // service or colour charge is bucketed into "Other" so no line silently drops.
+  const serviceLines = billing.lineItems.filter((line) => line.lineType === 'service');
+  const colourLines = billing.lineItems.filter((line) => line.lineType === 'product_usage');
+  const otherLines = billing.lineItems.filter(
+    (line) => line.lineType !== 'service' && line.lineType !== 'product_usage',
+  );
+
   return (
-    <div className="mt-4 rounded-input-lg border border-border bg-surface-alt/40 px-4 py-3">
-      <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-text-muted">Itemised bill</div>
-      <dl className="mt-2 flex flex-col gap-1.5 text-[13px]">
-        <BillRow label="Services" value={formatMoney(billing.serviceTotalCents, cc)} />
-        <BillRow label="Colour charges" value={formatMoney(billing.productUsageTotalCents, cc)} />
-        <BillRow label="Retail products" value="—" muted hint="Coming in V2" />
-        <BillRow label="Discounts" value="—" muted hint="Coming in V2" />
-        <div className="my-1 border-t border-border/60" />
-        <BillRow label="Total" value={formatMoney(billing.totalCents, cc)} strong />
-        {billing.depositPaidCents > 0 ? (
-          <BillRow label="Deposit paid" value={`− ${formatMoney(billing.depositPaidCents, cc)}`} />
+    <div className="mt-4 overflow-hidden rounded-input-lg border border-border bg-surface-alt/40">
+      <div className="flex flex-col gap-5 px-5 py-4">
+        <BillGroup
+          title="Services"
+          lines={serviceLines}
+          fallbackLabel="Services"
+          fallbackCents={billing.serviceTotalCents}
+          currencyCode={cc}
+        />
+
+        <BillGroup
+          title="Colour charge"
+          note="Includes the salon's colour pricing policy."
+          lines={colourLines}
+          fallbackLabel="Colour charges"
+          fallbackCents={billing.productUsageTotalCents}
+          currencyCode={cc}
+          hideWhenEmpty
+        />
+
+        {otherLines.length > 0 ? (
+          <BillGroup title="Other charges" lines={otherLines} currencyCode={cc} />
         ) : null}
-      </dl>
-      <div className="mt-2 flex items-center justify-between border-t border-border/60 pt-2">
-        <span className="text-[13px] font-semibold text-text-primary">Balance due</span>
-        <span className="text-[18px] font-semibold text-text-primary">{formatMoney(billing.balanceDueCents, cc)}</span>
+
+        {/* With a deposit taken, show the running subtotal and the credit so the
+            arithmetic down to the balance stays transparent. */}
+        {hasDeposit ? (
+          <dl className="flex flex-col gap-1.5 border-t border-border/60 pt-3 text-[13px]">
+            <BillRow label="Subtotal" value={formatMoney(billing.totalCents, cc)} />
+            <BillRow label="Deposit paid" value={`− ${formatMoney(billing.depositPaidCents, cc)}`} />
+          </dl>
+        ) : null}
       </div>
-      {/* VAT is informational and mode-aware. The Total/Balance due above are the
-          tax-exclusive figures the salon actually collects, so VAT is shown as its
-          own line (net / tax / inc-VAT) rather than added into the running total. */}
-      {tax?.enabled ? (
-        <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-[12px]">
-          <span className="font-medium text-text-primary">
-            {(tax.label?.trim() || 'VAT')} ({tax.ratePercent}%)
-          </span>
-          <span className="text-text-secondary">{taxSummaryDetail(tax, cc)}</span>
-        </div>
-      ) : null}
+
+      {/* The single figure the salon charges — exactly what confirm-payment expects. */}
+      <div className="flex items-center justify-between gap-3 border-t border-border px-5 py-3.5">
+        <span className="text-[13px] font-medium text-text-secondary">Total to collect</span>
+        <span className="text-[22px] font-semibold text-text-primary tabular-nums">
+          {formatMoney(billing.balanceDueCents, cc)}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// One labelled group of bill lines (Services / Colour charge / Other). Prefers the
+// API's itemised lines; when a completion predates line items it falls back to the
+// rolled-up category total so the figure is never lost. An optional group with no
+// lines and a zero total is hidden rather than shown empty.
+function BillGroup({
+  title,
+  note,
+  lines,
+  fallbackLabel,
+  fallbackCents = 0,
+  currencyCode,
+  hideWhenEmpty = false,
+}: {
+  title: string;
+  note?: string;
+  lines: AppointmentCompletionLineItem[];
+  fallbackLabel?: string;
+  fallbackCents?: number;
+  currencyCode: string;
+  hideWhenEmpty?: boolean;
+}) {
+  const hasLines = lines.length > 0;
+  if (!hasLines && (hideWhenEmpty || fallbackLabel === undefined) && fallbackCents <= 0) {
+    return null;
+  }
+  return (
+    <div>
+      <span className="text-[12px] font-semibold uppercase tracking-[0.06em] text-text-secondary">{title}</span>
+      {note ? <p className="mt-0.5 text-[11px] text-text-muted">{note}</p> : null}
+      <dl className="mt-1.5 flex flex-col gap-1.5 text-[13px]">
+        {hasLines ? (
+          lines.map((line, index) => (
+            <BillRow
+              key={`${line.lineType}-${index}`}
+              label={line.description}
+              value={formatMoney(line.amountCents, currencyCode)}
+            />
+          ))
+        ) : (
+          <BillRow label={fallbackLabel ?? title} value={formatMoney(fallbackCents, currencyCode)} />
+        )}
+      </dl>
     </div>
   );
 }
@@ -961,19 +1183,6 @@ function BillRow({
       </dd>
     </div>
   );
-}
-
-// Mode-aware VAT summary. Uses the API-provided net/tax/gross so the figure is
-// never misrepresented: 'ex_tax' surfaces the inc-VAT gross as the "would be"
-// total, 'inc_tax' clarifies the VAT already baked into the prices.
-function taxSummaryDetail(tax: AppointmentBillingTax, currencyCode: string): string {
-  const label = tax.label?.trim() || 'VAT';
-  const net = formatMoney(tax.netCents, currencyCode);
-  const taxAmt = formatMoney(tax.taxCents, currencyCode);
-  const gross = formatMoney(tax.grossCents, currencyCode);
-  if (tax.displayMode === 'inc_tax') return `${taxAmt} ${label} included (net ${net})`;
-  if (tax.displayMode === 'ex_tax') return `${taxAmt} ${label} on top → ${gross} inc. ${label}`;
-  return `Net ${net} · ${taxAmt} ${label} · ${gross} inc. ${label}`;
 }
 
 function EmptyState({ title, body }: { title: string; body: string }) {

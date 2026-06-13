@@ -10,6 +10,7 @@ import { DeviceResolvingScreen } from '../../screens/DeviceResolving/DeviceResol
 import { FormulaScreen } from '../../screens/Formula/FormulaScreen';
 import { FormulaHistoryScreen } from '../../screens/FormulaHistory/FormulaHistoryScreen';
 import { HomeScreen } from '../../screens/Home/HomeScreen';
+import { NewMixScreen } from '../../screens/NewMix/NewMixScreen';
 import { SettingsScreen } from '../../screens/Settings/SettingsScreen';
 import { useDeviceSession } from '../../features/sheer-lab/DeviceSessionProvider';
 import { labTheme } from '../../theme/labTheme';
@@ -59,8 +60,9 @@ export function RootNavigator(): React.JSX.Element {
           component={DeviceBlockedScreen}
           options={{ title: 'Device Blocked' }}
         />
-        <Stack.Screen name="Auth" component={AuthScreen} options={{ title: 'Sheer Lab' }} />
-        <Stack.Screen name="Home" component={HomeScreen} options={{ title: 'Lab Home' }} />
+        <Stack.Screen name="Auth" component={AuthScreen} options={{ title: 'Sheer Lab', headerShown: false }} />
+        <Stack.Screen name="Home" component={HomeScreen} options={{ title: 'Lab Home', headerShown: false }} />
+        <Stack.Screen name="NewMix" component={NewMixScreen} options={{ title: 'New Mix', headerShown: false }} />
         <Stack.Screen
           name="DevicePairing"
           component={DevicePairingScreen}

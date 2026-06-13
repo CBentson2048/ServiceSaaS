@@ -150,4 +150,13 @@ export class LabSessionInventoryController {
     const session = await this.labSessionService.assertActiveSession(sessionId);
     return this.inventory.listProductsForLabSession(session, query);
   }
+
+  @Get(':sessionId/stock')
+  async listStock(
+    @Param('sessionId') sessionId: string,
+    @Query() query: StockQueryDto,
+  ): Promise<ListInventoryStockResponse> {
+    const session = await this.labSessionService.assertActiveSession(sessionId);
+    return this.inventory.listStockForLabSession(session, query);
+  }
 }

@@ -49,7 +49,7 @@ export function useFormulaDraft() {
   const startFromAppointmentContext = useCallback(
     (input: {
       labSessionId: string;
-      appointmentId: string;
+      appointmentId?: string;
       client: FormulaClientContext;
       visit: FormulaVisitContext;
       patchTest?: FormulaPatchTestContext;
