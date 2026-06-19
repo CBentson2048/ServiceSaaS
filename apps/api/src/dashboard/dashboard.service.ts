@@ -24,12 +24,11 @@ import type { DashboardDateRangeQueryDto, DashboardInventoryAlertsQueryDto } fro
 
 type AppointmentStatus =
   | 'pending'
-  | 'confirmed'
+  | 'accepted'
+  | 'rejected'
   | 'checked_in'
-  | 'in_progress'
   | 'awaiting_payment'
   | 'paid'
-  | 'completed'
   | 'cancelled'
   | 'no_show';
 

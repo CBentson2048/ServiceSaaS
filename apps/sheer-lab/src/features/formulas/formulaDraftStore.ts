@@ -7,6 +7,7 @@ import type {
   FormulaDraftSession,
   FormulaIngredientRow,
   FormulaPatchTestContext,
+  FormulaRemixBaseline,
   FormulaRowMetadataUpdate,
   FormulaVisitContext,
   SavedFormulaRecord,
@@ -14,6 +15,20 @@ import type {
 import { toLabCoreFormulaItems, toFormulaFinalSavePayload, toFormulaSavePayload } from './formulaDraftTypes';
 
 type FormulaDraftListener = (draft: FormulaDraftSession) => void;
+
+/** One product chosen on the Build Formula screen, ready to seed an ingredient row. */
+export interface BuiltFormulaItemInput {
+  productId?: string;
+  productName: string;
+  brand?: string;
+  shade?: string;
+  category?: string;
+  sku?: string;
+  displayName?: string;
+  costPerGramCents?: number;
+  plannedGrams?: number;
+  currencyCode?: string;
+}
 
 const DEFAULT_DRAFT_ID = 'local-formula-draft';
 const DEFAULT_LAB_SESSION_ID = 'pending-lab-session';
@@ -40,6 +55,9 @@ export const formulaDraftStore = {
   },
   getLatestFormulaForClient(clientProfileId = currentDraft.client.clientProfileId): SavedFormulaRecord | undefined {
     return this.getHistoryForClient(clientProfileId)[0];
+  },
+  getSavedFormulaById(formulaId: string): SavedFormulaRecord | undefined {
+    return findSavedFormula(formulaId);
   },
   subscribe(listener: FormulaDraftListener): () => void {
     listeners.add(listener);
@@ -226,6 +244,93 @@ export const formulaDraftStore = {
     emit();
     return currentDraft;
   },
+  /**
+   * Seed a fresh draft from the products chosen on the Build Formula screen so
+   * the capture screen opens pre-populated with one ingredient row per product
+   * (identity + cost basis + planned/target grams). No weights are captured
+   * yet — the stylist still weighs each row on the capture screen.
+   */
+  startBuiltFormula(input: {
+    labSessionId: string;
+    appointmentId?: string;
+    client: FormulaClientContext;
+    visit: FormulaVisitContext;
+    patchTest?: FormulaPatchTestContext;
+    items: BuiltFormulaItemInput[];
+  }): FormulaDraftSession {
+    const createdAt = new Date().toISOString();
+    const rows =
+      input.items.length > 0
+        ? input.items.map((item) => createSeededIngredientRow(item))
+        : [createEmptyIngredientRow('Base colour')];
+
+    currentDraft = recalculateDraft({
+      ...createInitialDraft(),
+      id: createDraftId(),
+      labSessionId: input.labSessionId,
+      client: input.client,
+      visit: input.visit,
+      patchTest: input.patchTest ?? { status: 'unknown' },
+      rows,
+      activeIngredientId: rows[0]?.id,
+      status: input.items.length > 0 ? 'mixing' : 'draft',
+      createdAt,
+      updatedAt: createdAt,
+    });
+    emit();
+    return currentDraft;
+  },
+  /**
+   * Seed a fresh draft that re-mixes a previously saved formula. Each ingredient
+   * row is re-created from the source (identity + cost basis preserved) with its
+   * captures cleared and a planned/target weight derived from the source's actual
+   * grams scaled by `percent` (or overridden per row via `targetGramsByRowId`).
+   *
+   * The remix gets a brand-new draft id so it finalizes as its own formula on the
+   * same appointment/visit — the backend then deducts only the newly-weighed grams
+   * and aggregates visit usage, giving "total used = previous mix + this remix".
+   * The previous mix is captured in `remixBaseline` for display only.
+   */
+  startRemixFromFormula(input: {
+    sourceFormulaId: string;
+    percent: number;
+    labSessionId: string;
+    appointmentId?: string;
+    client: FormulaClientContext;
+    visit: FormulaVisitContext;
+    patchTest?: FormulaPatchTestContext;
+    targetGramsByRowId?: Record<string, number>;
+  }): FormulaDraftSession | undefined {
+    const source = findSavedFormula(input.sourceFormulaId);
+    if (!source) return undefined;
+
+    const createdAt = new Date().toISOString();
+    const rows = source.rows.map((row) =>
+      createRemixIngredientRow(
+        row,
+        input.targetGramsByRowId?.[row.id] ?? scaleGrams(row.capturedGrams, input.percent),
+      ),
+    );
+
+    currentDraft = recalculateDraft({
+      ...createInitialDraft(),
+      id: createDraftId(),
+      labSessionId: input.labSessionId,
+      client: input.client,
+      visit: input.visit,
+      patchTest: input.patchTest ?? { status: 'unknown' },
+      rows,
+      activeIngredientId: rows[0]?.id,
+      sourceFormulaId: source.id,
+      remixBaseline: buildRemixBaseline(source, input.percent),
+      currencyCode: source.currencyCode ?? 'GBP',
+      status: rows.length > 0 ? 'mixing' : 'draft',
+      createdAt,
+      updatedAt: createdAt,
+    });
+    emit();
+    return currentDraft;
+  },
   toSavePayload() {
     return toFormulaSavePayload(currentDraft);
   },
@@ -282,6 +387,32 @@ function createEmptyIngredientRow(productName = ''): FormulaIngredientRow {
   };
 }
 
+function createSeededIngredientRow(item: BuiltFormulaItemInput): FormulaIngredientRow {
+  rowSequence += 1;
+  const currencyCode = item.currencyCode ?? 'GBP';
+
+  return {
+    id: `ingredient-${rowSequence}`,
+    identityMode: item.productId ? 'catalogue_product' : 'custom_manual',
+    productId: item.productId,
+    productName: item.productName,
+    brand: item.brand,
+    shade: item.shade,
+    category: item.category,
+    sku: item.sku,
+    displayName: item.displayName,
+    plannedGrams: item.plannedGrams,
+    captureStatus: 'waiting',
+    costBasis: {
+      productId: item.productId,
+      source:
+        item.costPerGramCents == null ? 'missing' : item.productId ? 'product_catalog' : 'manual_cost',
+      costPerGramCents: item.costPerGramCents,
+      currencyCode,
+    },
+  };
+}
+
 function createDuplicatedIngredientRow(source: FormulaIngredientRow): FormulaIngredientRow {
   rowSequence += 1;
 
@@ -291,6 +422,53 @@ function createDuplicatedIngredientRow(source: FormulaIngredientRow): FormulaIng
     captureStatus: source.capturedGrams == null ? 'waiting' : 'captured',
     capturedAt: undefined,
     weightSource: undefined,
+  };
+}
+
+function createRemixIngredientRow(source: FormulaIngredientRow, targetGrams: number): FormulaIngredientRow {
+  rowSequence += 1;
+
+  return {
+    ...source,
+    id: `ingredient-${rowSequence}`,
+    plannedGrams: targetGrams > 0 ? targetGrams : undefined,
+    capturedGrams: undefined,
+    capturedAt: undefined,
+    weightSource: undefined,
+    wasteGrams: undefined,
+    captureStatus: 'waiting',
+    costCents: undefined,
+    wasteCostCents: undefined,
+  };
+}
+
+/** Scale a previous actual weight by a remix percentage, to 0.1 g precision. */
+function scaleGrams(grams: number | undefined, percent: number): number {
+  if (grams == null || grams <= 0) return 0;
+  return Math.round(((grams * percent) / 100) * 10) / 10;
+}
+
+function buildRemixBaseline(source: SavedFormulaRecord, percent: number): FormulaRemixBaseline {
+  const gramsByProduct = new Map<string, number>();
+  let totalGrams = 0;
+  for (const row of source.rows) {
+    const grams = row.capturedGrams ?? 0;
+    if (grams <= 0) continue;
+    totalGrams += grams;
+    const name = row.productName?.trim() || row.displayName?.trim() || 'Ingredient';
+    gramsByProduct.set(name, (gramsByProduct.get(name) ?? 0) + grams);
+  }
+
+  return {
+    sourceFormulaId: source.id,
+    percent,
+    totalGrams,
+    totalCostCents: source.totalCostCents ?? 0,
+    billableChargeCents: source.billableChargeCents ?? 0,
+    currencyCode: source.currencyCode ?? 'GBP',
+    productUsage: Array.from(gramsByProduct, ([productName, grams]) => ({ productName, grams })).sort(
+      (a, b) => b.grams - a.grams,
+    ),
   };
 }
 

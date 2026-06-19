@@ -334,8 +334,6 @@ export default function NewBookingScreen() {
   return (
     <ProtectedScreen allowedRoles={['owner', 'manager', 'stylist']}>
       <Screen>
-        <SectionHeader title="New booking" subtitle="Book a walk-in, phone or in-salon client." />
-
         {locations.length > 1 ? (
           <Card>
             <Text style={s.label}>Location</Text>

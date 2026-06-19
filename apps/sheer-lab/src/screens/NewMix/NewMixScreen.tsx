@@ -1,12 +1,13 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { PinUnlockResponse, StaffBookingSummary } from '@sheer/domain';
 import type React from 'react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import type { RootStackParamList } from '../../app/navigation/routes';
 import { listTodaysLabAppointmentsForSession } from '../../features/appointments/appointmentsApi';
 import { useBleScale } from '../../features/ble/hooks/useBleScale';
+import { getLabSessionBillingBreakdown } from '../../features/formulas/formulasApi';
 import { getActiveLabSession } from '../../features/sheer-lab/labSession';
 import { formatTimeOfDay } from '../Home/dashboardHelpers';
 import { c, initials, LabShell, Pill, t } from '../shared/LabShell';
@@ -32,6 +33,13 @@ export function NewMixScreen({ navigation }: NewMixScreenProps): React.JSX.Eleme
   // The service is one of the selected appointment's booked services (read from
   // the booking), not a generic taxonomy.
   const [service, setService] = useState<string | undefined>();
+  // Appointments that already have a finalized mix (a saved formula / product
+  // usage recorded). Formulas are tracked per appointment/visit on the backend,
+  // not per individual service, so this flag is appointment-scoped.
+  const [mixedByAppt, setMixedByAppt] = useState<Record<string, boolean>>({});
+  // Appointments we've already probed for an existing mix — kept in a ref so it
+  // can't land in the effect deps and re-trigger / cancel the in-flight fetch.
+  const probedMixRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     let cancelled = false;
@@ -67,6 +75,33 @@ export function NewMixScreen({ navigation }: NewMixScreenProps): React.JSX.Eleme
 
   const selectedAppointmentId = selected?.id;
   const canStart = Boolean(selected && service);
+  const alreadyMixed = selectedAppointmentId ? Boolean(mixedByAppt[selectedAppointmentId]) : false;
+
+  // Probe the selected appointment for an existing finalized mix so the action
+  // button can offer "Re-build Formula" instead of "Start Formula Build".
+  useEffect(() => {
+    const apptId = selected?.id;
+    const sid = session?.sessionId;
+    if (!apptId || !sid) return;
+    if (probedMixRef.current.has(apptId)) return;
+    probedMixRef.current.add(apptId);
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const breakdown = await getLabSessionBillingBreakdown(sid, apptId);
+        const mixed = breakdown.productUsage.length > 0 || breakdown.billingLineItem != null;
+        if (!cancelled) setMixedByAppt((current) => ({ ...current, [apptId]: mixed }));
+      } catch {
+        // Leave the flag unset on failure so the button defaults to "Start";
+        // allow a later reselect to retry.
+        probedMixRef.current.delete(apptId);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selected?.id, session?.sessionId]);
 
   // Stepper progress: client (1) → service (2) → then the mixing steps live on
   // the Formula screen, so step 3 lights up as the next destination.
@@ -81,7 +116,7 @@ export function NewMixScreen({ navigation }: NewMixScreenProps): React.JSX.Eleme
 
   const startFormulaBuild = useCallback(() => {
     if (!session || !selected || !service) return;
-    navigation.navigate('Formula', {
+    navigation.navigate('BuildFormula', {
       entryContext: {
         labSessionId: session.sessionId,
         appointmentId: selected.id,
@@ -123,6 +158,7 @@ export function NewMixScreen({ navigation }: NewMixScreenProps): React.JSX.Eleme
       <ActionBar
         stylistName={session?.displayName}
         canStart={canStart}
+        alreadyMixed={alreadyMixed}
         onCancel={() => navigation.goBack()}
         onStart={startFormulaBuild}
       />
@@ -332,11 +368,13 @@ function ServiceStep({
 function ActionBar({
   stylistName,
   canStart,
+  alreadyMixed,
   onCancel,
   onStart,
 }: {
   stylistName?: string;
   canStart: boolean;
+  alreadyMixed: boolean;
   onCancel: () => void;
   onStart: () => void;
 }): React.JSX.Element {
@@ -359,7 +397,7 @@ function ActionBar({
           onPress={onStart}
           style={[styles.startButton, !canStart && styles.buttonDisabled]}
         >
-          <Text style={styles.startText}>Start Formula Build →</Text>
+          <Text style={styles.startText}>{alreadyMixed ? 'Re-build Formula →' : 'Start Formula Build →'}</Text>
         </Pressable>
       </View>
     </View>

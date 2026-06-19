@@ -159,3 +159,34 @@ export class LabSessionAppointmentsController {
     return this.labAppointmentsService.detailForLabSession(session, id);
   }
 }
+
+/**
+ * Customer-facing appointment management (mobile app). A signed-in client can
+ * cancel or rebook (reschedule in place) their OWN upcoming appointment, subject
+ * to the salon's per-location cancellation window. Ownership + window rules are
+ * enforced in the service.
+ */
+@Controller('mobile/appointments')
+@UseGuards(SupabaseAuthGuard, RolesGuard)
+@RequireRoles('client')
+export class MobileAppointmentsController {
+  constructor(private readonly labAppointmentsService: LabAppointmentsService) {}
+
+  @Post(':id/cancel')
+  cancel(
+    @CurrentUser() actor: AuthUser,
+    @Param('id') id: string,
+    @Body() body: CancelAppointmentDto,
+  ): Promise<CancelAppointmentResponse> {
+    return this.labAppointmentsService.cancelForClient(actor, id, body.reason);
+  }
+
+  @Post(':id/reschedule')
+  reschedule(
+    @CurrentUser() actor: AuthUser,
+    @Param('id') id: string,
+    @Body() body: RescheduleAppointmentDto,
+  ): Promise<RescheduleAppointmentResponse> {
+    return this.labAppointmentsService.rescheduleForClient(actor, id, body);
+  }
+}

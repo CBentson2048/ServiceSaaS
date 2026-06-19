@@ -184,7 +184,7 @@ describe('LabAppointmentsService — appointment completion', () => {
     expect(result.billing.totalCents).toBe(5000);
     expect(result.billing.balanceDueCents).toBe(5000);
     expect(result.alreadyCompleted).toBe(false);
-    expect(client.queries[1].calls).toContainEqual({ method: 'in', args: ['status', ['confirmed', 'checked_in', 'in_progress']] });
+    expect(client.queries[1].calls).toContainEqual({ method: 'in', args: ['status', ['accepted', 'checked_in']] });
   });
 
   it('itemises each booked service as its own bill line', async () => {
@@ -291,7 +291,7 @@ describe('LabAppointmentsService — appointment completion', () => {
     expect(result.alreadyCompleted).toBe(true);
     expect(client.queries[1].calls).not.toContainEqual({
       method: 'in',
-      args: ['status', ['confirmed', 'checked_in', 'in_progress']],
+      args: ['status', ['accepted', 'checked_in']],
     });
   });
 
@@ -704,7 +704,7 @@ function appointmentRow(overrides: Record<string, unknown> = {}) {
     client_profile_id: 'client_1',
     assigned_staff_profile_id: 'staff_1',
     requested_staff_profile_id: null,
-    status: 'confirmed',
+    status: 'accepted',
     scheduled_start_at: '2026-05-13T09:00:00.000Z',
     scheduled_end_at: '2026-05-13T10:00:00.000Z',
     communication_preference: 'sms',

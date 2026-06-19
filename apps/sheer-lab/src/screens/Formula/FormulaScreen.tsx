@@ -1,36 +1,142 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import type { InventoryProduct } from '@sheer/domain';
+import type { InventoryProduct, PinUnlockResponse } from '@sheer/domain';
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import type { StyleProp, ViewStyle } from 'react-native';
+import {
+  Modal,
+  Pressable,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  useWindowDimensions,
+  View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { RootStackParamList } from '../../app/navigation/routes';
-import { ConnectionStatusBar } from '../../features/ble/components/ConnectionStatusBar';
 import { useBleScale } from '../../features/ble/hooks/useBleScale';
 import { formatMoney } from '../../features/formulas/formulaCosting';
-import {
-  finalizeFormulaForLabSession,
-  getLabProductBillingSettings,
-} from '../../features/formulas/formulasApi';
+import { getLabProductBillingSettings } from '../../features/formulas/formulasApi';
 import type {
   FormulaIngredientRow,
+  FormulaRemixBaseline,
+  FormulaRowCaptureStatus,
   FormulaRowMetadataUpdate,
   SavedFormulaRecord,
 } from '../../features/formulas/formulaDraftTypes';
-import type { FormulaDraftSession } from '../../features/formulas/formulaDraftTypes';
 import { toLabCoreFormulaDraft } from '../../features/formulas/formulaDraftTypes';
 import { useFormulaDraft } from '../../features/formulas/useFormulaDraft';
 import { listLabInventoryProducts } from '../../features/inventory/productsApi';
-import { getActiveLabSession, refreshActiveLabSession } from '../../features/sheer-lab/labSession';
+import { getActiveLabSession, logoutLabSession } from '../../features/sheer-lab/labSession';
+import { appConfig } from '../../config/appConfig';
+import { formatClock, initials, roleLabel } from '../Home/dashboardHelpers';
+import { featureFlags } from '../../config/featureFlags';
 import { labTheme } from '../../theme/labTheme';
-import { LabButton } from '../shared/LabButton';
-import { LabScreen } from '../shared/LabScreen';
+
+const T = labTheme;
+const C = T.colors;
 
 type ManualInputState = Record<string, string>;
 type FormulaScreenProps = NativeStackScreenProps<RootStackParamList, 'Formula'>;
+type ChipTone = 'neutral' | 'brand' | 'success' | 'warning' | 'danger';
 
-export function FormulaScreen({ route }: FormulaScreenProps): React.JSX.Element {
+// ---------------------------------------------------------------------------
+// Responsive layout — mirrors the Build Formula / dashboard breakpoints.
+// ---------------------------------------------------------------------------
+
+interface ConsoleLayout {
+  mode: 'phone' | 'tablet' | 'wide';
+  sidebarWidth: number;
+  railWidth: number;
+  pad: number;
+  gap: number;
+  showSidebar: boolean;
+  twoColumn: boolean;
+  ringSize: number;
+}
+
+function getLayout(width: number): ConsoleLayout {
+  if (width >= 1024) {
+    const large = width >= 1280;
+    return {
+      mode: 'wide',
+      sidebarWidth: large ? 248 : 216,
+      railWidth: clampNumber(Math.round(width * 0.3), 320, 400),
+      pad: large ? T.spacing.xl : T.spacing.base,
+      gap: T.spacing.lg,
+      showSidebar: true,
+      twoColumn: true,
+      ringSize: 256,
+    };
+  }
+  if (width >= 700) {
+    return {
+      mode: 'tablet',
+      sidebarWidth: 208,
+      railWidth: 0,
+      pad: T.spacing.base,
+      gap: T.spacing.base,
+      showSidebar: true,
+      twoColumn: false,
+      ringSize: 264,
+    };
+  }
+  return {
+    mode: 'phone',
+    sidebarWidth: 0,
+    railWidth: 0,
+    pad: T.spacing.base,
+    gap: T.spacing.base,
+    showSidebar: false,
+    twoColumn: false,
+    ringSize: Math.min(248, Math.round(width * 0.62)),
+  };
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+// ---------------------------------------------------------------------------
+// Sidebar navigation model (dark shell)
+// ---------------------------------------------------------------------------
+
+type WorkingRoute = 'Home' | 'NewMix' | 'FormulaHistory';
+type NavTarget = { kind: 'route'; route: WorkingRoute } | { kind: 'soon' } | { kind: 'current' };
+
+interface NavEntry {
+  key: string;
+  label: string;
+  glyph: string;
+  target: NavTarget;
+}
+
+const NAV_ITEMS: NavEntry[] = ([
+  { key: 'dashboard', label: 'Dashboard', glyph: '▦', target: { kind: 'route', route: 'Home' } },
+  { key: 'new-mix', label: 'New Mix', glyph: '🧪', target: { kind: 'route', route: 'NewMix' } },
+  { key: 'history', label: 'History', glyph: '🕘', target: { kind: 'route', route: 'FormulaHistory' } },
+  { key: 'inventory', label: 'Inventory', glyph: '📦', target: { kind: 'soon' } },
+  { key: 'billing', label: 'Billing Rules', glyph: '🧾', target: { kind: 'soon' } },
+  { key: 'audit', label: 'Audit Trail', glyph: '🛡️', target: { kind: 'soon' } },
+  // Billing Rules and Audit Trail are hidden from the nav behind feature flags
+  // for every role; their entries stay so the feature can be restored later.
+] satisfies NavEntry[]).filter(
+  (item) => (item.key !== 'billing' || featureFlags.billingRules) && (item.key !== 'audit' || featureFlags.auditTrail),
+);
+
+// ---------------------------------------------------------------------------
+// Screen
+// ---------------------------------------------------------------------------
+
+export function FormulaScreen({ navigation, route }: FormulaScreenProps): React.JSX.Element {
+  const { width } = useWindowDimensions();
+  const layout = getLayout(width);
   const ble = useBleScale();
+  const scaleConnected = ble.status === 'connected';
+
   const {
     draft,
     addRow,
@@ -42,31 +148,61 @@ export function FormulaScreen({ route }: FormulaScreenProps): React.JSX.Element 
     applyManualWeight,
     setProductBilling,
     saveDraft,
-    markFinalized,
     loadDraft,
-    toFinalSavePayload,
     getLatestFormulaForClient,
     duplicateFormula,
     startFromAppointmentContext,
   } = useFormulaDraft();
+
+  const [session, setSession] = useState<PinUnlockResponse | undefined>();
   const [manualInputs, setManualInputs] = useState<ManualInputState>({});
   const [draftMessage, setDraftMessage] = useState('Local draft not saved yet');
   const [savingDraft, setSavingDraft] = useState(false);
-  const [savingFinal, setSavingFinal] = useState(false);
   const [previousFormula, setPreviousFormula] = useState<SavedFormulaRecord | undefined>();
   const [productSearch, setProductSearch] = useState('');
   const [productPickerRowId, setProductPickerRowId] = useState<string | undefined>();
   const [products, setProducts] = useState<InventoryProduct[]>([]);
   const [productsLoading, setProductsLoading] = useState(false);
   const [productsError, setProductsError] = useState<string | undefined>();
+  const [tareOffset, setTareOffset] = useState(0);
+  const [now, setNow] = useState<Date>(() => new Date());
   const lastAppliedBleReading = useRef<string | undefined>(undefined);
 
-  const activeRow = draft.rows.find((row) => row.id === draft.activeIngredientId);
-  const activeWeightLabel = activeRow?.capturedGrams != null ? activeRow.capturedGrams.toFixed(1) : '--.-';
-  const activeCaptureStatus = activeRow?.captureStatus ?? 'waiting';
-  const labCoreDraft = useMemo(() => toLabCoreFormulaDraft(draft), [draft]);
   const entryContext = route.params?.entryContext;
+  const activeRow = draft.rows.find((row) => row.id === draft.activeIngredientId);
+  const activeIndex = draft.rows.findIndex((row) => row.id === draft.activeIngredientId);
+  const labCoreDraft = useMemo(() => toLabCoreFormulaDraft(draft), [draft]);
   const pickerRow = draft.rows.find((row) => row.id === productPickerRowId);
+
+  const activeCaptured = activeRow?.capturedGrams;
+  const activeWeightLabel = activeCaptured != null ? activeCaptured.toFixed(1) : '--.-';
+  const activeTarget = activeRow?.plannedGrams;
+  const ringState = resolveRingState(activeRow);
+  const ringProgress =
+    activeTarget && activeTarget > 0 && activeCaptured != null
+      ? clampNumber(activeCaptured / activeTarget, 0, 1)
+      : activeCaptured != null
+        ? 1
+        : 0;
+
+  const sessionTotals = useMemo(() => {
+    const totalTarget = draft.rows.reduce((sum, row) => sum + (row.plannedGrams ?? 0), 0);
+    const totalCaptured = draft.rows.reduce((sum, row) => sum + (row.capturedGrams ?? 0), 0);
+    const capturedCount = draft.rows.filter((row) => row.captureStatus === 'captured').length;
+    const fraction =
+      totalTarget > 0
+        ? clampNumber(totalCaptured / totalTarget, 0, 1)
+        : draft.rows.length > 0
+          ? capturedCount / draft.rows.length
+          : 0;
+    return { totalTarget, totalCaptured, capturedCount, fraction };
+  }, [draft.rows]);
+
+  // Reset the local tare baseline whenever the active row changes — each
+  // ingredient is weighed fresh.
+  useEffect(() => {
+    setTareOffset(0);
+  }, [draft.activeIngredientId]);
 
   useEffect(() => {
     if (!entryContext) return;
@@ -86,6 +222,20 @@ export function FormulaScreen({ route }: FormulaScreenProps): React.JSX.Element 
     });
   }, [entryContext, startFromAppointmentContext]);
 
+  // Load the active session for the top-bar identity + sign-out.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const loaded = await getActiveLabSession();
+      if (!cancelled && loaded) setSession(loaded);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Apply live BLE readings to the active row, folding in the local tare offset
+  // so the readout and the captured weight stay consistent.
   useEffect(() => {
     const reading = ble.liveWeight;
     if (!reading || reading.source !== 'ble') return;
@@ -94,18 +244,18 @@ export function FormulaScreen({ route }: FormulaScreenProps): React.JSX.Element 
     if (lastAppliedBleReading.current === readingKey) return;
 
     lastAppliedBleReading.current = readingKey;
-    applyBleWeight(reading);
-  }, [applyBleWeight, ble.liveWeight]);
+    const tared =
+      tareOffset > 0 ? { ...reading, grams: Math.max(0, reading.grams - tareOffset) } : reading;
+    applyBleWeight(tared);
+  }, [applyBleWeight, ble.liveWeight, tareOffset]);
 
   useEffect(() => {
     let cancelled = false;
-
     void (async () => {
       const activeSession = entryContext?.labSessionId
         ? { sessionId: entryContext.labSessionId }
         : await getActiveLabSession();
       if (!activeSession) return;
-
       try {
         const settings = await getLabProductBillingSettings(activeSession.sessionId);
         if (!cancelled) setProductBilling(settings);
@@ -113,11 +263,15 @@ export function FormulaScreen({ route }: FormulaScreenProps): React.JSX.Element 
         // Leave the colour-charge preview at cost-only if the rule can't be loaded.
       }
     })();
-
     return () => {
       cancelled = true;
     };
   }, [entryContext?.labSessionId, setProductBilling]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 60000);
+    return () => clearInterval(timer);
+  }, []);
 
   const loadProducts = useCallback(
     async (search = productSearch): Promise<void> => {
@@ -212,6 +366,23 @@ export function FormulaScreen({ route }: FormulaScreenProps): React.JSX.Element 
     });
   }
 
+  function handleAddProduct(): void {
+    const row = addRow();
+    openProductPicker(row.id);
+  }
+
+  function handleTare(): void {
+    if (!activeRow) return;
+    setTareOffset(ble.liveWeight?.grams ?? 0);
+    startRowReweigh(activeRow.id);
+  }
+
+  function handleReweigh(): void {
+    if (!activeRow) return;
+    setTareOffset(0);
+    startRowReweigh(activeRow.id);
+  }
+
   async function handleSaveDraft(): Promise<void> {
     setSavingDraft(true);
     setDraftMessage('Saving local draft...');
@@ -227,32 +398,14 @@ export function FormulaScreen({ route }: FormulaScreenProps): React.JSX.Element 
     }
   }
 
-  async function handleSaveFinal(): Promise<void> {
-    setSavingFinal(true);
-    setDraftMessage('Finalizing formula, billing, inventory, and waste...');
-    try {
-      const activeSession = await refreshActiveLabSession();
-      if (!activeSession) {
-        setDraftMessage('Sheer Lab session expired. Unlock Sheer Lab again, then tap Save Final.');
-        return;
-      }
-      const payload = {
-        ...toFinalSavePayload(),
-        labSessionId: activeSession.sessionId,
-      };
-      await finalizeFormulaForLabSession(activeSession.sessionId, payload);
-      const finalized = markFinalized();
-      setDraftMessage(
-        `Final formula saved ${formatTime(finalized.finalizedAt)} · ${formatMoney(
-          finalized.billableChargeCents,
-          finalized.currencyCode,
-        )} colour charge applied · inventory reconciled`,
-      );
-    } catch (err: unknown) {
-      setDraftMessage(err instanceof Error ? err.message : 'Could not finalize formula');
-    } finally {
-      setSavingFinal(false);
+  function handleReviewAndBill(): void {
+    if (!hasCapturedWeight) {
+      setDraftMessage('Weigh at least one ingredient before reviewing the bill.');
+      return;
     }
+    // Hand off to the Mix Finalized review screen, which owns billing and the
+    // finalize call. The draft is shared via the store, so no params are needed.
+    navigation.navigate('MixFinalized');
   }
 
   function handleLoadDraft(): void {
@@ -272,77 +425,167 @@ export function FormulaScreen({ route }: FormulaScreenProps): React.JSX.Element 
 
   function handleDuplicatePreviousFormula(): void {
     if (!previousFormula) return;
-
     const duplicated = duplicateFormula(previousFormula.id);
     setDraftMessage(
-      duplicated
-        ? `Duplicated previous formula into editable draft`
-        : 'Could not duplicate that formula in this session',
+      duplicated ? 'Duplicated previous formula into editable draft' : 'Could not duplicate that formula in this session',
     );
   }
 
-  return (
-    <LabScreen title="Capture formula" eyebrow="Ingredient capture">
-      <ConnectionStatusBar
-        status={ble.status}
-        deviceName={ble.connectedDevice?.name}
-        weight={ble.liveWeight}
-        error={ble.error}
+  const goToRoute = useCallback(
+    (target: NavTarget) => {
+      if (target.kind !== 'route') return;
+      navigation.navigate(target.route);
+    },
+    [navigation],
+  );
+
+  const handleSignOut = useCallback(async () => {
+    const sid = entryContext?.labSessionId ?? session?.sessionId;
+    if (sid) {
+      try {
+        await logoutLabSession(sid);
+      } catch {
+        // Best effort — always return the device to the lock screen.
+      }
+    }
+    navigation.reset({ index: 0, routes: [{ name: 'Auth' }] });
+  }, [entryContext?.labSessionId, navigation, session?.sessionId]);
+
+  const isFinalized = draft.status === 'saved';
+  const hasCapturedWeight = draft.rows.some((row) => row.capturedGrams != null);
+
+  const consoleColumn = (
+    <View style={[styles.column, { gap: layout.gap }]}>
+      <ScaleConsoleCard
+        ringSize={layout.ringSize}
+        weightLabel={activeWeightLabel}
+        ringState={ringState}
+        progress={ringProgress}
+        target={activeTarget}
+        hasActiveRow={Boolean(activeRow)}
+        stable={ble.liveWeight?.stable}
+        savedAt={draft.savedAt}
+        onTare={handleTare}
+        onReweigh={handleReweigh}
       />
-      <View style={styles.clientBar}>
-        <View style={styles.clientHeader}>
-          <View>
-            <Text style={styles.label}>Client</Text>
-            <Text style={styles.clientName}>{draft.client.clientName}</Text>
-          </View>
-          <Pressable accessibilityRole="button" onPress={handleLastFormula} style={styles.lastFormulaButton}>
-            <Text style={styles.lastFormulaText}>Last formula</Text>
-          </Pressable>
-        </View>
-        <Text style={styles.serviceText}>{draft.visit.serviceType}</Text>
-        <Text style={styles.meta}>
-          Patch test: {formatPatchTest(draft.patchTest.status, draft.patchTest.performedAt)}
-        </Text>
-      </View>
-      <View style={styles.captureCard}>
-        <Text style={styles.label}>Capturing into</Text>
-        <Text style={styles.captureTitle}>
-          {activeRow ? formatRowDisplayName(activeRow) : 'Select an ingredient row'}
-        </Text>
-        <Text style={styles.weight}>{activeWeightLabel} g</Text>
-        <Text style={styles.meta}>
-          Source: {activeRow?.weightSource ?? 'waiting'} · {formatCaptureStatus(activeCaptureStatus)} · Draft items:{' '}
-          {labCoreDraft.items.length}
-        </Text>
-      </View>
+      {activeRow ? (
+        <ActiveIngredientCard
+          row={activeRow}
+          manualValue={manualInputs[activeRow.id] ?? ''}
+          onMetadataChange={(metadata) => updateRowMetadata(activeRow.id, metadata)}
+          onOpenProductPicker={() => openProductPicker(activeRow.id)}
+          onUseManualIdentity={() => switchRowToManual(activeRow)}
+          onManualChange={(value) => updateManualInput(activeRow.id, value)}
+          onManualSubmit={() => submitManualWeight(activeRow.id)}
+          onRemove={draft.rows.length > 1 ? () => removeRow(activeRow.id) : undefined}
+        />
+      ) : null}
       {previousFormula ? (
         <PreviousFormulaCard formula={previousFormula} onDuplicate={handleDuplicatePreviousFormula} />
       ) : null}
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Ingredients</Text>
-        <LabButton label="Add row" onPress={addRow} variant="secondary" />
+    </View>
+  );
+
+  const railColumn = (
+    <View style={[styles.column, { gap: layout.gap }]}>
+      <FormulaQueueCard
+        rows={draft.rows}
+        activeId={draft.activeIngredientId}
+        activeIndex={activeIndex}
+        onSelect={(rowId, captured) => {
+          if (captured) startRowReweigh(rowId);
+          else selectActiveRow(rowId);
+        }}
+        onLastFormula={handleLastFormula}
+      />
+      <SessionProgressCard
+        fraction={sessionTotals.fraction}
+        totalTarget={sessionTotals.totalTarget}
+        totalCaptured={sessionTotals.totalCaptured}
+        itemCount={labCoreDraft.items.length}
+        remixBaseline={draft.remixBaseline}
+      />
+      <ChargeCard
+        billableChargeCents={draft.billableChargeCents}
+        totalCostCents={draft.totalCostCents}
+        totalWasteCostCents={draft.totalWasteCostCents}
+        currencyCode={draft.currencyCode}
+        hasMissingCost={draft.hasMissingCost}
+        finalized={isFinalized}
+        finalizedAt={draft.finalizedAt}
+      />
+      <MixTipCard />
+    </View>
+  );
+
+  return (
+    <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
+      <StatusBar barStyle="light-content" backgroundColor={C.surface} />
+      <TopBar session={session} online={session?.status === 'active'} />
+
+      <View style={[styles.body, layout.showSidebar ? styles.bodyRow : styles.bodyColumn]}>
+        {layout.showSidebar ? (
+          <Sidebar width={layout.sidebarWidth} onNav={goToRoute} onSignOut={handleSignOut} />
+        ) : null}
+
+        <View style={styles.mainArea}>
+          <ScrollView
+            style={styles.scroll}
+            contentContainerStyle={{ padding: layout.pad, paddingBottom: T.spacing.xl }}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
+            <View style={[styles.contentWrap, { gap: layout.gap }]}>
+              {!layout.showSidebar ? <NavScroller onNav={goToRoute} onSignOut={handleSignOut} /> : null}
+
+              <ContextHeader
+                formulaId={draft.id}
+                title={activeRow ? formatRowDisplayName(activeRow) : 'Select an ingredient'}
+                detail={activeRow?.developer}
+                stepIndex={activeIndex}
+                stepCount={draft.rows.length}
+                scaleConnected={scaleConnected}
+                scaleName={ble.connectedDevice?.name}
+                scaleStatus={ble.error ?? ble.status}
+              />
+
+              {layout.twoColumn ? (
+                <View style={[styles.columns, { gap: layout.gap }]}>
+                  <View style={styles.consoleColumn}>{consoleColumn}</View>
+                  <View style={{ width: layout.railWidth }}>{railColumn}</View>
+                </View>
+              ) : (
+                <View style={[styles.column, { gap: layout.gap }]}>
+                  {consoleColumn}
+                  {railColumn}
+                </View>
+              )}
+
+              <Footer now={now} scaleConnected={scaleConnected} online={session?.status === 'active'} />
+            </View>
+          </ScrollView>
+
+          <View style={styles.noticeBar}>
+            <Text style={styles.noticeText} numberOfLines={2}>
+              {draftMessage}
+            </Text>
+          </View>
+
+          <BottomBar
+            totalCaptured={sessionTotals.totalCaptured}
+            chargeCents={draft.billableChargeCents}
+            currencyCode={draft.currencyCode}
+            savingDraft={savingDraft}
+            reviewDisabled={savingDraft || !hasCapturedWeight}
+            finalized={isFinalized}
+            onAddProduct={handleAddProduct}
+            onSaveDraft={() => void handleSaveDraft()}
+            onReopenDraft={handleLoadDraft}
+            onReview={handleReviewAndBill}
+          />
+        </View>
       </View>
-      {draft.rows.map((row) => (
-        <IngredientRow
-          key={row.id}
-          row={row}
-          active={row.id === draft.activeIngredientId}
-          manualValue={manualInputs[row.id] ?? ''}
-          canRemove={draft.rows.length > 1}
-          onSelect={() => {
-            if (row.id === draft.activeIngredientId || row.captureStatus !== 'captured') {
-              selectActiveRow(row.id);
-            }
-          }}
-          onReweigh={() => startRowReweigh(row.id)}
-          onRemove={() => removeRow(row.id)}
-          onMetadataChange={(metadata) => updateRowMetadata(row.id, metadata)}
-          onOpenProductPicker={() => openProductPicker(row.id)}
-          onUseManualIdentity={() => switchRowToManual(row)}
-          onManualChange={(value) => updateManualInput(row.id, value)}
-          onManualSubmit={() => submitManualWeight(row.id)}
-        />
-      ))}
+
       <ProductPickerModal
         visible={Boolean(pickerRow)}
         products={products}
@@ -358,83 +601,727 @@ export function FormulaScreen({ route }: FormulaScreenProps): React.JSX.Element 
           selectProductForRow(pickerRow.id, product);
         }}
       />
-      <ChargeBreakdownCard draft={draft} />
-      <LabButton label={savingDraft ? 'Saving...' : 'Save draft'} onPress={() => void handleSaveDraft()} disabled={savingDraft} />
-      <LabButton
-        label={savingFinal ? 'Finalizing...' : 'Save Final'}
-        onPress={() => void handleSaveFinal()}
-        disabled={savingFinal || savingDraft || draft.status === 'saved'}
-      />
-      <LabButton label="Reopen saved draft" onPress={handleLoadDraft} variant="secondary" />
-      <Text style={styles.meta}>{draftMessage}</Text>
-    </LabScreen>
+    </SafeAreaView>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Charge breakdown card — shows colour charge + product billing info
+// Chrome — top bar, sidebar, mobile nav, footer
 // ---------------------------------------------------------------------------
 
-interface ChargeBreakdownCardProps {
-  draft: FormulaDraftSession;
+function TopBar({ session, online }: { session?: PinUnlockResponse; online: boolean }): React.JSX.Element {
+  return (
+    <View style={styles.topBar}>
+      <View style={styles.topSideLeft}>
+        <StatusChip label={online ? 'Connected' : 'Offline'} tone={online ? 'success' : 'neutral'} />
+      </View>
+      <View style={styles.brandRow}>
+        <View style={styles.brandMark}>
+          <Text style={styles.brandMarkText}>Q</Text>
+        </View>
+        <Text style={styles.brandText}>QLOOQO LAB</Text>
+      </View>
+      <View style={styles.topSideRight}>
+        {session ? (
+          <View style={styles.userRow}>
+            <View style={styles.userText}>
+              <Text style={styles.userName} numberOfLines={1}>
+                {session.displayName}
+              </Text>
+              <Text style={styles.userRole}>{roleLabel(session.role)}</Text>
+            </View>
+            <View style={styles.avatar}>
+              <Text style={styles.avatarText}>{initials(session.displayName)}</Text>
+            </View>
+          </View>
+        ) : null}
+      </View>
+    </View>
+  );
 }
 
-function ChargeBreakdownCard({ draft }: ChargeBreakdownCardProps): React.JSX.Element {
-  const isFinalized = draft.status === 'saved';
+function Sidebar({
+  width,
+  onNav,
+  onSignOut,
+}: {
+  width: number;
+  onNav: (target: NavTarget) => void;
+  onSignOut: () => void;
+}): React.JSX.Element {
+  return (
+    <View style={[styles.sidebar, { width }]}>
+      <View style={styles.sidebarNav}>
+        {NAV_ITEMS.map((item) => {
+          const active = item.target.kind === 'current';
+          const soon = item.target.kind === 'soon';
+          return (
+            <Pressable
+              key={item.key}
+              accessibilityRole="button"
+              disabled={soon || active}
+              onPress={() => onNav(item.target)}
+              style={[styles.navItem, active && styles.navItemActive, soon && styles.navItemSoon]}
+            >
+              <Text style={styles.navGlyph}>{item.glyph}</Text>
+              <Text style={[styles.navLabel, active && styles.navLabelActive]} numberOfLines={1}>
+                {item.label}
+              </Text>
+              {soon ? <Text style={styles.soonTag}>Soon</Text> : null}
+            </Pressable>
+          );
+        })}
+      </View>
+      <Pressable accessibilityRole="button" onPress={onSignOut} style={styles.signOut}>
+        <Text style={styles.signOutGlyph}>⏻</Text>
+        <Text style={styles.signOutLabel}>Sign Out</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function NavScroller({
+  onNav,
+  onSignOut,
+}: {
+  onNav: (target: NavTarget) => void;
+  onSignOut: () => void;
+}): React.JSX.Element {
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={styles.navScroller}
+      style={styles.navScrollerWrap}
+    >
+      {NAV_ITEMS.map((item) => {
+        const active = item.target.kind === 'current';
+        const soon = item.target.kind === 'soon';
+        return (
+          <Pressable
+            key={item.key}
+            accessibilityRole="button"
+            disabled={soon || active}
+            onPress={() => onNav(item.target)}
+            style={[styles.navChip, active && styles.navChipActive, soon && styles.navItemSoon]}
+          >
+            <Text style={styles.navGlyph}>{item.glyph}</Text>
+            <Text style={[styles.navChipLabel, active && styles.navLabelActive]}>{item.label}</Text>
+            {soon ? <Text style={styles.soonTag}>Soon</Text> : null}
+          </Pressable>
+        );
+      })}
+      <Pressable accessibilityRole="button" onPress={onSignOut} style={styles.navChip}>
+        <Text style={styles.navGlyph}>⏻</Text>
+        <Text style={styles.navChipLabel}>Sign Out</Text>
+      </Pressable>
+    </ScrollView>
+  );
+}
+
+function ContextHeader({
+  formulaId,
+  title,
+  detail,
+  stepIndex,
+  stepCount,
+  scaleConnected,
+  scaleName,
+  scaleStatus,
+}: {
+  formulaId: string;
+  title: string;
+  detail?: string;
+  stepIndex: number;
+  stepCount: number;
+  scaleConnected: boolean;
+  scaleName?: string;
+  scaleStatus: string;
+}): React.JSX.Element {
+  const step = stepCount > 0 ? Math.max(1, stepIndex + 1) : 1;
+  return (
+    <View style={styles.contextHeader}>
+      <View style={styles.contextText}>
+        <View style={styles.contextMetaRow}>
+          <View style={styles.stepBadge}>
+            <Text style={styles.stepBadgeText}>Step {step} of {Math.max(stepCount, 1)}</Text>
+          </View>
+          <Text style={styles.contextId}>Formula ID · {formatFormulaId(formulaId)}</Text>
+        </View>
+        <Text style={styles.contextTitle} numberOfLines={2}>
+          {title}
+          {detail ? <Text style={styles.contextTitleDetail}>  /  {detail}</Text> : null}
+        </Text>
+      </View>
+
+      <View style={styles.scalePill}>
+        <View style={[styles.scalePillDot, { backgroundColor: scaleConnected ? C.success.text : C.textMuted }]} />
+        <View>
+          <Text style={styles.scalePillLabel}>{(scaleName ?? 'Precision scale').toUpperCase()}</Text>
+          <Text style={styles.scalePillStatus}>{scaleConnected ? 'Connected · live' : capitalize(scaleStatus)}</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function Footer({
+  now,
+  scaleConnected,
+  online,
+}: {
+  now: Date;
+  scaleConnected: boolean;
+  online: boolean;
+}): React.JSX.Element {
+  return (
+    <View style={styles.footer}>
+      <View style={styles.footerSide}>
+        <Text style={styles.footerText}>{formatClock(now)}</Text>
+        <View style={[styles.dot, { backgroundColor: scaleConnected ? C.success.text : C.textMuted }]} />
+        <Text style={styles.footerText}>{scaleConnected ? 'Scale live' : 'Scale idle'}</Text>
+      </View>
+      <View style={styles.footerSide}>
+        <Text style={styles.footerText}>{appConfig.environment.toUpperCase()}</Text>
+        <Text style={styles.footerTextStrong}>{online ? 'SYSTEM LIVE' : 'SESSION ENDED'}</Text>
+      </View>
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Scale console — the live readout dial + tare/reweigh
+// ---------------------------------------------------------------------------
+
+function ScaleConsoleCard({
+  ringSize,
+  weightLabel,
+  ringState,
+  progress,
+  target,
+  hasActiveRow,
+  stable,
+  savedAt,
+  onTare,
+  onReweigh,
+}: {
+  ringSize: number;
+  weightLabel: string;
+  ringState: RingState;
+  progress: number;
+  target?: number;
+  hasActiveRow: boolean;
+  stable?: boolean;
+  savedAt?: string;
+  onTare: () => void;
+  onReweigh: () => void;
+}): React.JSX.Element {
+  const accent = ringStateColor(ringState);
+  const caption =
+    target && target > 0
+      ? `of ${target.toFixed(1)} g target`
+      : ringState === 'captured'
+        ? 'Captured weight'
+        : ringState === 'live'
+          ? 'Live capture'
+          : 'Place product on the scale';
 
   return (
-    <View style={chargeStyles.card}>
-      {/* Header row */}
-      <View style={chargeStyles.headerRow}>
-        <Text style={chargeStyles.cardLabel}>Colour charge</Text>
-        {isFinalized ? (
-          <View style={chargeStyles.statusPill}>
-            <Text style={chargeStyles.statusPillText}>Reconciled</Text>
-          </View>
-        ) : (
-          <View style={[chargeStyles.statusPill, chargeStyles.statusPillPending]}>
-            <Text style={[chargeStyles.statusPillText, chargeStyles.statusPillTextPending]}>Preview</Text>
-          </View>
-        )}
+    <View style={styles.consoleCard}>
+      <ScaleDial size={ringSize} accent={accent} progress={progress} weightLabel={weightLabel} caption={caption} />
+
+      <View style={styles.consoleButtons}>
+        <ConsoleButton glyph="⊘" label="Tare" onPress={onTare} disabled={!hasActiveRow} />
+        <ConsoleButton glyph="↻" label="Reweigh" onPress={onReweigh} disabled={!hasActiveRow} />
       </View>
 
-      {/* Billable total */}
-      <Text style={chargeStyles.chargeTotal}>
-        {formatMoney(draft.billableChargeCents, draft.currencyCode)}
+      <View style={styles.consoleFooter}>
+        <Text style={styles.consoleFooterText}>
+          {savedAt ? `✓ Saved automatically ${formatTime(savedAt)}` : 'Auto-save ready'}
+        </Text>
+        <Text style={[styles.consoleFooterText, stable && styles.consoleFooterStable]}>
+          {stable ? '⚖ Stable weight detected' : 'Awaiting stable weight'}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+function ScaleDial({
+  size,
+  accent,
+  progress,
+  weightLabel,
+  caption,
+}: {
+  size: number;
+  accent: string;
+  progress: number;
+  weightLabel: string;
+  caption: string;
+}): React.JSX.Element {
+  const stroke = Math.max(10, Math.round(size * 0.055));
+  const numberSize = Math.round(size * 0.27);
+  return (
+    <ProgressRing size={size} strokeWidth={stroke} progress={progress} color={accent} trackColor={C.border} holeColor={C.card}>
+      <View style={styles.dialNumberRow}>
+        <Text style={[styles.dialNumber, { fontSize: numberSize }]} numberOfLines={1} adjustsFontSizeToFit>
+          {weightLabel}
+        </Text>
+        <Text style={styles.dialUnit}>g</Text>
+      </View>
+      <Text style={styles.dialCaption} numberOfLines={2}>
+        {caption}
       </Text>
+    </ProgressRing>
+  );
+}
 
-      {/* Cost breakdown rows */}
-      <View style={chargeStyles.breakdownTable}>
-        <ChargeRow
-          label="Actual product cost"
-          value={formatMoney(draft.totalCostCents, draft.currencyCode)}
-        />
-        {draft.totalWasteCostCents > 0 ? (
-          <ChargeRow
-            label="Waste cost"
-            value={formatMoney(draft.totalWasteCostCents, draft.currencyCode)}
-            tone="warning"
+/**
+ * Pure-RN circular progress arc (no SVG). The filled wedge sweeps clockwise
+ * from 12 o'clock by `progress` (0..1), drawn as two clipped half-discs that
+ * rotate about the circle centre, with a centre "donut hole" punched out to
+ * leave a ring. The unfilled remainder shows `trackColor`.
+ */
+function ProgressRing({
+  size,
+  strokeWidth,
+  progress,
+  color,
+  trackColor,
+  holeColor,
+  children,
+}: {
+  size: number;
+  strokeWidth: number;
+  progress: number;
+  color: string;
+  trackColor: string;
+  holeColor: string;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  const half = size / 2;
+  const angle = clampNumber(progress, 0, 1) * 360;
+  const rotateRight = Math.min(angle, 180);
+  const rotateLeft = Math.max(angle - 180, 0);
+  const innerSize = size - strokeWidth * 2;
+
+  return (
+    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
+      {/* Track */}
+      <View style={{ position: 'absolute', width: size, height: size, borderRadius: half, backgroundColor: trackColor }} />
+
+      {/* Right half — fills 0–50% */}
+      <View style={[styles.ringClip, { width: half, height: size, left: half }]}>
+        <View style={{ position: 'absolute', width: size, height: size, left: -half, transform: [{ rotate: `${rotateRight}deg` }] }}>
+          <View
+            style={{
+              position: 'absolute',
+              width: half,
+              height: size,
+              left: 0,
+              backgroundColor: color,
+              borderTopLeftRadius: half,
+              borderBottomLeftRadius: half,
+            }}
           />
-        ) : null}
-        {draft.billableChargeCents !== draft.totalCostCents ? (
-          <ChargeRow
-            label="Markup / uplift applied"
-            value={`+${formatMoney(
-              draft.billableChargeCents - draft.totalCostCents,
-              draft.currencyCode,
-            )}`}
-            tone="brand"
-          />
-        ) : null}
+        </View>
       </View>
 
-      {/* Status line */}
-      <Text style={chargeStyles.statusLine}>
-        {isFinalized
-          ? `Finalized ${formatTime(draft.finalizedAt)}. Billing and inventory reconciled.`
-          : draft.hasMissingCost
-            ? 'Some ingredients are missing a cost per gram — update them before saving final.'
-            : 'Save Final to apply billing, inventory usage, waste, and low-stock reconciliation.'}
+      {/* Left half — fills 50–100% */}
+      <View style={[styles.ringClip, { width: half, height: size, left: 0 }]}>
+        <View style={{ position: 'absolute', width: size, height: size, left: 0, transform: [{ rotate: `${rotateLeft}deg` }] }}>
+          <View
+            style={{
+              position: 'absolute',
+              width: half,
+              height: size,
+              left: half,
+              backgroundColor: color,
+              borderTopRightRadius: half,
+              borderBottomRightRadius: half,
+            }}
+          />
+        </View>
+      </View>
+
+      {/* Donut hole */}
+      <View style={{ position: 'absolute', width: innerSize, height: innerSize, borderRadius: innerSize / 2, backgroundColor: holeColor }} />
+
+      {/* Centre content */}
+      <View style={{ width: innerSize - 12, alignItems: 'center', justifyContent: 'center', gap: 4 }}>{children}</View>
+    </View>
+  );
+}
+
+function ConsoleButton({
+  glyph,
+  label,
+  onPress,
+  disabled,
+}: {
+  glyph: string;
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+}): React.JSX.Element {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.consoleButton,
+        pressed && !disabled && styles.consoleButtonPressed,
+        disabled && styles.consoleButtonDisabled,
+      ]}
+    >
+      <Text style={styles.consoleButtonGlyph}>{glyph}</Text>
+      <Text style={styles.consoleButtonLabel}>{label}</Text>
+    </Pressable>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Active ingredient editor (for the selected row)
+// ---------------------------------------------------------------------------
+
+function ActiveIngredientCard({
+  row,
+  manualValue,
+  onMetadataChange,
+  onOpenProductPicker,
+  onUseManualIdentity,
+  onManualChange,
+  onManualSubmit,
+  onRemove,
+}: {
+  row: FormulaIngredientRow;
+  manualValue: string;
+  onMetadataChange: (metadata: FormulaRowMetadataUpdate) => void;
+  onOpenProductPicker: () => void;
+  onUseManualIdentity: () => void;
+  onManualChange: (value: string) => void;
+  onManualSubmit: () => void;
+  onRemove?: () => void;
+}): React.JSX.Element {
+  const manualDisabled = manualValue.trim().length === 0 || Number.isNaN(Number(manualValue));
+  const isManualIdentity = row.identityMode === 'custom_manual';
+  const productMeta = [row.brand, row.category, row.sku ? `SKU ${row.sku}` : undefined].filter(Boolean).join(' · ');
+  const costBasisLabel =
+    row.costBasis.costPerGramCents == null
+      ? 'No product cost on record'
+      : `${row.costBasis.costPerGramCents}p/g from inventory`;
+
+  return (
+    <View style={styles.card}>
+      <View style={styles.cardHeadRow}>
+        <Text style={styles.cardEyebrow}>Active ingredient</Text>
+        <StatusChip label={formatCaptureStatus(row.captureStatus)} tone={captureTone(row.captureStatus)} />
+      </View>
+
+      {isManualIdentity ? (
+        <View style={styles.subCard}>
+          <Text style={styles.fieldLabel}>Custom ingredient</Text>
+          <TextInput
+            onChangeText={(productName) => onMetadataChange({ ...row, productName })}
+            placeholder="Custom ingredient name"
+            placeholderTextColor={C.inputPlaceholder}
+            style={styles.input}
+            value={row.productName}
+          />
+          <View style={styles.metadataGrid}>
+            <Field label="Brand / supplier" style={styles.fieldWide}>
+              <TextInput
+                onChangeText={(brand) => onMetadataChange({ ...row, brand })}
+                placeholder="e.g. Wella"
+                placeholderTextColor={C.inputPlaceholder}
+                style={styles.input}
+                value={row.brand ?? ''}
+              />
+            </Field>
+            <Field label="Cost / g (pence)" style={styles.fieldNarrow}>
+              <TextInput
+                keyboardType="decimal-pad"
+                onChangeText={(value) => {
+                  const parsed = Number(value);
+                  onMetadataChange({
+                    ...row,
+                    costBasis: {
+                      source: value.trim().length > 0 && !Number.isNaN(parsed) ? 'manual_cost' : 'missing',
+                      costPerGramCents: value.trim().length > 0 && !Number.isNaN(parsed) ? parsed : undefined,
+                      currencyCode: row.costBasis.currencyCode,
+                    },
+                  });
+                }}
+                placeholder="0"
+                placeholderTextColor={C.inputPlaceholder}
+                style={styles.input}
+                value={row.costBasis.source === 'manual_cost' ? row.costBasis.costPerGramCents?.toString() ?? '' : ''}
+              />
+            </Field>
+          </View>
+          <OutlineButton label="Select catalogue product instead" onPress={onOpenProductPicker} />
+        </View>
+      ) : (
+        <View style={styles.subCard}>
+          <Text style={styles.fieldLabel}>Product data</Text>
+          <Text style={styles.productTitle}>{row.displayName ?? (row.productName || 'No product selected')}</Text>
+          <Text style={styles.meta}>{productMeta || 'Brand / category / SKU autofills after selection.'}</Text>
+          <Text style={row.costBasis.costPerGramCents == null ? styles.costMissing : styles.costBasis}>
+            {costBasisLabel}
+          </Text>
+          <View style={styles.productActions}>
+            <View style={styles.flexItem}>
+              <OutlineButton label={row.productId ? 'Change product' : 'Select product'} onPress={onOpenProductPicker} />
+            </View>
+            <Pressable accessibilityRole="button" onPress={onUseManualIdentity} style={styles.textAction}>
+              <Text style={styles.textActionLabel}>Custom ingredient</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+
+      <View style={styles.metadataGrid}>
+        <Field label="Developer / metadata" style={styles.fieldWide}>
+          <TextInput
+            onChangeText={(developer) => onMetadataChange({ ...row, developer })}
+            placeholder="e.g. 20 Vol (6%)"
+            placeholderTextColor={C.inputPlaceholder}
+            style={styles.input}
+            value={row.developer ?? ''}
+          />
+        </Field>
+        <Field label="Waste (g)" style={styles.fieldNarrow}>
+          <TextInput
+            keyboardType="decimal-pad"
+            onChangeText={(value) => {
+              const parsed = Number(value);
+              onMetadataChange({
+                ...row,
+                wasteGrams: value.trim().length > 0 && !Number.isNaN(parsed) ? parsed : undefined,
+              });
+            }}
+            placeholder="0"
+            placeholderTextColor={C.inputPlaceholder}
+            style={styles.input}
+            value={row.wasteGrams?.toString() ?? ''}
+          />
+        </Field>
+      </View>
+
+      <Field label="Manual override (g)">
+        <View style={styles.manualRow}>
+          <TextInput
+            keyboardType="decimal-pad"
+            onChangeText={onManualChange}
+            placeholder="Manual grams"
+            placeholderTextColor={C.inputPlaceholder}
+            style={[styles.input, styles.flexItem]}
+            value={manualValue}
+          />
+          <View style={styles.manualButton}>
+            <OutlineButton label="Use manual" onPress={onManualSubmit} disabled={manualDisabled} />
+          </View>
+        </View>
+      </Field>
+
+      <Field label="Notes">
+        <TextInput
+          onChangeText={(notes) => onMetadataChange({ ...row, notes })}
+          placeholder="Application notes…"
+          placeholderTextColor={C.inputPlaceholder}
+          style={styles.notesInput}
+          multiline
+          value={row.notes ?? ''}
+        />
+      </Field>
+
+      {onRemove ? (
+        <Pressable accessibilityRole="button" onPress={onRemove} style={styles.removeAction} hitSlop={6}>
+          <Text style={styles.removeActionLabel}>Remove ingredient</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Formula queue rail
+// ---------------------------------------------------------------------------
+
+function FormulaQueueCard({
+  rows,
+  activeId,
+  activeIndex,
+  onSelect,
+  onLastFormula,
+}: {
+  rows: FormulaIngredientRow[];
+  activeId?: string;
+  activeIndex: number;
+  onSelect: (rowId: string, captured: boolean) => void;
+  onLastFormula: () => void;
+}): React.JSX.Element {
+  const step = rows.length > 0 ? Math.max(1, activeIndex + 1) : 1;
+  return (
+    <View style={styles.card}>
+      <View style={styles.cardHeadRow}>
+        <Text style={styles.cardEyebrow}>Formula queue</Text>
+        <View style={styles.stepBadge}>
+          <Text style={styles.stepBadgeText}>Step {step} of {Math.max(rows.length, 1)}</Text>
+        </View>
+      </View>
+
+      <View style={styles.queueList}>
+        {rows.map((row, index) => (
+          <QueueRow
+            key={row.id}
+            row={row}
+            index={index}
+            active={row.id === activeId}
+            onPress={() => onSelect(row.id, row.captureStatus === 'captured')}
+          />
+        ))}
+      </View>
+
+      <OutlineButton glyph="🕘" label="Load last formula" onPress={onLastFormula} />
+    </View>
+  );
+}
+
+function QueueRow({
+  row,
+  index,
+  active,
+  onPress,
+}: {
+  row: FormulaIngredientRow;
+  index: number;
+  active: boolean;
+  onPress: () => void;
+}): React.JSX.Element {
+  const captured = row.captureStatus === 'captured';
+  const live = active && row.captureStatus !== 'captured';
+  const tone: ChipTone = captured ? 'success' : live ? 'brand' : 'neutral';
+  const icon = captured ? '✓' : live ? '◆' : String(index + 1);
+  const palette = chipToneStyle(tone);
+  const name = formatRowDisplayName(row);
+  const sub = [row.brand, row.developer].filter(Boolean).join(' · ');
+  const showActual = row.capturedGrams != null;
+  const grams = showActual ? `${row.capturedGrams!.toFixed(1)}g` : row.plannedGrams != null ? `${row.plannedGrams.toFixed(0)}g` : '—';
+  const gramsLabel = showActual ? 'Actual' : row.plannedGrams != null ? 'Target' : 'Set';
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={[styles.queueRow, active && styles.queueRowActive]}
+    >
+      <View style={[styles.queueIcon, { backgroundColor: palette.bg, borderColor: palette.border }]}>
+        <Text style={[styles.queueIconText, { color: palette.text }]}>{icon}</Text>
+      </View>
+      <View style={styles.queueInfo}>
+        <Text style={styles.queueName} numberOfLines={1}>
+          {name}
+        </Text>
+        {sub ? (
+          <Text style={styles.queueSub} numberOfLines={1}>
+            {sub}
+          </Text>
+        ) : null}
+      </View>
+      <View style={styles.queueGrams}>
+        <Text style={[styles.queueGramsValue, captured && styles.queueGramsCaptured]}>{grams}</Text>
+        <Text style={styles.queueGramsLabel}>{gramsLabel}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+function SessionProgressCard({
+  fraction,
+  totalTarget,
+  totalCaptured,
+  itemCount,
+  remixBaseline,
+}: {
+  fraction: number;
+  totalTarget: number;
+  totalCaptured: number;
+  itemCount: number;
+  remixBaseline?: FormulaRemixBaseline;
+}): React.JSX.Element {
+  const pct = Math.round(fraction * 100);
+  return (
+    <View style={styles.card}>
+      <View style={styles.cardHeadRow}>
+        <Text style={styles.cardEyebrow}>Session progress</Text>
+        <Text style={styles.progressPct}>{pct}%</Text>
+      </View>
+      <View style={styles.progressTrack}>
+        <View style={[styles.progressFill, { width: `${pct}%`, backgroundColor: C.primary }]} />
+      </View>
+      <View style={styles.sessionStatsRow}>
+        <Text style={styles.sessionStat}>
+          {totalCaptured.toFixed(1)} g captured · {itemCount} {itemCount === 1 ? 'item' : 'items'}
+        </Text>
+        {totalTarget > 0 ? (
+          <Text style={styles.sessionStat}>Target {totalTarget.toFixed(1)} g</Text>
+        ) : null}
+      </View>
+      {remixBaseline ? (
+        <View style={styles.sessionStatsRow}>
+          <Text style={styles.sessionStat}>Previous mix {remixBaseline.totalGrams.toFixed(1)} g</Text>
+          <Text style={styles.sessionStatStrong}>
+            Combined {(remixBaseline.totalGrams + totalCaptured).toFixed(1)} g
+          </Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function ChargeCard({
+  billableChargeCents,
+  totalCostCents,
+  totalWasteCostCents,
+  currencyCode,
+  hasMissingCost,
+  finalized,
+  finalizedAt,
+}: {
+  billableChargeCents: number;
+  totalCostCents: number;
+  totalWasteCostCents: number;
+  currencyCode: string;
+  hasMissingCost: boolean;
+  finalized: boolean;
+  finalizedAt?: string;
+}): React.JSX.Element {
+  const markupCents = billableChargeCents - totalCostCents;
+  return (
+    <View style={styles.card}>
+      <View style={styles.cardHeadRow}>
+        <Text style={styles.cardEyebrow}>Colour charge</Text>
+        <StatusChip label={finalized ? 'Reconciled' : 'Preview'} tone={finalized ? 'success' : 'brand'} />
+      </View>
+      <Text style={styles.chargeTotal}>{formatMoney(billableChargeCents, currencyCode)}</Text>
+      <View style={styles.chargeRows}>
+        <ChargeRow label="Actual product cost" value={formatMoney(totalCostCents, currencyCode)} />
+        {totalWasteCostCents > 0 ? (
+          <ChargeRow label="Waste cost" value={formatMoney(totalWasteCostCents, currencyCode)} tone="warning" />
+        ) : null}
+        {markupCents !== 0 ? (
+          <ChargeRow label="Markup / uplift" value={`+${formatMoney(markupCents, currencyCode)}`} tone="brand" />
+        ) : null}
+      </View>
+      <Text style={styles.chargeStatus}>
+        {finalized
+          ? `Finalized ${formatTime(finalizedAt)}. Billing and inventory reconciled.`
+          : hasMissingCost
+            ? 'Some ingredients are missing a cost per gram — set them before completing.'
+            : 'Complete the mix to apply billing, inventory usage and waste.'}
       </Text>
     </View>
   );
@@ -449,313 +1336,114 @@ function ChargeRow({
   value: string;
   tone?: 'muted' | 'warning' | 'brand';
 }): React.JSX.Element {
-  const valueStyle =
-    tone === 'warning'
-      ? chargeStyles.valueWarning
-      : tone === 'brand'
-        ? chargeStyles.valueBrand
-        : chargeStyles.valueMuted;
+  const color = tone === 'warning' ? C.warning.text : tone === 'brand' ? C.primary : C.textSecondary;
   return (
-    <View style={chargeStyles.breakdownRow}>
-      <Text style={chargeStyles.breakdownLabel}>{label}</Text>
-      <Text style={[chargeStyles.breakdownValue, valueStyle]}>{value}</Text>
+    <View style={styles.chargeRow}>
+      <Text style={styles.chargeRowLabel}>{label}</Text>
+      <Text style={[styles.chargeRowValue, { color }]}>{value}</Text>
     </View>
   );
 }
 
-const chargeStyles = StyleSheet.create({
-  card: {
-    gap: labTheme.spacing.sm,
-    padding: labTheme.spacing.md,
-    borderWidth: 1,
-    borderColor: labTheme.colors.border,
-    borderRadius: labTheme.radius.card,
-    backgroundColor: labTheme.colors.card,
-  },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: labTheme.spacing.sm,
-  },
-  cardLabel: {
-    color: labTheme.colors.textMuted,
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-  },
-  statusPill: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: labTheme.radius.pill,
-    backgroundColor: labTheme.colors.success.bg,
-    borderWidth: 1,
-    borderColor: labTheme.colors.success.border,
-  },
-  statusPillPending: {
-    backgroundColor: 'rgba(166,124,245,0.14)',
-    borderColor: 'rgba(196,160,245,0.32)',
-  },
-  statusPillText: {
-    color: labTheme.colors.success.text,
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  statusPillTextPending: {
-    color: labTheme.colors.primary,
-  },
-  chargeTotal: {
-    color: labTheme.colors.textPrimary,
-    fontSize: 34,
-    fontWeight: '900',
-    letterSpacing: -1,
-  },
-  breakdownTable: {
-    gap: 4,
-    paddingTop: labTheme.spacing.xs,
-    borderTopWidth: 1,
-    borderTopColor: labTheme.colors.border,
-  },
-  breakdownRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 2,
-  },
-  breakdownLabel: {
-    color: labTheme.colors.textMuted,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  breakdownValue: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  valueMuted: {
-    color: labTheme.colors.textSecondary,
-  },
-  valueWarning: {
-    color: labTheme.colors.warning.text,
-  },
-  valueBrand: {
-    color: labTheme.colors.primary,
-  },
-  statusLine: {
-    color: labTheme.colors.textMuted,
-    fontSize: 12,
-    lineHeight: 17,
-  },
-});
-
-// ---------------------------------------------------------------------------
-
-interface IngredientRowProps {
-  row: FormulaIngredientRow;
-  active: boolean;
-  manualValue: string;
-  canRemove: boolean;
-  onSelect: () => void;
-  onReweigh: () => void;
-  onRemove: () => void;
-  onMetadataChange: (metadata: FormulaRowMetadataUpdate) => void;
-  onOpenProductPicker: () => void;
-  onUseManualIdentity: () => void;
-  onManualChange: (value: string) => void;
-  onManualSubmit: () => void;
+function MixTipCard(): React.JSX.Element {
+  return (
+    <View style={styles.tipCard}>
+      <View style={styles.tipHead}>
+        <Text style={styles.tipGlyph}>💡</Text>
+        <Text style={styles.tipTitle}>Mix tip</Text>
+      </View>
+      <Text style={styles.tipBody}>
+        Pour slowly once you are within 5 g of the target to maximise precision and minimise chemical waste.
+      </Text>
+    </View>
+  );
 }
 
-function IngredientRow({
-  row,
-  active,
-  manualValue,
-  canRemove,
-  onSelect,
-  onReweigh,
-  onRemove,
-  onMetadataChange,
-  onOpenProductPicker,
-  onUseManualIdentity,
-  onManualChange,
-  onManualSubmit,
-}: IngredientRowProps): React.JSX.Element {
-  const manualDisabled = manualValue.trim().length === 0 || Number.isNaN(Number(manualValue));
-  const weightLabel = row.capturedGrams != null ? `${row.capturedGrams.toFixed(1)} g` : 'No weight yet';
-  const sourceLabel = row.weightSource === 'ble' ? 'BLE scale' : row.weightSource === 'manual' ? 'Manual' : 'Waiting';
-  const captureLabel = active ? formatCaptureStatus(row.captureStatus) : formatInactiveCaptureStatus(row);
-  const rowActionLabel = active
-    ? row.captureStatus === 'captured'
-      ? 'Selected'
-      : 'Active capture'
-    : row.captureStatus === 'captured'
-      ? 'Saved weight'
-      : 'Tap to resume';
-  const reweighLabel = active && row.captureStatus !== 'captured' ? 'Capturing' : 'Reweigh';
-  const costLabel =
-    row.costCents != null
-      ? formatMoney(row.costCents, row.costBasis.currencyCode)
-      : row.costBasis.costPerGramCents == null
-        ? 'Missing cost'
-        : formatMoney(0, row.costBasis.currencyCode);
-  const productMeta = [row.brand, row.category, row.sku ? `SKU ${row.sku}` : undefined].filter(Boolean).join(' · ');
-  const costBasisLabel =
-    row.costBasis.costPerGramCents == null
-      ? 'No product cost on record'
-      : `${row.costBasis.costPerGramCents}p/g from inventory`;
-  const isManualIdentity = row.identityMode === 'custom_manual';
+// ---------------------------------------------------------------------------
+// Bottom action bar
+// ---------------------------------------------------------------------------
 
+function BottomBar({
+  totalCaptured,
+  chargeCents,
+  currencyCode,
+  savingDraft,
+  reviewDisabled,
+  finalized,
+  onAddProduct,
+  onSaveDraft,
+  onReopenDraft,
+  onReview,
+}: {
+  totalCaptured: number;
+  chargeCents: number;
+  currencyCode: string;
+  savingDraft: boolean;
+  reviewDisabled: boolean;
+  finalized: boolean;
+  onAddProduct: () => void;
+  onSaveDraft: () => void;
+  onReopenDraft: () => void;
+  onReview: () => void;
+}): React.JSX.Element {
+  return (
+    <View style={styles.bottomBar}>
+      <View style={styles.bottomSummary}>
+        <Text style={styles.bottomGrams}>{totalCaptured.toFixed(1)} g</Text>
+        <Text style={styles.bottomCharge}>{formatMoney(chargeCents, currencyCode)} charge</Text>
+      </View>
+      <View style={styles.bottomActions}>
+        <BottomButton glyph="＋" label="Add product" onPress={onAddProduct} />
+        <BottomButton glyph="🖫" label={savingDraft ? 'Saving…' : 'Save draft'} onPress={onSaveDraft} disabled={savingDraft} />
+        <BottomButton label="Reopen" onPress={onReopenDraft} />
+        <Pressable
+          accessibilityRole="button"
+          disabled={reviewDisabled}
+          onPress={onReview}
+          style={({ pressed }) => [
+            styles.completeButton,
+            pressed && !reviewDisabled && styles.completeButtonPressed,
+            reviewDisabled && styles.completeButtonDisabled,
+          ]}
+        >
+          <Text style={styles.completeButtonText}>{finalized ? 'View Bill →' : 'Review & Bill →'}</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+function BottomButton({
+  glyph,
+  label,
+  onPress,
+  disabled,
+}: {
+  glyph?: string;
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+}): React.JSX.Element {
   return (
     <Pressable
       accessibilityRole="button"
-      onPress={onSelect}
-      style={[styles.ingredientRow, active && styles.activeIngredientRow]}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.bottomButton,
+        pressed && !disabled && styles.bottomButtonPressed,
+        disabled && styles.bottomButtonDisabled,
+      ]}
     >
-      <View style={styles.rowHeader}>
-        <View style={styles.rowTitleBlock}>
-          <Text style={styles.activePill}>{rowActionLabel}</Text>
-          <Text style={styles.meta}>{captureLabel}</Text>
-          {isManualIdentity ? (
-            <TextInput
-              onChangeText={(productName) => onMetadataChange({ ...row, productName })}
-              placeholder="Custom ingredient name"
-              placeholderTextColor={labTheme.colors.textMuted}
-              style={styles.productInput}
-              value={row.productName}
-            />
-          ) : (
-            <Pressable accessibilityRole="button" onPress={onOpenProductPicker} style={styles.productSelectButton}>
-              <Text style={row.productId ? styles.productInput : styles.productPlaceholder}>
-                {row.productName || 'Select product'}
-              </Text>
-              <Text style={styles.meta}>
-                {row.productId ? 'Inventory product selected' : 'Tap to search product catalogue'}
-              </Text>
-            </Pressable>
-          )}
-        </View>
-        <View style={styles.rowWeightBlock}>
-          <Text style={styles.rowWeight}>{weightLabel}</Text>
-          <Text style={styles.meta}>{sourceLabel}</Text>
-          <Text style={styles.rowCost}>{costLabel}</Text>
-        </View>
-      </View>
-      {isManualIdentity ? (
-        <View style={styles.manualIdentityCard}>
-          <Text style={styles.label}>Manual ingredient fallback</Text>
-          <Text style={styles.meta}>Use only when the ingredient is not in the inventory catalogue.</Text>
-          <TextInput
-            onChangeText={(brand) => onMetadataChange({ ...row, brand })}
-            placeholder="Brand / supplier"
-            placeholderTextColor={labTheme.colors.textMuted}
-            style={styles.smallInput}
-            value={row.brand ?? ''}
-          />
-          <TextInput
-            keyboardType="decimal-pad"
-            onChangeText={(value) => {
-              const parsedCostPerGram = Number(value);
-
-              onMetadataChange({
-                ...row,
-                costBasis: {
-                  source:
-                    value.trim().length > 0 && !Number.isNaN(parsedCostPerGram)
-                      ? 'manual_cost'
-                      : 'missing',
-                  costPerGramCents:
-                    value.trim().length > 0 && !Number.isNaN(parsedCostPerGram)
-                      ? parsedCostPerGram
-                      : undefined,
-                  currencyCode: row.costBasis.currencyCode,
-                },
-              });
-            }}
-            placeholder="Manual cost / g in pence"
-            placeholderTextColor={labTheme.colors.textMuted}
-            style={styles.smallInput}
-            value={row.costBasis.source === 'manual_cost' ? row.costBasis.costPerGramCents?.toString() ?? '' : ''}
-          />
-          <LabButton label="Select catalogue product instead" onPress={onOpenProductPicker} variant="secondary" />
-        </View>
-      ) : (
-        <View style={styles.productSummaryCard}>
-          <View>
-            <Text style={styles.label}>Product data</Text>
-            <Text style={styles.productSummaryTitle}>{row.displayName ?? (row.productName || 'No product selected')}</Text>
-            <Text style={styles.meta}>{productMeta || 'Brand/category/SKU will autofill after selection.'}</Text>
-            <Text style={row.costBasis.costPerGramCents == null ? styles.warningText : styles.meta}>
-              {costBasisLabel}
-            </Text>
-          </View>
-          <View style={styles.productActions}>
-            <LabButton label={row.productId ? 'Change product' : 'Select product'} onPress={onOpenProductPicker} variant="secondary" />
-            <Pressable accessibilityRole="button" onPress={onUseManualIdentity} style={styles.textAction}>
-              <Text style={styles.textActionLabel}>Custom ingredient</Text>
-            </Pressable>
-          </View>
-        </View>
-      )}
-      <View style={styles.metadataGrid}>
-        <TextInput
-          onChangeText={(developer) => onMetadataChange({ ...row, developer })}
-          placeholder="Developer / application metadata"
-          placeholderTextColor={labTheme.colors.textMuted}
-          style={styles.smallInput}
-          value={row.developer ?? ''}
-        />
-        <TextInput
-          keyboardType="decimal-pad"
-          onChangeText={(value) => {
-            const parsedWaste = Number(value);
-
-            onMetadataChange({
-              ...row,
-              wasteGrams:
-                value.trim().length > 0 && !Number.isNaN(parsedWaste)
-                  ? parsedWaste
-                  : undefined,
-            });
-          }}
-          placeholder="Waste grams"
-          placeholderTextColor={labTheme.colors.textMuted}
-          style={styles.smallInput}
-          value={row.wasteGrams?.toString() ?? ''}
-        />
-      </View>
-      <View style={styles.manualRow}>
-        <TextInput
-          keyboardType="decimal-pad"
-          onChangeText={onManualChange}
-          placeholder="Manual grams"
-          placeholderTextColor={labTheme.colors.textMuted}
-          style={styles.manualInput}
-          value={manualValue}
-        />
-        <LabButton
-          label="Use manual"
-          onPress={onManualSubmit}
-          disabled={manualDisabled}
-          variant="secondary"
-        />
-      </View>
-      <LabButton
-        label={reweighLabel}
-        onPress={onReweigh}
-        disabled={active && row.captureStatus !== 'captured'}
-        variant="secondary"
-      />
-      <TextInput
-        onChangeText={(notes) => onMetadataChange({ ...row, notes })}
-        placeholder="Notes"
-        placeholderTextColor={labTheme.colors.textMuted}
-        style={styles.notesInput}
-        value={row.notes ?? ''}
-      />
-      {canRemove ? <LabButton label="Remove row" onPress={onRemove} variant="secondary" /> : null}
+      {glyph ? <Text style={styles.bottomButtonGlyph}>{glyph}</Text> : null}
+      <Text style={styles.bottomButtonLabel}>{label}</Text>
     </Pressable>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Product picker modal
+// ---------------------------------------------------------------------------
 
 interface ProductPickerModalProps {
   visible: boolean;
@@ -786,28 +1474,29 @@ function ProductPickerModal({
     <Modal animationType="slide" transparent visible={visible} onRequestClose={onClose}>
       <View style={styles.modalBackdrop}>
         <View style={styles.productPicker}>
-          <View style={styles.clientHeader}>
-            <View>
-              <Text style={styles.label}>Select product</Text>
-              <Text style={styles.sectionTitle}>{row?.productName || 'Inventory catalogue'}</Text>
+          <View style={styles.modalHandle} />
+          <View style={styles.cardHeadRow}>
+            <View style={styles.flexItem}>
+              <Text style={styles.cardEyebrow}>Select product</Text>
+              <Text style={styles.modalTitle}>{row?.productName || 'Inventory catalogue'}</Text>
             </View>
-            <Pressable accessibilityRole="button" onPress={onClose} style={styles.lastFormulaButton}>
-              <Text style={styles.lastFormulaText}>Close</Text>
+            <Pressable accessibilityRole="button" onPress={onClose} style={styles.closeButton} hitSlop={8}>
+              <Text style={styles.closeButtonText}>✕</Text>
             </Pressable>
           </View>
           <TextInput
             autoCapitalize="none"
             onChangeText={onSearchChange}
             placeholder="Search brand, shade, SKU or category"
-            placeholderTextColor={labTheme.colors.textMuted}
+            placeholderTextColor={C.inputPlaceholder}
             style={styles.searchInput}
             value={search}
           />
           {loading ? <Text style={styles.meta}>Loading products...</Text> : null}
           {error ? (
             <View style={styles.errorCard}>
-              <Text style={styles.warningText}>{error}</Text>
-              <LabButton label="Retry" onPress={onRetry} variant="secondary" />
+              <Text style={styles.errorText}>{error}</Text>
+              <OutlineButton label="Retry" onPress={onRetry} />
             </View>
           ) : null}
           {!loading && !error && products.length === 0 ? (
@@ -842,49 +1531,174 @@ function ProductResult({
 
   return (
     <Pressable accessibilityRole="button" onPress={onPress} style={styles.productResult}>
-      <Text style={styles.productSummaryTitle}>{formatProductDisplayName(product)}</Text>
+      <Text style={styles.productTitle}>{formatProductDisplayName(product)}</Text>
       <Text style={styles.meta}>{meta || 'Inventory product'}</Text>
-      <Text style={product.defaultCostPerGramCents == null ? styles.warningText : styles.rowCost}>
+      <Text style={product.defaultCostPerGramCents == null ? styles.costMissing : styles.costBasis}>
         {product.defaultCostPerGramCents == null ? 'Missing cost basis' : `${product.defaultCostPerGramCents}p/g`}
       </Text>
     </Pressable>
   );
 }
 
-interface PreviousFormulaCardProps {
+function PreviousFormulaCard({
+  formula,
+  onDuplicate,
+}: {
   formula: SavedFormulaRecord;
   onDuplicate: () => void;
-}
-
-function PreviousFormulaCard({ formula, onDuplicate }: PreviousFormulaCardProps): React.JSX.Element {
+}): React.JSX.Element {
   return (
     <View style={styles.previousCard}>
-      <View style={styles.clientHeader}>
-        <View>
-          <Text style={styles.label}>Last formula</Text>
-          <Text style={styles.sectionTitle}>{new Date(formula.savedAt).toLocaleDateString()}</Text>
+      <View style={styles.cardHeadRow}>
+        <View style={styles.flexItem}>
+          <Text style={styles.cardEyebrow}>Last formula</Text>
+          <Text style={styles.modalTitle}>{new Date(formula.savedAt).toLocaleDateString()}</Text>
         </View>
-        <Text style={styles.rowWeight}>{formatMoney(formula.totalCostCents, formula.currencyCode)}</Text>
+        <Text style={styles.previousTotal}>{formatMoney(formula.totalCostCents, formula.currencyCode)}</Text>
       </View>
       {formula.rows.slice(0, 3).map((row) => (
         <Text key={row.id} style={styles.meta}>
           {formatRowDisplayName(row)} · {row.capturedGrams?.toFixed(1) ?? '--'} g
         </Text>
       ))}
-      <LabButton label="Duplicate into current mix" onPress={onDuplicate} variant="secondary" />
+      <OutlineButton label="Duplicate into current mix" onPress={onDuplicate} />
     </View>
   );
 }
 
-function formatPatchTest(status: string, performedAt?: string): string {
-  if (!performedAt) return status;
+// ---------------------------------------------------------------------------
+// Shared primitives
+// ---------------------------------------------------------------------------
 
-  return `${status} on ${new Date(performedAt).toLocaleDateString()}`;
+type RingState = 'waiting' | 'live' | 'on-target' | 'over' | 'captured';
+
+function resolveRingState(row?: FormulaIngredientRow): RingState {
+  if (!row || row.capturedGrams == null) return 'waiting';
+  const captured = row.capturedGrams;
+  const target = row.plannedGrams;
+  if (row.captureStatus === 'captured') {
+    if (target && target > 0 && captured > target + tolerance(target)) return 'over';
+    return 'captured';
+  }
+  if (target && target > 0) {
+    if (captured > target + tolerance(target)) return 'over';
+    if (Math.abs(captured - target) <= tolerance(target)) return 'on-target';
+  }
+  return 'live';
+}
+
+function tolerance(target: number): number {
+  return Math.max(1, target * 0.03);
+}
+
+function ringStateColor(state: RingState): string {
+  switch (state) {
+    case 'live':
+      return C.primary;
+    case 'on-target':
+    case 'captured':
+      return C.success.text;
+    case 'over':
+      return C.warning.text;
+    default:
+      return C.borderStrong;
+  }
+}
+
+function chipToneStyle(tone: ChipTone): { text: string; bg: string; border: string } {
+  switch (tone) {
+    case 'brand':
+      return { text: C.primary, bg: C.primarySoft, border: C.primary };
+    case 'success':
+      return { text: C.success.text, bg: C.success.bg, border: C.success.border };
+    case 'warning':
+      return { text: C.warning.text, bg: C.warning.bg, border: C.warning.border };
+    case 'danger':
+      return { text: C.danger.text, bg: C.danger.bg, border: C.danger.border };
+    default:
+      return { text: C.textSecondary, bg: C.inputBg, border: C.borderStrong };
+  }
+}
+
+function StatusChip({ label, tone }: { label: string; tone: ChipTone }): React.JSX.Element {
+  const palette = chipToneStyle(tone);
+  return (
+    <View style={[styles.chip, { backgroundColor: palette.bg, borderColor: palette.border }]}>
+      <View style={[styles.chipDot, { backgroundColor: palette.text }]} />
+      <Text style={[styles.chipText, { color: palette.text }]} numberOfLines={1}>
+        {label}
+      </Text>
+    </View>
+  );
+}
+
+function OutlineButton({
+  label,
+  onPress,
+  glyph,
+  disabled,
+}: {
+  label: string;
+  onPress: () => void;
+  glyph?: string;
+  disabled?: boolean;
+}): React.JSX.Element {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.outlineButton,
+        pressed && !disabled && styles.outlineButtonPressed,
+        disabled && styles.outlineButtonDisabled,
+      ]}
+    >
+      {glyph ? <Text style={styles.outlineButtonGlyph}>{glyph}</Text> : null}
+      <Text style={styles.outlineButtonText}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function Field({
+  label,
+  style,
+  children,
+}: {
+  label: string;
+  style?: StyleProp<ViewStyle>;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  return (
+    <View style={[styles.field, style]}>
+      <Text style={styles.fieldLabel}>{label}</Text>
+      {children}
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Formatting helpers
+// ---------------------------------------------------------------------------
+
+function formatFormulaId(id: string): string {
+  const tail = id.replace(/[^a-z0-9]/gi, '').slice(-4).toUpperCase();
+  return `#MIX-${tail || '0001'}`;
+}
+
+function capitalize(value: string): string {
+  if (!value) return value;
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function captureTone(status: FormulaRowCaptureStatus): ChipTone {
+  if (status === 'captured') return 'success';
+  if (status === 'live') return 'brand';
+  return 'neutral';
 }
 
 function formatTime(value?: string): string {
   if (!value) return 'just now';
-
   return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
@@ -902,276 +1716,491 @@ function formatCaptureStatus(status: FormulaIngredientRow['captureStatus']): str
   return 'Waiting for weight';
 }
 
-function formatInactiveCaptureStatus(row: FormulaIngredientRow): string {
-  if (row.captureStatus === 'captured') return 'Captured';
-  if (row.capturedGrams != null) return 'Captured';
-  return 'Waiting';
-}
-
 const styles = StyleSheet.create({
-  clientBar: {
-    gap: labTheme.spacing.xs,
-    padding: labTheme.spacing.lg,
-    borderRadius: labTheme.radius.cardLg,
-    backgroundColor: labTheme.colors.card,
-  },
-  clientHeader: {
+  screen: { flex: 1, backgroundColor: C.background },
+  body: { flex: 1 },
+  bodyRow: { flexDirection: 'row' },
+  bodyColumn: { flexDirection: 'column' },
+  mainArea: { flex: 1 },
+  scroll: { flex: 1 },
+  contentWrap: { width: '100%', maxWidth: 1600, alignSelf: 'center' },
+  column: { width: '100%' },
+
+  columns: { flexDirection: 'row', alignItems: 'flex-start' },
+  consoleColumn: { flex: 1 },
+
+  // Top bar
+  topBar: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: labTheme.spacing.md,
-  },
-  label: {
-    color: labTheme.colors.textMuted,
-    fontSize: 13,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-  },
-  clientName: {
-    color: labTheme.colors.textPrimary,
-    fontSize: 24,
-    fontWeight: '900',
-  },
-  serviceText: {
-    color: labTheme.colors.textSecondary,
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  lastFormulaButton: {
-    alignSelf: 'flex-start',
-    paddingVertical: labTheme.spacing.sm,
-    paddingHorizontal: labTheme.spacing.md,
-    borderWidth: 1,
-    borderColor: labTheme.colors.border,
-    borderRadius: labTheme.radius.full,
-  },
-  lastFormulaText: {
-    color: labTheme.colors.textPrimary,
-    fontSize: 13,
-    fontWeight: '800',
-  },
-  captureCard: {
-    gap: labTheme.spacing.xs,
-    padding: labTheme.spacing.lg,
-    borderWidth: 1,
-    borderColor: labTheme.colors.primary,
-    borderRadius: labTheme.radius.cardLg,
-    backgroundColor: labTheme.colors.card,
-  },
-  captureTitle: {
-    color: labTheme.colors.textPrimary,
-    fontSize: 20,
-    fontWeight: '900',
-  },
-  weight: {
-    color: labTheme.colors.textPrimary,
-    fontSize: 48,
-    fontWeight: '900',
-  },
-  meta: {
-    color: labTheme.colors.textSecondary,
-    fontSize: 14,
-  },
-  sectionHeader: {
     alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: labTheme.spacing.md,
+    paddingHorizontal: T.spacing.base,
+    paddingVertical: T.spacing.md,
+    backgroundColor: C.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
   },
-  sectionTitle: {
-    color: labTheme.colors.textPrimary,
-    fontSize: 18,
-    fontWeight: '900',
-  },
-  ingredientRow: {
-    gap: labTheme.spacing.md,
-    padding: labTheme.spacing.md,
-    borderWidth: 1,
-    borderColor: labTheme.colors.border,
-    borderRadius: labTheme.radius.card,
-    backgroundColor: labTheme.colors.card,
-  },
-  activeIngredientRow: {
-    borderColor: labTheme.colors.primary,
-  },
-  rowHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: labTheme.spacing.md,
-  },
-  rowTitleBlock: {
-    flex: 1,
-    gap: labTheme.spacing.xs,
-  },
-  rowWeightBlock: {
-    alignItems: 'flex-end',
+  topSideLeft: { flex: 1, alignItems: 'flex-start' },
+  topSideRight: { flex: 1, alignItems: 'flex-end' },
+  brandRow: { flexDirection: 'row', alignItems: 'center', gap: T.spacing.sm },
+  brandMark: {
+    width: 30,
+    height: 30,
+    borderRadius: T.radius.sm,
+    backgroundColor: C.primary,
+    alignItems: 'center',
     justifyContent: 'center',
   },
-  activePill: {
-    color: labTheme.colors.primary,
-    fontSize: 12,
-    fontWeight: '800',
-    textTransform: 'uppercase',
-  },
-  productInput: {
-    color: labTheme.colors.textPrimary,
-    fontSize: 20,
-    fontWeight: '900',
-  },
-  productPlaceholder: {
-    color: labTheme.colors.textMuted,
-    fontSize: 20,
-    fontWeight: '900',
-  },
-  productSelectButton: {
-    gap: labTheme.spacing.xs,
-    paddingVertical: labTheme.spacing.xs,
-  },
-  rowWeight: {
-    color: labTheme.colors.textPrimary,
-    fontSize: 20,
-    fontWeight: '900',
-  },
-  rowCost: {
-    color: labTheme.colors.primary,
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  metadataGrid: {
-    gap: labTheme.spacing.sm,
-  },
-  productSummaryCard: {
-    gap: labTheme.spacing.md,
-    padding: labTheme.spacing.md,
+  brandMarkText: { color: C.textOnPrimary, fontSize: 16, fontWeight: '800' },
+  brandText: { color: C.textPrimary, fontSize: 17, fontWeight: '800', letterSpacing: 1 },
+  userRow: { flexDirection: 'row', alignItems: 'center', gap: T.spacing.sm, maxWidth: 220 },
+  userText: { alignItems: 'flex-end' },
+  userName: { color: C.textPrimary, fontWeight: '700', fontSize: 13 },
+  userRole: { color: C.textMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 },
+  avatar: {
+    width: 36,
+    height: 36,
+    borderRadius: T.radius.full,
+    backgroundColor: C.primarySoft,
     borderWidth: 1,
-    borderColor: labTheme.colors.border,
-    borderRadius: labTheme.radius.card,
-    backgroundColor: labTheme.colors.inputBg,
+    borderColor: C.border,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  productSummaryTitle: {
-    color: labTheme.colors.textPrimary,
-    fontSize: 17,
-    fontWeight: '900',
+  avatarText: { color: C.primary, fontWeight: '800', fontSize: 13 },
+
+  // Sidebar
+  sidebar: {
+    backgroundColor: C.surface,
+    borderRightWidth: 1,
+    borderRightColor: C.border,
+    paddingVertical: T.spacing.lg,
+    paddingHorizontal: T.spacing.md,
+    justifyContent: 'space-between',
   },
-  productActions: {
-    gap: labTheme.spacing.sm,
+  sidebarNav: { gap: T.spacing.xs },
+  navItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: T.spacing.md,
+    paddingVertical: T.spacing.md,
+    paddingHorizontal: T.spacing.md,
+    borderRadius: T.radius.card,
   },
-  manualIdentityCard: {
-    gap: labTheme.spacing.sm,
-    padding: labTheme.spacing.md,
+  // Active item reads as a solid brand pill with white text (was a soft fill).
+  navItemActive: { backgroundColor: C.sidebarActive },
+  navItemSoon: { opacity: 0.5 },
+  navGlyph: { fontSize: 16 },
+  navLabel: { flex: 1, color: C.textSecondary, fontSize: 13, fontWeight: '700' },
+  navLabelActive: { color: C.sidebarActiveText },
+  soonTag: { color: C.textMuted, fontSize: 11, fontWeight: '700' },
+  signOut: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: T.spacing.md,
+    paddingVertical: T.spacing.md,
+    paddingHorizontal: T.spacing.md,
+    borderRadius: T.radius.card,
     borderWidth: 1,
-    borderColor: labTheme.colors.border,
-    borderRadius: labTheme.radius.card,
-    backgroundColor: labTheme.colors.inputBg,
+    borderColor: C.border,
   },
-  textAction: {
-    alignSelf: 'flex-start',
-    paddingVertical: labTheme.spacing.xs,
-  },
-  textActionLabel: {
-    color: labTheme.colors.textSecondary,
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  warningText: {
-    color: labTheme.colors.primary,
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  smallInput: {
-    minHeight: 48,
-    paddingHorizontal: labTheme.spacing.md,
+  signOutGlyph: { fontSize: 16, color: C.danger.text },
+  signOutLabel: { color: C.textPrimary, fontWeight: '700', fontSize: 13 },
+
+  navScrollerWrap: { marginBottom: T.spacing.xs },
+  navScroller: { flexDirection: 'row', gap: T.spacing.sm, paddingVertical: T.spacing.xs },
+  navChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: T.spacing.xs,
+    paddingVertical: T.spacing.sm,
+    paddingHorizontal: T.spacing.md,
+    borderRadius: T.radius.full,
     borderWidth: 1,
-    borderColor: labTheme.colors.border,
-    borderRadius: labTheme.radius.inputLg,
-    backgroundColor: labTheme.colors.inputBg,
-    color: labTheme.colors.textPrimary,
-    fontSize: 18,
+    borderColor: C.border,
+    backgroundColor: C.surface,
   },
-  manualRow: {
-    gap: labTheme.spacing.sm,
+  navChipActive: { backgroundColor: C.primarySoft, borderColor: C.primary },
+  navChipLabel: { color: C.textSecondary, fontSize: 13, fontWeight: '700' },
+
+  // Context header
+  contextHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: T.spacing.md,
+    flexWrap: 'wrap',
   },
-  manualInput: {
-    minHeight: 48,
-    paddingHorizontal: labTheme.spacing.md,
+  contextText: { flex: 1, minWidth: 240, gap: 6 },
+  contextMetaRow: { flexDirection: 'row', alignItems: 'center', gap: T.spacing.sm, flexWrap: 'wrap' },
+  contextId: { color: C.textMuted, fontSize: 12, fontWeight: '700', letterSpacing: 0.4 },
+  contextTitle: { color: C.textPrimary, fontSize: 26, fontWeight: '800', letterSpacing: -0.5 },
+  contextTitleDetail: { color: C.textMuted, fontSize: 22, fontWeight: '700' },
+  stepBadge: {
+    paddingHorizontal: T.spacing.sm,
+    paddingVertical: 4,
+    borderRadius: T.radius.full,
+    backgroundColor: C.primarySoft,
     borderWidth: 1,
-    borderColor: labTheme.colors.border,
-    borderRadius: labTheme.radius.inputLg,
-    backgroundColor: labTheme.colors.inputBg,
-    color: labTheme.colors.textPrimary,
-    fontSize: 18,
+    borderColor: C.primary,
   },
-  notesInput: {
-    minHeight: 48,
-    paddingHorizontal: labTheme.spacing.md,
+  stepBadgeText: { color: C.primary, fontSize: 11, fontWeight: '800', letterSpacing: 0.4, textTransform: 'uppercase' },
+  scalePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: T.spacing.sm,
+    paddingHorizontal: T.spacing.md,
+    paddingVertical: T.spacing.sm,
+    borderRadius: T.radius.pill,
     borderWidth: 1,
-    borderColor: labTheme.colors.border,
-    borderRadius: labTheme.radius.inputLg,
-    backgroundColor: labTheme.colors.inputBg,
-    color: labTheme.colors.textPrimary,
-    fontSize: 16,
+    borderColor: C.border,
+    backgroundColor: C.card,
   },
-  chargeCard: {
-    gap: labTheme.spacing.sm,
-    padding: labTheme.spacing.md,
+  scalePillDot: { width: 8, height: 8, borderRadius: T.radius.full },
+  scalePillLabel: { color: C.textPrimary, fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
+  scalePillStatus: { color: C.textMuted, fontSize: 11, fontWeight: '600' },
+
+  // Cards
+  card: {
+    gap: T.spacing.md,
+    padding: T.spacing.lg,
     borderWidth: 1,
-    borderColor: labTheme.colors.border,
-    borderRadius: labTheme.radius.card,
-    backgroundColor: labTheme.colors.card,
+    borderColor: C.border,
+    borderRadius: T.radius.cardLg,
+    backgroundColor: C.card,
   },
-  chargeTotal: {
-    color: labTheme.colors.textPrimary,
-    fontSize: 34,
-    fontWeight: '900',
+  cardHeadRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: T.spacing.sm,
   },
-  previousCard: {
-    gap: labTheme.spacing.sm,
-    padding: labTheme.spacing.md,
+  cardEyebrow: { color: C.textMuted, fontSize: 11, fontWeight: '800', letterSpacing: 1, textTransform: 'uppercase' },
+  meta: { color: C.textSecondary, fontSize: 13 },
+
+  // Scale console
+  consoleCard: {
+    gap: T.spacing.lg,
+    padding: T.spacing.lg,
     borderWidth: 1,
-    borderColor: labTheme.colors.primary,
-    borderRadius: labTheme.radius.card,
-    backgroundColor: labTheme.colors.card,
+    borderColor: C.primary,
+    borderRadius: T.radius.cardLg,
+    backgroundColor: C.card,
+    alignItems: 'center',
   },
-  modalBackdrop: {
+  ringClip: { position: 'absolute', top: 0, height: '100%', overflow: 'hidden' },
+  dialNumberRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'center' },
+  dialNumber: { color: C.textPrimary, fontWeight: '800', letterSpacing: -2 },
+  dialUnit: { color: C.textMuted, fontSize: 18, fontWeight: '700', paddingBottom: 6, marginLeft: 2 },
+  dialCaption: { color: C.textMuted, fontSize: 12, fontWeight: '600', textAlign: 'center', paddingHorizontal: T.spacing.md },
+
+  progressTrack: {
+    alignSelf: 'stretch',
+    height: 8,
+    borderRadius: T.radius.full,
+    backgroundColor: C.inputBg,
+    overflow: 'hidden',
+  },
+  progressFill: { height: '100%', borderRadius: T.radius.full },
+
+  consoleButtons: { flexDirection: 'row', gap: T.spacing.md, alignSelf: 'stretch' },
+  consoleButton: {
     flex: 1,
-    justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: T.spacing.sm,
+    minHeight: 52,
+    borderRadius: T.radius.inputLg,
+    borderWidth: 1,
+    borderColor: C.borderStrong,
+    backgroundColor: C.inputBg,
   },
+  consoleButtonPressed: { opacity: 0.7 },
+  consoleButtonDisabled: { opacity: 0.4 },
+  consoleButtonGlyph: { color: C.textPrimary, fontSize: 16, fontWeight: '800' },
+  consoleButtonLabel: { color: C.textPrimary, fontSize: 14, fontWeight: '800' },
+  consoleFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    alignSelf: 'stretch',
+    gap: T.spacing.sm,
+    flexWrap: 'wrap',
+  },
+  consoleFooterText: { color: C.textMuted, fontSize: 11, fontWeight: '700' },
+  consoleFooterStable: { color: C.success.text },
+
+  // Active ingredient editor
+  subCard: {
+    gap: 6,
+    padding: T.spacing.md,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: T.radius.card,
+    backgroundColor: C.inputBg,
+  },
+  productTitle: { color: C.textPrimary, fontSize: 16, fontWeight: '800' },
+  costBasis: { color: C.textSecondary, fontSize: 13, fontWeight: '600' },
+  costMissing: { color: C.warning.text, fontSize: 13, fontWeight: '700' },
+  productActions: { flexDirection: 'row', alignItems: 'center', gap: T.spacing.md, marginTop: T.spacing.xs },
+  textAction: { paddingVertical: T.spacing.xs },
+  textActionLabel: { color: C.textSecondary, fontSize: 13, fontWeight: '700' },
+
+  field: { gap: 6 },
+  fieldLabel: { color: C.textMuted, fontSize: 11, fontWeight: '700', letterSpacing: 0.6, textTransform: 'uppercase' },
+  metadataGrid: { flexDirection: 'row', gap: T.spacing.sm, flexWrap: 'wrap' },
+  fieldWide: { flexGrow: 1, flexBasis: 200 },
+  fieldNarrow: { flexGrow: 1, flexBasis: 96 },
+  input: {
+    minHeight: 48,
+    paddingHorizontal: T.spacing.md,
+    borderWidth: 1,
+    borderColor: C.inputBorder,
+    borderRadius: T.radius.inputLg,
+    backgroundColor: C.inputBg,
+    color: C.textPrimary,
+    fontSize: 15,
+  },
+  manualRow: { flexDirection: 'row', alignItems: 'center', gap: T.spacing.sm },
+  manualButton: { minWidth: 128 },
+  flexItem: { flex: 1 },
+  notesInput: {
+    minHeight: 56,
+    paddingHorizontal: T.spacing.md,
+    paddingTop: T.spacing.md,
+    borderWidth: 1,
+    borderColor: C.inputBorder,
+    borderRadius: T.radius.inputLg,
+    backgroundColor: C.inputBg,
+    color: C.textPrimary,
+    fontSize: 15,
+    textAlignVertical: 'top',
+  },
+  removeAction: { alignSelf: 'center', paddingVertical: T.spacing.sm, paddingHorizontal: T.spacing.md },
+  removeActionLabel: { color: C.danger.text, fontSize: 13, fontWeight: '700' },
+
+  // Queue
+  queueList: { gap: T.spacing.sm },
+  queueRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: T.spacing.md,
+    padding: T.spacing.md,
+    borderRadius: T.radius.card,
+    borderWidth: 1,
+    borderColor: C.border,
+    backgroundColor: C.inputBg,
+  },
+  queueRowActive: { borderColor: C.primary, backgroundColor: C.primarySoft },
+  queueIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: T.radius.full,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  queueIconText: { fontSize: 13, fontWeight: '800' },
+  queueInfo: { flex: 1, gap: 2 },
+  queueName: { color: C.textPrimary, fontSize: 14, fontWeight: '700' },
+  queueSub: { color: C.textMuted, fontSize: 11 },
+  queueGrams: { alignItems: 'flex-end' },
+  queueGramsValue: { color: C.textSecondary, fontSize: 15, fontWeight: '800' },
+  queueGramsCaptured: { color: C.success.text },
+  queueGramsLabel: { color: C.textMuted, fontSize: 10, fontWeight: '700', letterSpacing: 0.4, textTransform: 'uppercase' },
+
+  // Session progress
+  progressPct: { color: C.textPrimary, fontSize: 16, fontWeight: '800' },
+  sessionStatsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: T.spacing.sm, flexWrap: 'wrap' },
+  sessionStat: { color: C.textMuted, fontSize: 11, fontWeight: '700', letterSpacing: 0.3, textTransform: 'uppercase' },
+  sessionStatStrong: { color: C.primary, fontSize: 11, fontWeight: '800', letterSpacing: 0.3, textTransform: 'uppercase' },
+
+  // Charge
+  chargeTotal: { color: C.textPrimary, fontSize: 32, fontWeight: '800', letterSpacing: -1 },
+  chargeRows: { gap: 4, paddingTop: T.spacing.sm, borderTopWidth: 1, borderTopColor: C.border },
+  chargeRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 3 },
+  chargeRowLabel: { color: C.textMuted, fontSize: 13, fontWeight: '600' },
+  chargeRowValue: { fontSize: 13, fontWeight: '700' },
+  chargeStatus: { color: C.textMuted, fontSize: 12, lineHeight: 17 },
+
+  // Mix tip
+  tipCard: {
+    gap: T.spacing.sm,
+    padding: T.spacing.lg,
+    borderRadius: T.radius.cardLg,
+    borderWidth: 1,
+    borderColor: C.primary,
+    backgroundColor: C.primarySoft,
+  },
+  tipHead: { flexDirection: 'row', alignItems: 'center', gap: T.spacing.sm },
+  tipGlyph: { fontSize: 16 },
+  tipTitle: { color: C.textPrimary, fontSize: 14, fontWeight: '800' },
+  tipBody: { color: C.textSecondary, fontSize: 13, lineHeight: 19 },
+
+  // Previous formula
+  previousCard: {
+    gap: T.spacing.sm,
+    padding: T.spacing.lg,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: T.radius.cardLg,
+    backgroundColor: C.card,
+  },
+  previousTotal: { color: C.primary, fontSize: 18, fontWeight: '800' },
+
+  // Notice / status strip
+  noticeBar: {
+    paddingHorizontal: T.spacing.lg,
+    paddingVertical: T.spacing.sm,
+    backgroundColor: C.surface,
+    borderTopWidth: 1,
+    borderTopColor: C.border,
+  },
+  noticeText: { color: C.textMuted, fontSize: 12, fontWeight: '600' },
+
+  // Bottom bar
+  bottomBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: T.spacing.md,
+    paddingHorizontal: T.spacing.lg,
+    paddingVertical: T.spacing.md,
+    backgroundColor: C.surface,
+    borderTopWidth: 1,
+    borderTopColor: C.border,
+    flexWrap: 'wrap',
+  },
+  bottomSummary: { flex: 1, minWidth: 120 },
+  bottomGrams: { color: C.textPrimary, fontSize: 18, fontWeight: '800', letterSpacing: -0.3 },
+  bottomCharge: { color: C.textMuted, fontSize: 12, fontWeight: '600' },
+  bottomActions: { flexDirection: 'row', alignItems: 'center', gap: T.spacing.sm, flexWrap: 'wrap' },
+  bottomButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    minHeight: 48,
+    paddingHorizontal: T.spacing.md,
+    borderRadius: T.radius.inputLg,
+    borderWidth: 1,
+    borderColor: C.borderStrong,
+    backgroundColor: C.card,
+  },
+  bottomButtonPressed: { opacity: 0.7 },
+  bottomButtonDisabled: { opacity: 0.45 },
+  bottomButtonGlyph: { color: C.textSecondary, fontSize: 14 },
+  bottomButtonLabel: { color: C.textPrimary, fontSize: 13, fontWeight: '800' },
+  completeButton: {
+    minHeight: 48,
+    paddingHorizontal: T.spacing.xl,
+    borderRadius: T.radius.inputLg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: C.primary,
+  },
+  completeButtonPressed: { backgroundColor: C.primaryPressed },
+  completeButtonDisabled: { backgroundColor: C.surfaceAlt },
+  completeButtonText: { color: C.textOnPrimary, fontSize: 14, fontWeight: '900' },
+
+  // Footer
+  footer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: T.spacing.md,
+    marginTop: T.spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: C.border,
+    flexWrap: 'wrap',
+    gap: T.spacing.sm,
+  },
+  footerSide: { flexDirection: 'row', alignItems: 'center', gap: T.spacing.sm },
+  footerText: { color: C.textMuted, fontSize: 12 },
+  footerTextStrong: { color: C.textSecondary, fontSize: 11, fontWeight: '800', letterSpacing: 1 },
+  dot: { width: 8, height: 8, borderRadius: T.radius.full },
+
+  // Modal
+  modalBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: C.overlay },
   productPicker: {
     maxHeight: '86%',
-    gap: labTheme.spacing.md,
-    padding: labTheme.spacing.lg,
-    borderTopLeftRadius: labTheme.radius.cardLg,
-    borderTopRightRadius: labTheme.radius.cardLg,
-    backgroundColor: labTheme.colors.background,
+    gap: T.spacing.md,
+    padding: T.spacing.lg,
+    borderTopLeftRadius: T.radius.cardLg,
+    borderTopRightRadius: T.radius.cardLg,
+    backgroundColor: C.surface,
+    borderTopWidth: 1,
+    borderColor: C.border,
   },
+  modalHandle: { alignSelf: 'center', width: 40, height: 4, borderRadius: T.radius.full, backgroundColor: C.borderStrong },
+  modalTitle: { color: C.textPrimary, fontSize: 18, fontWeight: '800' },
+  closeButton: {
+    width: 36,
+    height: 36,
+    borderRadius: T.radius.full,
+    borderWidth: 1,
+    borderColor: C.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  closeButtonText: { color: C.textSecondary, fontSize: 15, fontWeight: '700' },
   searchInput: {
     minHeight: 52,
-    paddingHorizontal: labTheme.spacing.md,
+    paddingHorizontal: T.spacing.md,
     borderWidth: 1,
-    borderColor: labTheme.colors.primary,
-    borderRadius: labTheme.radius.inputLg,
-    backgroundColor: labTheme.colors.inputBg,
-    color: labTheme.colors.textPrimary,
-    fontSize: 18,
+    borderColor: C.inputBorder,
+    borderRadius: T.radius.inputLg,
+    backgroundColor: C.inputBg,
+    color: C.textPrimary,
+    fontSize: 16,
   },
-  productList: {
-    gap: labTheme.spacing.sm,
-    paddingBottom: labTheme.spacing.lg,
-  },
+  productList: { gap: T.spacing.sm, paddingBottom: T.spacing.lg },
   productResult: {
-    gap: labTheme.spacing.xs,
-    padding: labTheme.spacing.md,
+    gap: 4,
+    padding: T.spacing.md,
     borderWidth: 1,
-    borderColor: labTheme.colors.border,
-    borderRadius: labTheme.radius.card,
-    backgroundColor: labTheme.colors.card,
+    borderColor: C.border,
+    borderRadius: T.radius.card,
+    backgroundColor: C.card,
   },
   errorCard: {
-    gap: labTheme.spacing.sm,
-    padding: labTheme.spacing.md,
+    gap: T.spacing.sm,
+    padding: T.spacing.md,
     borderWidth: 1,
-    borderColor: labTheme.colors.primary,
-    borderRadius: labTheme.radius.card,
-    backgroundColor: labTheme.colors.card,
+    borderColor: C.danger.border,
+    borderRadius: T.radius.card,
+    backgroundColor: C.danger.bg,
   },
+  errorText: { color: C.danger.text, fontSize: 14, fontWeight: '700' },
+
+  // Chip
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: T.spacing.sm,
+    paddingVertical: 4,
+    borderRadius: T.radius.full,
+    borderWidth: 1,
+    alignSelf: 'flex-start',
+  },
+  chipDot: { width: 6, height: 6, borderRadius: T.radius.full },
+  chipText: { fontSize: 11, fontWeight: '800', letterSpacing: 0.4, textTransform: 'uppercase' },
+
+  // Outline button
+  outlineButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    minHeight: 44,
+    paddingVertical: T.spacing.sm,
+    paddingHorizontal: T.spacing.md,
+    borderRadius: T.radius.inputLg,
+    borderWidth: 1,
+    borderColor: C.borderStrong,
+    backgroundColor: C.card,
+  },
+  outlineButtonPressed: { opacity: 0.7 },
+  outlineButtonDisabled: { opacity: 0.45 },
+  outlineButtonGlyph: { color: C.textSecondary, fontSize: 14 },
+  outlineButtonText: { color: C.textPrimary, fontSize: 13, fontWeight: '800' },
 });

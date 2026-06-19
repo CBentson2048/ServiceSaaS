@@ -44,12 +44,12 @@ export function SheerLabPage() {
   const auth = useAuth();
   const accessToken = auth.session?.accessToken;
   const canViewAnalytics = auth.user?.role === 'owner' || auth.user?.role === 'manager';
-  // The stylist + device lists filter by the shared sidebar scope ("All" shows
+  // The staff + device lists filter by the shared sidebar scope ("All" shows
   // every location). The sentinel is the literal 'all', matching the filter
   // checks below, so the scope value drops straight in.
   const { selectedLocationId: scopeLocationId } = useLocationScope();
 
-  const [stylists, setStylists] = useState<LabPinCredentialStatus[]>([]);
+  const [credentials, setCredentials] = useState<LabPinCredentialStatus[]>([]);
   const [devices, setDevices] = useState<SharedDeviceSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -74,7 +74,7 @@ export function SheerLabPage() {
         listLabPinStatuses(accessToken),
         listLabDevices(accessToken),
       ]);
-      setStylists(Array.isArray(pinResponse.stylists) ? pinResponse.stylists : []);
+      setCredentials(Array.isArray(pinResponse.credentials) ? pinResponse.credentials : []);
       setDevices(Array.isArray(deviceResponse.devices) ? deviceResponse.devices : []);
     } catch (err: unknown) {
       if (err instanceof ApiRequestError) setError(err.message);
@@ -91,28 +91,28 @@ export function SheerLabPage() {
 
   const locations = useMemo(() => {
     const byId = new Map<string, string>();
-    stylists.forEach((stylist) => byId.set(stylist.locationId, stylist.locationName));
+    credentials.forEach((member) => byId.set(member.locationId, member.locationName));
     devices.forEach((device) => {
       if (!byId.has(device.locationId)) byId.set(device.locationId, device.locationName);
     });
     return Array.from(byId.entries()).map(([id, name]) => ({ id, name }));
-  }, [stylists, devices]);
+  }, [credentials, devices]);
 
-  const filteredStylists = useMemo(
+  const filteredCredentials = useMemo(
     () =>
       scopeLocationId === 'all'
-        ? stylists
-        : stylists.filter((stylist) => stylist.locationId === scopeLocationId),
-    [scopeLocationId, stylists],
+        ? credentials
+        : credentials.filter((member) => member.locationId === scopeLocationId),
+    [scopeLocationId, credentials],
   );
 
   const activeDeviceCount = useMemo(
     () => devices.filter((device) => device.status === 'active' || device.status === 'registered').length,
     [devices],
   );
-  const stylistsWithPin = useMemo(
-    () => stylists.filter((stylist) => stylist.status === 'active').length,
-    [stylists],
+  const membersWithPin = useMemo(
+    () => credentials.filter((member) => member.status === 'active').length,
+    [credentials],
   );
 
   const filteredDevices = useMemo(
@@ -135,9 +135,9 @@ export function SheerLabPage() {
     return <Navigate to="/unauthorized" replace />;
   }
 
-  async function handleSetPin(stylist: LabPinCredentialStatus) {
+  async function handleSetPin(member: LabPinCredentialStatus) {
     if (!accessToken) return;
-    const key = rowKey(stylist);
+    const key = rowKey(member);
     const pin = pinInputs[key]?.trim() ?? '';
     if (!/^\d{4}$/.test(pin)) {
       setError('PIN must be exactly 4 digits.');
@@ -149,13 +149,13 @@ export function SheerLabPage() {
     setActionMessage(null);
     try {
       const result = await setLabPin(accessToken, {
-        locationId: stylist.locationId,
-        userProfileId: stylist.userProfileId,
+        locationId: member.locationId,
+        userProfileId: member.userProfileId,
         pin,
       });
-      setStylists((current) => replaceCredential(current, result.credential));
+      setCredentials((current) => replaceCredential(current, result.credential));
       setPinInputs((current) => ({ ...current, [key]: '' }));
-      setActionMessage(`PIN set for ${stylist.displayName}.`);
+      setActionMessage(`PIN set for ${member.displayName}.`);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not set PIN');
     } finally {
@@ -163,19 +163,19 @@ export function SheerLabPage() {
     }
   }
 
-  async function handleResetPin(stylist: LabPinCredentialStatus) {
+  async function handleResetPin(member: LabPinCredentialStatus) {
     if (!accessToken) return;
-    const key = rowKey(stylist);
+    const key = rowKey(member);
     setBusyKey(key);
     setError(null);
     setActionMessage(null);
     try {
       const result = await resetLabPin(accessToken, {
-        locationId: stylist.locationId,
-        userProfileId: stylist.userProfileId,
+        locationId: member.locationId,
+        userProfileId: member.userProfileId,
       });
-      setStylists((current) => replaceCredential(current, result.credential));
-      setActionMessage(`PIN reset for ${stylist.displayName}. Set a new PIN before their next Lab login.`);
+      setCredentials((current) => replaceCredential(current, result.credential));
+      setActionMessage(`PIN reset for ${member.displayName}. Set a new PIN before their next Lab login.`);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not reset PIN');
     } finally {
@@ -246,7 +246,7 @@ export function SheerLabPage() {
         <div>
           <h1 className="text-[22px] font-semibold leading-7 text-text-primary">Sheer Lab</h1>
           <p className="mt-1 max-w-2xl text-[13px] text-text-secondary">
-            Manage the shared iPads, stylist PINs, and colour-bar performance for the dedicated Sheer Lab app.
+            Manage the shared iPads, staff PINs, and colour-bar performance for the dedicated Sheer Lab app.
           </p>
         </div>
         <button
@@ -272,7 +272,7 @@ export function SheerLabPage() {
 
       <div className="mb-6 grid gap-3 sm:grid-cols-3">
         <SummaryTile label="Registered devices" value={String(devices.length)} hint={`${activeDeviceCount} active`} />
-        <SummaryTile label="Stylists" value={String(stylists.length)} hint={`${stylistsWithPin} PIN active`} />
+        <SummaryTile label="Team members" value={String(credentials.length)} hint={`${membersWithPin} PIN active`} />
         <SummaryTile
           label="Locations"
           value={String(locations.length)}
@@ -490,21 +490,22 @@ export function SheerLabPage() {
         <header className="flex flex-col gap-3 border-b border-border bg-surface-alt px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <div className="text-[12px] font-semibold uppercase tracking-[0.12em] text-text-secondary">
-              Stylist PIN management
+              Staff PIN management
             </div>
             <div className="mt-1 text-[13px] text-text-secondary">
-              PINs are stored hashed and unlock the shared iPad for each stylist. Existing values are never displayed.
+              PINs are stored hashed and unlock the shared iPad for owners, managers and stylists. Existing values are
+              never displayed.
             </div>
           </div>
         </header>
 
         {loading ? (
           <div className="px-4 py-8 text-center text-[13px] text-text-secondary">Loading Lab access…</div>
-        ) : filteredStylists.length === 0 ? (
+        ) : filteredCredentials.length === 0 ? (
           <div className="px-4 py-10 text-center">
-            <div className="text-[14px] font-medium text-text-primary">No stylists available</div>
+            <div className="text-[14px] font-medium text-text-primary">No team members available</div>
             <div className="mt-1 text-[13px] text-text-secondary">
-              Invite active stylists before assigning Sheer Lab PINs.
+              Invite active owners, managers or stylists before assigning Sheer Lab PINs.
             </div>
           </div>
         ) : (
@@ -512,28 +513,32 @@ export function SheerLabPage() {
             <table className="w-full text-left text-[13px]">
               <thead className="bg-surface-alt text-[11px] font-medium uppercase tracking-[0.08em] text-text-secondary">
                 <tr>
-                  <th className="px-4 py-3">Stylist</th>
+                  <th className="px-4 py-3">Team member</th>
+                  <th className="px-4 py-3">Role</th>
                   <th className="px-4 py-3">Location</th>
                   <th className="px-4 py-3">PIN status</th>
                   <th className="px-4 py-3">Set / reset PIN</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {filteredStylists.map((stylist) => {
-                  const key = rowKey(stylist);
+                {filteredCredentials.map((member) => {
+                  const key = rowKey(member);
                   const busy = busyKey === key;
                   return (
                     <tr key={key}>
                       <td className="px-4 py-3">
-                        <div className="font-medium text-text-primary">{stylist.displayName}</div>
-                        <div className="text-[12px] text-text-secondary">{stylist.email}</div>
+                        <div className="font-medium text-text-primary">{member.displayName}</div>
+                        <div className="text-[12px] text-text-secondary">{member.email}</div>
                       </td>
-                      <td className="px-4 py-3 text-text-secondary">{stylist.locationName}</td>
                       <td className="px-4 py-3">
-                        <StatusPill status={stylist.status} />
+                        <RoleBadge role={member.role} />
+                      </td>
+                      <td className="px-4 py-3 text-text-secondary">{member.locationName}</td>
+                      <td className="px-4 py-3">
+                        <StatusPill status={member.status} />
                         <div className="mt-1 text-[11px] text-text-secondary">
-                          {stylist.lastRotatedAt
-                            ? `Updated ${formatDate(stylist.lastRotatedAt)}`
+                          {member.lastRotatedAt
+                            ? `Updated ${formatDate(member.lastRotatedAt)}`
                             : 'No PIN set yet'}
                         </div>
                       </td>
@@ -557,15 +562,15 @@ export function SheerLabPage() {
                             type="button"
                             className="h-9 rounded-pill bg-primary px-4 text-[12px] font-semibold text-text-on-primary transition hover:bg-primary-deep disabled:opacity-50"
                             disabled={busy || !/^\d{4}$/.test(pinInputs[key] ?? '')}
-                            onClick={() => void handleSetPin(stylist)}
+                            onClick={() => void handleSetPin(member)}
                           >
-                            {stylist.status === 'not_set' ? 'Set PIN' : 'Update PIN'}
+                            {member.status === 'not_set' ? 'Set PIN' : 'Update PIN'}
                           </button>
                           <button
                             type="button"
                             className="h-9 rounded-pill border border-border-strong px-4 text-[12px] font-semibold text-text-secondary transition hover:bg-surface-alt disabled:opacity-50"
-                            disabled={busy || stylist.status === 'not_set'}
-                            onClick={() => void handleResetPin(stylist)}
+                            disabled={busy || member.status === 'not_set'}
+                            onClick={() => void handleResetPin(member)}
                           >
                             Reset
                           </button>
@@ -695,6 +700,20 @@ function StatusPill({ status }: { status: LabPinCredentialStatus['status'] }) {
   return (
     <span className={`inline-flex rounded-pill border px-2.5 py-1 text-[11px] font-semibold capitalize ${tone}`}>
       {label}
+    </span>
+  );
+}
+
+function RoleBadge({ role }: { role: LabPinCredentialStatus['role'] }) {
+  const tone =
+    role === 'owner'
+      ? 'border-primary/40 bg-primary-soft text-primary-deep'
+      : role === 'manager'
+        ? 'border-border-strong bg-surface-alt text-text-primary'
+        : 'border-border-strong bg-surface-alt text-text-secondary';
+  return (
+    <span className={`inline-flex rounded-pill border px-2.5 py-1 text-[11px] font-semibold capitalize ${tone}`}>
+      {role}
     </span>
   );
 }

@@ -615,10 +615,10 @@ function bookingActionAvailability(status: StaffBookingSummary['status']): {
   checkOutLabel: string;
 } {
   return {
-    canCheckIn: status === 'confirmed',
-    canCheckOut: ['confirmed', 'checked_in', 'in_progress', 'in_service', 'awaiting_payment'].includes(status),
-    canEdit: ['pending', 'confirmed', 'checked_in'].includes(status),
-    canCancel: ['pending', 'confirmed', 'checked_in', 'in_progress', 'in_service'].includes(status),
+    canCheckIn: status === 'accepted',
+    canCheckOut: ['accepted', 'checked_in', 'awaiting_payment'].includes(status),
+    canEdit: ['pending', 'accepted', 'checked_in'].includes(status),
+    canCancel: ['pending', 'accepted', 'checked_in'].includes(status),
     checkOutLabel: status === 'awaiting_payment' ? 'Open checkout' : 'Check out',
   };
 }
@@ -947,15 +947,12 @@ function intersectsDay(startsAt: string, endsAt: string | undefined, dayStart: D
 
 function statusTone(status: StaffBookingSummary['status']): StatusTone {
   switch (status) {
-    case 'confirmed':
+    case 'accepted':
     case 'checked_in':
-    case 'in_progress':
-    case 'in_service':
       return 'success';
     case 'pending':
-    case 'draft':
-    case 'booked':
       return 'warning';
+    case 'rejected':
     case 'cancelled':
     case 'no_show':
       return 'danger';

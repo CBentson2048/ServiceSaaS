@@ -133,7 +133,6 @@ export default function RotaScreen() {
         {/* ── Header with primary action ── */}
         <View style={styles.header}>
           <View style={styles.flex}>
-            <Text style={styles.eyebrow}>Rota</Text>
             <Text style={styles.headerTitle}>My week</Text>
           </View>
           <Pressable

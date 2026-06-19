@@ -21,6 +21,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { RootStackParamList } from '../../app/navigation/routes';
+import { featureFlags } from '../../config/featureFlags';
 import { getLabAnalyticsSummaryForSession } from '../../features/analytics/analyticsApi';
 import { listTodaysLabAppointmentsForSession } from '../../features/appointments/appointmentsApi';
 import { useBleScale } from '../../features/ble/hooks/useBleScale';
@@ -53,7 +54,7 @@ const c = t.colors;
 
 type HomeScreenProps = NativeStackScreenProps<RootStackParamList, 'Home'>;
 
-type WorkingRoute = 'NewMix' | 'Formula' | 'FormulaHistory' | 'DevicePairing' | 'Settings';
+type WorkingRoute = 'NewMix' | 'Formula' | 'FormulaHistory' | 'Inventory' | 'BillingRules' | 'DevicePairing' | 'Settings';
 
 type NavTarget = { kind: 'route'; route: WorkingRoute } | { kind: 'soon' } | { kind: 'current' };
 
@@ -64,22 +65,45 @@ interface NavEntry {
   target: NavTarget;
 }
 
-const NAV_ITEMS: NavEntry[] = [
-  { key: 'dashboard', label: 'Dashboard', glyph: '▦', target: { kind: 'current' } },
-  { key: 'new-mix', label: 'New Mix', glyph: '🧪', target: { kind: 'route', route: 'NewMix' } },
-  { key: 'history', label: 'History', glyph: '🕘', target: { kind: 'route', route: 'FormulaHistory' } },
-  { key: 'inventory', label: 'Inventory', glyph: '📦', target: { kind: 'soon' } },
-  { key: 'billing', label: 'Billing Rules', glyph: '🧾', target: { kind: 'soon' } },
-  { key: 'audit', label: 'Audit Trail', glyph: '🛡️', target: { kind: 'soon' } },
-];
+// Inventory and Billing Rules are owner/manager-only (stylists get a lock
+// screen), so they only become live destinations for those roles — stylists
+// keep the "Soon" affordance rather than being sent to a wall.
+function buildNavItems(canManageOps: boolean): NavEntry[] {
+  const inventoryTarget: NavTarget = canManageOps ? { kind: 'route', route: 'Inventory' } : { kind: 'soon' };
+  const billingTarget: NavTarget = canManageOps ? { kind: 'route', route: 'BillingRules' } : { kind: 'soon' };
+  const items: NavEntry[] = [
+    { key: 'dashboard', label: 'Dashboard', glyph: '▦', target: { kind: 'current' } },
+    { key: 'new-mix', label: 'New Mix', glyph: '🧪', target: { kind: 'route', route: 'NewMix' } },
+    { key: 'history', label: 'History', glyph: '🕘', target: { kind: 'route', route: 'FormulaHistory' } },
+    { key: 'inventory', label: 'Inventory', glyph: '📦', target: inventoryTarget },
+    { key: 'billing', label: 'Billing Rules', glyph: '🧾', target: billingTarget },
+    { key: 'audit', label: 'Audit Trail', glyph: '🛡️', target: { kind: 'soon' } },
+  ];
+  // Billing Rules and Audit Trail are hidden from the UI behind their feature
+  // flags for every role until the flags are flipped on.
+  return items.filter(
+    (item) => (item.key !== 'billing' || featureFlags.billingRules) && (item.key !== 'audit' || featureFlags.auditTrail),
+  );
+}
 
-const QUICK_TOOLS: NavEntry[] = [
-  { key: 'reweigh', label: 'Reweigh Tool', glyph: '⚖️', target: { kind: 'route', route: 'DevicePairing' } },
-  { key: 'formula-search', label: 'Formula Search', glyph: '🔍', target: { kind: 'route', route: 'FormulaHistory' } },
-  { key: 'add-inventory', label: 'Add Inventory', glyph: '➕', target: { kind: 'soon' } },
-  { key: 'billing-settings', label: 'Billing Settings', glyph: '🧾', target: { kind: 'soon' } },
-  { key: 'lab-audit', label: 'Lab Audit', glyph: '🛡️', target: { kind: 'soon' } },
-];
+function buildQuickTools(canManageOps: boolean): NavEntry[] {
+  const inventoryTarget: NavTarget = canManageOps ? { kind: 'route', route: 'Inventory' } : { kind: 'soon' };
+  const billingTarget: NavTarget = canManageOps ? { kind: 'route', route: 'BillingRules' } : { kind: 'soon' };
+  const tools: NavEntry[] = [
+    { key: 'reweigh', label: 'Reweigh Tool', glyph: '⚖️', target: { kind: 'route', route: 'DevicePairing' } },
+    { key: 'formula-search', label: 'Formula Search', glyph: '🔍', target: { kind: 'route', route: 'FormulaHistory' } },
+    { key: 'add-inventory', label: 'Add Inventory', glyph: '➕', target: inventoryTarget },
+    { key: 'billing-settings', label: 'Billing Rules', glyph: '🧾', target: billingTarget },
+    { key: 'lab-audit', label: 'Lab Audit', glyph: '🛡️', target: { kind: 'soon' } },
+  ];
+  // Billing Rules and the Lab Audit tool are hidden behind their feature flags
+  // for every role until the flags are flipped on.
+  return tools.filter(
+    (tool) =>
+      (tool.key !== 'billing-settings' || featureFlags.billingRules) &&
+      (tool.key !== 'lab-audit' || featureFlags.auditTrail),
+  );
+}
 
 type LayoutMode = 'phone' | 'tablet' | 'wide';
 
@@ -219,6 +243,12 @@ export function HomeScreen({ navigation }: HomeScreenProps): React.JSX.Element {
         case 'FormulaHistory':
           navigation.navigate('FormulaHistory');
           break;
+        case 'Inventory':
+          navigation.navigate('Inventory');
+          break;
+        case 'BillingRules':
+          navigation.navigate('BillingRules');
+          break;
         case 'DevicePairing':
           navigation.navigate('DevicePairing');
           break;
@@ -261,11 +291,14 @@ export function HomeScreen({ navigation }: HomeScreenProps): React.JSX.Element {
 
   const scale = mapScaleState(ble);
   const canSeeInsights = session?.role === 'owner' || session?.role === 'manager';
+  const canManageOps = session?.role === 'owner' || session?.role === 'manager';
+  const navItems = useMemo(() => buildNavItems(canManageOps), [canManageOps]);
+  const quickTools = useMemo(() => buildQuickTools(canManageOps), [canManageOps]);
 
   if (loading && !session) {
     return (
       <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
-        <StatusBar barStyle="dark-content" backgroundColor={c.background} />
+        <StatusBar barStyle="light-content" backgroundColor={c.background} />
         <View style={styles.centerFill}>
           <ActivityIndicator color={c.primary} />
           <Text style={styles.mutedText}>Loading your lab…</Text>
@@ -286,18 +319,18 @@ export function HomeScreen({ navigation }: HomeScreenProps): React.JSX.Element {
     <>
       <ActiveSessionsPanel bookings={activeBookings} onOpen={openFormulaForBooking} />
       <CompletedTodayPanel bookings={completedBookings} isWide={isWide} onOpen={openFormulaForBooking} />
-      <QuickToolsPanel fixedTiles={showSidebar} onSelect={handleNav} />
+      <QuickToolsPanel fixedTiles={showSidebar} tools={quickTools} onSelect={handleNav} />
     </>
   );
 
   return (
     <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
-      <StatusBar barStyle="dark-content" backgroundColor={c.background} />
+      <StatusBar barStyle="light-content" backgroundColor={c.background} />
       <TopBar session={session} bleConnected={scale.connected} onRefresh={handleRefresh} onSettings={() => goToRoute('Settings')} />
 
       <View style={[styles.body, showSidebar ? styles.bodyRow : styles.bodyColumn]}>
         {showSidebar ? (
-          <Sidebar width={layout.sidebarWidth} onNav={handleNav} onSignOut={handleLogout} />
+          <Sidebar width={layout.sidebarWidth} items={navItems} onNav={handleNav} onSignOut={handleLogout} />
         ) : null}
 
         <ScrollView
@@ -307,7 +340,7 @@ export function HomeScreen({ navigation }: HomeScreenProps): React.JSX.Element {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={c.primary} />}
         >
           <View style={[styles.contentWrap, { gap: layout.gap }]}>
-            {!showSidebar ? <NavScroller onNav={handleNav} onSignOut={handleLogout} /> : null}
+            {!showSidebar ? <NavScroller items={navItems} onNav={handleNav} onSignOut={handleLogout} /> : null}
 
             {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
@@ -431,17 +464,19 @@ function TopBar({
 
 function Sidebar({
   width,
+  items,
   onNav,
   onSignOut,
 }: {
   width: number;
+  items: NavEntry[];
   onNav: (target: NavTarget) => void;
   onSignOut: () => void;
 }): React.JSX.Element {
   return (
     <View style={[styles.sidebar, { width }]}>
       <View style={styles.sidebarNav}>
-        {NAV_ITEMS.map((item) => {
+        {items.map((item) => {
           const active = item.target.kind === 'current';
           const soon = item.target.kind === 'soon';
           return (
@@ -452,11 +487,11 @@ function Sidebar({
               onPress={() => onNav(item.target)}
               style={[styles.navItem, active && styles.navItemActive, soon && styles.navItemSoon]}
             >
-              <Text style={styles.navGlyph}>{item.glyph}</Text>
+              <Text style={[styles.navGlyph, styles.sidebarGlyph, active && styles.sidebarGlyphActive]}>{item.glyph}</Text>
               <Text style={[styles.navLabel, active && styles.navLabelActive]} numberOfLines={1}>
                 {item.label}
               </Text>
-              {soon ? <Text style={styles.soonTag}>Soon</Text> : null}
+              {soon ? <Text style={styles.sidebarSoonTag}>Soon</Text> : null}
             </Pressable>
           );
         })}
@@ -471,9 +506,11 @@ function Sidebar({
 }
 
 function NavScroller({
+  items,
   onNav,
   onSignOut,
 }: {
+  items: NavEntry[];
   onNav: (target: NavTarget) => void;
   onSignOut: () => void;
 }): React.JSX.Element {
@@ -484,7 +521,7 @@ function NavScroller({
       contentContainerStyle={styles.navScroller}
       style={styles.navScrollerWrap}
     >
-      {NAV_ITEMS.map((item) => {
+      {items.map((item) => {
         const active = item.target.kind === 'current';
         const soon = item.target.kind === 'soon';
         return (
@@ -796,16 +833,18 @@ function CompletedTodayPanel({
 
 function QuickToolsPanel({
   fixedTiles,
+  tools,
   onSelect,
 }: {
   fixedTiles: boolean;
+  tools: NavEntry[];
   onSelect: (target: NavTarget) => void;
 }): React.JSX.Element {
   return (
     <View style={styles.card}>
       <Text style={styles.eyebrow}>Quick Lab Tools</Text>
       <View style={styles.toolGrid}>
-        {QUICK_TOOLS.map((tool) => {
+        {tools.map((tool) => {
           const soon = tool.target.kind === 'soon';
           return (
             <Pressable
@@ -1090,9 +1129,9 @@ const styles = StyleSheet.create({
 
   // Sidebar
   sidebar: {
-    backgroundColor: c.surface,
+    backgroundColor: c.sidebar,
     borderRightWidth: 1,
-    borderRightColor: c.border,
+    borderRightColor: c.sidebarBorder,
     paddingVertical: t.spacing.lg,
     paddingHorizontal: t.spacing.md,
     justifyContent: 'space-between',
@@ -1108,8 +1147,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: t.spacing.md,
     borderRadius: t.radius.card,
   },
+  // Active item reads as a solid brand pill (rounded via `navItem.borderRadius`)
+  // with white text/glyph, rather than the older soft-tinted fill.
   navItemActive: {
-    backgroundColor: c.primarySoft,
+    backgroundColor: c.sidebarActive,
   },
   navItemSoon: {
     opacity: 0.55,
@@ -1117,17 +1158,34 @@ const styles = StyleSheet.create({
   navGlyph: {
     fontSize: 16,
   },
+  // Lightens non-emoji glyphs (e.g. the ▦ dashboard mark) on the dark rail;
+  // colour emoji ignore the tint either way.
+  sidebarGlyph: {
+    color: c.sidebarText,
+  },
+  // On the filled active pill the ▦-style glyph flips to white to match the label.
+  sidebarGlyphActive: {
+    color: c.sidebarActiveText,
+  },
   navLabel: {
     flex: 1,
-    color: c.textSecondary,
+    color: c.sidebarText,
     fontSize: t.typography.fontSize.small,
     fontWeight: '600',
   },
   navLabelActive: {
-    color: c.primary,
+    color: c.sidebarActiveText,
+    fontWeight: '700',
   },
   soonTag: {
     color: c.textMuted,
+    fontSize: t.typography.fontSize.micro,
+    fontWeight: '600',
+  },
+  // Sidebar sits on the deep purple rail, so its "Soon" tag needs a light tone
+  // (the shared `soonTag` above stays dark for the mobile nav scroller chips).
+  sidebarSoonTag: {
+    color: c.sidebarTextMuted,
     fontSize: t.typography.fontSize.micro,
     fontWeight: '600',
   },
@@ -1139,14 +1197,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: t.spacing.md,
     borderRadius: t.radius.card,
     borderWidth: 1,
-    borderColor: c.border,
+    borderColor: c.sidebarBorder,
   },
   signOutGlyph: {
     fontSize: 16,
-    color: c.dangerText,
+    color: c.sidebarText,
   },
   signOutLabel: {
-    color: c.textPrimary,
+    color: c.sidebarText,
     fontWeight: '600',
     fontSize: t.typography.fontSize.small,
   },

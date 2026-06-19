@@ -58,7 +58,7 @@ export default function BookingLocationScreen() {
             onPress={() => router.back()}
           >
             <Text style={s.headerBackArrow}>‹</Text>
-            <Text style={s.headerBackLabel}>Dashboard</Text>
+            <Text style={s.headerBackLabel}>Back</Text>
           </Pressable>
 
           <Text style={s.headerTitle}>Book appointment</Text>
@@ -75,7 +75,6 @@ export default function BookingLocationScreen() {
           keyboardShouldPersistTaps="handled"
         >
           <View style={styles.hero}>
-            <Text style={styles.eyebrow}>Step 1 of 5</Text>
             <Text style={styles.heroTitle}>Choose your salon</Text>
             <Text style={styles.heroBody}>
               Select the salon that works best for your appointment. Availability, services, and stylists are tailored to this location.

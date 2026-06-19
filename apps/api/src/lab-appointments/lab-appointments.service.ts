@@ -194,37 +194,39 @@ interface ScopedAppointmentQuery<TQuery> {
 }
 
 const ACTIVE_BOOKING_STATUSES: AppointmentStatus[] = [
-  'awaiting_acceptance',
   'pending',
-  'confirmed',
+  'accepted',
   'checked_in',
-  'in_progress',
   'awaiting_payment',
   'paid',
 ];
-const COMPLETABLE_BOOKING_STATUSES: AppointmentStatus[] = ['confirmed', 'checked_in', 'in_progress'];
+const COMPLETABLE_BOOKING_STATUSES: AppointmentStatus[] = ['accepted', 'checked_in'];
 const PAYABLE_BOOKING_STATUSES: AppointmentStatus[] = ['awaiting_payment'];
-// A confirmed booking checks in to 'checked_in'. These statuses mean the client
+// An accepted booking checks in to 'checked_in'. These statuses mean the client
 // has already arrived (or moved past arrival), so a check-in is a no-op.
 const CHECKED_IN_OR_LATER_STATUSES: AppointmentStatus[] = [
   'checked_in',
-  'in_progress',
   'awaiting_payment',
   'paid',
-  'completed',
 ];
-// Statuses a booking can be cancelled from via the book. 'awaiting_acceptance'
-// is handled by reject; 'awaiting_payment'/'paid'/'completed' already have a visit
-// in flight; 'cancelled'/'no_show' are terminal. (DB-enum-valid values only.)
-const CANCELLABLE_BOOKING_STATUSES: AppointmentStatus[] = [
-  'pending',
-  'confirmed',
-  'checked_in',
-  'in_progress',
-];
+// Statuses a booking can be cancelled from via the book. 'pending' requests are
+// handled by reject; 'awaiting_payment'/'paid' already have a visit in flight;
+// 'rejected'/'cancelled'/'no_show' are terminal.
+const CANCELLABLE_BOOKING_STATUSES: AppointmentStatus[] = ['pending', 'accepted', 'checked_in'];
 // Statuses a booking can be moved/reassigned from. Once a visit exists
-// (awaiting_payment onwards) the time is locked. (DB-enum-valid values only.)
-const RESCHEDULABLE_BOOKING_STATUSES: AppointmentStatus[] = ['pending', 'confirmed', 'checked_in'];
+// (awaiting_payment onwards) the time is locked.
+const RESCHEDULABLE_BOOKING_STATUSES: AppointmentStatus[] = ['pending', 'accepted', 'checked_in'];
+
+// What a CUSTOMER may self-cancel / self-rebook from the mobile app. Narrower than
+// the staff lists: once the client has arrived ('checked_in') the salon owns the
+// booking, so self-service stops. A 'pending' (not-yet-accepted) request can still
+// be withdrawn/rebooked by the client.
+const CLIENT_CANCELLABLE_STATUSES: AppointmentStatus[] = ['pending', 'accepted'];
+const CLIENT_RESCHEDULABLE_STATUSES: AppointmentStatus[] = ['pending', 'accepted'];
+
+// Fallback when a location has no `cancellation_notice_hours` configured. Matches
+// the core.location_settings column default.
+const DEFAULT_CANCELLATION_NOTICE_HOURS = 24;
 
 const LIST_COLUMNS =
   'id,business_id,location_id,client_profile_id,assigned_staff_profile_id,requested_staff_profile_id,status,scheduled_start_at,scheduled_end_at,check_in_at,client_note,completed_at,completed_by_user_profile_id,completed_by_staff_profile_id,appointment_services(service_id,service_name_snapshot,duration_minutes,deposit_required_amount,price_amount),deposits(status,amount,currency_code)';
@@ -320,18 +322,24 @@ export class LabAppointmentsService {
 
   async todayForLabSession(session: LabRuntimeSession): Promise<ListStaffBookingsResponse> {
     const { rangeStart, rangeEnd } = todayRange();
-    const staffProfileId = await this.fetchStaffProfileIdForSession(session);
-    const query = this.admin
+    let query = this.admin
       .schema('booking')
       .from('appointments')
       .select(LIST_COLUMNS)
       .eq('business_id', session.businessId)
       .eq('location_id', session.locationId)
-      .eq('assigned_staff_profile_id', staffProfileId)
       .gte('scheduled_start_at', rangeStart)
       .lt('scheduled_start_at', rangeEnd)
       .in('status', ACTIVE_BOOKING_STATUSES)
       .order('scheduled_start_at', { ascending: true });
+
+    // A stylist session only sees its own chair; an owner/manager session sees
+    // the whole location's schedule (they have no assigned-stylist profile and
+    // are supervising the station, not mixing a single client's colour).
+    if (session.role === 'stylist') {
+      const staffProfileId = await this.fetchStaffProfileIdForSession(session);
+      query = query.eq('assigned_staff_profile_id', staffProfileId);
+    }
 
     const { data, error } = await query.returns<AppointmentRow[]>();
     if (error) {
@@ -350,7 +358,7 @@ export class LabAppointmentsService {
       bookings: rows.map((row) =>
         toBookingSummary(row, clientsById.get(row.client_profile_id), patchTestsByClient.get(row.client_profile_id)),
       ),
-      scope: 'stylist',
+      scope: session.role,
       rangeStart,
       rangeEnd,
     };
@@ -406,16 +414,22 @@ export class LabAppointmentsService {
   }
 
   async detailForLabSession(session: LabRuntimeSession, id: string): Promise<StaffBookingDetail> {
-    const staffProfileId = await this.fetchStaffProfileIdForSession(session);
-    const { data, error } = await this.admin
+    let query = this.admin
       .schema('booking')
       .from('appointments')
       .select(DETAIL_COLUMNS)
       .eq('id', id)
       .eq('business_id', session.businessId)
-      .eq('location_id', session.locationId)
-      .eq('assigned_staff_profile_id', staffProfileId)
-      .maybeSingle<AppointmentRow>();
+      .eq('location_id', session.locationId);
+
+    // Stylists are scoped to their own chair; owners/managers can open any
+    // booking at the station's location.
+    if (session.role === 'stylist') {
+      const staffProfileId = await this.fetchStaffProfileIdForSession(session);
+      query = query.eq('assigned_staff_profile_id', staffProfileId);
+    }
+
+    const { data, error } = await query.maybeSingle<AppointmentRow>();
 
     if (error) {
       this.logger.error(`detailForLabSession failed: ${error.message}`);
@@ -437,24 +451,24 @@ export class LabAppointmentsService {
 
   /**
    * Owner/manager approves a client-requested booking. Moves it from
-   * 'awaiting_acceptance' → 'confirmed' and only THEN schedules the client
+   * 'pending' → 'accepted' and only THEN schedules the client
    * confirmation + reminders and credits any eligible rebooking outcome (these
    * are deliberately not fired at booking time for client requests).
    */
   async accept(actor: AuthUser, id: string): Promise<AcceptBookingResponse> {
     this.assertOwnerOrManager(actor);
     const appointment = await this.fetchAppointmentForActor(actor, id);
-    if (appointment.status !== 'awaiting_acceptance') {
+    if (appointment.status !== 'pending') {
       throw new ConflictException(`Booking cannot be accepted from ${appointment.status}`);
     }
 
     const { data, error } = await this.admin
       .schema('booking')
       .from('appointments')
-      .update({ status: 'confirmed' })
+      .update({ status: 'accepted' })
       .eq('id', appointment.id)
       .eq('business_id', appointment.business_id)
-      .eq('status', 'awaiting_acceptance')
+      .eq('status', 'pending')
       .select(DETAIL_COLUMNS)
       .maybeSingle<AppointmentRow>();
     if (error) {
@@ -462,7 +476,7 @@ export class LabAppointmentsService {
       throw new InternalServerErrorException('Unable to accept booking');
     }
     const confirmed = data ?? (await this.fetchAppointmentById(id, actor.businessId));
-    if (confirmed.status !== 'confirmed') {
+    if (confirmed.status !== 'accepted') {
       throw new ConflictException('Booking was updated before it could be accepted');
     }
 
@@ -490,14 +504,15 @@ export class LabAppointmentsService {
 
   /**
    * Owner/manager rejects a client-requested booking. Refunds any paid deposit via
-   * Stripe (the client is made whole), then moves the appointment to 'cancelled'.
-   * The refund is best-effort: a refund failure is surfaced but never blocks the
-   * cancellation (the deposit stays 'paid' so it can be refunded manually).
+   * Stripe (the client is made whole), then moves the appointment to the distinct
+   * 'rejected' state (separate from a customer/salon 'cancelled'). The refund is
+   * best-effort: a refund failure is surfaced but never blocks the rejection (the
+   * deposit stays 'paid' so it can be refunded manually).
    */
   async reject(actor: AuthUser, id: string, reason?: string): Promise<RejectBookingResponse> {
     this.assertOwnerOrManager(actor);
     const appointment = await this.fetchAppointmentForActor(actor, id);
-    if (appointment.status !== 'awaiting_acceptance') {
+    if (appointment.status !== 'pending') {
       throw new ConflictException(`Booking cannot be rejected from ${appointment.status}`);
     }
 
@@ -507,13 +522,13 @@ export class LabAppointmentsService {
       .schema('booking')
       .from('appointments')
       .update({
-        status: 'cancelled',
+        status: 'rejected',
         cancelled_at: new Date().toISOString(),
         cancellation_reason: reason?.trim() || 'Rejected by salon',
       })
       .eq('id', appointment.id)
       .eq('business_id', appointment.business_id)
-      .eq('status', 'awaiting_acceptance')
+      .eq('status', 'pending')
       .select(DETAIL_COLUMNS)
       .maybeSingle<AppointmentRow>();
     if (error) {
@@ -521,7 +536,7 @@ export class LabAppointmentsService {
       throw new InternalServerErrorException('Unable to reject booking');
     }
     const cancelled = data ?? (await this.fetchAppointmentById(id, actor.businessId));
-    if (cancelled.status !== 'cancelled') {
+    if (cancelled.status !== 'rejected') {
       throw new ConflictException('Booking was updated before it could be rejected');
     }
 
@@ -575,8 +590,8 @@ export class LabAppointmentsService {
   }
 
   /**
-   * Mark a confirmed appointment as arrived (client checked in at the desk).
-   * Moves 'confirmed' → 'checked_in' and stamps check_in_at. The status change is
+   * Mark an accepted appointment as arrived (client checked in at the desk).
+   * Moves 'accepted' → 'checked_in' and stamps check_in_at. The status change is
    * itself the in-app signal to the assigned stylist — their book shows the client
    * as arrived. Idempotent: a booking already arrived (or further along) is returned
    * unchanged so a double-tap never errors.
@@ -588,7 +603,7 @@ export class LabAppointmentsService {
       const clientsById = await this.fetchClientProfiles(actor.businessId, [appointment.client_profile_id]);
       return { appointment: toBookingDetail(appointment, clientsById.get(appointment.client_profile_id)) };
     }
-    if (appointment.status !== 'confirmed') {
+    if (appointment.status !== 'accepted') {
       throw new ConflictException(`Appointment cannot be checked in from ${appointment.status}`);
     }
 
@@ -598,7 +613,7 @@ export class LabAppointmentsService {
       .update({ status: 'checked_in', check_in_at: new Date().toISOString() })
       .eq('id', appointment.id)
       .eq('business_id', appointment.business_id)
-      .eq('status', 'confirmed')
+      .eq('status', 'accepted')
       .select(DETAIL_COLUMNS)
       .maybeSingle<AppointmentRow>();
     if (error) {
@@ -685,6 +700,162 @@ export class LabAppointmentsService {
   }
 
   /**
+   * Customer-initiated cancellation from the mobile app. The customer may always
+   * cancel an upcoming booking, but the deposit is only refunded when they cancel
+   * OUTSIDE the salon's configured cancellation window (`cancellation_notice_hours`
+   * before the start). Inside the window the booking still cancels but a paid
+   * deposit is forfeited (kept). Ownership is enforced via clientProfileId; the
+   * 'cancelled' transition is claimed atomically so a double-tap never double-refunds.
+   */
+  async cancelForClient(actor: AuthUser, id: string, reason?: string): Promise<CancelAppointmentResponse> {
+    const appointment = await this.fetchAppointmentForClient(actor, id);
+
+    if (appointment.status === 'cancelled') {
+      const clientsById = await this.fetchClientProfiles(actor.businessId, [appointment.client_profile_id]);
+      return {
+        appointment: toBookingDetail(appointment, clientsById.get(appointment.client_profile_id)),
+        depositRefunded: false,
+      };
+    }
+    if (!CLIENT_CANCELLABLE_STATUSES.includes(appointment.status)) {
+      throw new ConflictException('This appointment can no longer be cancelled online. Please contact the salon.');
+    }
+
+    const windowHours = await this.fetchCancellationWindowHours(appointment.location_id);
+    const outsideWindow = isOutsideCancellationWindow(appointment.scheduled_start_at, windowHours);
+
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('appointments')
+      .update({
+        status: 'cancelled',
+        cancelled_at: new Date().toISOString(),
+        cancellation_reason: reason?.trim() || 'Cancelled by client',
+      })
+      .eq('id', appointment.id)
+      .eq('business_id', appointment.business_id)
+      .in('status', CLIENT_CANCELLABLE_STATUSES)
+      .select(DETAIL_COLUMNS)
+      .maybeSingle<AppointmentRow>();
+    if (error) {
+      this.logger.error(`cancelForClient failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to cancel appointment');
+    }
+
+    if (!data) {
+      // Lost the race (already cancelled elsewhere) — never refund twice.
+      const replayed = await this.fetchAppointmentById(id, actor.businessId);
+      if (replayed.status !== 'cancelled') {
+        throw new ConflictException('Appointment was updated before it could be cancelled');
+      }
+      const clientsById = await this.fetchClientProfiles(actor.businessId, [replayed.client_profile_id]);
+      return {
+        appointment: toBookingDetail(replayed, clientsById.get(replayed.client_profile_id)),
+        depositRefunded: false,
+      };
+    }
+
+    // Outside the window → refund the paid deposit (best-effort). Inside it → keep
+    // the deposit; flag it forfeited so the app can tell the customer.
+    let depositRefunded = false;
+    let depositForfeited = false;
+    let refundError: string | undefined;
+    if (outsideWindow) {
+      const refund = await this.refundPaidDeposit(data);
+      depositRefunded = refund.refunded;
+      refundError = refund.error;
+    } else {
+      depositForfeited = arrayOf(data.deposits).some((deposit) => deposit.status === 'paid');
+    }
+    await this.bookingNotifications.syncBookingNotificationsSafe(data.id);
+
+    const clientsById = await this.fetchClientProfiles(actor.businessId, [data.client_profile_id]);
+    return {
+      appointment: toBookingDetail(data, clientsById.get(data.client_profile_id)),
+      depositRefunded,
+      refundError,
+      depositForfeited: depositForfeited || undefined,
+    };
+  }
+
+  /**
+   * Customer-initiated rebooking (reschedule in place) from the mobile app. Only
+   * allowed OUTSIDE the cancellation window; the deposit carries over untouched.
+   * The customer can only move the time — the stylist and services are preserved.
+   */
+  async rescheduleForClient(
+    actor: AuthUser,
+    id: string,
+    input: RescheduleAppointmentRequest,
+  ): Promise<RescheduleAppointmentResponse> {
+    const appointment = await this.fetchAppointmentForClient(actor, id);
+    if (!CLIENT_RESCHEDULABLE_STATUSES.includes(appointment.status)) {
+      throw new ConflictException('This appointment can no longer be rebooked online. Please contact the salon.');
+    }
+
+    const windowHours = await this.fetchCancellationWindowHours(appointment.location_id);
+    if (!isOutsideCancellationWindow(appointment.scheduled_start_at, windowHours)) {
+      throw new ConflictException('Rebooking is only available before the cancellation cut-off. Please contact the salon.');
+    }
+
+    // Customers never reassign staff or swap services — only the start time moves.
+    return this.performReschedule(
+      actor,
+      appointment,
+      { scheduledStartAt: input.scheduledStartAt },
+      CLIENT_RESCHEDULABLE_STATUSES,
+    );
+  }
+
+  /**
+   * Load an appointment scoped to the calling CLIENT and assert they own it. The
+   * staff-oriented `fetchAppointmentForActor` rejects clients outright, so the
+   * mobile cancel/rebook flows use this instead.
+   */
+  private async fetchAppointmentForClient(actor: AuthUser, id: string): Promise<AppointmentRow> {
+    if (actor.role !== 'client' || !actor.clientProfileId) {
+      throw new ForbiddenException('A client account is required to manage this appointment');
+    }
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('appointments')
+      .select(DETAIL_COLUMNS)
+      .eq('id', id)
+      .eq('business_id', actor.businessId)
+      .maybeSingle<AppointmentRow>();
+    if (error) {
+      this.logger.error(`fetchAppointmentForClient failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load appointment');
+    }
+    if (!data) throw new NotFoundException('Appointment not found');
+    if (data.client_profile_id !== actor.clientProfileId) {
+      throw new ForbiddenException('You can only manage your own appointments');
+    }
+    return data;
+  }
+
+  /**
+   * The location's cancellation-notice window in hours. `core.location_settings`
+   * is in a different schema than `booking.appointments`, so it is fetched
+   * separately (PostgREST can't embed across schemas). Falls back to the column
+   * default on any miss.
+   */
+  private async fetchCancellationWindowHours(locationId: string): Promise<number> {
+    const { data, error } = await this.admin
+      .schema('core')
+      .from('location_settings')
+      .select('cancellation_notice_hours')
+      .eq('location_id', locationId)
+      .maybeSingle<{ cancellation_notice_hours: number | null }>();
+    if (error) {
+      this.logger.error(`fetchCancellationWindowHours failed: ${error.message}`);
+      return DEFAULT_CANCELLATION_NOTICE_HOURS;
+    }
+    const hours = data?.cancellation_notice_hours;
+    return typeof hours === 'number' && hours >= 0 ? hours : DEFAULT_CANCELLATION_NOTICE_HOURS;
+  }
+
+  /**
    * Move a booking to a new time and/or reassign its stylist from the book, and
    * optionally replace the services on it. With no `serviceIds` the service list and
    * total duration are preserved and only the per-service times are re-sequenced.
@@ -700,7 +871,22 @@ export class LabAppointmentsService {
     if (!RESCHEDULABLE_BOOKING_STATUSES.includes(appointment.status)) {
       throw new ConflictException(`Appointment cannot be rescheduled from ${appointment.status}`);
     }
+    return this.performReschedule(actor, appointment, input, RESCHEDULABLE_BOOKING_STATUSES);
+  }
 
+  /**
+   * Shared move/reassign logic for an already-loaded, status-validated appointment.
+   * Both the staff `reschedule` and the customer-facing `rescheduleForClient` funnel
+   * through here; they differ only in who is allowed in and which statuses guard the
+   * conditional update (`allowedStatuses`).
+   */
+  private async performReschedule(
+    actor: AuthUser,
+    appointment: AppointmentRow,
+    input: RescheduleAppointmentRequest,
+    allowedStatuses: AppointmentStatus[],
+  ): Promise<RescheduleAppointmentResponse> {
+    const id = appointment.id;
     // Edit Appointment is a day-of tool, so (unlike rebooking) it allows moving to
     // an earlier slot today — only the date itself must be valid, not in the future.
     const newStart = parseValidDate(input.scheduledStartAt);
@@ -775,7 +961,7 @@ export class LabAppointmentsService {
       })
       .eq('id', appointment.id)
       .eq('business_id', appointment.business_id)
-      .in('status', RESCHEDULABLE_BOOKING_STATUSES)
+      .in('status', allowedStatuses)
       .select(DETAIL_COLUMNS)
       .maybeSingle<AppointmentRow>();
     if (error) {
@@ -1441,7 +1627,7 @@ export class LabAppointmentsService {
         assigned_staff_profile_id: input.staffProfileId,
         requested_staff_profile_id: input.staffProfileId,
         staff_request_mode: 'specific_staff',
-        status: 'confirmed',
+        status: 'accepted',
         booking_channel: 'staff_app',
         scheduled_start_at: input.selectedStart.toISOString(),
         scheduled_end_at: input.selectedEnd.toISOString(),
@@ -1984,6 +2170,14 @@ function parseValidDate(value: string): Date {
     throw new ConflictException('Selected time must be a valid date');
   }
   return parsed;
+}
+
+// True when "now" is at or before the cancellation cut-off (windowHours before the
+// scheduled start) — i.e. the customer is still early enough to cancel-with-refund
+// or rebook.
+function isOutsideCancellationWindow(scheduledStartAt: string, windowHours: number): boolean {
+  const cutoff = new Date(scheduledStartAt).getTime() - windowHours * 3_600_000;
+  return Date.now() <= cutoff;
 }
 
 // True when both lists contain the same ids (ignoring order and duplicates). Used

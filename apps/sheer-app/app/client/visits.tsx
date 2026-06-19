@@ -81,7 +81,7 @@ export default function VisitHistoryScreen() {
             onPress={() => router.back()}
           >
             <Text style={s.backArrow}>‹</Text>
-            <Text style={s.backLabel}>Dashboard</Text>
+            <Text style={s.backLabel}>Back</Text>
           </Pressable>
           <Text style={s.headerTitle}>Visit History</Text>
           <View style={s.headerSpacer} />

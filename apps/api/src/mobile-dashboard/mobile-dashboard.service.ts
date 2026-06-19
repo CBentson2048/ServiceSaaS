@@ -13,6 +13,7 @@ import type {
 } from '@sheer/domain';
 
 interface AppointmentServiceRow {
+  service_id?: string | null;
   service_name_snapshot: string;
   duration_minutes: number;
   deposit_required_amount: number | string;
@@ -70,7 +71,7 @@ interface StockRow {
 }
 
 const APPOINTMENT_COLUMNS =
-  'id,business_id,location_id,client_profile_id,assigned_staff_profile_id,requested_staff_profile_id,status,scheduled_start_at,scheduled_end_at,client_note,appointment_services(service_name_snapshot,duration_minutes,deposit_required_amount),deposits(status,amount)';
+  'id,business_id,location_id,client_profile_id,assigned_staff_profile_id,requested_staff_profile_id,status,scheduled_start_at,scheduled_end_at,client_note,appointment_services(service_id,service_name_snapshot,duration_minutes,deposit_required_amount),deposits(status,amount)';
 const CLIENT_COLUMNS = 'id,first_name,last_name,communication_preference';
 const VISIT_COLUMNS =
   'id,business_id,location_id,appointment_id,client_profile_id,primary_staff_profile_id,status,checked_in_at,started_at,completed_at,service_summary,client_visible_summary,created_at';
@@ -215,14 +216,45 @@ export class MobileDashboardService {
       .eq('business_id', businessId)
       .eq('client_profile_id', clientProfileId)
       .gte('scheduled_start_at', now)
-      .not('status', 'in', '("cancelled","no_show")')
+      .not('status', 'in', '("cancelled","no_show","rejected")')
       .order('scheduled_start_at', { ascending: true })
       .limit(8)
       .returns<AppointmentRow[]>();
     if (error) this.throwQueryError('fetchClientUpcomingAppointments', error.message);
 
-    const client = await this.fetchClientProfile(businessId, clientProfileId);
-    return (data ?? []).map((row) => toBookingSummary(row, client));
+    const rows = data ?? [];
+    const [client, windows] = await Promise.all([
+      this.fetchClientProfile(businessId, clientProfileId),
+      this.fetchCancellationWindows(rows.map((row) => row.location_id)),
+    ]);
+    return rows.map((row) => toBookingSummary(row, client, windows.get(row.location_id)));
+  }
+
+  /**
+   * Per-location cancellation window (hours). Fetched separately because
+   * core.location_settings can't be embedded from a booking.* query. Fail-soft: a
+   * missing/failed lookup just omits the policy hints from the summary.
+   */
+  private async fetchCancellationWindows(locationIds: string[]): Promise<Map<string, number>> {
+    const unique = Array.from(new Set(locationIds));
+    if (unique.length === 0) return new Map();
+    const { data, error } = await this.admin
+      .schema('core')
+      .from('location_settings')
+      .select('location_id,cancellation_notice_hours')
+      .in('location_id', unique)
+      .returns<Array<{ location_id: string; cancellation_notice_hours: number | null }>>();
+    if (error) {
+      this.logger.error(`fetchCancellationWindows failed: ${error.message}`);
+      return new Map();
+    }
+    const map = new Map<string, number>();
+    for (const row of data ?? []) {
+      if (typeof row.cancellation_notice_hours === 'number' && row.cancellation_notice_hours >= 0) {
+        map.set(row.location_id, row.cancellation_notice_hours);
+      }
+    }
+    return map;
   }
 
   private async fetchClientVisitHistory(businessId: string, clientProfileId: string): Promise<CrmVisitSummary[]> {
@@ -359,7 +391,11 @@ function todayRange(): { rangeStart: string; rangeEnd: string } {
   return { rangeStart: start.toISOString(), rangeEnd: end.toISOString() };
 }
 
-function toBookingSummary(row: AppointmentRow, client?: ClientProfileRow): StaffBookingSummary {
+function toBookingSummary(
+  row: AppointmentRow,
+  client?: ClientProfileRow,
+  cancellationWindowHours?: number,
+): StaffBookingSummary {
   const services = arrayOf(row.appointment_services);
   const deposits = arrayOf(row.deposits);
   const durationMinutes = services.reduce((sum, service) => sum + Number(service.duration_minutes ?? 0), 0);
@@ -367,6 +403,16 @@ function toBookingSummary(row: AppointmentRow, client?: ClientProfileRow): Staff
     (sum, service) => sum + Number(service.deposit_required_amount ?? 0),
     0,
   );
+  const serviceIds = services
+    .map((service) => service.service_id)
+    .filter((id): id is string => Boolean(id));
+
+  // The deadline a customer must cancel/rebook by to keep their deposit (only
+  // surfaced when the location has a window — client dashboard path).
+  const refundCutoffAt =
+    cancellationWindowHours !== undefined
+      ? new Date(new Date(row.scheduled_start_at).getTime() - cancellationWindowHours * 3_600_000).toISOString()
+      : undefined;
 
   return {
     id: row.id,
@@ -380,10 +426,13 @@ function toBookingSummary(row: AppointmentRow, client?: ClientProfileRow): Staff
     endsAt: row.scheduled_end_at,
     clientDisplayName: client ? clientName(client) : 'Client',
     serviceNames: services.map((service) => service.service_name_snapshot),
+    serviceIds: serviceIds.length ? serviceIds : undefined,
     durationMinutes: durationMinutes || minutesBetween(row.scheduled_start_at, row.scheduled_end_at),
     depositRequiredAmount: depositRequiredAmount || undefined,
     depositStatus: deposits[0]?.status,
     clientNote: row.client_note ?? undefined,
+    cancellationWindowHours,
+    refundCutoffAt,
   };
 }
 

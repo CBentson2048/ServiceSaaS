@@ -212,7 +212,7 @@ export default function ProfileScreen() {
               onPress={() => router.back()}
             >
               <Text style={s.headerBackArrow}>‹</Text>
-              <Text style={s.headerBackLabel}>Dashboard</Text>
+              <Text style={s.headerBackLabel}>Back</Text>
             </Pressable>
           )}
 

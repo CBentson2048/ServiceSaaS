@@ -7,8 +7,13 @@ import { DeviceBlockedScreen } from '../../screens/DeviceBlocked/DeviceBlockedSc
 import { DevicePairingScreen } from '../../screens/DevicePairing/DevicePairingScreen';
 import { DeviceRegistrationScreen } from '../../screens/DeviceRegistration/DeviceRegistrationScreen';
 import { DeviceResolvingScreen } from '../../screens/DeviceResolving/DeviceResolvingScreen';
+import { BuildFormulaScreen } from '../../screens/BuildFormula/BuildFormulaScreen';
+import { UpdateFormulaScreen } from '../../screens/UpdateFormula/UpdateFormulaScreen';
 import { FormulaScreen } from '../../screens/Formula/FormulaScreen';
+import { MixFinalizedScreen } from '../../screens/MixFinalized/MixFinalizedScreen';
 import { FormulaHistoryScreen } from '../../screens/FormulaHistory/FormulaHistoryScreen';
+import { InventoryScreen } from '../../screens/Inventory/InventoryScreen';
+import { BillingRulesScreen } from '../../screens/BillingRules/BillingRulesScreen';
 import { HomeScreen } from '../../screens/Home/HomeScreen';
 import { NewMixScreen } from '../../screens/NewMix/NewMixScreen';
 import { SettingsScreen } from '../../screens/Settings/SettingsScreen';
@@ -68,12 +73,29 @@ export function RootNavigator(): React.JSX.Element {
           component={DevicePairingScreen}
           options={{ title: 'Device Pairing' }}
         />
+        <Stack.Screen
+          name="BuildFormula"
+          component={BuildFormulaScreen}
+          options={{ title: 'Build Formula', headerShown: false }}
+        />
+        <Stack.Screen
+          name="UpdateFormula"
+          component={UpdateFormulaScreen}
+          options={{ title: 'Update Formula', headerShown: false }}
+        />
         <Stack.Screen name="Formula" component={FormulaScreen} options={{ title: 'Formula' }} />
+        <Stack.Screen
+          name="MixFinalized"
+          component={MixFinalizedScreen}
+          options={{ title: 'Mix Finalized', headerShown: false }}
+        />
         <Stack.Screen
           name="FormulaHistory"
           component={FormulaHistoryScreen}
           options={{ title: 'Formula History' }}
         />
+        <Stack.Screen name="Inventory" component={InventoryScreen} options={{ title: 'Inventory', headerShown: false }} />
+        <Stack.Screen name="BillingRules" component={BillingRulesScreen} options={{ title: 'Billing Rules', headerShown: false }} />
         <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Settings' }} />
       </Stack.Navigator>
     </NavigationContainer>

@@ -11,14 +11,13 @@ import type {
  * no placeholder or random values are introduced.
  */
 
-// A client is "in the chair" (an active session) once they are checked in or
-// the colour is being mixed. Earlier statuses are upcoming, not active.
-const ACTIVE_STATUSES: AppointmentStatus[] = ['checked_in', 'in_progress'];
+// A client is "in the chair" (an active session) once they are checked in.
+// Earlier statuses are upcoming, not active.
+const ACTIVE_STATUSES: AppointmentStatus[] = ['checked_in'];
 
-// `today` for a lab session never returns terminal 'completed', so the
-// post-service states (billing sent / settled) are what "Completed today"
-// shows. 'completed' is included defensively in case the source ever widens.
-const COMPLETED_STATUSES: AppointmentStatus[] = ['awaiting_payment', 'paid', 'completed'];
+// The post-service states (billing sent / settled) are what "Completed today"
+// shows.
+const COMPLETED_STATUSES: AppointmentStatus[] = ['awaiting_payment', 'paid'];
 
 export function isActiveBooking(booking: StaffBookingSummary): boolean {
   return ACTIVE_STATUSES.includes(booking.status);
@@ -34,8 +33,6 @@ export function completedStatusBadge(status: AppointmentStatus): { label: string
   switch (status) {
     case 'paid':
       return { label: 'Paid', tone: 'success' };
-    case 'completed':
-      return { label: 'Completed', tone: 'success' };
     case 'awaiting_payment':
       return { label: 'Billing sent', tone: 'warning' };
     default:
@@ -45,8 +42,6 @@ export function completedStatusBadge(status: AppointmentStatus): { label: string
 
 export function activeStatusBadge(status: AppointmentStatus): { label: string; tone: StatusTone } {
   switch (status) {
-    case 'in_progress':
-      return { label: 'Mixing', tone: 'brand' };
     case 'checked_in':
       return { label: 'Checked in', tone: 'success' };
     default:

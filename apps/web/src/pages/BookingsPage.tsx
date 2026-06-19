@@ -420,7 +420,7 @@ export function BookingsPage() {
   const pendingRequests = useMemo(
     () =>
       bookings
-        .filter((booking) => booking.status === 'awaiting_acceptance')
+        .filter((booking) => booking.status === 'pending')
         .sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt)),
     [bookings],
   );
@@ -1263,13 +1263,10 @@ function formatDateTime(iso: string): string {
 function isCompletionLocked(status: StaffBookingSummary['status']): boolean {
   return (
     status === 'paid' ||
-    status === 'completed' ||
     status === 'cancelled' ||
     status === 'no_show' ||
-    status === 'awaiting_acceptance' ||
-    status === 'pending' ||
-    status === 'draft' ||
-    status === 'booked'
+    status === 'rejected' ||
+    status === 'pending'
   );
 }
 

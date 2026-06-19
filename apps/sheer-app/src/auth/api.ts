@@ -1,4 +1,5 @@
 import type {
+  CancelAppointmentResponse,
   CreateMyLeaveRequest,
   ClientLabHistoryResponse,
   CreateCrmClientRequest,
@@ -7,6 +8,7 @@ import type {
   CreateStylistRebookingRequest,
   CrmClientSummary,
   CurrentUserResponse,
+  RescheduleAppointmentResponse,
   ListCrmClientsResponse,
   AppointmentCompletionResponse,
   AppointmentPaymentConfirmationRequest,
@@ -40,10 +42,31 @@ import type {
 
 const API_BASE_URL = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3001').replace(/\/$/, '');
 
+// Thrown when the backend rejects an authenticated request with 401 — i.e. the
+// access token has expired or been revoked (session timeout). Screens can keep
+// catching plain `Error`; the global handler below drives the login redirect.
+export class SessionExpiredError extends Error {
+  constructor(message = 'Your session has expired. Please sign in again.') {
+    super(message);
+    this.name = 'SessionExpiredError';
+  }
+}
+
+// A single app-wide listener (registered by AuthProvider) that fires whenever an
+// authenticated request times out, so the session can be cleared and the user
+// sent back to the login screen.
+type UnauthorizedHandler = () => void;
+let onUnauthorized: UnauthorizedHandler | null = null;
+
+export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): void {
+  onUnauthorized = handler;
+}
+
 export async function login(email: string, password: string): Promise<LoginResponse> {
   return request<LoginResponse>('/auth/login', {
     method: 'POST',
     body: { email, password, surface: 'sheer_app' },
+    suppressAuthRedirect: true,
   });
 }
 
@@ -51,11 +74,12 @@ export async function refreshSession(refreshToken: string): Promise<LoginRespons
   return request<LoginResponse>('/auth/refresh', {
     method: 'POST',
     body: { refreshToken, surface: 'sheer_app' },
+    suppressAuthRedirect: true,
   });
 }
 
 export async function getCurrentUser(accessToken: string): Promise<CurrentUserResponse> {
-  return request<CurrentUserResponse>('/auth/me', { accessToken });
+  return request<CurrentUserResponse>('/auth/me', { accessToken, suppressAuthRedirect: true });
 }
 
 export async function logout(accessToken?: string, refreshToken?: string): Promise<void> {
@@ -63,6 +87,7 @@ export async function logout(accessToken?: string, refreshToken?: string): Promi
     method: 'POST',
     accessToken,
     body: { refreshToken },
+    suppressAuthRedirect: true,
   });
 }
 
@@ -303,6 +328,33 @@ export async function getMobileBookingAttempt(
   );
 }
 
+// -------------------- Customer appointment management --------------------
+// A signed-in client cancels or rebooks (reschedules in place) their own upcoming
+// appointment. The salon's per-location cancellation window decides refund vs.
+// forfeit (cancel) and whether rebooking is allowed (enforced server-side too).
+
+export async function cancelAppointment(
+  accessToken: string,
+  appointmentId: string,
+  reason?: string,
+): Promise<CancelAppointmentResponse> {
+  return request<CancelAppointmentResponse>(
+    `/mobile/appointments/${encodeURIComponent(appointmentId)}/cancel`,
+    { method: 'POST', body: reason ? { reason } : {}, accessToken },
+  );
+}
+
+export async function rescheduleAppointment(
+  accessToken: string,
+  appointmentId: string,
+  payload: { scheduledStartAt: string },
+): Promise<RescheduleAppointmentResponse> {
+  return request<RescheduleAppointmentResponse>(
+    `/mobile/appointments/${encodeURIComponent(appointmentId)}/reschedule`,
+    { method: 'POST', body: payload, accessToken },
+  );
+}
+
 // -------------------- Staff booking (owner / manager / stylist) --------------------
 // Internal flow: a staff member books on behalf of a client (walk-in, phone,
 // manual). Reuses the same rota-based availability engine as the client flow.
@@ -389,7 +441,14 @@ export async function createStaffBooking(
 
 async function request<T>(
   path: string,
-  init: { method?: string; body?: unknown; accessToken?: string } = {},
+  init: {
+    method?: string;
+    body?: unknown;
+    accessToken?: string;
+    // Set on auth-flow calls (login/refresh/me/logout) so a 401 there does not
+    // trigger the global session-timeout redirect — those callers handle it.
+    suppressAuthRedirect?: boolean;
+  } = {},
 ): Promise<T> {
   const response = await fetch(`${API_BASE_URL}/api${path}`, {
     method: init.method ?? 'GET',
@@ -410,6 +469,15 @@ async function request<T>(
       parsed = undefined;
     }
     const message = extractErrorMessage(parsed) ?? raw ?? `QLOOQO request failed with ${response.status}`;
+
+    // Session timeout: an authenticated call came back 401. Notify the app so it
+    // can clear the stored session and redirect to login, then surface a
+    // recognisable error to the caller.
+    if (response.status === 401 && !init.suppressAuthRedirect) {
+      onUnauthorized?.();
+      throw new SessionExpiredError(message);
+    }
+
     throw new Error(message);
   }
 

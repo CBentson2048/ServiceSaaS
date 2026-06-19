@@ -90,6 +90,17 @@ interface FormulaVisitLineItemRow {
   updated_at: string;
 }
 
+interface FormulaItemUsageRow {
+  product_name: string | null;
+  captured_grams: number | string;
+}
+
+/** Per-product grams actually spent in a finalized mix, aggregated for a visit. */
+export interface FormulaProductUsage {
+  productName: string;
+  grams: number;
+}
+
 interface ProductBillingRulesRow {
   product_billing_enabled: boolean;
   product_billing_rule: string;
@@ -310,6 +321,107 @@ export class LabFormulaService {
       productRoundUpEnabled: rules.product_round_up_enabled ?? false,
       productRoundUpIncrement: rules.product_round_up_increment,
     };
+  }
+
+  /**
+   * Read-only billing breakdown for a finalized appointment, scoped to the lab
+   * station's location. Surfaces the durable product-usage line item written at
+   * finalize time (lab cost, billed charge and per-formula breakdown) so the
+   * Sheer Lab history view can show real billing without the JWT-only formula
+   * store. Returns a null line item when the appointment has no visit yet or no
+   * mix has been finalized — never fabricates figures, and never creates a visit.
+   */
+  async getBillingBreakdownForLabSession(
+    session: LabRuntimeSession,
+    appointmentId: string,
+  ): Promise<{
+    appointmentId: string;
+    billingLineItem: FormulaSaveResult['billingLineItem'] | null;
+    productUsage: FormulaProductUsage[];
+  }> {
+    const actor = toAuthUserFromLabSession(session);
+
+    const { data: appointment, error: appointmentError } = await this.admin
+      .schema('booking')
+      .from('appointments')
+      .select('id,business_id,location_id')
+      .eq('id', appointmentId)
+      .eq('business_id', actor.businessId)
+      .maybeSingle<{ id: string; business_id: string; location_id: string }>();
+
+    if (appointmentError) {
+      this.logger.error(`getBillingBreakdownForLabSession appointment lookup failed: ${appointmentError.message}`);
+      throw new InternalServerErrorException('Unable to load appointment for billing breakdown');
+    }
+    if (!appointment) throw new BadRequestException('appointmentId is not valid for this business');
+    this.assertLocationScope(actor, appointment.location_id);
+
+    const { data: visit, error: visitError } = await this.admin
+      .schema('booking')
+      .from('visits')
+      .select('id')
+      .eq('appointment_id', appointment.id)
+      .maybeSingle<{ id: string }>();
+
+    if (visitError) {
+      this.logger.error(`getBillingBreakdownForLabSession visit lookup failed: ${visitError.message}`);
+      throw new InternalServerErrorException('Unable to resolve appointment visit');
+    }
+    if (!visit) return { appointmentId: appointment.id, billingLineItem: null, productUsage: [] };
+
+    const [billingLineItem, productUsage] = await Promise.all([
+      this.fetchProductUsageLineItem(visit.id),
+      this.fetchFormulaProductUsage(visit.id),
+    ]);
+    return { appointmentId: appointment.id, billingLineItem: billingLineItem ?? null, productUsage };
+  }
+
+  /**
+   * Per-product grams spent in the finalized mix(es) for a visit, read straight
+   * from lab.formula_items (which stores product_name + captured_grams at save
+   * time). Aggregated across every saved formula on the visit and sorted by
+   * grams desc. Empty when no mix has been finalized yet.
+   */
+  private async fetchFormulaProductUsage(visitId: string): Promise<FormulaProductUsage[]> {
+    const { data: formulas, error: formulasError } = await this.admin
+      .schema('lab')
+      .from('formulas')
+      .select('id')
+      .eq('visit_id', visitId)
+      .eq('status', 'saved')
+      .returns<{ id: string }[]>();
+
+    if (formulasError) {
+      this.logger.error(`fetchFormulaProductUsage formulas lookup failed: ${formulasError.message}`);
+      throw new InternalServerErrorException('Unable to load formula product usage');
+    }
+
+    const formulaIds = (formulas ?? []).map((row) => row.id);
+    if (formulaIds.length === 0) return [];
+
+    const { data: items, error: itemsError } = await this.admin
+      .schema('lab')
+      .from('formula_items')
+      .select('product_name,captured_grams')
+      .in('formula_id', formulaIds)
+      .returns<FormulaItemUsageRow[]>();
+
+    if (itemsError) {
+      this.logger.error(`fetchFormulaProductUsage items lookup failed: ${itemsError.message}`);
+      throw new InternalServerErrorException('Unable to load formula product usage');
+    }
+
+    const gramsByProduct = new Map<string, number>();
+    for (const item of items ?? []) {
+      const grams = Number(item.captured_grams);
+      if (!Number.isFinite(grams) || grams <= 0) continue;
+      const name = item.product_name?.trim() || 'Unknown product';
+      gramsByProduct.set(name, (gramsByProduct.get(name) ?? 0) + grams);
+    }
+
+    return Array.from(gramsByProduct, ([productName, grams]) => ({ productName, grams })).sort(
+      (a, b) => b.grams - a.grams,
+    );
   }
 
   latestForClient(actor: AuthUser, clientProfileId: string): FormulaHistoryRecord | null {

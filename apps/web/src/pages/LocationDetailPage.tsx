@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import type {
   BusinessLocation,
+  LocationCancellationPolicy,
   LocationProductBillingSettings,
   LocationTaxSettings,
   ProductBillingRule,
@@ -11,9 +12,11 @@ import type {
 import { describeTaxedAmount } from '@sheer/domain';
 import {
   ApiRequestError,
+  getCancellationPolicy,
   getLocation,
   getLocationProductBillingSettings,
   getLocationTaxSettings,
+  updateCancellationPolicy,
   updateLocationProductBillingSettings,
   updateLocationTaxSettings,
 } from '../auth/api';
@@ -140,6 +143,11 @@ export function LocationDetailPage() {
           {/* Tax configuration */}
           {role === 'owner' || role === 'manager' ? (
             <TaxSettingsSection locationId={location.id} accessToken={accessToken} />
+          ) : null}
+
+          {/* Cancellation policy */}
+          {role === 'owner' || role === 'manager' ? (
+            <CancellationPolicySection locationId={location.id} accessToken={accessToken} />
           ) : null}
         </div>
       ) : null}
@@ -1041,6 +1049,175 @@ function TaxSettingsSection({
         </fieldset>
 
         {/* Footer */}
+        <div className="mt-5 flex items-center justify-between gap-4 border-t border-border pt-4">
+          <p className="text-[12px] text-text-muted">
+            {settings && !hasChanges ? 'No unsaved changes.' : hasChanges ? 'You have unsaved changes.' : ''}
+          </p>
+          <button
+            type="submit"
+            disabled={saving || !hasChanges}
+            className="inline-flex h-9 items-center gap-2 rounded-pill bg-primary px-5 text-[13px] font-semibold text-text-on-primary transition hover:bg-primary-deep disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {saving ? (
+              <>
+                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                Saving…
+              </>
+            ) : (
+              'Save settings'
+            )}
+          </button>
+        </div>
+      </form>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Cancellation policy
+// ---------------------------------------------------------------------------
+
+function CancellationPolicySection({
+  locationId,
+  accessToken,
+}: {
+  locationId: string;
+  accessToken: string | undefined;
+}) {
+  const [settings, setSettings] = useState<LocationCancellationPolicy | null>(null);
+  const [windowDays, setWindowDays] = useState('');
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'unavailable'>('loading');
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState<{ tone: 'success' | 'danger'; text: string } | null>(null);
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showNotice = useCallback((tone: 'success' | 'danger', text: string) => {
+    setNotice({ tone, text });
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    if (tone === 'success') {
+      noticeTimer.current = setTimeout(() => setNotice(null), 4000);
+    }
+  }, []);
+
+  const load = useCallback(async () => {
+    if (!accessToken) return;
+    setLoadState('loading');
+    try {
+      const { settings: loaded } = await getCancellationPolicy(accessToken, locationId);
+      setSettings(loaded);
+      setWindowDays(String(loaded.cancellationWindowDays));
+      setLoadState('ready');
+    } catch {
+      setLoadState('unavailable');
+    }
+  }, [accessToken, locationId]);
+
+  useEffect(() => {
+    void load();
+    return () => {
+      if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    };
+  }, [load]);
+
+  const parsed = Number.parseInt(windowDays, 10);
+  const valid = Number.isInteger(parsed) && parsed >= 0 && parsed <= 60;
+  const hasChanges = settings ? valid && parsed !== settings.cancellationWindowDays : false;
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!accessToken || !settings) return;
+    if (!valid) {
+      showNotice('danger', 'Enter a whole number of days between 0 and 60.');
+      return;
+    }
+    setSaving(true);
+    setNotice(null);
+    try {
+      const { settings: updated } = await updateCancellationPolicy(accessToken, {
+        locationId,
+        cancellationWindowDays: parsed,
+      });
+      setSettings(updated);
+      setWindowDays(String(updated.cancellationWindowDays));
+      showNotice('success', 'Cancellation policy saved successfully.');
+    } catch (err) {
+      const message =
+        err instanceof ApiRequestError ? err.message
+        : err instanceof Error ? err.message
+        : 'Could not save the cancellation policy.';
+      showNotice('danger', message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loadState === 'loading') {
+    return (
+      <section className="rounded-card-lg border border-border bg-surface px-5 py-6">
+        <div className="flex items-center gap-3">
+          <div className="h-4 w-4 animate-spin rounded-full border-2 border-border border-t-primary" />
+          <span className="text-[13px] text-text-secondary">Loading cancellation policy…</span>
+        </div>
+      </section>
+    );
+  }
+
+  if (loadState === 'unavailable') return null;
+
+  return (
+    <section className="rounded-card-lg border border-border bg-surface">
+      <div className="border-b border-border px-5 py-4">
+        <h2 className="text-[14px] font-semibold text-text-primary">Cancellation Policy</h2>
+        <p className="mt-0.5 text-[12px] text-text-secondary">
+          How far ahead customers can cancel (with a deposit refund) or rebook from the app.
+        </p>
+      </div>
+
+      <form onSubmit={(e) => { void handleSubmit(e); }} className="px-5 py-5">
+        {notice ? (
+          <div
+            role="alert"
+            className={`mb-5 flex items-start gap-3 rounded-input-lg border px-4 py-3 text-[13px] ${
+              notice.tone === 'success'
+                ? 'border-success-border bg-success-soft text-success'
+                : 'border-danger-border bg-danger-soft text-danger'
+            }`}
+          >
+            <span className="mt-px shrink-0 text-[15px] leading-none">
+              {notice.tone === 'success' ? '✓' : '!'}
+            </span>
+            <span>{notice.text}</span>
+          </div>
+        ) : null}
+
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="cancellation-window" className="text-[12px] font-medium text-text-secondary">
+            Cancellation window
+          </label>
+          <div className="flex items-center gap-3">
+            <div className="relative w-40">
+              <input
+                id="cancellation-window"
+                type="number"
+                min="0"
+                max="60"
+                step="1"
+                value={windowDays}
+                onChange={(e) => setWindowDays(e.target.value)}
+                placeholder="e.g. 2"
+                className="h-10 w-full rounded-input-lg border border-border-strong bg-surface px-3 pr-16 text-[13px] text-text-primary outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+              />
+              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[13px] font-medium text-text-muted">
+                days
+              </span>
+            </div>
+          </div>
+          <p className="mt-1 text-[12px] text-text-muted">
+            Customers can cancel or rebook up to this many days before their appointment. Inside this window a
+            cancellation forfeits the deposit and rebooking is disabled.
+          </p>
+        </div>
+
         <div className="mt-5 flex items-center justify-between gap-4 border-t border-border pt-4">
           <p className="text-[12px] text-text-muted">
             {settings && !hasChanges ? 'No unsaved changes.' : hasChanges ? 'You have unsaved changes.' : ''}

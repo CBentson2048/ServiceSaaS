@@ -43,9 +43,17 @@ export function useFormulaDraft() {
   const getLatestFormulaForClient = useCallback((clientProfileId?: string) => {
     return formulaDraftStore.getLatestFormulaForClient(clientProfileId);
   }, []);
+  const getSavedFormulaById = useCallback((formulaId: string) => {
+    return formulaDraftStore.getSavedFormulaById(formulaId);
+  }, []);
   const duplicateFormula = useCallback((sourceFormulaId: string) => {
     return formulaDraftStore.duplicateFormula(sourceFormulaId);
   }, []);
+  const startRemixFromFormula = useCallback(
+    (input: Parameters<typeof formulaDraftStore.startRemixFromFormula>[0]) =>
+      formulaDraftStore.startRemixFromFormula(input),
+    [],
+  );
   const startFromAppointmentContext = useCallback(
     (input: {
       labSessionId: string;
@@ -74,7 +82,9 @@ export function useFormulaDraft() {
     loadDraft,
     getHistoryForClient,
     getLatestFormulaForClient,
+    getSavedFormulaById,
     duplicateFormula,
+    startRemixFromFormula,
     startFromAppointmentContext,
     toSavePayload,
     toFinalSavePayload,

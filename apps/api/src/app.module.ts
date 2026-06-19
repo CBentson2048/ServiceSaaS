@@ -8,6 +8,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { HealthModule } from './health/health.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { LabAppointmentsModule } from './lab-appointments/lab-appointments.module';
+import { LabBillingRulesModule } from './lab-billing-rules/lab-billing-rules.module';
 import { LabAnalyticsModule } from './lab-analytics/lab-analytics.module';
 import { LabDeviceModule } from './lab-device/lab-device.module';
 import { LabFormulaModule } from './lab-formula/lab-formula.module';
@@ -18,6 +19,7 @@ import { LocationsModule } from './locations/locations.module';
 import { MobileDashboardModule } from './mobile-dashboard/mobile-dashboard.module';
 import { OwnerBillingSettingsModule } from './owner-billing-settings/owner-billing-settings.module';
 import { OwnerBookingSettingsModule } from './owner-booking-settings/owner-booking-settings.module';
+import { OwnerCancellationPolicyModule } from './owner-cancellation-policy/owner-cancellation-policy.module';
 import { OwnerTaxSettingsModule } from './owner-tax-settings/owner-tax-settings.module';
 import { OwnerOnboardingModule } from './owner-onboarding/owner-onboarding.module';
 import { ProfileModule } from './profile/profile.module';
@@ -47,6 +49,7 @@ import { validateEnv } from './config/env.validation';
     OwnerBookingSettingsModule,
     OwnerBillingSettingsModule,
     OwnerTaxSettingsModule,
+    OwnerCancellationPolicyModule,
     PublicBookingModule,
     StaffBookingModule,
     TwilioModule,
@@ -65,6 +68,7 @@ import { validateEnv } from './config/env.validation';
     LabAppointmentsModule,
     LabAnalyticsModule,
     LabFormulaModule,
+    LabBillingRulesModule,
   ],
 })
 export class AppModule implements NestModule {

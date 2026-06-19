@@ -502,6 +502,89 @@ export interface ProductBillingSnapshot {
   roundUpIncrementSnapshot: number | null;
 }
 
+// ---------------------------------------------------------------------------
+// Service-category billing & revenue rules (Sheer Lab "Billing Rules" page)
+//
+// Per colour-service-category rules describing how product usage is charged:
+// a charging strategy, an included gram allowance, and a salon markup. These
+// live per location and are managed by owners/managers on the lab station.
+// ---------------------------------------------------------------------------
+
+/** The fixed catalogue of colour service categories these rules apply to. */
+export type ServiceBillingCategory =
+  | 'permanent_colour'
+  | 'lightener_bleach'
+  | 'semi_toners'
+  | 'special_treatments';
+
+/**
+ * How a category's product usage becomes a charge:
+ *  - `track_only`: record usage, never charge the client.
+ *  - `overage`:    charge only grams used beyond the standard allowance.
+ *  - `charge_all`: charge every gram used.
+ */
+export type ChargingStrategy = 'track_only' | 'overage' | 'charge_all';
+
+export interface ServiceBillingRule {
+  id: string;
+  locationId: string;
+  category: ServiceBillingCategory;
+  /** Human label, e.g. "Permanent Colour". Derived server-side from `category`. */
+  categoryLabel: string;
+  /** Short descriptor, e.g. "Standard single-process applications". */
+  categoryDescription: string;
+  chargingStrategy: ChargingStrategy;
+  /** Included grams that are never charged. >= 0 */
+  standardAllowanceGrams: number;
+  /** Markup applied to the chargeable cost, as a percentage. >= 0 */
+  salonMarkupPercent: number;
+}
+
+/** Location-level parameters that power the live billing preview. */
+export interface ServiceBillingGlobalParameters {
+  locationId: string;
+  /** Sample grams used in the preview simulation. >= 0 */
+  sampleUsageGrams: number;
+  /** Base product cost per gram in minor units (e.g. 18 = £0.18). >= 0 */
+  baseCostPerGramCents: number;
+  /** ISO 4217 currency code, e.g. "GBP". */
+  currencyCode: string;
+  /** Default markup suggested when seeding new categories. >= 0 */
+  defaultMarkupPercent: number;
+}
+
+export interface ServiceBillingRulesResponse {
+  rules: ServiceBillingRule[];
+  globalParameters: ServiceBillingGlobalParameters;
+}
+
+export interface UpdateServiceBillingRuleInput {
+  category: ServiceBillingCategory;
+  chargingStrategy?: ChargingStrategy;
+  standardAllowanceGrams?: number;
+  salonMarkupPercent?: number;
+}
+
+export interface UpdateServiceBillingRulesRequest {
+  rules?: UpdateServiceBillingRuleInput[];
+  globalParameters?: {
+    sampleUsageGrams?: number;
+    baseCostPerGramCents?: number;
+    currencyCode?: string;
+    defaultMarkupPercent?: number;
+  };
+}
+
+export interface UpdateServiceBillingRulesResponse {
+  rules: ServiceBillingRule[];
+  globalParameters: ServiceBillingGlobalParameters;
+}
+
+export interface ResetServiceBillingRulesResponse {
+  rules: ServiceBillingRule[];
+  globalParameters: ServiceBillingGlobalParameters;
+}
+
 export interface StaffInvitation {
   id: string;
   businessId: string;
@@ -816,6 +899,19 @@ export interface StaffBookingSummary {
   completedAt?: string;
   completedByUserProfileId?: string;
   completedByStaffProfileId?: string;
+  /**
+   * The location's cancellation-notice window in hours (from
+   * `core.location_settings.cancellation_notice_hours`). Lets the client app show
+   * the policy and decide refund-vs-forfeit. Only populated on client-facing
+   * summaries.
+   */
+  cancellationWindowHours?: number;
+  /**
+   * ISO deadline (= `startsAt − cancellationWindowHours`). Cancelling on or before
+   * this refunds the deposit and rebooking is allowed; after it, a cancel forfeits
+   * the deposit and rebooking is blocked. Only populated on client-facing summaries.
+   */
+  refundCutoffAt?: string;
 }
 
 export interface StaffBookingDetail extends StaffBookingSummary {
@@ -936,6 +1032,12 @@ export interface CancelAppointmentResponse {
   depositRefunded: boolean;
   /** Set when a refund was attempted but failed — the appointment is still cancelled. */
   refundError?: string;
+  /**
+   * True when a paid deposit was deliberately NOT refunded because the customer
+   * cancelled inside the salon's cancellation window (deposit forfeited). Only set
+   * on customer-initiated cancellations.
+   */
+  depositForfeited?: boolean;
 }
 
 export interface RescheduleAppointmentRequest {
@@ -960,6 +1062,38 @@ export interface RescheduleAppointmentResponse {
   appointment: StaffBookingDetail;
 }
 
+// ---------------------------------------------------------------------------
+// Cancellation policy (owner/manager-configured, per location)
+//
+// Controls how far ahead of an appointment a customer may self-cancel with a
+// deposit refund, and rebook. Persisted as `core.location_settings
+// .cancellation_notice_hours`; this contract is expressed in whole days because
+// that is how the policy is configured and communicated.
+// ---------------------------------------------------------------------------
+
+export interface LocationCancellationPolicy {
+  locationId: string;
+  /**
+   * Days before the appointment start that a customer may cancel (with a deposit
+   * refund) or rebook. Cancelling inside this window forfeits the deposit and
+   * rebooking is blocked.
+   */
+  cancellationWindowDays: number;
+}
+
+export interface GetCancellationPolicyResponse {
+  settings: LocationCancellationPolicy;
+}
+
+export interface UpdateCancellationPolicyRequest {
+  locationId: string;
+  cancellationWindowDays: number;
+}
+
+export interface UpdateCancellationPolicyResponse {
+  settings: LocationCancellationPolicy;
+}
+
 export interface StaffBookingPatchTestSummary {
   status: 'unknown' | 'pending' | 'passed' | 'failed' | 'expired';
   performedAt?: string;
@@ -977,18 +1111,17 @@ export type LabSessionStatus = 'unlocking' | 'active' | 'locked' | 'expired' | '
 
 export type DevicePairingStatus = 'unpaired' | 'pairing' | 'paired' | 'disconnected' | 'revoked';
 
+// Canonical appointment lifecycle: pending → accepted / rejected →
+// checked_in → awaiting_payment → paid, plus the terminal states cancelled
+// (customer/salon cancellation) and no_show. Backed by
+// booking.appointment_status_enum.
 export type AppointmentStatus =
   | 'pending'
-  | 'draft'
-  | 'booked'
-  | 'awaiting_acceptance'
-  | 'confirmed'
+  | 'accepted'
+  | 'rejected'
   | 'checked_in'
-  | 'in_progress'
-  | 'in_service'
   | 'awaiting_payment'
   | 'paid'
-  | 'completed'
   | 'cancelled'
   | 'no_show';
 
@@ -1020,6 +1153,8 @@ export interface LabPinCredentialStatus {
   staffProfileId?: string;
   displayName: string;
   email: string;
+  /** The member's role for this location — drives lab capabilities on unlock. */
+  role: Extract<UserRole, 'owner' | 'manager' | 'stylist'>;
   locationId: string;
   locationName: string;
   status: 'not_set' | StylistPinCredentialStatus;
@@ -1032,7 +1167,8 @@ export interface LabPinCredentialStatus {
 }
 
 export interface ListLabPinStatusesResponse {
-  stylists: LabPinCredentialStatus[];
+  /** PIN-eligible members (owners, managers and stylists) across the scope. */
+  credentials: LabPinCredentialStatus[];
   scope: 'owner' | 'manager';
 }
 

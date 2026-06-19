@@ -20,8 +20,13 @@ export type RootStackParamList = {
   Home: undefined;
   NewMix: undefined;
   DevicePairing: undefined;
+  BuildFormula: { entryContext: FormulaEntryContext };
+  UpdateFormula: { entryContext: FormulaEntryContext; sourceFormulaId: string };
   Formula: { entryContext?: FormulaEntryContext } | undefined;
+  MixFinalized: undefined;
   FormulaHistory: undefined;
+  Inventory: undefined;
+  BillingRules: undefined;
   Settings: undefined;
 };
 
@@ -35,7 +40,12 @@ export const routes = {
   home: 'Home',
   newMix: 'NewMix',
   devicePairing: 'DevicePairing',
+  buildFormula: 'BuildFormula',
+  updateFormula: 'UpdateFormula',
   formula: 'Formula',
+  mixFinalized: 'MixFinalized',
   formulaHistory: 'FormulaHistory',
+  inventory: 'Inventory',
+  billingRules: 'BillingRules',
   settings: 'Settings',
 } as const satisfies Record<string, keyof RootStackParamList>;

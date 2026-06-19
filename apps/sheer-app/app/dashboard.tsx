@@ -241,9 +241,10 @@ function ClientDashboard({ dashboard }: { dashboard: MobileClientDashboardRespon
 // ── Next appointment card (client hero) ───────────────────────────────────────
 
 function NextAppointmentCard({ appointment }: { appointment: StaffBookingSummary }) {
+  const manageHref = `/manage-appointment?id=${encodeURIComponent(appointment.id)}` as const;
   return (
     <Pressable
-      onPress={() => router.push('/bookings')}
+      onPress={() => router.push(manageHref)}
       style={({ pressed }) => [s.apptCard, pressed && s.pressed]}
     >
       <Text style={s.apptEyebrow}>YOUR NEXT APPOINTMENT</Text>
@@ -266,7 +267,7 @@ function NextAppointmentCard({ appointment }: { appointment: StaffBookingSummary
             <Text style={s.apptActionBtnText}>Directions</Text>
           </Pressable>
           <Pressable
-            onPress={() => router.push('/bookings')}
+            onPress={() => router.push(manageHref)}
             style={s.apptManageBtn}
           >
             <Text style={s.apptManageBtnText}>Manage</Text>
@@ -461,7 +462,7 @@ function StaffAppointmentCard({
           <Text style={s.staffApptTitle}>{appointment.clientDisplayName}</Text>
           <Text style={s.staffApptService}>{appointment.serviceNames.join(', ') || 'Service'}</Text>
         </View>
-        <View style={[s.statusPill, appointment.status === 'completed' ? s.statusGood : s.statusNeutral]}>
+        <View style={[s.statusPill, appointment.status === 'paid' ? s.statusGood : s.statusNeutral]}>
           <Text style={s.statusText}>{formatStatus(appointment.status)}</Text>
         </View>
       </View>

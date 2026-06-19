@@ -159,4 +159,118 @@ export class LabSessionInventoryController {
     const session = await this.labSessionService.assertActiveSession(sessionId);
     return this.inventory.listStockForLabSession(session, query);
   }
+
+  // ---------------------------------------------------------------------------
+  // Management surface (owner/manager only — enforced inside InventoryService).
+  // These mirror the JWT InventoryController one-for-one so the qlooqo-lab app
+  // and the web dashboard drive the same behaviour. Stock mutations are pinned
+  // to the station's own location by the service.
+  // ---------------------------------------------------------------------------
+
+  @Get(':sessionId/manage/products')
+  async manageListProducts(
+    @Param('sessionId') sessionId: string,
+    @Query() query: InventoryQueryDto,
+  ): Promise<ListInventoryProductsResponse> {
+    const session = await this.labSessionService.assertActiveSession(sessionId);
+    return this.inventory.listProductsForLabManagement(session, query);
+  }
+
+  @Get(':sessionId/manage/stock')
+  async manageListStock(
+    @Param('sessionId') sessionId: string,
+    @Query() query: StockQueryDto,
+  ): Promise<ListInventoryStockResponse> {
+    const session = await this.labSessionService.assertActiveSession(sessionId);
+    return this.inventory.listStockForLabManagement(session, query);
+  }
+
+  @Get(':sessionId/manage/movements')
+  async manageListMovements(
+    @Param('sessionId') sessionId: string,
+    @Query() query: MovementQueryDto,
+  ): Promise<ListInventoryMovementsResponse> {
+    const session = await this.labSessionService.assertActiveSession(sessionId);
+    return this.inventory.listMovementsForLabSession(session, query);
+  }
+
+  @Get(':sessionId/manage/low-stock')
+  async manageListLowStock(@Param('sessionId') sessionId: string): Promise<ListInventoryLowStockResponse> {
+    const session = await this.labSessionService.assertActiveSession(sessionId);
+    return this.inventory.listLowStockForLabSession(session);
+  }
+
+  @Get(':sessionId/manage/categories')
+  async manageListCategories(
+    @Param('sessionId') sessionId: string,
+    @Query() query: CategoryQueryDto,
+  ): Promise<ListInventoryCategoriesResponse> {
+    const session = await this.labSessionService.assertActiveSession(sessionId);
+    return this.inventory.listCategoriesForLabSession(session, query);
+  }
+
+  @Post(':sessionId/manage/products')
+  async manageCreateProduct(
+    @Param('sessionId') sessionId: string,
+    @Body() dto: UpsertInventoryProductDto,
+  ): Promise<InventoryProductResponse> {
+    const session = await this.labSessionService.assertActiveSession(sessionId);
+    return this.inventory.createProductForLabSession(session, dto);
+  }
+
+  @Patch(':sessionId/manage/products/:id')
+  async manageUpdateProduct(
+    @Param('sessionId') sessionId: string,
+    @Param('id') id: string,
+    @Body() dto: UpsertInventoryProductDto,
+  ): Promise<InventoryProductResponse> {
+    const session = await this.labSessionService.assertActiveSession(sessionId);
+    return this.inventory.updateProductForLabSession(session, id, dto);
+  }
+
+  @Post(':sessionId/manage/products/:id/archive')
+  async manageArchiveProduct(
+    @Param('sessionId') sessionId: string,
+    @Param('id') id: string,
+  ): Promise<InventoryProductResponse> {
+    const session = await this.labSessionService.assertActiveSession(sessionId);
+    return this.inventory.archiveProductForLabSession(session, id);
+  }
+
+  @Post(':sessionId/manage/stock/initialize')
+  async manageInitializeStock(
+    @Param('sessionId') sessionId: string,
+    @Body() dto: InitializeInventoryStockDto,
+  ): Promise<InventoryStockMutationResponse> {
+    const session = await this.labSessionService.assertActiveSession(sessionId);
+    return this.inventory.initializeStockForLabSession(session, dto);
+  }
+
+  @Post(':sessionId/manage/stock/adjust')
+  async manageAdjustStock(
+    @Param('sessionId') sessionId: string,
+    @Body() dto: AdjustInventoryStockDto,
+  ): Promise<InventoryStockMutationResponse> {
+    const session = await this.labSessionService.assertActiveSession(sessionId);
+    return this.inventory.adjustStockForLabSession(session, dto);
+  }
+
+  @Patch(':sessionId/manage/stock/:id')
+  async manageUpdateStockThreshold(
+    @Param('sessionId') sessionId: string,
+    @Param('id') id: string,
+    @Body() dto: UpdateInventoryStockThresholdDto,
+  ): Promise<InventoryStockMutationResponse> {
+    const session = await this.labSessionService.assertActiveSession(sessionId);
+    return this.inventory.updateStockThresholdForLabSession(session, id, dto);
+  }
+
+  @Post(':sessionId/manage/categories')
+  async manageCreateCategory(
+    @Param('sessionId') sessionId: string,
+    @Body() dto: CreateInventoryCategoryDto,
+  ): Promise<InventoryCategoryResponse> {
+    const session = await this.labSessionService.assertActiveSession(sessionId);
+    return this.inventory.createCategoryForLabSession(session, dto);
+  }
 }

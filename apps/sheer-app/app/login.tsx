@@ -32,10 +32,6 @@ export default function LoginScreen() {
 
   return (
     <Screen>
-      <SectionHeader
-        title="QLOOQO"
-        subtitle="Personal QLOOQO app"
-      />
       <Card>
         <SectionHeader
           title="Welcome back"

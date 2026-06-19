@@ -500,6 +500,92 @@ export class InventoryService {
     return { category: toCategory(data) };
   }
 
+  // ---------------------------------------------------------------------------
+  // Lab-session inventory management (owner/manager only)
+  //
+  // The lab station authenticates with a PIN session, not a JWT, so it cannot
+  // reach the JWT-gated InventoryController. To give owners/managers working at
+  // a station the full management surface WITHOUT duplicating validation, we
+  // project the runtime session into a minimal AuthUser scoped to the station's
+  // single location and delegate to the exact same methods the web dashboard
+  // uses. This keeps both surfaces behaviourally identical and means:
+  //   - `assertManagerOrOwner` rejects stylist sessions (403) — management stays
+  //     owner/manager-only, never stylists or clients.
+  //   - every stock mutation is forced onto the station's own location.
+  // ---------------------------------------------------------------------------
+
+  listProductsForLabManagement(session: LabRuntimeSession, query: InventoryQueryDto): Promise<ListInventoryProductsResponse> {
+    return this.listProducts(this.labActor(session), query);
+  }
+
+  listStockForLabManagement(session: LabRuntimeSession, query: StockQueryDto): Promise<ListInventoryStockResponse> {
+    return this.listStock(this.labActor(session), { ...query, locationId: session.locationId });
+  }
+
+  listMovementsForLabSession(session: LabRuntimeSession, query: MovementQueryDto): Promise<ListInventoryMovementsResponse> {
+    return this.listMovements(this.labActor(session), { ...query, locationId: session.locationId });
+  }
+
+  listLowStockForLabSession(session: LabRuntimeSession): Promise<ListInventoryLowStockResponse> {
+    return this.listLowStock(this.labActor(session), session.locationId);
+  }
+
+  listCategoriesForLabSession(session: LabRuntimeSession, query: CategoryQueryDto): Promise<ListInventoryCategoriesResponse> {
+    return this.listCategories(this.labActor(session), query);
+  }
+
+  createProductForLabSession(session: LabRuntimeSession, dto: UpsertInventoryProductDto): Promise<InventoryProductResponse> {
+    return this.createProduct(this.labActor(session), dto);
+  }
+
+  updateProductForLabSession(
+    session: LabRuntimeSession,
+    productId: string,
+    dto: UpsertInventoryProductDto,
+  ): Promise<InventoryProductResponse> {
+    return this.updateProduct(this.labActor(session), productId, dto);
+  }
+
+  archiveProductForLabSession(session: LabRuntimeSession, productId: string): Promise<InventoryProductResponse> {
+    return this.archiveProduct(this.labActor(session), productId);
+  }
+
+  createCategoryForLabSession(session: LabRuntimeSession, dto: CreateInventoryCategoryDto): Promise<InventoryCategoryResponse> {
+    return this.createCategory(this.labActor(session), dto);
+  }
+
+  initializeStockForLabSession(
+    session: LabRuntimeSession,
+    dto: InitializeInventoryStockDto,
+  ): Promise<InventoryStockMutationResponse> {
+    return this.initializeStock(this.labActor(session), { ...dto, locationId: session.locationId });
+  }
+
+  adjustStockForLabSession(session: LabRuntimeSession, dto: AdjustInventoryStockDto): Promise<InventoryStockMutationResponse> {
+    return this.adjustStock(this.labActor(session), { ...dto, locationId: session.locationId });
+  }
+
+  updateStockThresholdForLabSession(
+    session: LabRuntimeSession,
+    stockId: string,
+    dto: UpdateInventoryStockThresholdDto,
+  ): Promise<InventoryStockMutationResponse> {
+    return this.updateStockThreshold(this.labActor(session), stockId, dto);
+  }
+
+  private labActor(session: LabRuntimeSession): AuthUser {
+    return {
+      id: session.userProfileId,
+      role: session.role,
+      businessId: session.businessId,
+      allowedLocationIds: [session.locationId],
+      locationScope: { kind: 'locations', locationIds: [session.locationId] },
+      locations: [],
+      profile: { id: session.userProfileId, email: '', fullName: '' },
+      staffProfileId: session.staffProfileId,
+    };
+  }
+
   private assertManagerOrOwner(actor: AuthUser): void {
     if (actor.role !== 'owner' && actor.role !== 'manager') {
       throw new ForbiddenException('Inventory is limited to owners and managers');

@@ -33,6 +33,26 @@ export interface FormulaCostBasis {
   currencyCode: string;
 }
 
+/**
+ * Display-only snapshot of the formula a remix is continuing from. The remix is
+ * finalized as its own new formula on the same appointment/visit (so the backend
+ * deducts only the newly-weighed grams and aggregates visit usage on its own) —
+ * this baseline is never sent in the save payload. It exists purely so the weigh
+ * and finalize screens can show "total used = previous mix + this remix".
+ */
+export interface FormulaRemixBaseline {
+  sourceFormulaId: string;
+  /** The remix percentage chosen against the previous mix's actual grams. */
+  percent: number;
+  /** Sum of the previous mix's captured grams. */
+  totalGrams: number;
+  totalCostCents: number;
+  billableChargeCents: number;
+  currencyCode: string;
+  /** Per-product grams from the previous mix, aggregated by product name. */
+  productUsage: { productName: string; grams: number }[];
+}
+
 export interface FormulaIngredientRow {
   id: string;
   identityMode: FormulaIngredientIdentityMode;
@@ -47,6 +67,13 @@ export interface FormulaIngredientRow {
   ratio?: string;
   processingTimeMinutes?: number;
   capturedGrams?: number;
+  /**
+   * Target/planned grams set while building the formula (Build Formula screen),
+   * before any weighing happens. Pure guidance metadata — it is NOT used for
+   * costing (cost is derived from `capturedGrams`) and is not included in the
+   * save payload, so it never affects billing or inventory.
+   */
+  plannedGrams?: number;
   wasteGrams?: number;
   weightSource?: FormulaWeightSource;
   captureStatus: FormulaRowCaptureStatus;
@@ -68,6 +95,8 @@ export interface FormulaDraftSession {
   activeIngredientId?: string;
   lastLiveReading?: BleWeightReading;
   sourceFormulaId?: string;
+  /** Set when this draft is a remix of a previous mix (see FormulaRemixBaseline). */
+  remixBaseline?: FormulaRemixBaseline;
   totalCostCents: number;
   totalWasteCostCents: number;
   billableChargeCents: number;

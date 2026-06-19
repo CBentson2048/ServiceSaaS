@@ -438,7 +438,7 @@ export class PublicBookingService {
     const appointment = await this.insertMobileAppointment(request, client, context);
     await this.insertMobileAppointmentServices(appointment.id, context);
 
-    // The booking is 'awaiting_acceptance' — do NOT confirm to the client or link
+    // The booking is 'pending' — do NOT confirm to the client or link
     // a rebooking outcome yet. Client confirmation + reminders + rebooking credit
     // are scheduled when an owner/manager accepts the request (LabAppointmentsService.accept).
 
@@ -922,7 +922,7 @@ export class PublicBookingService {
           .eq('business_id', businessId)
           .eq('location_id', locationId)
           .or(staffIds.map((id) => `assigned_staff_profile_id.eq.${id}`).join(','))
-          .in('status', ['awaiting_acceptance', 'pending', 'confirmed', 'checked_in', 'in_progress'])
+          .in('status', ['pending', 'accepted', 'checked_in'])
           .gte('scheduled_end_at', searchStart.toISOString())
           .lt('scheduled_start_at', searchEnd.toISOString())
           .returns<AppointmentRow[]>(),
@@ -1298,8 +1298,8 @@ export class PublicBookingService {
       requestedStaffProfileId: input.staffRequestMode === 'specific_staff' ? context.stylist.id : null,
       staffRequestMode: input.staffRequestMode,
       bookingChannel: 'client_app',
-      // Client-initiated bookings await owner/manager acceptance before they are confirmed.
-      status: 'awaiting_acceptance',
+      // Client-initiated bookings await owner/manager acceptance before they are accepted.
+      status: 'pending',
       scheduledStart: context.selectedStart,
       scheduledEnd: context.selectedEnd,
       communicationPreference: input.communicationPreference,
@@ -1333,7 +1333,7 @@ export class PublicBookingService {
     requestedStaffProfileId: string | null;
     staffRequestMode: 'specific_staff' | 'next_available';
     bookingChannel: 'client_app' | 'staff_app' | 'web_dashboard' | 'phone' | 'walk_in' | 'api';
-    /** Initial status. Client bookings open as 'awaiting_acceptance'; staff bookings as 'confirmed' (default). */
+    /** Initial status. Client bookings open as 'pending'; staff bookings as 'accepted' (default). */
     status?: AppointmentStatus;
     scheduledStart: Date;
     scheduledEnd: Date;
@@ -1353,7 +1353,7 @@ export class PublicBookingService {
         assigned_staff_profile_id: params.assignedStaffProfileId,
         requested_staff_profile_id: params.requestedStaffProfileId,
         staff_request_mode: params.staffRequestMode,
-        status: params.status ?? 'confirmed',
+        status: params.status ?? 'accepted',
         booking_channel: params.bookingChannel,
         scheduled_start_at: params.scheduledStart.toISOString(),
         scheduled_end_at: params.scheduledEnd.toISOString(),
@@ -1730,7 +1730,7 @@ export class PublicBookingService {
       `Finalized booking attempt ${confirmedAttempt.id} into appointment ${appointment.id} for PaymentIntent ${paymentIntent.id}`,
     );
 
-    // The paid booking is 'awaiting_acceptance' — client confirmation + reminders are
+    // The paid booking is 'pending' — client confirmation + reminders are
     // scheduled when an owner/manager accepts it, not here.
 
     return appointment;
@@ -1760,7 +1760,7 @@ export class PublicBookingService {
           attempt.staff_request_mode === 'specific_staff' ? attempt.stylist_profile_id : null,
         staff_request_mode: attempt.staff_request_mode,
         // Client paid the deposit, but the booking still awaits owner/manager acceptance.
-        status: 'awaiting_acceptance',
+        status: 'pending',
         booking_channel: 'api',
         scheduled_start_at: context.selectedStart.toISOString(),
         scheduled_end_at: context.selectedEnd.toISOString(),

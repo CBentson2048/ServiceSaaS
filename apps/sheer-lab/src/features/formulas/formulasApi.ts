@@ -1,8 +1,26 @@
 import type { LocationProductBillingSettings } from '@sheer/domain';
-import type { FormulaSavePayload } from '@sheer/lab-core';
+import type { FormulaBillingBreakdown, FormulaSavePayload } from '@sheer/lab-core';
 
 import { appConfig } from '../../config/appConfig';
 import { sheerApiClient } from '../../lib/api/client';
+
+export interface LabProductUsage {
+  productName: string;
+  grams: number;
+}
+
+export interface LabSessionBillingBreakdown {
+  appointmentId: string;
+  billingLineItem: {
+    visitId: string;
+    amountCents: number;
+    currencyCode: string;
+    formulaBreakdown: FormulaBillingBreakdown[];
+    updatedAt: string;
+  } | null;
+  /** Per-product grams spent in the finalized mix(es) for this appointment. */
+  productUsage: LabProductUsage[];
+}
 
 export async function startFormula(input: {
   labSessionId: string;
@@ -48,6 +66,27 @@ export async function getLabProductBillingSettings(
 
   const data = (await response.json()) as { settings: LocationProductBillingSettings };
   return data.settings;
+}
+
+/**
+ * Real, durable billing breakdown for a finalized appointment, scoped to the
+ * lab session's location. Reads the product-usage line item written at finalize
+ * time. `billingLineItem` is null when no mix has been finalized for the
+ * appointment's visit yet.
+ */
+export async function getLabSessionBillingBreakdown(
+  sessionId: string,
+  appointmentId: string,
+): Promise<LabSessionBillingBreakdown> {
+  const response = await fetch(
+    `${appConfig.apiBaseUrl}/lab/formulas/session/${encodeURIComponent(sessionId)}/appointment/${encodeURIComponent(appointmentId)}/billing-breakdown`,
+  );
+
+  if (!response.ok) {
+    throw new Error(`Could not load billing breakdown (${response.status})`);
+  }
+
+  return (await response.json()) as LabSessionBillingBreakdown;
 }
 
 export async function getLatestFormulaForClient(clientProfileId: string) {

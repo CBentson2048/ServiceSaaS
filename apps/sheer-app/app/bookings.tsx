@@ -116,8 +116,6 @@ export default function BookingsScreen() {
   return (
     <ProtectedScreen allowedRoles={['manager', 'stylist']}>
       <Screen>
-        <SectionHeader title="Today's Bookings" subtitle="Your assigned appointments for today." />
-
         <AppButton label="+ New booking" onPress={() => router.push('/new-booking')} />
 
         {error ? (
@@ -166,7 +164,7 @@ export default function BookingsScreen() {
             {selectedBooking.clientNote ? (
               <Text style={styles.warningText}>Client note: {selectedBooking.clientNote}</Text>
             ) : null}
-            {selectedBooking.status === 'paid' || selectedBooking.status === 'completed' ? (
+            {selectedBooking.status === 'paid' ? (
               <CompletionStatusBanner status={selectedBooking.status} />
             ) : (
               <AppButton
@@ -290,7 +288,7 @@ function BookingCard({
         {booking.clientNote ? <Text style={styles.muted}>Note: {booking.clientNote}</Text> : null}
         {loading ? <Text style={styles.muted}>Opening appointment...</Text> : null}
       </Pressable>
-      {booking.status === 'paid' || booking.status === 'completed' ? (
+      {booking.status === 'paid' ? (
         <CompletionStatusBanner status={booking.status} />
       ) : (
         <AppButton
@@ -314,8 +312,8 @@ function StatusPill({ status }: { status: StaffBookingSummary['status'] }) {
 
 // Settled/completed states are not actionable — render them as a confirmation
 // banner rather than a (disabled) button so they don't read as a CTA.
-function CompletionStatusBanner({ status }: { status: StaffBookingSummary['status'] }) {
-  const label = status === 'paid' ? 'Paid' : 'Completed';
+function CompletionStatusBanner({ status: _status }: { status: StaffBookingSummary['status'] }) {
+  const label = 'Paid';
   return (
     <View style={styles.statusBanner}>
       <Text style={styles.statusBannerCheck}>✓</Text>
@@ -592,24 +590,18 @@ function TimeSlots({ value, onChange }: { value: string; onChange: (time: string
 
 function statusStyle(status: StaffBookingSummary['status']) {
   switch (status) {
-    case 'confirmed':
+    case 'accepted':
     case 'checked_in':
-    case 'in_progress':
-    case 'in_service':
       return styles.statusActive;
-    case 'awaiting_acceptance':
     case 'awaiting_payment':
+    case 'pending':
       return styles.statusPending;
     case 'paid':
       return styles.statusComplete;
-    case 'pending':
-    case 'draft':
-    case 'booked':
-      return styles.statusPending;
+    case 'rejected':
     case 'cancelled':
     case 'no_show':
       return styles.statusDanger;
-    case 'completed':
     default:
       return styles.statusComplete;
   }
@@ -627,7 +619,7 @@ function formatStatus(status: string): string {
 }
 
 function isCompletionLocked(status: StaffBookingSummary['status']): boolean {
-  return status === 'paid' || status === 'completed' || status === 'cancelled' || status === 'no_show' || status === 'awaiting_acceptance' || status === 'pending' || status === 'draft' || status === 'booked';
+  return status === 'paid' || status === 'cancelled' || status === 'no_show' || status === 'rejected' || status === 'pending';
 }
 
 function formatMoney(amountCents: number, currencyCode: string): string {

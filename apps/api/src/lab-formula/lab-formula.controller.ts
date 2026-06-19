@@ -91,6 +91,15 @@ export class LabSessionFormulaController {
     return { settings: await this.labFormulaService.getProductBillingSettingsForLabSession(session) };
   }
 
+  @Get(':sessionId/appointment/:appointmentId/billing-breakdown')
+  async billingBreakdown(
+    @Param('sessionId') sessionId: string,
+    @Param('appointmentId') appointmentId: string,
+  ) {
+    const session = await this.labSessionService.assertActiveSession(sessionId);
+    return this.labFormulaService.getBillingBreakdownForLabSession(session, appointmentId);
+  }
+
   @Post(':sessionId/:id/finalize')
   async finalize(
     @Param('sessionId') sessionId: string,

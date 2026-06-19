@@ -16,6 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { RootStackParamList } from '../../app/navigation/routes';
+import { featureFlags } from '../../config/featureFlags';
 import { logoutLabSession } from '../../features/sheer-lab/labSession';
 import { labLightTheme } from '../../theme/labTheme';
 
@@ -70,7 +71,7 @@ export type NavKey = 'dashboard' | 'new-mix' | 'history' | 'inventory' | 'billin
 
 // Routes the sidebar can reach. All have `undefined` params so a bare
 // navigation.navigate(route) is type-safe.
-type DirectRoute = 'Home' | 'NewMix' | 'FormulaHistory';
+type DirectRoute = 'Home' | 'NewMix' | 'FormulaHistory' | 'Inventory' | 'BillingRules';
 
 interface NavSpec {
   key: NavKey;
@@ -83,10 +84,23 @@ const NAV_ITEMS: NavSpec[] = [
   { key: 'dashboard', label: 'Dashboard', glyph: '▦', route: 'Home' },
   { key: 'new-mix', label: 'New Mix', glyph: '🧪', route: 'NewMix' },
   { key: 'history', label: 'History', glyph: '🕘', route: 'FormulaHistory' },
-  { key: 'inventory', label: 'Inventory', glyph: '📦' },
-  { key: 'billing', label: 'Billing Rules', glyph: '🧾' },
+  { key: 'inventory', label: 'Inventory', glyph: '📦', route: 'Inventory' },
+  { key: 'billing', label: 'Billing Rules', glyph: '🧾', route: 'BillingRules' },
   { key: 'audit', label: 'Audit Trail', glyph: '🛡️' },
 ];
+
+// Billing Rules and Audit Trail are hidden from the UI behind their feature
+// flags; the screens/routes stay intact, they are simply dropped from the
+// sidebar/nav for every role until the flags are flipped on.
+const VISIBLE_NAV_ITEMS = NAV_ITEMS.filter(
+  (item) =>
+    (item.key !== 'billing' || featureFlags.billingRules) && (item.key !== 'audit' || featureFlags.auditTrail),
+);
+
+// Destinations restricted to owners/managers — stylists see them disabled.
+function isManagedNav(key: NavKey): boolean {
+  return key === 'inventory' || key === 'billing';
+}
 
 // ---------------------------------------------------------------------------
 // Shell
@@ -115,6 +129,11 @@ export function LabShell({
   const layout = useLabLayout();
   const showSidebar = layout.mode !== 'phone';
 
+  // Inventory and Billing Rules are owner/manager-only (stylists get a lock
+  // screen), so those destinations are only live for those roles — stylists keep
+  // the "Soon" affordance rather than being routed to a wall.
+  const canManageOps = session?.role === 'owner' || session?.role === 'manager';
+
   const navigate = useCallback(
     (item: NavSpec) => {
       if (!item.route || item.key === active) return;
@@ -136,7 +155,7 @@ export function LabShell({
 
   return (
     <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
-      <StatusBar barStyle="dark-content" backgroundColor={c.background} />
+      <StatusBar barStyle="light-content" backgroundColor={c.background} />
       <TopBar
         session={session}
         bleConnected={bleConnected}
@@ -146,7 +165,13 @@ export function LabShell({
 
       <View style={[styles.body, showSidebar ? styles.bodyRow : styles.bodyColumn]}>
         {showSidebar ? (
-          <Sidebar active={active} width={layout.sidebarWidth} onNav={navigate} onSignOut={handleSignOut} />
+          <Sidebar
+            active={active}
+            width={layout.sidebarWidth}
+            canManageOps={canManageOps}
+            onNav={navigate}
+            onSignOut={handleSignOut}
+          />
         ) : null}
 
         <ScrollView
@@ -158,7 +183,9 @@ export function LabShell({
           }
         >
           <View style={[styles.contentWrap, { gap: layout.gap }]}>
-            {!showSidebar ? <NavScroller active={active} onNav={navigate} onSignOut={handleSignOut} /> : null}
+            {!showSidebar ? (
+              <NavScroller active={active} canManageOps={canManageOps} onNav={navigate} onSignOut={handleSignOut} />
+            ) : null}
             {children}
             {footer ?? <DefaultFooter session={session} />}
           </View>
@@ -225,20 +252,22 @@ function TopBar({
 function Sidebar({
   active,
   width,
+  canManageOps,
   onNav,
   onSignOut,
 }: {
   active: NavKey;
   width: number;
+  canManageOps: boolean;
   onNav: (item: NavSpec) => void;
   onSignOut: () => void;
 }): React.JSX.Element {
   return (
     <View style={[styles.sidebar, { width }]}>
       <View style={styles.sidebarNav}>
-        {NAV_ITEMS.map((item) => {
+        {VISIBLE_NAV_ITEMS.map((item) => {
           const isActive = item.key === active;
-          const soon = !item.route;
+          const soon = !item.route || (isManagedNav(item.key) && !canManageOps);
           return (
             <Pressable
               key={item.key}
@@ -247,11 +276,11 @@ function Sidebar({
               onPress={() => onNav(item)}
               style={[styles.navItem, isActive && styles.navItemActive, soon && styles.navItemSoon]}
             >
-              <Text style={styles.navGlyph}>{item.glyph}</Text>
+              <Text style={[styles.navGlyph, styles.sidebarGlyph, isActive && styles.sidebarGlyphActive]}>{item.glyph}</Text>
               <Text style={[styles.navLabel, isActive && styles.navLabelActive]} numberOfLines={1}>
                 {item.label}
               </Text>
-              {soon ? <Text style={styles.soonTag}>Soon</Text> : null}
+              {soon ? <Text style={styles.sidebarSoonTag}>Soon</Text> : null}
             </Pressable>
           );
         })}
@@ -267,10 +296,12 @@ function Sidebar({
 
 function NavScroller({
   active,
+  canManageOps,
   onNav,
   onSignOut,
 }: {
   active: NavKey;
+  canManageOps: boolean;
   onNav: (item: NavSpec) => void;
   onSignOut: () => void;
 }): React.JSX.Element {
@@ -281,9 +312,9 @@ function NavScroller({
       contentContainerStyle={styles.navScroller}
       style={styles.navScrollerWrap}
     >
-      {NAV_ITEMS.map((item) => {
+      {VISIBLE_NAV_ITEMS.map((item) => {
         const isActive = item.key === active;
-        const soon = !item.route;
+        const soon = !item.route || (isManagedNav(item.key) && !canManageOps);
         return (
           <Pressable
             key={item.key}
@@ -438,9 +469,9 @@ const styles = StyleSheet.create({
   userRole: { color: c.textMuted, fontSize: t.typography.fontSize.micro },
 
   sidebar: {
-    backgroundColor: c.surface,
+    backgroundColor: c.sidebar,
     borderRightWidth: 1,
-    borderRightColor: c.border,
+    borderRightColor: c.sidebarBorder,
     paddingVertical: t.spacing.lg,
     paddingHorizontal: t.spacing.md,
     justifyContent: 'space-between',
@@ -454,12 +485,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: t.spacing.md,
     borderRadius: t.radius.card,
   },
-  navItemActive: { backgroundColor: c.primarySoft },
+  // Active item reads as a solid brand pill (rounded via `navItem.borderRadius`)
+  // with white text/glyph, rather than the older soft-tinted fill.
+  navItemActive: { backgroundColor: c.sidebarActive },
   navItemSoon: { opacity: 0.55 },
   navGlyph: { fontSize: 16 },
-  navLabel: { flex: 1, color: c.textSecondary, fontSize: t.typography.fontSize.small, fontWeight: '600' },
-  navLabelActive: { color: c.primary },
+  // Lightens non-emoji glyphs (e.g. the ▦ dashboard mark) on the dark rail;
+  // colour emoji ignore the tint either way.
+  sidebarGlyph: { color: c.sidebarText },
+  // On the filled active pill the ▦-style glyph flips to white to match the label.
+  sidebarGlyphActive: { color: c.sidebarActiveText },
+  navLabel: { flex: 1, color: c.sidebarText, fontSize: t.typography.fontSize.small, fontWeight: '600' },
+  navLabelActive: { color: c.sidebarActiveText, fontWeight: '700' },
   soonTag: { color: c.textMuted, fontSize: t.typography.fontSize.micro, fontWeight: '600' },
+  // Light variant for the deep-purple sidebar rail; `soonTag` above stays dark
+  // for the mobile nav scroller chips that sit on the light canvas.
+  sidebarSoonTag: { color: c.sidebarTextMuted, fontSize: t.typography.fontSize.micro, fontWeight: '600' },
   signOut: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -468,10 +509,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: t.spacing.md,
     borderRadius: t.radius.card,
     borderWidth: 1,
-    borderColor: c.border,
+    borderColor: c.sidebarBorder,
   },
-  signOutGlyph: { fontSize: 16, color: c.dangerText },
-  signOutLabel: { color: c.textPrimary, fontWeight: '600', fontSize: t.typography.fontSize.small },
+  signOutGlyph: { fontSize: 16, color: c.sidebarText },
+  signOutLabel: { color: c.sidebarText, fontWeight: '600', fontSize: t.typography.fontSize.small },
 
   navScrollerWrap: { marginBottom: t.spacing.xs },
   navScroller: { flexDirection: 'row', gap: t.spacing.sm, paddingVertical: t.spacing.xs },

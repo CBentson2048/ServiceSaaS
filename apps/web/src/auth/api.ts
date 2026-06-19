@@ -120,9 +120,12 @@ import type {
   UpsertServiceUpgradeSuggestionRequest,
   WeeklyRotaResponse,
   AdminUpdateProfileRequest,
+  GetCancellationPolicyResponse,
   GetLocationProductBillingSettingsResponse,
   GetLocationTaxSettingsResponse,
   ListProfilesResponse,
+  UpdateCancellationPolicyRequest,
+  UpdateCancellationPolicyResponse,
   UpdateCurrentProfileRequest,
   UpdateLocationProductBillingSettingsRequest,
   UpdateLocationProductBillingSettingsResponse,
@@ -1110,6 +1113,25 @@ export async function completePasswordReset(input: {
   });
 }
 
+// -------------------- Account deletion (public; App Store Guideline 5.1.1(v)) --------------------
+
+// Authenticates a client for self-service account deletion. Uses the `sheer_app`
+// surface — the same one the qlooqo mobile app signs in with — because the
+// `web_dashboard` surface rejects client logins (see assertSurfaceAccess in the
+// API). The returned access token is used only to call deleteMyAccount below.
+export async function signInForAccountDeletion(input: LoginInput): Promise<LoginResponse> {
+  return request<LoginResponse>('/auth/login', {
+    method: 'POST',
+    body: { ...input, surface: 'sheer_app' },
+  });
+}
+
+// Permanently deletes the signed-in caller's own account. The API restricts this
+// to client accounts (DELETE /profiles/me → 403 for staff/owner/manager).
+export async function deleteMyAccount(accessToken: string): Promise<void> {
+  await request<void>('/profiles/me', { method: 'DELETE', accessToken });
+}
+
 export async function getOwnerOnboardingBootstrap(): Promise<OwnerOnboardingBootstrap> {
   return request<OwnerOnboardingBootstrap>('/owner/onboarding/bootstrap');
 }
@@ -1401,6 +1423,29 @@ export async function updateLocationTaxSettings(
   payload: UpdateLocationTaxSettingsRequest,
 ): Promise<UpdateLocationTaxSettingsResponse> {
   return request<UpdateLocationTaxSettingsResponse>('/owner/tax-settings', {
+    method: 'PATCH',
+    body: payload,
+    accessToken,
+  });
+}
+
+// -------------------- Cancellation policy (owner + manager) --------------------
+
+export async function getCancellationPolicy(
+  accessToken: string,
+  locationId: string,
+): Promise<GetCancellationPolicyResponse> {
+  return request<GetCancellationPolicyResponse>(
+    `/owner/cancellation-policy?locationId=${encodeURIComponent(locationId)}`,
+    { accessToken },
+  );
+}
+
+export async function updateCancellationPolicy(
+  accessToken: string,
+  payload: UpdateCancellationPolicyRequest,
+): Promise<UpdateCancellationPolicyResponse> {
+  return request<UpdateCancellationPolicyResponse>('/owner/cancellation-policy', {
     method: 'PATCH',
     body: payload,
     accessToken,

@@ -16,6 +16,7 @@ import { CreateLocationPage } from './pages/CreateLocationPage';
 import { CrmClientDetailPage } from './pages/CrmClientDetailPage';
 import { CrmClientsPage } from './pages/CrmClientsPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { DeleteAccountPage } from './pages/DeleteAccountPage';
 import { EditLocationPage } from './pages/EditLocationPage';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
 import { InventoryCategoriesPage } from './pages/InventoryCategoriesPage';
@@ -61,6 +62,14 @@ export function App() {
       <Route path="/auth/reset-password" element={<ResetPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/auth/password-reset-complete" element={<PasswordResetCompletePage />} />
+      {/*
+        Public self-service account deletion (App Store Guideline 5.1.1(v)).
+        This is the URL given to App Store Connect; a client signs in with their
+        qlooqo app credentials to delete their own account. Both paths resolve to
+        the same page so either can be used as the published link.
+      */}
+      <Route path="/delete-account" element={<DeleteAccountPage />} />
+      <Route path="/account/delete" element={<DeleteAccountPage />} />
       <Route path="/book/location" element={<ClientBookingLocationPage />} />
       <Route path="/book/service" element={<ClientBookingServicePage />} />
       <Route path="/book/date-time" element={<ClientBookingDateTimePage />} />

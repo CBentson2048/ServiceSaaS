@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import * as SecureStore from 'expo-secure-store';
+import { router } from 'expo-router';
 import type { AuthSession, AuthUser } from '@sheer/domain';
 import * as authApi from './api';
 
@@ -41,6 +42,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setStatus('anonymous');
     await SecureStore.deleteItemAsync(STORAGE_KEY);
   }, []);
+
+  // When any authenticated request times out (401), clear the stored session and
+  // send the user to the login screen so they can sign back in immediately.
+  useEffect(() => {
+    authApi.setUnauthorizedHandler(() => {
+      void clearSession();
+      router.replace('/login');
+    });
+    return () => authApi.setUnauthorizedHandler(null);
+  }, [clearSession]);
 
   useEffect(() => {
     let cancelled = false;
