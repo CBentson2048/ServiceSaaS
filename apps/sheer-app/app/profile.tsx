@@ -16,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import type { ClientLabFormulaSummary, CrmVisitSummary, UserProfileResponse } from '@sheer/domain';
+import { userHasRole } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
 import { StylistTabBar } from '../src/navigation/StylistTabBar';
@@ -37,11 +38,10 @@ interface EditForm {
 export default function ProfileScreen() {
   const auth = useAuth();
   const accessToken = auth.session?.accessToken ?? '';
-  const userRole = auth.user?.role;
-  const isClient = userRole === 'client';
+  const isClient = userHasRole(auth.user, 'client');
   // Stylists reach Profile via the bottom tab bar (a root tab), so there is no
   // dashboard to go "back" to — show the tab bar instead of a back button.
-  const showStylistTabs = userRole === 'stylist';
+  const showStylistTabs = userHasRole(auth.user, 'stylist');
 
   const [signingOut, setSigningOut] = useState(false);
   const [deleting, setDeleting] = useState(false);

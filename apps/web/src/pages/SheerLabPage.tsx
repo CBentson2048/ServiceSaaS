@@ -6,6 +6,7 @@ import type {
   SharedDeviceSummary,
   SheerLabAnalyticsRange,
 } from '@sheer/domain';
+import { userHasAnyRole, userHasRole } from '@sheer/domain';
 import {
   ApiRequestError,
   listLabDevices,
@@ -43,7 +44,7 @@ function deviceStatusGroup(status: SharedDeviceSummary['status']): Exclude<Devic
 export function SheerLabPage() {
   const auth = useAuth();
   const accessToken = auth.session?.accessToken;
-  const canViewAnalytics = auth.user?.role === 'owner' || auth.user?.role === 'manager';
+  const canViewAnalytics = userHasAnyRole(auth.user, ['owner', 'manager']);
   // The staff + device lists filter by the shared sidebar scope ("All" shows
   // every location). The sentinel is the literal 'all', matching the filter
   // checks below, so the scope value drops straight in.
@@ -131,7 +132,7 @@ export function SheerLabPage() {
     }
   }, [deviceLocationId, locations]);
 
-  if (auth.status === 'authenticated' && auth.user?.role === 'stylist') {
+  if (auth.status === 'authenticated' && userHasRole(auth.user, 'stylist')) {
     return <Navigate to="/unauthorized" replace />;
   }
 
@@ -276,7 +277,7 @@ export function SheerLabPage() {
         <SummaryTile
           label="Locations"
           value={String(locations.length)}
-          hint={auth.user?.role === 'manager' ? 'In your scope' : 'Across business'}
+          hint={userHasRole(auth.user, 'owner') ? 'Across business' : 'In your scope'}
         />
       </div>
 

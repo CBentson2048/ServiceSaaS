@@ -272,6 +272,89 @@ describe('LabAppointmentsService — appointment completion', () => {
     expect(result.billing.balanceDueCents).toBe(8400);
   });
 
+  it('itemises the colour charge into one line per product and persists the breakdown', async () => {
+    const awaitingPayment = appointmentRow({
+      status: 'awaiting_payment',
+      completed_at: '2026-05-13T10:01:00.000Z',
+    });
+    // Two saved formulas worth £20 of product, billed at cost. The colour products
+    // used (£15 of Blondor, £5 of Koleston) should split the £20 charge accordingly.
+    const savedFormulas = [
+      {
+        id: 'formula_1',
+        external_formula_id: 'f1',
+        actual_cost_cents: 2000,
+        billable_charge_cents: 2000,
+        currency_code: 'GBP',
+        saved_at: '2026-05-13T09:45:00.000Z',
+      },
+    ];
+    const billingRules = {
+      product_billing_enabled: true,
+      product_billing_rule: 'cost_only',
+      product_markup_percent: null,
+      product_fixed_uplift_amount: null,
+      product_round_up_enabled: false,
+      product_round_up_increment: null,
+    };
+    const formulaItems = [
+      { product_name: 'Blondor', brand: 'Wella', shade: null, cost_cents: 1500 },
+      { product_name: 'Koleston', brand: 'Wella', shade: '9/1', cost_cents: 500 },
+    ];
+    // The persisted product_usage line is a single rolled-up £20 row carrying the
+    // per-product split in metadata — checkout expands it back into two lines.
+    const persistedLines = [
+      { line_type: 'service', description: 'Cut and blow dry', amount_cents: 5000, currency_code: 'GBP' },
+      {
+        line_type: 'product_usage',
+        description: 'Product usage',
+        amount_cents: 2000,
+        currency_code: 'GBP',
+        metadata: {
+          product_breakdown: [
+            { description: 'Wella Blondor', cost_cents: 1500 },
+            { description: 'Wella Koleston · 9/1', cost_cents: 500 },
+          ],
+        },
+      },
+    ];
+    const client = createMockSupabaseClient([
+      { data: appointmentRow(), error: null },
+      { data: awaitingPayment, error: null },
+      { error: null },
+      { data: null, error: null },
+      { data: visitRow(), error: null },
+      { error: null },
+      { data: savedFormulas, error: null },
+      { data: billingRules, error: null },
+      { data: formulaItems, error: null },
+      { error: null },
+      { data: persistedLines, error: null },
+      { data: [clientProfileRow()], error: null },
+    ]);
+    const service = createService(client);
+
+    const result = await service.complete(stylistActor(), 'appointment_1');
+
+    const colourLines = result.billing.lineItems.filter((item) => item.lineType === 'product_usage');
+    expect(colourLines.map((item) => item.description)).toEqual(['Wella Blondor', 'Wella Koleston · 9/1']);
+    expect(colourLines.map((item) => item.amountCents)).toEqual([1500, 500]);
+    // Per-product lines sum to the rolled-up colour charge, and totals are unchanged.
+    expect(result.billing.productUsageTotalCents).toBe(2000);
+    expect(result.billing.serviceTotalCents).toBe(5000);
+    expect(result.billing.totalCents).toBe(7000);
+    expect(result.billing.balanceDueCents).toBe(7000);
+
+    // The per-product split is derived from formula_items and persisted on the line.
+    const upsertCall = client.queries
+      .flatMap((query) => query.calls)
+      .find((call) => call.method === 'upsert' && (call.args[0] as { line_type?: string }).line_type === 'product_usage');
+    expect((upsertCall?.args[0] as { metadata: { product_breakdown: unknown } }).metadata.product_breakdown).toEqual([
+      { description: 'Wella Blondor', cost_cents: 1500 },
+      { description: 'Wella Koleston · 9/1', cost_cents: 500 },
+    ]);
+  });
+
   it('replays awaiting-payment appointments without re-running the status transition', async () => {
     const awaitingPayment = appointmentRow({ status: 'awaiting_payment', completed_at: '2026-05-13T10:01:00.000Z' });
     const client = createMockSupabaseClient([
@@ -354,7 +437,8 @@ describe('LabAppointmentsService — manager and owner booking visibility', () =
 
     await service.today({
       ...stylistActor(),
-      role: 'manager',
+      roles: ['manager'],
+      primaryRole: 'manager',
       staffProfileId: undefined,
       locationScope: { kind: 'locations', locationIds: ['location_1', 'location_2'] },
     });
@@ -376,7 +460,8 @@ describe('LabAppointmentsService — manager and owner booking visibility', () =
 
     await service.today({
       ...stylistActor(),
-      role: 'owner',
+      roles: ['owner'],
+      primaryRole: 'owner',
       staffProfileId: undefined,
       locationScope: { kind: 'all', locationIds: ['location_1', 'location_2'] },
     });
@@ -401,7 +486,8 @@ describe('LabAppointmentsService — edit appointment services', () => {
   function ownerActor(): AuthUser {
     return {
       ...stylistActor(),
-      role: 'owner',
+      roles: ['owner'],
+      primaryRole: 'owner',
       staffProfileId: undefined,
       locationScope: { kind: 'all', locationIds: ['location_1', 'location_2'] },
     };
@@ -679,7 +765,8 @@ function createMockQuery(result: unknown): MockQuery {
 function stylistActor(): AuthUser {
   return {
     id: 'user_1',
-    role: 'stylist',
+    roles: ['stylist'],
+    primaryRole: 'stylist',
     businessId: 'business_1',
     allowedLocationIds: ['location_1', 'location_2'],
     locationScope: { kind: 'self', locationIds: ['location_1', 'location_2'] },

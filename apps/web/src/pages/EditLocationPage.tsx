@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import type { BusinessLocation } from '@sheer/domain';
+import { userHasRole } from '@sheer/domain';
 import { ApiRequestError, getLocation, updateLocation } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
 import {
@@ -60,7 +61,7 @@ export function EditLocationPage() {
     };
   }, [location]);
 
-  if (auth.status === 'authenticated' && auth.user?.role !== 'owner') {
+  if (auth.status === 'authenticated' && !userHasRole(auth.user, 'owner')) {
     return <Navigate to="/unauthorized" replace />;
   }
 

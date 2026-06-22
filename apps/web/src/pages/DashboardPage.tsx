@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { DashboardInventoryAlertsResponse, DashboardTopServicesResponse } from '@sheer/domain';
+import { userHasRole } from '@sheer/domain';
 import { AppText } from '../design';
 import { CommissionReadinessCard } from '../components/dashboard/CommissionReadinessCard';
 import { DiagnosticCard } from '../components/dashboard/DiagnosticCard';
@@ -27,7 +28,7 @@ export function DashboardPage() {
   // Owners compare multiple salons side-by-side; a manager only sees their own
   // single location, which the KPI strip above already summarises — so the
   // per-salon comparison grid is only meaningful when there is more than one.
-  const showSalonsAtAGlance = user?.role === 'owner' && salons.length > 1;
+  const showSalonsAtAGlance = userHasRole(user, 'owner') && salons.length > 1;
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-6 lg:px-8">
@@ -38,7 +39,7 @@ export function DashboardPage() {
               Good morning, {user?.profile.fullName.split(' ')[0] ?? greeting.ownerName}
             </AppText>
             <AppText as="div" variant="caption" tone="muted" className="mt-0.5">
-              {user?.role === 'owner' ? 'Owner' : 'Manager'} ·{' '}
+              {userHasRole(user, 'owner') ? 'Owner' : 'Manager'} ·{' '}
               {user?.locations.length ?? greeting.locationCount} accessible locations ·{' '}
               {greeting.stylistsOnToday} stylists on today · Last updated {greeting.lastUpdatedLabel}
             </AppText>
@@ -89,7 +90,7 @@ export function DashboardPage() {
             </>
           ) : null}
 
-          <SectionLabel>{user?.role === 'owner' ? 'All stylists today' : 'Your team today'}</SectionLabel>
+          <SectionLabel>{userHasRole(user, 'owner') ? 'All stylists today' : 'Your team today'}</SectionLabel>
           <div className="mb-6">
             <StylistsTable rows={stylists.map(toStylistRow)} />
           </div>

@@ -1,6 +1,7 @@
 import { useState, type ReactElement, type ReactNode, type SVGProps } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import type { UserRole } from '@sheer/domain';
+import type { AuthUser, UserRole } from '@sheer/domain';
+import { userHasAnyRole } from '@sheer/domain';
 import { cn } from '@sheer/utils';
 import { useAuth } from '../auth/AuthProvider';
 import { ALL_LOCATIONS, useLocationScope } from './LocationScopeContext';
@@ -51,9 +52,9 @@ const NAV: NavItem[] = [
 ];
 
 // Keeps leaf entries and any group that still has at least one role-visible child.
-function filterNav(items: NavItem[], role?: UserRole): NavItem[] {
+function filterNav(items: NavItem[], user?: AuthUser | null): NavItem[] {
   const allowed = (entry: NavEntry) =>
-    !entry.allowedRoles || (role !== undefined && entry.allowedRoles.includes(role));
+    !entry.allowedRoles || (!!user && userHasAnyRole(user, entry.allowedRoles));
   return items.reduce<NavItem[]>((acc, item) => {
     if (isGroup(item)) {
       const children = item.children.filter(allowed);
@@ -69,9 +70,8 @@ const STORAGE_KEY = 'sheer.web.sidebarCollapsed';
 
 export function Sidebar() {
   const { user } = useAuth();
-  const role = user?.role;
   const location = useLocation();
-  const visible = filterNav(NAV, role);
+  const visible = filterNav(NAV, user);
 
   const isPathActive = (to: string) =>
     location.pathname === to || location.pathname.startsWith(`${to}/`);

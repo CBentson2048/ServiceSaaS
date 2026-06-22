@@ -16,6 +16,7 @@ import type {
   ListLocationsResponse,
   UpdateLocationRequest,
 } from '@sheer/domain';
+import { userHasRole, userHasAnyRole } from '@sheer/domain';
 
 interface BusinessRow {
   id: string;
@@ -77,7 +78,7 @@ export class LocationsService {
       .order('sort_order', { ascending: true })
       .order('name', { ascending: true });
 
-    if (actor.role === 'manager') {
+    if (userHasRole(actor, 'manager')) {
       // Manager only sees the location(s) attached to their active membership.
       // `allowedLocationIds` is computed by AuthService from user_memberships.
       if (actor.allowedLocationIds.length === 0) {
@@ -94,14 +95,14 @@ export class LocationsService {
 
     return {
       locations: (data ?? []).map(toBusinessLocation),
-      scope: actor.role === 'owner' ? 'owner' : 'manager',
+      scope: userHasRole(actor, 'owner') ? 'owner' : 'manager',
     };
   }
 
   async getForActor(actor: AuthUser, locationId: string): Promise<BusinessLocation> {
     this.assertManagerOrOwner(actor);
 
-    if (actor.role === 'manager' && !actor.allowedLocationIds.includes(locationId)) {
+    if (userHasRole(actor, 'manager') && !actor.allowedLocationIds.includes(locationId)) {
       throw new ForbiddenException('Location is outside your assigned scope');
     }
 
@@ -280,13 +281,13 @@ export class LocationsService {
   }
 
   private assertOwner(actor: AuthUser): void {
-    if (actor.role !== 'owner') {
+    if (!userHasRole(actor, 'owner')) {
       throw new ForbiddenException('Only owners can perform this action');
     }
   }
 
   private assertManagerOrOwner(actor: AuthUser): void {
-    if (actor.role !== 'owner' && actor.role !== 'manager') {
+    if (!userHasAnyRole(actor, ['owner', 'manager'])) {
       throw new ForbiddenException('Locations are accessible to owners and managers only');
     }
   }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import type { InventoryCategory } from '@sheer/domain';
+import { userHasAnyRole, userHasRole } from '@sheer/domain';
 import {
   ApiRequestError,
   createInventoryCategory,
@@ -22,8 +23,8 @@ const emptyForm: CategoryForm = { id: null, name: '', description: '', isActive:
 export function InventoryCategoriesPage() {
   const auth = useAuth();
   const accessToken = auth.session?.accessToken;
-  const isOwner = auth.user?.role === 'owner';
-  const canManage = auth.user?.role === 'owner' || auth.user?.role === 'manager';
+  const isOwner = userHasRole(auth.user, 'owner');
+  const canManage = userHasAnyRole(auth.user, ['owner', 'manager']);
   const [categories, setCategories] = useState<InventoryCategory[]>([]);
   const [search, setSearch] = useState('');
   const [includeInactive, setIncludeInactive] = useState(false);
@@ -62,7 +63,7 @@ export function InventoryCategoriesPage() {
     );
   }, [categories, search]);
 
-  if (auth.status === 'authenticated' && auth.user?.role !== 'owner' && auth.user?.role !== 'manager') {
+  if (auth.status === 'authenticated' && !userHasAnyRole(auth.user, ['owner', 'manager'])) {
     return <Navigate to="/unauthorized" replace />;
   }
 

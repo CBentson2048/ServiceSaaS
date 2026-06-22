@@ -14,6 +14,7 @@ import type {
   StylistKpiResponse,
   StylistKpiResult,
 } from '@sheer/domain';
+import { userHasRole, userHasAnyRole } from '@sheer/domain';
 import {
   aggregateStylistKpi,
   resolveKpiWindow,
@@ -139,7 +140,7 @@ export class KpiService {
 
   /** Owner / manager view: every in-scope stylist's KPI for the period. */
   async stylistList(actor: AuthUser, query: KpiQueryDto): Promise<StylistKpiListResponse> {
-    if (actor.role !== 'owner' && actor.role !== 'manager') {
+    if (!userHasAnyRole(actor, ['owner', 'manager'])) {
       throw new ForbiddenException('KPI summaries are limited to owners and managers');
     }
     const window = this.resolveWindow(query);
@@ -171,7 +172,7 @@ export class KpiService {
 
     const locations = await this.fetchLocations(actor.businessId, [staff.primary_location_id]);
     const scope: KpiScope = {
-      scope: actor.role === 'owner' ? 'owner' : 'manager',
+      scope: userHasRole(actor, 'owner') ? 'owner' : 'manager',
       locationIds: [staff.primary_location_id],
       locations,
     };
@@ -287,7 +288,7 @@ export class KpiService {
   }
 
   private async resolveScope(actor: AuthUser, requestedLocationId?: string): Promise<KpiScope> {
-    if (actor.role === 'manager') {
+    if (userHasRole(actor, 'manager') && !userHasRole(actor, 'owner')) {
       if (requestedLocationId && !actor.allowedLocationIds.includes(requestedLocationId)) {
         throw new ForbiddenException('Location is outside your scope');
       }

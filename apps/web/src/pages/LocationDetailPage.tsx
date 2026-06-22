@@ -26,7 +26,7 @@ export function LocationDetailPage() {
   const auth = useAuth();
   const params = useParams<{ id: string }>();
   const accessToken = auth.session?.accessToken;
-  const role = auth.user?.role;
+  const role = auth.user?.primaryRole;
   const [location, setLocation] = useState<BusinessLocation | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);

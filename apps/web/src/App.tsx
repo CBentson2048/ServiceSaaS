@@ -31,6 +31,7 @@ import { OwnerOnboardingPage } from './pages/OwnerOnboardingPage';
 import { PasswordResetCompletePage } from './pages/PasswordResetCompletePage';
 import { PerformancePage } from './pages/PerformancePage';
 import { CommissionPage } from './pages/CommissionPage';
+import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { RotaPage } from './pages/RotaPage';
@@ -70,6 +71,12 @@ export function App() {
       */}
       <Route path="/delete-account" element={<DeleteAccountPage />} />
       <Route path="/account/delete" element={<DeleteAccountPage />} />
+      {/*
+        Public privacy policy (App Store App Privacy requirement).
+        This is the Privacy Policy URL given to App Store Connect; mounted
+        OUTSIDE the dashboard ProtectedRoute so it is reachable without a session.
+      */}
+      <Route path="/privacy-policy" element={<PrivacyPolicyPage />} />
       <Route path="/book/location" element={<ClientBookingLocationPage />} />
       <Route path="/book/service" element={<ClientBookingServicePage />} />
       <Route path="/book/date-time" element={<ClientBookingDateTimePage />} />

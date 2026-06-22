@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { userHasRole, userHasAnyRole } from '@sheer/domain';
 import type {
   AuthUser,
   ListManagedServicesResponse,
@@ -32,6 +33,7 @@ interface CategoryRow {
   business_id: string;
   name: string;
   description: string | null;
+  color_hex: string | null;
   is_active: boolean;
   sort_order: number;
   created_at: string;
@@ -57,7 +59,7 @@ interface ServiceRow {
   updated_at: string;
 }
 
-const CATEGORY_COLUMNS = 'id,business_id,name,description,is_active,sort_order,created_at,updated_at';
+const CATEGORY_COLUMNS = 'id,business_id,name,description,color_hex,is_active,sort_order,created_at,updated_at';
 const SERVICE_COLUMNS =
   'id,business_id,location_id,name,description,service_category_id,estimated_duration_minutes,processing_time_minutes,base_price,deposit_type,deposit_value,requires_patch_test,is_active,sort_order,created_at,updated_at';
 
@@ -112,6 +114,7 @@ export class ServicesService {
         business_id: actor.businessId,
         name,
         description: clean(dto.description),
+        color_hex: dto.colorHex ?? null,
         is_active: dto.isActive ?? true,
         sort_order: dto.sortOrder ?? 0,
       })
@@ -141,6 +144,7 @@ export class ServicesService {
       patch.name = name;
     }
     if ('description' in dto) patch.description = clean(dto.description);
+    if ('colorHex' in dto) patch.color_hex = dto.colorHex ?? null;
     if (dto.isActive !== undefined) patch.is_active = dto.isActive;
     if (dto.sortOrder !== undefined) patch.sort_order = dto.sortOrder;
     if (Object.keys(patch).length === 0) throw new BadRequestException('No category fields to update');
@@ -451,13 +455,13 @@ export class ServicesService {
   }
 
   private assertManagerOrOwner(actor: AuthUser): void {
-    if (actor.role !== 'owner' && actor.role !== 'manager') {
+    if (!userHasAnyRole(actor, ['owner', 'manager'])) {
       throw new ForbiddenException('Service management is limited to owners and managers');
     }
   }
 
   private assertOwner(actor: AuthUser): void {
-    if (actor.role !== 'owner') throw new ForbiddenException('Only owners can delete or archive catalogue items');
+    if (!userHasRole(actor, 'owner')) throw new ForbiddenException('Only owners can delete or archive catalogue items');
   }
 }
 
@@ -504,6 +508,7 @@ function toCategory(row: CategoryRow): ServiceCategory {
     businessId: row.business_id,
     name: row.name,
     description: row.description ?? undefined,
+    colorHex: row.color_hex ?? undefined,
     isActive: row.is_active,
     sortOrder: row.sort_order,
     createdAt: row.created_at,

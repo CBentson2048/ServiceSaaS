@@ -33,6 +33,8 @@ import type {
 import {
   calculateAppointmentBillingTax,
   calculateTaxForCategory,
+  userHasAnyRole,
+  userHasRole,
   type LocationTaxSettings,
   type TaxableCategory,
 } from '@sheer/domain';
@@ -149,14 +151,39 @@ interface VisitLineItemRow {
   description: string;
   amount_cents: number;
   currency_code: string;
+  metadata?: Record<string, unknown> | null;
 }
 
 interface FormulaBillingRow {
+  id: string;
   external_formula_id: string | null;
   actual_cost_cents: number;
   billable_charge_cents: number;
   currency_code: string;
   saved_at: string | null;
+}
+
+// A row read from lab.formula_items, used to itemise the colour charge per product.
+interface FormulaItemBreakdownRow {
+  product_name: string | null;
+  brand: string | null;
+  shade: string | null;
+  cost_cents: number | null;
+}
+
+// One colour product's raw cost, aggregated across every saved formula on a visit.
+// Persisted on the product_usage line (metadata.product_breakdown) so checkout can
+// split the rolled-up colour charge back into per-product display lines.
+interface ProductBreakdownEntry {
+  description: string;
+  costCents: number;
+}
+
+// A checkout line item carrying the per-product breakdown that backs it (only set
+// for product_usage lines). The breakdown is internal plumbing for display
+// itemisation and is stripped before the lines leave buildBillingSummary.
+interface BillingLineItem extends AppointmentCompletionLineItem {
+  productBreakdown?: ProductBreakdownEntry[];
 }
 
 interface ProductBillingRulesRow {
@@ -280,7 +307,7 @@ export class LabAppointmentsService {
 
     return {
       bookings: rows.map((row) => toBookingSummary(row, clientsById.get(row.client_profile_id))),
-      scope: actor.role === 'owner' ? 'owner' : actor.role === 'manager' ? 'manager' : 'stylist',
+      scope: userHasRole(actor, 'owner') ? 'owner' : userHasRole(actor, 'manager') ? 'manager' : 'stylist',
       rangeStart: rows.at(-1)?.scheduled_start_at ?? '',
       rangeEnd: rows[0]?.scheduled_start_at ?? '',
     };
@@ -314,7 +341,7 @@ export class LabAppointmentsService {
 
     return {
       bookings: rows.map((row) => toBookingSummary(row, clientsById.get(row.client_profile_id))),
-      scope: actor.role === 'owner' ? 'owner' : actor.role === 'manager' ? 'manager' : 'stylist',
+      scope: userHasRole(actor, 'owner') ? 'owner' : userHasRole(actor, 'manager') ? 'manager' : 'stylist',
       rangeStart,
       rangeEnd,
     };
@@ -370,7 +397,7 @@ export class LabAppointmentsService {
     rawLocationId?: string,
   ): TQuery {
     const locationId = this.resolveLocationForActor(actor, rawLocationId);
-    if (actor.role === 'stylist') {
+    if (userHasRole(actor, 'stylist')) {
       if (!actor.staffProfileId) {
         throw new ForbiddenException('Stylist profile could not be resolved');
       }
@@ -383,7 +410,7 @@ export class LabAppointmentsService {
         .in('location_id', actor.allowedLocationIds);
     } else if (locationId) {
       query = query.eq('location_id', locationId);
-    } else if (actor.role === 'manager') {
+    } else if (userHasRole(actor, 'manager')) {
       if (actor.allowedLocationIds.length === 0) {
         throw new ForbiddenException('No location scope is assigned');
       }
@@ -584,7 +611,7 @@ export class LabAppointmentsService {
   }
 
   private assertOwnerOrManager(actor: AuthUser): void {
-    if (actor.role !== 'owner' && actor.role !== 'manager') {
+    if (!userHasAnyRole(actor, ['owner', 'manager'])) {
       throw new ForbiddenException('Only an owner or manager can review booking requests');
     }
   }
@@ -813,7 +840,7 @@ export class LabAppointmentsService {
    * mobile cancel/rebook flows use this instead.
    */
   private async fetchAppointmentForClient(actor: AuthUser, id: string): Promise<AppointmentRow> {
-    if (actor.role !== 'client' || !actor.clientProfileId) {
+    if (!userHasRole(actor, 'client') || !actor.clientProfileId) {
       throw new ForbiddenException('A client account is required to manage this appointment');
     }
     const { data, error } = await this.admin
@@ -1513,7 +1540,7 @@ export class LabAppointmentsService {
 
   private assertCanCompleteAppointment(actor: AuthUser, appointment: AppointmentRow): void {
     this.assertCanAccessAppointment(actor, appointment);
-    if (actor.role === 'stylist') {
+    if (userHasRole(actor, 'stylist')) {
       if (!actor.staffProfileId) throw new ForbiddenException('Stylist profile could not be resolved');
       if (appointment.assigned_staff_profile_id !== actor.staffProfileId) {
         throw new ForbiddenException('Stylists can only complete appointments assigned to themselves');
@@ -1523,7 +1550,7 @@ export class LabAppointmentsService {
 
   private assertCanConfirmPayment(actor: AuthUser, appointment: AppointmentRow): void {
     this.assertCanAccessAppointment(actor, appointment);
-    if (actor.role === 'stylist') {
+    if (userHasRole(actor, 'stylist')) {
       if (!actor.staffProfileId) throw new ForbiddenException('Stylist profile could not be resolved');
       if (appointment.assigned_staff_profile_id !== actor.staffProfileId) {
         throw new ForbiddenException('Stylists can only confirm payment for their own appointments');
@@ -1532,21 +1559,21 @@ export class LabAppointmentsService {
   }
 
   private assertCanAccessVisit(actor: AuthUser, visit: VisitRow): void {
-    if (actor.role === 'owner') return;
+    if (userHasRole(actor, 'owner')) return;
     if (!actor.allowedLocationIds.includes(visit.location_id)) {
       throw new ForbiddenException('Visit is outside your location scope');
     }
-    if (actor.role === 'stylist' && actor.staffProfileId !== visit.primary_staff_profile_id) {
+    if (userHasRole(actor, 'stylist') && actor.staffProfileId !== visit.primary_staff_profile_id) {
       throw new ForbiddenException('Stylists can only rebook their own completed visits');
     }
   }
 
   private assertCanAssignRebookingStaff(actor: AuthUser, staffProfileId: string, locationId: string): void {
-    if (actor.role === 'owner') return;
+    if (userHasRole(actor, 'owner')) return;
     if (!actor.allowedLocationIds.includes(locationId)) {
       throw new ForbiddenException('Rebooking location is outside your scope');
     }
-    if (actor.role === 'stylist' && actor.staffProfileId !== staffProfileId) {
+    if (userHasRole(actor, 'stylist') && actor.staffProfileId !== staffProfileId) {
       throw new ForbiddenException('Stylists can only rebook to themselves');
     }
   }
@@ -1883,6 +1910,12 @@ export class LabAppointmentsService {
       rules.product_round_up_increment,
     );
 
+    // Capture the per-product cost split so checkout can itemise the colour charge
+    // back into one line per product. Stored as relative weights — the billable
+    // (and tax-inclusive) total is distributed across them at display time, so the
+    // bill always foots to the rolled-up charge regardless of the billing rule.
+    const productBreakdown = await this.fetchFormulaProductBreakdown(formulas.map((formula) => formula.id));
+
     const { error } = await this.admin.schema('billing').from('visit_line_items').upsert(
       {
         business_id: appointment.business_id,
@@ -1899,7 +1932,14 @@ export class LabAppointmentsService {
         fixed_uplift_amount_snapshot: snapshot.fixedUpliftAmountSnapshot,
         round_up_enabled_snapshot: snapshot.roundUpEnabledSnapshot,
         round_up_increment_snapshot: snapshot.roundUpIncrementSnapshot,
-        metadata: { source: 'appointment_completion', appointment_id: appointment.id },
+        metadata: {
+          source: 'appointment_completion',
+          appointment_id: appointment.id,
+          product_breakdown: productBreakdown.map((entry) => ({
+            description: entry.description,
+            cost_cents: entry.costCents,
+          })),
+        },
       },
       { onConflict: 'visit_id,line_type' },
     );
@@ -1934,7 +1974,7 @@ export class LabAppointmentsService {
     const { data, error } = await this.admin
       .schema('lab')
       .from('formulas')
-      .select('external_formula_id,actual_cost_cents,billable_charge_cents,currency_code,saved_at')
+      .select('id,external_formula_id,actual_cost_cents,billable_charge_cents,currency_code,saved_at')
       .eq('appointment_id', appointmentId)
       .eq('status', 'saved')
       .returns<FormulaBillingRow[]>();
@@ -1945,23 +1985,50 @@ export class LabAppointmentsService {
     return data ?? [];
   }
 
-  private async fetchVisitLineItems(visitId: string): Promise<AppointmentCompletionLineItem[]> {
+  // The per-product cost split behind the colour charge, aggregated across every
+  // saved formula on the appointment (one entry per product, sorted by cost desc).
+  // A failure here degrades to an empty breakdown — checkout then falls back to a
+  // single rolled-up "Product usage" line rather than failing the whole bill.
+  private async fetchFormulaProductBreakdown(formulaIds: string[]): Promise<ProductBreakdownEntry[]> {
+    const ids = formulaIds.filter(Boolean);
+    if (ids.length === 0) return [];
+    const { data, error } = await this.admin
+      .schema('lab')
+      .from('formula_items')
+      .select('product_name,brand,shade,cost_cents')
+      .in('formula_id', ids)
+      .returns<FormulaItemBreakdownRow[]>();
+    if (error) {
+      this.logger.warn(`fetchFormulaProductBreakdown failed: ${error.message} — colour charge will not be itemised`);
+      return [];
+    }
+    return aggregateProductCosts(data ?? []);
+  }
+
+  private async fetchVisitLineItems(visitId: string): Promise<BillingLineItem[]> {
     const { data, error } = await this.admin
       .schema('billing')
       .from('visit_line_items')
-      .select('line_type,description,amount_cents,currency_code')
+      .select('line_type,description,amount_cents,currency_code,metadata')
       .eq('visit_id', visitId)
       .returns<VisitLineItemRow[]>();
     if (error) {
       this.logger.error(`fetchVisitLineItems failed: ${error.message}`);
       throw new InternalServerErrorException('Unable to load checkout line items');
     }
-    return (data ?? []).map((row) => ({
-      lineType: row.line_type,
-      description: row.description,
-      amountCents: row.amount_cents,
-      currencyCode: row.currency_code,
-    }));
+    return (data ?? []).map((row) => {
+      const line: BillingLineItem = {
+        lineType: row.line_type,
+        description: row.description,
+        amountCents: row.amount_cents,
+        currencyCode: row.currency_code,
+      };
+      if (row.line_type === 'product_usage') {
+        const breakdown = parseProductBreakdown(row.metadata);
+        if (breakdown) line.productBreakdown = breakdown;
+      }
+      return line;
+    });
   }
 
   private async fetchSalonPaymentForVisit(visitId: string): Promise<SalonPaymentRow | undefined> {
@@ -2133,17 +2200,17 @@ export class LabAppointmentsService {
 
   private resolveLocationForActor(actor: AuthUser, locationId?: string): string | undefined {
     if (!locationId) return undefined;
-    if (actor.role === 'owner' || actor.allowedLocationIds.includes(locationId)) return locationId;
+    if (userHasRole(actor, 'owner') || actor.allowedLocationIds.includes(locationId)) return locationId;
     throw new ForbiddenException('Location is outside the signed-in user scope');
   }
 
   private assertCanAccessAppointment(actor: AuthUser, appointment: AppointmentRow): void {
-    if (actor.role === 'owner') return;
+    if (userHasRole(actor, 'owner')) return;
     if (!actor.allowedLocationIds.includes(appointment.location_id)) {
       throw new ForbiddenException('Booking is outside your location scope');
     }
-    if (actor.role === 'manager') return;
-    if (actor.role === 'stylist' && appointment.assigned_staff_profile_id === actor.staffProfileId) return;
+    if (userHasRole(actor, 'manager')) return;
+    if (userHasRole(actor, 'stylist') && appointment.assigned_staff_profile_id === actor.staffProfileId) return;
     throw new ForbiddenException('Booking is outside your stylist scope');
   }
 }
@@ -2316,14 +2383,14 @@ function toPaymentRecord(row: SalonPaymentRow): AppointmentPaymentRecord {
 // otherwise the persisted line is kept so the bill always foots.
 function expandServiceLineItems(
   appointment: AppointmentRow,
-  lineItems: AppointmentCompletionLineItem[],
-): AppointmentCompletionLineItem[] {
+  lineItems: BillingLineItem[],
+): BillingLineItem[] {
   const services = arrayOf(appointment.appointment_services);
   const serviceLines = lineItems.filter((item) => item.lineType === 'service');
   if (services.length === 0 || serviceLines.length === 0) return lineItems;
 
   const currencyCode = serviceLines[0].currencyCode;
-  const perServiceLines: AppointmentCompletionLineItem[] = services.map((service) => ({
+  const perServiceLines: BillingLineItem[] = services.map((service) => ({
     lineType: 'service',
     description: service.service_name_snapshot || 'Service',
     amountCents: toCents(service.price_amount),
@@ -2336,6 +2403,93 @@ function expandServiceLineItems(
 
   const nonServiceLines = lineItems.filter((item) => item.lineType !== 'service');
   return [...perServiceLines, ...nonServiceLines];
+}
+
+// The colour charge persists as a single rolled-up product_usage line (the table
+// is uniquely keyed by visit_id + line_type), but checkout itemises each product
+// used. Expand that one (tax-inclusive) line into per-product display lines using
+// the cost split captured at completion (metadata.product_breakdown), distributing
+// the line's amount in proportion to each product's raw cost. The largest line
+// absorbs the rounding remainder, so the per-product lines always sum to exactly
+// the colour total the till collects. With no breakdown (legacy/empty visits) the
+// single rolled-up line is kept untouched, so the bill always foots either way.
+function expandProductUsageLineItems(lineItems: BillingLineItem[]): AppointmentCompletionLineItem[] {
+  const productLines = lineItems.filter((item) => item.lineType === 'product_usage');
+  const breakdown = productLines.flatMap((line) => line.productBreakdown ?? []);
+  const grossTotal = productLines.reduce((sum, item) => sum + item.amountCents, 0);
+  const totalCost = breakdown.reduce((sum, entry) => sum + entry.costCents, 0);
+  if (productLines.length === 0 || breakdown.length === 0 || grossTotal <= 0 || totalCost <= 0) {
+    return stripBreakdown(lineItems);
+  }
+
+  const currencyCode = productLines[0].currencyCode;
+  const shares = breakdown.map((entry) => Math.round((grossTotal * entry.costCents) / totalCost));
+  // breakdown is sorted by cost desc, so the largest line comfortably absorbs the
+  // few-pennies rounding remainder without ever going negative.
+  shares[0] += grossTotal - shares.reduce((sum, value) => sum + value, 0);
+
+  const perProductLines: AppointmentCompletionLineItem[] = breakdown.map((entry, index) => ({
+    lineType: 'product_usage',
+    description: entry.description,
+    amountCents: shares[index],
+    currencyCode,
+  }));
+  const otherLines = stripBreakdown(lineItems.filter((item) => item.lineType !== 'product_usage'));
+  return [...otherLines, ...perProductLines];
+}
+
+// Drop the internal productBreakdown so only the public line-item shape leaves the
+// billing summary.
+function stripBreakdown(items: BillingLineItem[]): AppointmentCompletionLineItem[] {
+  return items.map(({ lineType, description, amountCents, currencyCode }) => ({
+    lineType,
+    description,
+    amountCents,
+    currencyCode,
+  }));
+}
+
+// Aggregate raw formula_items costs into one entry per product, summed across every
+// formula on the visit and sorted by cost desc. Zero/invalid-cost rows are dropped
+// so they never surface as £0.00 colour lines.
+function aggregateProductCosts(rows: FormulaItemBreakdownRow[]): ProductBreakdownEntry[] {
+  const byProduct = new Map<string, number>();
+  for (const row of rows) {
+    const costCents = Number(row.cost_cents ?? 0);
+    if (!Number.isFinite(costCents) || costCents <= 0) continue;
+    const description = productDisplayName(row);
+    byProduct.set(description, (byProduct.get(description) ?? 0) + costCents);
+  }
+  return Array.from(byProduct, ([description, costCents]) => ({ description, costCents })).sort(
+    (a, b) => b.costCents - a.costCents,
+  );
+}
+
+// A readable label for a colour product line: "Brand Product · Shade", falling back
+// gracefully when brand or shade is absent.
+function productDisplayName(row: FormulaItemBreakdownRow): string {
+  const name = [row.brand?.trim(), row.product_name?.trim()].filter(Boolean).join(' ').trim() || 'Colour product';
+  const shade = row.shade?.trim();
+  return shade ? `${name} · ${shade}` : name;
+}
+
+// Read the per-product colour breakdown persisted on a product_usage line's
+// metadata. Defensive: anything that isn't a well-formed { description, cost_cents }
+// array is treated as absent so the colour charge falls back to its single line.
+function parseProductBreakdown(metadata: unknown): ProductBreakdownEntry[] | undefined {
+  if (!metadata || typeof metadata !== 'object') return undefined;
+  const raw = (metadata as Record<string, unknown>).product_breakdown;
+  if (!Array.isArray(raw)) return undefined;
+  const entries: ProductBreakdownEntry[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const record = item as Record<string, unknown>;
+    const description = typeof record.description === 'string' ? record.description.trim() : '';
+    const costCents = Number(record.cost_cents ?? 0);
+    if (!description || !Number.isFinite(costCents) || costCents <= 0) continue;
+    entries.push({ description, costCents });
+  }
+  return entries.length > 0 ? entries : undefined;
 }
 
 // Map a visit line type to the tax category that gates it (services vs retail).
@@ -2354,7 +2508,7 @@ function sumLineItemsByType(items: AppointmentCompletionLineItem[], lineType: st
 
 function buildBillingSummary(
   appointment: AppointmentRow,
-  lineItems: AppointmentCompletionLineItem[],
+  lineItems: BillingLineItem[],
   taxSettings: LocationTaxSettings,
 ): AppointmentCompletionResponse['billing'] {
   // Itemise services for display; totals are derived from the same set so they
@@ -2397,7 +2551,11 @@ function buildBillingSummary(
     taxSettings,
   );
   return {
-    lineItems: grossLineItems,
+    // Totals above are computed from the rolled-up gross lines and are unchanged;
+    // only the displayed colour charge is itemised per product (sums back to
+    // productUsageTotalCents exactly), so every figure the till collects is
+    // identical whether or not the colour breakdown is present.
+    lineItems: expandProductUsageLineItems(grossLineItems),
     serviceTotalCents,
     productUsageTotalCents,
     depositPaidCents,

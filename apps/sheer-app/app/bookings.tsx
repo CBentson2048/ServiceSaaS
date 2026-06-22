@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router } from 'expo-router';
 import type { AppointmentCompletionResponse, CreateStylistRebookingRequest, StaffBookingSummary } from '@sheer/domain';
+import { userHasRole } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { AppButton, Card, EmptyState, Screen, SectionHeader } from '@sheer/ui-mobile';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
@@ -111,7 +112,7 @@ export default function BookingsScreen() {
     }
   }
 
-  const showStylistTabs = auth.user?.role === 'stylist';
+  const showStylistTabs = userHasRole(auth.user, 'stylist');
 
   return (
     <ProtectedScreen allowedRoles={['manager', 'stylist']}>

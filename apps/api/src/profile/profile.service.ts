@@ -22,6 +22,7 @@ import type {
   UserProfileResponse,
   UserRole,
 } from '@sheer/domain';
+import { userHasRole, userHasAnyRole } from '@sheer/domain';
 import type { ListProfilesQueryDto } from './dto';
 
 interface UserProfileRow {
@@ -130,7 +131,7 @@ export class ProfileService {
       await this.updateUserProfile(actor.id, identityPatch);
     }
 
-    if (actor.role === 'client' && actor.clientProfileId) {
+    if (userHasRole(actor, 'client') && actor.clientProfileId) {
       await this.updateOwnClientProfile(actor, actor.clientProfileId, input);
     }
 
@@ -145,7 +146,7 @@ export class ProfileService {
    * cascade-delete the staff_profile — an HR action, not self-service.
    */
   async deleteCurrentAccount(actor: AuthUser): Promise<void> {
-    if (actor.role !== 'client') {
+    if (!userHasRole(actor, 'client')) {
       throw new ForbiddenException(
         'Only client accounts can be deleted from the app. Staff accounts are managed by your salon.',
       );
@@ -201,7 +202,7 @@ export class ProfileService {
       }
     }
 
-    return { profiles, scope: actor.role === 'owner' ? 'owner' : 'manager' };
+    return { profiles, scope: userHasRole(actor, 'owner') ? 'owner' : 'manager' };
   }
 
   async getClientProfile(actor: AuthUser, clientProfileId: string): Promise<UserProfileResponse> {
@@ -235,7 +236,7 @@ export class ProfileService {
     const staff = await this.fetchStaffForActor(actor, staffProfileId);
     return this.buildProfileForUser(actor, staff.user_profile_id, {
       staffRow: staff,
-      allowAdminFields: actor.role === 'owner' || actor.role === 'manager',
+      allowAdminFields: userHasAnyRole(actor, ['owner', 'manager']),
     });
   }
 
@@ -247,7 +248,7 @@ export class ProfileService {
     this.assertManagerOrOwner(actor);
     const targetMembership = await this.fetchTargetMembership(actor.businessId, userProfileId);
     if (!targetMembership) throw new NotFoundException('Profile not found in this business');
-    if (actor.role === 'manager') {
+    if (userHasRole(actor, 'manager')) {
       if (!targetMembership.location_id || !actor.allowedLocationIds.includes(targetMembership.location_id)) {
         throw new ForbiddenException('Profile is outside your location scope');
       }
@@ -297,11 +298,11 @@ export class ProfileService {
       options.staffRow !== undefined ? Promise.resolve(options.staffRow) : this.fetchStaffByUser(actor.businessId, userProfileId),
     ]);
     const businessMemberships = memberships.filter((m) => m.business_id === actor.businessId && m.status === 'active');
-    const role = this.primaryRole(businessMemberships) ?? actor.role;
+    const role = this.primaryRole(businessMemberships) ?? actor.primaryRole;
 
     if (client) this.assertClientAccess(actor, client);
     if (staff) this.assertStaffAccess(actor, staff, userProfileId === actor.id);
-    if (!client && !staff && userProfileId !== actor.id && actor.role !== 'owner') {
+    if (!client && !staff && userProfileId !== actor.id && !userHasRole(actor, 'owner')) {
       throw new ForbiddenException('Profile is outside your scope');
     }
 
@@ -333,7 +334,7 @@ export class ProfileService {
       clientProfile: await this.toClientDetails(client),
       locations: client.primary_location_id ? await this.fetchLocationsByIds([client.primary_location_id]) : [],
       scope: actor.locationScope,
-      editableFields: actor.role === 'owner' || actor.role === 'manager' ? ['clientNotes', 'communicationPreference'] : [],
+      editableFields: userHasAnyRole(actor, ['owner', 'manager']) ? ['clientNotes', 'communicationPreference'] : [],
     };
   }
 
@@ -523,7 +524,7 @@ export class ProfileService {
       .neq('employment_status', 'terminated')
       .order('display_name', { ascending: true });
     if (query.locationId) request = request.eq('primary_location_id', query.locationId);
-    else if (actor.role === 'manager') request = request.in('primary_location_id', actor.allowedLocationIds);
+    else if (userHasRole(actor, 'manager')) request = request.in('primary_location_id', actor.allowedLocationIds);
     if (query.q?.trim()) request = request.ilike('display_name', `%${escapeLike(query.q.trim())}%`);
     const { data, error } = await request.returns<StaffProfileRow[]>();
     if (error) throw new InternalServerErrorException('Unable to list staff profiles');
@@ -539,7 +540,7 @@ export class ProfileService {
       .order('updated_at', { ascending: false })
       .limit(50);
     if (query.locationId) request = request.eq('primary_location_id', query.locationId);
-    else if (actor.role === 'manager') request = request.in('primary_location_id', actor.allowedLocationIds);
+    else if (userHasRole(actor, 'manager')) request = request.in('primary_location_id', actor.allowedLocationIds);
     if (query.q?.trim()) {
       const q = escapeLike(query.q.trim());
       request = request.or(`first_name.ilike.%${q}%,last_name.ilike.%${q}%,email.ilike.%${q}%,phone.ilike.%${q}%`);
@@ -709,7 +710,7 @@ export class ProfileService {
         ...(role === 'client' && hasClient ? ['communicationPreference'] : []),
       ];
     }
-    if (actor.role === 'owner') {
+    if (userHasRole(actor, 'owner')) {
       return [
         'firstName',
         'lastName',
@@ -721,34 +722,34 @@ export class ProfileService {
           : []),
       ];
     }
-    if (actor.role === 'manager' && role === 'stylist') {
+    if (userHasRole(actor, 'manager') && role === 'stylist') {
       return ['staffDisplayName', 'isBookable', 'leaveNotes'];
     }
     return [];
   }
 
   private assertManagerOrOwner(actor: AuthUser): void {
-    if (actor.role !== 'owner' && actor.role !== 'manager') {
+    if (!userHasAnyRole(actor, ['owner', 'manager'])) {
       throw new ForbiddenException('This profile action requires owner or manager access');
     }
   }
 
   private assertLocationScope(actor: AuthUser, locationId: string): void {
-    if (actor.role !== 'owner' && !actor.allowedLocationIds.includes(locationId)) {
+    if (!userHasRole(actor, 'owner') && !actor.allowedLocationIds.includes(locationId)) {
       throw new ForbiddenException('Location is outside your profile scope');
     }
   }
 
   private assertClientAccess(actor: AuthUser, client: ClientProfileRow): void {
-    if (actor.role === 'owner') return;
-    if (actor.role === 'client' && client.user_profile_id === actor.id) return;
+    if (userHasRole(actor, 'owner')) return;
+    if (userHasRole(actor, 'client') && client.user_profile_id === actor.id) return;
     if (client.primary_location_id && actor.allowedLocationIds.includes(client.primary_location_id)) return;
     throw new ForbiddenException('Client profile is outside your scope');
   }
 
   private assertStaffAccess(actor: AuthUser, staff: StaffProfileRow, isSelf = false): void {
-    if (actor.role === 'owner' || isSelf) return;
-    if (actor.role === 'manager' && actor.allowedLocationIds.includes(staff.primary_location_id)) return;
+    if (userHasRole(actor, 'owner') || isSelf) return;
+    if (userHasRole(actor, 'manager') && actor.allowedLocationIds.includes(staff.primary_location_id)) return;
     throw new ForbiddenException('Staff profile is outside your scope');
   }
 }

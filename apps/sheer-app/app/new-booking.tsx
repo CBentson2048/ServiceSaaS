@@ -10,6 +10,7 @@ import type {
   StaffBookingPaymentMode,
   StaffBookingSource,
 } from '@sheer/domain';
+import { userHasRole } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { AppButton, Card, EmptyState, Screen, SectionHeader } from '@sheer/ui-mobile';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
@@ -302,7 +303,7 @@ export default function NewBookingScreen() {
     setError(null);
   }
 
-  const showTabs = auth.user?.role === 'stylist';
+  const showTabs = userHasRole(auth.user, 'stylist');
   const canSubmit = Boolean(selectedClient) && selectedServiceIds.length > 0 && Boolean(selectedSlot) && !submitting;
   const dateOptions = useMemo(() => buildDateOptions(14), []);
 

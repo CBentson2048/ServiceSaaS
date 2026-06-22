@@ -29,7 +29,7 @@ export default function DashboardScreen() {
   const auth = useAuth();
   const { signOut, user } = auth;
   const accessToken = auth.session?.accessToken ?? '';
-  const isClient = user?.role === 'client';
+  const isClient = user?.primaryRole === 'client';
 
   const [dashboard, setDashboard] = useState<api.MobileDashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -37,11 +37,11 @@ export default function DashboardScreen() {
   const [activeTab, setActiveTab] = useState<BottomTab>('home');
 
   const load = useCallback(async () => {
-    if (!accessToken || !user || !isMobileDashboardRole(user.role)) return;
+    if (!accessToken || !user || !isMobileDashboardRole(user.primaryRole)) return;
     setLoading(true);
     setError(null);
     try {
-      const result = await api.getMobileDashboard(accessToken, user.role);
+      const result = await api.getMobileDashboard(accessToken, user.primaryRole);
       setDashboard(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load dashboard');
@@ -63,7 +63,7 @@ export default function DashboardScreen() {
 
   // Stylists no longer have a dashboard — their home is the performance screen,
   // reached through the bottom tab bar.
-  if (user?.role === 'stylist') {
+  if (user?.primaryRole === 'stylist') {
     return <Redirect href="/performance" />;
   }
 

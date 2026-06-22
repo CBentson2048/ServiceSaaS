@@ -9,6 +9,7 @@ import type {
   CrmVisitPhoto,
   CrmVisitSummary,
 } from '@sheer/domain';
+import { userHasRole } from '@sheer/domain';
 import {
   ApiRequestError,
   createCrmClientAllergy,
@@ -64,7 +65,7 @@ export function CrmClientDetailPage() {
     [detail],
   );
 
-  if (auth.status === 'authenticated' && auth.user?.role === 'client') {
+  if (auth.status === 'authenticated' && userHasRole(auth.user, 'client')) {
     return <Navigate to="/unauthorized" replace />;
   }
 
@@ -204,7 +205,7 @@ export function CrmClientDetailPage() {
                 value={allergyName}
                 onChange={setAllergyName}
                 onSubmit={handleAddAllergy}
-                canWrite={auth.user?.role !== 'stylist'}
+                canWrite={!userHasRole(auth.user, 'stylist')}
               />
               <PatchTests
                 patchTests={detail.patchTests}
@@ -213,7 +214,7 @@ export function CrmClientDetailPage() {
                 onStatusChange={setPatchStatus}
                 onPerformedAtChange={setPatchPerformedAt}
                 onSubmit={handleAddPatchTest}
-                canWrite={auth.user?.role !== 'stylist'}
+                canWrite={!userHasRole(auth.user, 'stylist')}
               />
               <Photos photos={detail.photos} />
               <GdprFoundation pendingRequests={detail.profile.gdpr.pendingRequests} />

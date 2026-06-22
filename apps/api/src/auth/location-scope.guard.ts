@@ -1,5 +1,6 @@
 import { CanActivate, ExecutionContext, ForbiddenException, Injectable, SetMetadata } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { userHasRole } from '@sheer/domain';
 import type { AuthenticatedRequest } from './types';
 
 const LOCATION_PARAM_KEY = 'sheer:location-param';
@@ -29,7 +30,7 @@ export class LocationScopeGuard implements CanActivate {
       throw new ForbiddenException('Location scope could not be resolved');
     }
 
-    if (user.role === 'owner' || user.allowedLocationIds.includes(locationId)) {
+    if (userHasRole(user, 'owner') || user.allowedLocationIds.includes(locationId)) {
       return true;
     }
 

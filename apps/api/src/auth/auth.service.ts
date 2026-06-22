@@ -26,6 +26,7 @@ import type {
   PasswordResetTokenStatus,
   UserRole,
 } from '@sheer/domain';
+import { sortRolesByPriority, userHasAnyRole, userHasRole } from '@sheer/domain';
 import type { ClientBookingAccountDto, ClientBookingLoginDto } from './dto';
 import { EmailService } from '../email/email.service';
 import { renderPasswordResetEmail } from '../email/templates/password-reset.template';
@@ -352,6 +353,12 @@ export class AuthService {
       (m) => m.business_id === primaryMembership.business_id,
     );
 
+    // A user can hold several roles in the same business (owner + manager +
+    // stylist). Expose ALL of them (highest-privilege first) and keep the
+    // primary one only for surface routing / display.
+    const roles = sortRolesByPriority(sameBusinessMemberships.map((m) => m.role));
+    const primaryRole = roles[0];
+
     const [business, businessLocations, staffProfile, clientProfile] = await Promise.all([
       this.fetchBusiness(primaryMembership.business_id),
       this.fetchLocations(primaryMembership.business_id),
@@ -359,14 +366,14 @@ export class AuthService {
       this.fetchClientProfile(
         primaryMembership.business_id,
         userId,
-        primaryMembership.role === 'client'
+        roles.includes('client')
           ? sameBusinessMemberships.map((membership) => membership.location_id).filter(isString)
           : undefined,
       ),
     ]);
 
     const allowedLocationIds = this.resolveAllowedLocationIds(
-      primaryMembership.role,
+      roles,
       sameBusinessMemberships,
       businessLocations,
     );
@@ -382,15 +389,19 @@ export class AuthService {
 
     return {
       id: profile.id,
-      role: primaryMembership.role,
+      roles,
+      primaryRole,
       businessId: business.id,
       businessName: business.name,
       businessSlug: business.slug,
       allowedLocationIds,
+      // Scope kind follows the highest-privilege role: owner sees everything,
+      // a manager (anywhere in the set) gets multi-location scope, otherwise
+      // the user is limited to their own locations.
       locationScope:
-        primaryMembership.role === 'owner'
+        primaryRole === 'owner'
           ? { kind: 'all', locationIds: allowedLocationIds }
-          : primaryMembership.role === 'stylist' || primaryMembership.role === 'client'
+          : primaryRole === 'stylist' || primaryRole === 'client'
             ? { kind: 'self', locationIds: allowedLocationIds }
             : { kind: 'locations', locationIds: allowedLocationIds },
       locations: visibleLocations.map((location) => ({
@@ -634,51 +645,43 @@ export class AuthService {
   }
 
   canAccessLocation(user: AuthUser, locationId: string): boolean {
-    return user.role === 'owner' || user.allowedLocationIds.includes(locationId);
+    return userHasRole(user, 'owner') || user.allowedLocationIds.includes(locationId);
   }
 
   canAccessOwnStaffProfile(user: AuthUser, staffProfileId: string): boolean {
-    return user.role === 'owner' || user.role === 'manager' || user.staffProfileId === staffProfileId;
+    return userHasAnyRole(user, ['owner', 'manager']) || user.staffProfileId === staffProfileId;
   }
 
   private assertSurfaceAccess(user: AuthUser, surface: RuntimeSurface): void {
-    if (surface === 'web_dashboard' && user.role !== 'owner' && user.role !== 'manager') {
+    if (surface === 'web_dashboard' && !userHasAnyRole(user, ['owner', 'manager'])) {
       throw new ForbiddenException('Web dashboard access is limited to owners and managers');
     }
 
-    if (
-      surface === 'sheer_app' &&
-      user.role !== 'owner' &&
-      user.role !== 'manager' &&
-      user.role !== 'stylist' &&
-      user.role !== 'client'
-    ) {
+    if (surface === 'sheer_app' && !userHasAnyRole(user, ['owner', 'manager', 'stylist', 'client'])) {
       throw new ForbiddenException('Sheer App access is limited to active Sheer accounts');
     }
 
-    if (
-      surface === 'sheer_lab' &&
-      user.role !== 'owner' &&
-      user.role !== 'manager' &&
-      user.role !== 'stylist'
-    ) {
+    if (surface === 'sheer_lab' && !userHasAnyRole(user, ['owner', 'manager', 'stylist'])) {
       throw new ForbiddenException('Sheer Lab access is limited to staff accounts');
     }
   }
 
   private resolveAllowedLocationIds(
-    role: UserRole,
+    roles: UserRole[],
     memberships: MembershipRow[],
     businessLocations: LocationRow[],
   ): string[] {
-    if (role === 'owner') {
+    if (roles.includes('owner')) {
       return businessLocations.filter((l) => l.is_active).map((l) => l.id);
     }
 
+    // Union the locations across EVERY role the user holds — a manager@A who is
+    // also a stylist@B must see both A and B, not just their primary role's
+    // locations.
     return [
       ...new Set(
         memberships
-          .filter((m) => m.role === role && m.location_id)
+          .filter((m) => m.location_id)
           .map((m) => m.location_id as string),
       ),
     ];

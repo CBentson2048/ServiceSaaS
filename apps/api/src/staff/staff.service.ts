@@ -30,6 +30,7 @@ import type {
   UpdateStaffMemberResponse,
   UserRole,
 } from '@sheer/domain';
+import { userHasRole } from '@sheer/domain';
 import { AuthService } from '../auth/auth.service';
 import { EmailService } from '../email/email.service';
 import { renderStaffInvitationEmail } from '../email/templates/staff-invitation.template';
@@ -487,10 +488,21 @@ export class StaffService {
       staffProfiles.map((s) => s.id),
     );
 
-    const staff: StaffMember[] = (memberships ?? [])
-      .map((m) => this.toStaffMember(m, profileById, staffProfileByUser, locationById, eligibilityByStaffProfile))
+    // Group every membership by user so a member who holds several roles
+    // (e.g. manager + stylist at one location) appears as ONE row with roles[].
+    const membershipsByUser = new Map<string, MembershipRow[]>();
+    for (const m of memberships ?? []) {
+      const list = membershipsByUser.get(m.user_profile_id) ?? [];
+      list.push(m);
+      membershipsByUser.set(m.user_profile_id, list);
+    }
+
+    const staff: StaffMember[] = Array.from(membershipsByUser.values())
+      .map((group) =>
+        this.toStaffMember(group, profileById, staffProfileByUser, locationById, eligibilityByStaffProfile),
+      )
       .filter((s): s is StaffMember => Boolean(s))
-      .sort((a, b) => roleOrder(a.role) - roleOrder(b.role));
+      .sort((a, b) => roleOrder(a.roles[0]) - roleOrder(b.roles[0]));
 
     return { staff, pendingInvitations, locations };
   }
@@ -505,54 +517,65 @@ export class StaffService {
       throw new ForbiddenException('Owners cannot edit their own membership through this endpoint');
     }
 
-    const target = await this.fetchTargetMembership(actor.businessId, targetUserId);
-    if (target.role === 'owner') {
+    const memberships = await this.fetchUserMemberships(actor.businessId, targetUserId);
+    if (memberships.length === 0) {
+      throw new NotFoundException('Staff member not found');
+    }
+    if (memberships.some((m) => m.role === 'owner')) {
       throw new ForbiddenException('Owner accounts cannot be modified via the staff endpoint');
     }
 
-    const newRole = input.role ?? (target.role as InvitableRole);
-    if (newRole !== 'manager' && newRole !== 'stylist') {
-      throw new BadRequestException('Role must be manager or stylist');
+    // Desired role SET at the member's (single) location. A member can hold both
+    // manager and stylist. Default to the current roles when the caller only
+    // changes status/location (e.g. deactivate/reactivate).
+    const currentRoles = memberships
+      .map((m) => m.role)
+      .filter((r): r is InvitableRole => r === 'manager' || r === 'stylist');
+    const desiredRoles = Array.from(
+      new Set(input.roles && input.roles.length > 0 ? input.roles : currentRoles),
+    );
+    if (desiredRoles.length === 0) {
+      throw new BadRequestException('Select at least one role');
+    }
+    for (const role of desiredRoles) {
+      if (role !== 'manager' && role !== 'stylist') {
+        throw new BadRequestException('Roles must be manager or stylist');
+      }
     }
 
-    const newLocationId = input.locationId ?? target.location_id ?? undefined;
+    const newLocationId =
+      input.locationId ?? memberships.find((m) => m.location_id)?.location_id ?? undefined;
     if (!newLocationId) throw new BadRequestException('Location is required for staff');
     await this.assertLocationInBusiness(actor.businessId, newLocationId);
 
-    const newStatus = input.membershipStatus ?? (target.status === 'invited' ? 'active' : target.status);
+    const currentStatus = memberships[0].status;
+    const newStatus =
+      input.membershipStatus ?? (currentStatus === 'invited' ? 'active' : currentStatus);
     if (newStatus !== 'active' && newStatus !== 'suspended' && newStatus !== 'revoked') {
       throw new BadRequestException('Invalid membership status');
     }
 
-    const { data, error } = await this.admin.schema('core').rpc('update_staff_member', {
-      p_actor_user_id: actor.id,
-      p_business_id: actor.businessId,
-      p_user_profile_id: targetUserId,
-      p_new_role: newRole,
-      p_new_location_id: newLocationId,
-      p_new_status: newStatus,
-      p_display_name: input.displayName ?? '',
-      p_color_hex: input.colorHex ?? '',
-      p_bio: input.bio ?? '',
-      p_is_bookable: input.isBookable ?? null,
-    });
-
-    if (error) {
-      this.logger.error(`update_staff_member RPC failed: ${error.message}`);
-      throw this.translateUpdateError(error.message);
-    }
+    await this.syncMembershipRoles(actor, targetUserId, memberships, desiredRoles, newLocationId, newStatus);
+    await this.syncStaffProfile(actor.businessId, targetUserId, newLocationId, desiredRoles, newStatus, input);
 
     await this.updateStaffBusinessFields(actor.businessId, targetUserId, input);
 
-    // Replace the stylist's service eligibility when an explicit set was sent.
-    if (input.serviceIds !== undefined) {
-      await this.setStaffServiceEligibility(actor.businessId, targetUserId, input.serviceIds);
+    // Replace the stylist's service eligibility (and per-stylist prices) when an
+    // explicit set was sent. `serviceAssignments` carries prices; `serviceIds`
+    // is the legacy id-only alias (all prices inherit the service base price).
+    if (input.serviceAssignments !== undefined) {
+      await this.setStaffServiceEligibility(actor.businessId, targetUserId, input.serviceAssignments);
+    } else if (input.serviceIds !== undefined) {
+      await this.setStaffServiceEligibility(
+        actor.businessId,
+        targetUserId,
+        input.serviceIds.map((serviceId) => ({ serviceId, priceAmount: null })),
+      );
     }
 
     const updated = await this.findStaffMember(actor.businessId, targetUserId);
     if (!updated) throw new NotFoundException('Staff member not found after update');
 
-    void data;
     return { staff: updated };
   }
 
@@ -602,40 +625,51 @@ export class StaffService {
   private async setStaffServiceEligibility(
     businessId: string,
     userProfileId: string,
-    serviceIds: string[],
+    assignments: { serviceId: string; priceAmount?: number | null }[],
   ): Promise<void> {
     const [profile] = await this.fetchStaffProfiles(businessId, [userProfileId]);
     const staffProfileId = profile?.id;
     if (!staffProfileId) {
-      if (serviceIds.length === 0) return;
+      if (assignments.length === 0) return;
       throw new BadRequestException('This team member cannot be assigned services');
     }
 
-    const desired = Array.from(new Set(serviceIds.filter(Boolean)));
+    // Collapse to one assignment per service (last write wins), dropping blanks.
+    const byServiceId = new Map<string, number | null>();
+    for (const { serviceId, priceAmount } of assignments) {
+      if (!serviceId) continue;
+      byServiceId.set(serviceId, priceAmount ?? null);
+    }
+    const desiredIds = Array.from(byServiceId.keys());
 
     // Validate every service belongs to this business before we touch anything.
-    if (desired.length > 0) {
+    if (desiredIds.length > 0) {
       const { data: validRows, error: validError } = await this.admin
         .schema('booking')
         .from('services')
         .select('id')
         .eq('business_id', businessId)
-        .in('id', desired)
+        .in('id', desiredIds)
         .returns<{ id: string }[]>();
       if (validError) {
         this.logger.error(`setStaffServiceEligibility validate failed: ${validError.message}`);
         throw new InternalServerErrorException('Unable to validate services');
       }
       const validIds = new Set((validRows ?? []).map((row) => row.id));
-      if (desired.some((id) => !validIds.has(id))) {
+      if (desiredIds.some((id) => !validIds.has(id))) {
         throw new BadRequestException('One or more services are not valid for this business');
       }
     }
 
+    const payload = desiredIds.map((serviceId) => ({
+      service_id: serviceId,
+      price_amount: byServiceId.get(serviceId) ?? null,
+    }));
+
     const { error } = await this.admin.schema('booking').rpc('set_staff_service_eligibility', {
       p_business_id: businessId,
       p_staff_profile_id: staffProfileId,
-      p_service_ids: desired,
+      p_assignments: payload,
     });
     if (error) {
       this.logger.error(`set_staff_service_eligibility RPC failed: ${error.message}`);
@@ -651,31 +685,34 @@ export class StaffService {
   private async fetchServiceEligibilityByStaffProfile(
     businessId: string,
     staffProfileIds: string[],
-  ): Promise<Map<string, string[]>> {
+  ): Promise<Map<string, { serviceId: string; priceAmount: number | null }[]>> {
     const ids = Array.from(new Set(staffProfileIds.filter(Boolean)));
     if (ids.length === 0) return new Map();
     const { data, error } = await this.admin
       .schema('booking')
       .from('staff_service_eligibility')
-      .select('service_id,staff_profile_id')
+      .select('service_id,staff_profile_id,price_amount')
       .eq('business_id', businessId)
       .in('staff_profile_id', ids)
-      .returns<{ service_id: string; staff_profile_id: string }[]>();
+      .returns<{ service_id: string; staff_profile_id: string; price_amount: number | string | null }[]>();
     if (error) {
       this.logger.error(`fetchServiceEligibilityByStaffProfile failed: ${error.message}`);
       throw new InternalServerErrorException('Unable to load service eligibility');
     }
-    const byStaff = new Map<string, string[]>();
+    const byStaff = new Map<string, { serviceId: string; priceAmount: number | null }[]>();
     for (const row of data ?? []) {
       const list = byStaff.get(row.staff_profile_id) ?? [];
-      list.push(row.service_id);
+      list.push({
+        serviceId: row.service_id,
+        priceAmount: row.price_amount === null ? null : Number(row.price_amount),
+      });
       byStaff.set(row.staff_profile_id, list);
     }
     return byStaff;
   }
 
   private assertOwner(actor: AuthUser): void {
-    if (actor.role !== 'owner') {
+    if (!userHasRole(actor, 'owner')) {
       throw new ForbiddenException('Only owners can manage staff');
     }
   }
@@ -839,10 +876,10 @@ export class StaffService {
     return data ?? [];
   }
 
-  private async fetchTargetMembership(
+  private async fetchUserMemberships(
     businessId: string,
     userProfileId: string,
-  ): Promise<MembershipRow> {
+  ): Promise<MembershipRow[]> {
     const { data, error } = await this.admin
       .schema('core')
       .from('user_memberships')
@@ -851,20 +888,167 @@ export class StaffService {
       )
       .eq('business_id', businessId)
       .eq('user_profile_id', userProfileId)
-      .order('role', { ascending: true })
+      .in('role', ['owner', 'manager', 'stylist'])
       .returns<MembershipRow[]>();
     if (error) {
-      this.logger.error(`fetchTargetMembership failed: ${error.message}`);
-      throw new InternalServerErrorException('Unable to load target membership');
+      this.logger.error(`fetchUserMemberships failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load staff memberships');
     }
-    if (!data || data.length === 0) {
-      throw new NotFoundException('Staff member not found');
+    return data ?? [];
+  }
+
+  /**
+   * Sync a member's role memberships to exactly `desiredRoles` at `locationId`,
+   * applying `status`. Existing rows for a desired role are updated in place
+   * (history preserved); roles no longer wanted — and any rows at other
+   * locations — are removed. A member can hold several roles at one location.
+   */
+  private async syncMembershipRoles(
+    actor: AuthUser,
+    targetUserId: string,
+    existing: MembershipRow[],
+    desiredRoles: InvitableRole[],
+    locationId: string,
+    status: 'active' | 'suspended' | 'revoked',
+  ): Promise<void> {
+    const nowIso = new Date().toISOString();
+    const existingByRole = new Map(existing.map((m) => [m.role, m]));
+    const keptIds = new Set<string>();
+
+    for (const role of desiredRoles) {
+      const current = existingByRole.get(role);
+      if (current) {
+        keptIds.add(current.id);
+        const { error } = await this.admin
+          .schema('core')
+          .from('user_memberships')
+          .update({
+            location_id: locationId,
+            status,
+            activated_at: status === 'active' ? current.activated_at ?? nowIso : current.activated_at,
+            suspended_at: status === 'suspended' ? nowIso : null,
+            revoked_at: status === 'revoked' ? nowIso : null,
+            updated_at: nowIso,
+          })
+          .eq('id', current.id);
+        if (error) {
+          this.logger.error(`syncMembershipRoles update failed: ${error.message}`);
+          throw new InternalServerErrorException('Unable to update staff roles');
+        }
+      } else {
+        const { error } = await this.admin
+          .schema('core')
+          .from('user_memberships')
+          .insert({
+            business_id: actor.businessId,
+            location_id: locationId,
+            user_profile_id: targetUserId,
+            role,
+            status,
+            invited_by_user_profile_id: actor.id,
+            activated_at: status === 'active' ? nowIso : null,
+            suspended_at: status === 'suspended' ? nowIso : null,
+            revoked_at: status === 'revoked' ? nowIso : null,
+          });
+        if (error) {
+          this.logger.error(`syncMembershipRoles insert failed: ${error.message}`);
+          throw new InternalServerErrorException('Unable to add staff role');
+        }
+      }
     }
-    return data.sort((a, b) => roleOrder(a.role) - roleOrder(b.role))[0];
+
+    const staleIds = existing.filter((m) => !keptIds.has(m.id)).map((m) => m.id);
+    if (staleIds.length > 0) {
+      const { error } = await this.admin
+        .schema('core')
+        .from('user_memberships')
+        .delete()
+        .in('id', staleIds);
+      if (error) {
+        this.logger.error(`syncMembershipRoles delete failed: ${error.message}`);
+        throw new InternalServerErrorException('Unable to remove staff roles');
+      }
+    }
+  }
+
+  /**
+   * Keep the member's single staff profile in step with their role set. When
+   * they hold the stylist role the profile is (created and) kept bookable; when
+   * they are manager-only the profile is retained for history but made
+   * non-bookable. Mirrors the previous `update_staff_member` RPC behaviour,
+   * preserving fields the caller did not send.
+   */
+  private async syncStaffProfile(
+    businessId: string,
+    userProfileId: string,
+    locationId: string,
+    desiredRoles: InvitableRole[],
+    status: 'active' | 'suspended' | 'revoked',
+    input: UpdateStaffMemberRequest,
+  ): Promise<void> {
+    const nowIso = new Date().toISOString();
+    const employmentStatus = status === 'active' ? 'active' : 'on_leave';
+    const [existing] = await this.fetchStaffProfiles(businessId, [userProfileId]);
+
+    if (desiredRoles.includes('stylist')) {
+      if (existing) {
+        const patch: Record<string, unknown> = {
+          primary_location_id: locationId,
+          employment_status: employmentStatus,
+          is_bookable: input.isBookable ?? existing.is_bookable,
+          updated_at: nowIso,
+        };
+        if (input.displayName?.trim()) patch.display_name = input.displayName.trim();
+        if (input.colorHex?.trim()) patch.color_hex = input.colorHex.trim();
+        if (input.bio?.trim()) patch.bio = input.bio.trim();
+        const { error } = await this.admin
+          .schema('core')
+          .from('staff_profiles')
+          .update(patch)
+          .eq('business_id', businessId)
+          .eq('user_profile_id', userProfileId);
+        if (error) {
+          this.logger.error(`syncStaffProfile update failed: ${error.message}`);
+          throw new InternalServerErrorException('Unable to update staff profile');
+        }
+      } else {
+        const [profile] = await this.fetchUserProfiles([userProfileId]);
+        const { error } = await this.admin
+          .schema('core')
+          .from('staff_profiles')
+          .insert({
+            business_id: businessId,
+            user_profile_id: userProfileId,
+            primary_location_id: locationId,
+            display_name: input.displayName?.trim() || profile?.full_name || 'Stylist',
+            employment_status: employmentStatus,
+            color_hex: input.colorHex?.trim() || null,
+            bio: input.bio?.trim() || null,
+            is_bookable: input.isBookable ?? true,
+          });
+        if (error) {
+          this.logger.error(`syncStaffProfile insert failed: ${error.message}`);
+          throw new InternalServerErrorException('Unable to create staff profile');
+        }
+      }
+    } else if (existing) {
+      // Manager-only: keep the profile for history but make it non-bookable.
+      const { error } = await this.admin
+        .schema('core')
+        .from('staff_profiles')
+        .update({ is_bookable: false, employment_status: employmentStatus, updated_at: nowIso })
+        .eq('business_id', businessId)
+        .eq('user_profile_id', userProfileId);
+      if (error) {
+        this.logger.error(`syncStaffProfile downgrade failed: ${error.message}`);
+        throw new InternalServerErrorException('Unable to update staff profile');
+      }
+    }
   }
 
   private async findStaffMember(businessId: string, userProfileId: string): Promise<StaffMember | null> {
-    const membership = await this.fetchTargetMembership(businessId, userProfileId);
+    const memberships = await this.fetchUserMemberships(businessId, userProfileId);
+    if (memberships.length === 0) return null;
     const [profiles, staffProfiles, locations] = await Promise.all([
       this.fetchUserProfiles([userProfileId]),
       this.fetchStaffProfiles(businessId, [userProfileId]),
@@ -877,29 +1061,35 @@ export class StaffService {
       businessId,
       staffProfiles.map((s) => s.id),
     );
-    return this.toStaffMember(membership, profileById, staffProfileByUser, locationById, eligibilityByStaffProfile);
+    return this.toStaffMember(memberships, profileById, staffProfileByUser, locationById, eligibilityByStaffProfile);
   }
 
   private toStaffMember(
-    membership: MembershipRow,
+    memberships: MembershipRow[],
     profileById: Map<string, UserProfileRow>,
     staffProfileByUser: Map<string, StaffProfileRow>,
     locationById: Map<string, BusinessLocationSummary>,
-    eligibilityByStaffProfile: Map<string, string[]>,
+    eligibilityByStaffProfile: Map<string, { serviceId: string; priceAmount: number | null }[]>,
   ): StaffMember | null {
+    if (memberships.length === 0) return null;
+    // Highest-privilege membership represents the member; roles[] holds the set.
+    const ordered = [...memberships].sort((a, b) => roleOrder(a.role) - roleOrder(b.role));
+    const membership = ordered[0];
     const profile = profileById.get(membership.user_profile_id);
     if (!profile) return null;
+    const roles = Array.from(new Set(ordered.map((m) => m.role))) as UserRole[];
     const staffProfile = staffProfileByUser.get(membership.user_profile_id);
-    const location = membership.location_id ? locationById.get(membership.location_id) : undefined;
+    const locationId = membership.location_id ?? ordered.find((m) => m.location_id)?.location_id ?? null;
+    const location = locationId ? locationById.get(locationId) : undefined;
     return {
       userProfileId: profile.id,
       email: profile.email,
       fullName: profile.full_name,
       phone: profile.phone ?? undefined,
       avatarUrl: profile.avatar_url ?? undefined,
-      role: membership.role,
+      roles,
       membershipId: membership.id,
-      membershipStatus: membership.status,
+      membershipStatus: aggregateMembershipStatus(ordered.map((m) => m.status)),
       location,
       staffProfile: staffProfile
         ? {
@@ -914,7 +1104,8 @@ export class StaffService {
             leaveNotes: staffProfile.leave_notes ?? undefined,
             colorHex: staffProfile.color_hex ?? undefined,
             bio: staffProfile.bio ?? undefined,
-            serviceIds: eligibilityByStaffProfile.get(staffProfile.id) ?? [],
+            serviceIds: (eligibilityByStaffProfile.get(staffProfile.id) ?? []).map((e) => e.serviceId),
+            servicePricing: eligibilityByStaffProfile.get(staffProfile.id) ?? [],
           }
         : undefined,
       invitedAt: membership.invited_by_user_profile_id ? membership.created_at : undefined,
@@ -1084,24 +1275,6 @@ export class StaffService {
     return new InternalServerErrorException('Unable to accept invitation');
   }
 
-  private translateUpdateError(message: string): Error {
-    const normalized = message.toLowerCase();
-    if (normalized.includes('actor_not_owner')) return new ForbiddenException('Only owners can update staff');
-    if (normalized.includes('cannot_modify_owner'))
-      return new ForbiddenException('Owner accounts cannot be modified via this endpoint');
-    if (normalized.includes('target_membership_not_found'))
-      return new NotFoundException('Staff member not found');
-    if (normalized.includes('invalid_role_target'))
-      return new BadRequestException('Role must be manager or stylist');
-    if (normalized.includes('invalid_status_target'))
-      return new BadRequestException('Invalid membership status');
-    if (normalized.includes('location_required'))
-      return new BadRequestException('Location is required');
-    if (normalized.includes('location_outside_business'))
-      return new ForbiddenException('Location does not belong to this business');
-    return new InternalServerErrorException('Unable to update staff member');
-  }
-
   private toHttpError(error: unknown): Error {
     if (
       error instanceof BadRequestException ||
@@ -1156,4 +1329,13 @@ function roleOrder(role: 'owner' | 'manager' | 'stylist' | 'client'): number {
     default:
       return 99;
   }
+}
+
+// A member's overall status across their role memberships (which are managed
+// together). Prefers the "most active" status if they ever diverge.
+function aggregateMembershipStatus(statuses: MembershipStatus[]): MembershipStatus {
+  if (statuses.includes('active')) return 'active';
+  if (statuses.includes('invited')) return 'invited';
+  if (statuses.includes('suspended')) return 'suspended';
+  return 'revoked';
 }

@@ -26,6 +26,7 @@ import type {
   ListInventoryProductsResponse,
   ListInventoryStockResponse,
 } from '@sheer/domain';
+import { userHasRole, userHasAnyRole } from '@sheer/domain';
 import type { LabRuntimeSession } from '../lab-session/lab-session.service';
 import type {
   AdjustInventoryStockDto,
@@ -208,7 +209,7 @@ export class InventoryService {
     this.assertManagerOrOwner(actor);
     const locationIds = await this.resolveLocationScope(actor, query.locationId);
     const { stock, locations } = await this.loadStock(actor.businessId, locationIds, query);
-    return { stock, locations, scope: actor.role === 'owner' ? 'owner' : 'manager' };
+    return { stock, locations, scope: userHasRole(actor, 'owner') ? 'owner' : 'manager' };
   }
 
   // Lab-session-scoped variant: stock is restricted to the station's single
@@ -576,7 +577,8 @@ export class InventoryService {
   private labActor(session: LabRuntimeSession): AuthUser {
     return {
       id: session.userProfileId,
-      role: session.role,
+      roles: [session.role],
+      primaryRole: session.role,
       businessId: session.businessId,
       allowedLocationIds: [session.locationId],
       locationScope: { kind: 'locations', locationIds: [session.locationId] },
@@ -587,18 +589,18 @@ export class InventoryService {
   }
 
   private assertManagerOrOwner(actor: AuthUser): void {
-    if (actor.role !== 'owner' && actor.role !== 'manager') {
+    if (!userHasAnyRole(actor, ['owner', 'manager'])) {
       throw new ForbiddenException('Inventory is limited to owners and managers');
     }
   }
 
   private assertOwner(actor: AuthUser): void {
-    if (actor.role !== 'owner') throw new ForbiddenException('Only owners can manage product catalogue');
+    if (!userHasRole(actor, 'owner')) throw new ForbiddenException('Only owners can manage product catalogue');
   }
 
   private async assertLocationScope(actor: AuthUser, locationId: string): Promise<void> {
     this.assertManagerOrOwner(actor);
-    if (actor.role !== 'owner' && !actor.allowedLocationIds.includes(locationId)) {
+    if (!userHasRole(actor, 'owner') && !actor.allowedLocationIds.includes(locationId)) {
       throw new ForbiddenException('Location is outside your inventory scope');
     }
     const { data, error } = await this.admin
@@ -621,9 +623,13 @@ export class InventoryService {
       await this.assertLocationScope(actor, locationId);
       return [locationId];
     }
-    if (actor.role === 'manager') return actor.allowedLocationIds;
-    const locations = await this.fetchLocations(actor.businessId);
-    return locations.map((location) => location.id);
+    // Owner wins: a user who holds an owner role (even alongside manager) sees
+    // every business location; a manager-only user is scoped to their locations.
+    if (userHasRole(actor, 'owner')) {
+      const locations = await this.fetchLocations(actor.businessId);
+      return locations.map((location) => location.id);
+    }
+    return actor.allowedLocationIds;
   }
 
   private async assertProduct(businessId: string, productId: string): Promise<void> {

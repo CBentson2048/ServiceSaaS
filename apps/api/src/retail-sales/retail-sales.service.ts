@@ -14,6 +14,7 @@ import type {
   RetailSale,
   RetailSalesListResponse,
 } from '@sheer/domain';
+import { userHasRole, userHasAnyRole } from '@sheer/domain';
 import type { RecordRetailSaleDto, RetailSalesQueryDto } from './dto';
 
 interface RetailSaleRow {
@@ -58,7 +59,9 @@ export class RetailSalesService {
     }
 
     // Stylists may only attribute sales to themselves; owners/managers choose.
-    const staffProfileId = actor.role === 'stylist' ? actor.staffProfileId : dto.staffProfileId;
+    // A user who is ALSO an owner/manager keeps the choose-any ability.
+    const stylistOnly = userHasRole(actor, 'stylist') && !userHasAnyRole(actor, ['owner', 'manager']);
+    const staffProfileId = stylistOnly ? actor.staffProfileId : dto.staffProfileId;
 
     const { data, error } = await this.admin.schema('billing').rpc('record_retail_sale', {
       p_payload: {
@@ -92,7 +95,7 @@ export class RetailSalesService {
 
   /** List retail sales for the actor's scope, optionally windowed. */
   async list(actor: AuthUser, query: RetailSalesQueryDto): Promise<RetailSalesListResponse> {
-    if (actor.role !== 'owner' && actor.role !== 'manager') {
+    if (!userHasAnyRole(actor, ['owner', 'manager'])) {
       throw new ForbiddenException('Retail sales reports are limited to owners and managers');
     }
     const accessible = await this.accessibleLocationIds(actor);
@@ -105,7 +108,7 @@ export class RetailSalesService {
 
     if (locationIds.length === 0) {
       return {
-        scope: actor.role,
+        scope: userHasRole(actor, 'owner') ? 'owner' : 'manager',
         selectedLocationId: query.locationId,
         rangeStart: query.from,
         rangeEnd: query.to,
@@ -139,7 +142,7 @@ export class RetailSalesService {
     const totalAmountCents = sales.reduce((sum, s) => sum + s.totalAmountCents, 0);
 
     return {
-      scope: actor.role,
+      scope: userHasRole(actor, 'owner') ? 'owner' : 'manager',
       selectedLocationId: query.locationId,
       rangeStart: query.from,
       rangeEnd: query.to,
@@ -150,7 +153,7 @@ export class RetailSalesService {
   }
 
   private async accessibleLocationIds(actor: AuthUser): Promise<string[]> {
-    if (actor.role === 'owner') {
+    if (userHasRole(actor, 'owner')) {
       const { data, error } = await this.admin
         .schema('core')
         .from('locations')

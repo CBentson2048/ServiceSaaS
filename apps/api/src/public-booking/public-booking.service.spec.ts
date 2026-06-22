@@ -39,3 +39,15 @@ describe('PublicBookingService — service rules and upgrades', () => {
 describe('PublicBookingService — deposit payment methods', () => {
   it.todo('deposit PaymentIntent omits payment_method_types so Stripe dynamic payment methods remain dashboard-controlled');
 });
+
+describe('PublicBookingService — per-stylist service pricing', () => {
+  // applyStylistServicePricing runs inside resolveBookingContext, so it covers
+  // every charge path that funnels through it (public checkout, mobile, staff
+  // booking) and the totals derived from context.services. price_amount NULL on
+  // booking.staff_service_eligibility inherits services.base_price.
+  it.todo('overrides startingPriceAmount with the stylist price_amount when one is set');
+  it.todo('falls back to services.base_price when the stylist has no price_amount (NULL)');
+  it.todo('applies different prices for the same service across two stylists');
+  it.todo('overridden price flows into appointment_services.price_amount and the booking total');
+  it.todo('getStylists / getAvailability browsing still show the base "from" price');
+});

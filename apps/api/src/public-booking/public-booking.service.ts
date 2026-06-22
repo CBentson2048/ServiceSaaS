@@ -36,6 +36,7 @@ import type {
   StartPublicBookingCheckoutRequest,
   StartPublicBookingCheckoutResponse,
 } from '@sheer/domain';
+import { userHasRole } from '@sheer/domain';
 import { BookingNotificationService } from '../communications/booking-notification.service';
 import { RebookingService } from '../rebooking/rebooking.service';
 import { StripeService, type StripePaymentIntent } from '../stripe/stripe.service';
@@ -850,6 +851,40 @@ export class PublicBookingService {
     return eligible;
   }
 
+  /**
+   * Overrides each service's price with the chosen stylist's per-stylist price
+   * (booking.staff_service_eligibility.price_amount) where one is set. A NULL
+   * price leaves the service base price untouched. Mutates `services` in place so
+   * totals and the snapshotted appointment/attempt service prices follow.
+   */
+  private async applyStylistServicePricing(
+    businessId: string,
+    staffProfileId: string,
+    services: PublicBookingServiceSummary[],
+  ): Promise<void> {
+    if (services.length === 0) return;
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('staff_service_eligibility')
+      .select('service_id,price_amount')
+      .eq('business_id', businessId)
+      .eq('staff_profile_id', staffProfileId)
+      .in('service_id', services.map((service) => service.id))
+      .returns<{ service_id: string; price_amount: number | string | null }[]>();
+    if (error) {
+      this.logger.error(`applyStylistServicePricing failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load stylist pricing');
+    }
+    const priceByService = new Map<string, number>();
+    for (const row of data ?? []) {
+      if (row.price_amount !== null) priceByService.set(row.service_id, Number(row.price_amount));
+    }
+    for (const service of services) {
+      const override = priceByService.get(service.id);
+      if (override !== undefined) service.startingPriceAmount = override;
+    }
+  }
+
   private async assertStaffEligibleForServices(
     businessId: string,
     staffProfileId: string,
@@ -1126,7 +1161,7 @@ export class PublicBookingService {
   }
 
   private assertClientActor(actor: AuthUser): asserts actor is AuthUser & { clientProfileId: string } {
-    if (actor.role !== 'client' || !actor.clientProfileId) {
+    if (!userHasRole(actor, 'client') || !actor.clientProfileId) {
       throw new ForbiddenException('Mobile booking requires a signed-in client account');
     }
   }
@@ -1163,6 +1198,10 @@ export class PublicBookingService {
     }
     // Hard-block: the stylist must be eligible for every selected service.
     await this.assertStaffEligibleForServices(location.businessId, input.staffProfileId, input.serviceIds);
+    // Now that a specific stylist is locked in, apply their per-stylist prices so
+    // every downstream charge (totals + appointment/attempt service rows) uses the
+    // stylist's price instead of the service base price.
+    await this.applyStylistServicePricing(location.businessId, input.staffProfileId, services);
     if (input.staffRequestMode === 'next_available' && !location.allowNextAvailable) {
       throw new BadRequestException('Next available booking is not enabled for this location');
     }

@@ -58,3 +58,29 @@ describe('StaffService — staff management', () => {
   it.todo('reactivateStaff sets membership status to active');
   it.todo('listStaff returns memberships hydrated with profiles, staffProfiles, and locations');
 });
+
+describe('StaffService — per-stylist service pricing', () => {
+  // booking.staff_service_eligibility.price_amount: NULL inherits services.base_price.
+  it.todo('serviceAssignments writes price_amount via set_staff_service_eligibility RPC (jsonb)');
+  it.todo('serviceAssignments with priceAmount null/omitted stores NULL (inherits base price)');
+  it.todo('legacy serviceIds[] still works and stores NULL prices for every service');
+  it.todo('serviceAssignments takes precedence over serviceIds when both are sent');
+  it.todo('rejects an assignment whose serviceId does not belong to the business');
+  it.todo('rejects assigning services to a member without a staff profile');
+  it.todo('listStaff hydrates staffProfile.servicePricing alongside serviceIds');
+});
+
+describe('StaffService — multi-role members', () => {
+  // A member can hold several roles at their location (e.g. a working manager
+  // who also does hair). Roles are managed as a SET keyed by user.
+  it.todo('listStaff returns ONE row per user with roles[] (manager + stylist collapsed)');
+  it.todo('update with roles:[manager,stylist] creates both membership rows at the location');
+  it.todo('update that drops stylist removes the stylist membership and keeps manager');
+  it.todo('removing the stylist role downgrades the staff profile to non-bookable (kept for history)');
+  it.todo('adding the stylist role (re)creates a bookable staff profile, preserving existing fields');
+  it.todo('update with empty roles[] is rejected (a member must keep at least one role)');
+  it.todo('changing location moves ALL of the member\'s role memberships to the new location');
+  it.todo('status-only update (deactivate/reactivate) applies to every role the member holds');
+  it.todo('updating a member never touches their owner membership and cannot grant owner');
+  it.todo('existing membership activated_at is preserved across edits');
+});

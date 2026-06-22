@@ -14,6 +14,7 @@ import type {
   ProductBillingRule,
   UpdateLocationProductBillingSettingsRequest,
 } from '@sheer/domain';
+import { userHasRole } from '@sheer/domain';
 
 interface BillingRulesRow {
   id: string;
@@ -167,8 +168,8 @@ export class OwnerBillingSettingsService {
   }
 
   private assertManagementAccess(actor: AuthUser, locationId: string): void {
-    if (actor.role === 'owner') return;
-    if (actor.role === 'manager' && actor.allowedLocationIds.includes(locationId)) return;
+    if (userHasRole(actor, 'owner')) return;
+    if (userHasRole(actor, 'manager') && actor.allowedLocationIds.includes(locationId)) return;
     throw new ForbiddenException('You do not have permission to manage billing settings for this location');
   }
 }

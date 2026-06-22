@@ -20,6 +20,7 @@ import type {
   DashboardTopService,
   DashboardTopServicesResponse,
 } from '@sheer/domain';
+import { userHasAnyRole, userHasRole } from '@sheer/domain';
 import type { DashboardDateRangeQueryDto, DashboardInventoryAlertsQueryDto } from './dto';
 
 type AppointmentStatus =
@@ -270,11 +271,11 @@ export class DashboardService {
   }
 
   private async resolveScope(actor: AuthUser, requestedLocationId?: string): Promise<DashboardScope> {
-    if (actor.role !== 'owner' && actor.role !== 'manager') {
+    if (!userHasAnyRole(actor, ['owner', 'manager'])) {
       throw new ForbiddenException('Dashboard KPIs are limited to owners and managers');
     }
 
-    if (actor.role === 'manager') {
+    if (!userHasRole(actor, 'owner')) {
       if (requestedLocationId && !actor.allowedLocationIds.includes(requestedLocationId)) {
         throw new ForbiddenException('Location is outside your dashboard scope');
       }

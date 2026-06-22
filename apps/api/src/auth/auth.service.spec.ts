@@ -15,6 +15,20 @@
  *     RESEND_API_KEY logs the reset URL instead of throwing.
  */
 
+describe('AuthService — multi-role resolution (resolveAuthUser)', () => {
+  // A single user can hold several roles in one business (owner + manager +
+  // stylist). resolveAuthUser must expose ALL of them, never collapse to one.
+  it.todo('exposes roles[] containing every active membership role in the primary business');
+  it.todo('orders roles[] highest-privilege first (owner > manager > stylist > client)');
+  it.todo('sets primaryRole to the highest-privilege active role (= roles[0])');
+  it.todo('deduplicates roles[] when the user has the same role at multiple locations');
+  it.todo('allowedLocationIds is the UNION of locations across ALL the user\'s roles');
+  it.todo('owner role yields every active business location in allowedLocationIds');
+  it.todo('locationScope.kind follows the highest role: owner=all, manager=locations, stylist/client=self');
+  it.todo('a manager@A + stylist@B user can see BOTH location A and location B');
+  it.todo('fetches the client profile when the user holds a client role alongside staff roles');
+});
+
 describe('AuthService — password reset request', () => {
   it.todo('always responds { accepted: true } regardless of whether the email exists');
   it.todo('does NOT call EmailService.send when the email does not match a profile');

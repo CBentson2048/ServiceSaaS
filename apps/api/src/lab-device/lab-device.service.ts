@@ -18,6 +18,7 @@ import type {
   SharedDevice,
   SharedDeviceSummary,
 } from '@sheer/domain';
+import { userHasRole, userHasAnyRole } from '@sheer/domain';
 import type { PairScaleDto, RegisterLabDeviceDto, RevokeLabDeviceDto } from './dto';
 
 interface SharedDeviceRow {
@@ -104,7 +105,7 @@ export class LabDeviceService {
       .eq('app_mode', 'sheer_lab')
       .order('registered_at', { ascending: false });
 
-    if (actor.role === 'manager') {
+    if (userHasRole(actor, 'manager')) {
       query = query.in('location_id', actor.allowedLocationIds.length > 0 ? actor.allowedLocationIds : ['']);
     }
 
@@ -116,7 +117,7 @@ export class LabDeviceService {
 
     return {
       devices: (data ?? []).map(toSharedDeviceSummary),
-      scope: actor.role === 'owner' ? 'owner' : 'manager',
+      scope: userHasRole(actor, 'owner') ? 'owner' : 'manager',
     };
   }
 
@@ -137,7 +138,7 @@ export class LabDeviceService {
       throw new InternalServerErrorException('Unable to revoke Sheer Lab device');
     }
     if (!existing) throw new NotFoundException('Sheer Lab device not found');
-    if (actor.role === 'manager' && !actor.allowedLocationIds.includes(existing.location_id)) {
+    if (userHasRole(actor, 'manager') && !actor.allowedLocationIds.includes(existing.location_id)) {
       throw new ForbiddenException('Cannot revoke a device outside your location scope');
     }
     if (existing.status === 'revoked') {
@@ -225,19 +226,19 @@ export class LabDeviceService {
   }
 
   private assertCanManage(actor: AuthUser): void {
-    if (actor.role !== 'owner' && actor.role !== 'manager') {
+    if (!userHasAnyRole(actor, ['owner', 'manager'])) {
       throw new ForbiddenException('Role is not allowed to manage Sheer Lab devices');
     }
   }
 
   private assertCanManageDevice(actor: AuthUser, businessId: string, locationId: string): void {
-    if (actor.role !== 'owner' && actor.role !== 'manager') {
+    if (!userHasAnyRole(actor, ['owner', 'manager'])) {
       throw new ForbiddenException('Role is not allowed to register Sheer Lab devices');
     }
     if (actor.businessId !== businessId) {
       throw new ForbiddenException('Cannot register a device outside your business');
     }
-    if (actor.role === 'owner') return;
+    if (userHasRole(actor, 'owner')) return;
 
     const allowedLocationIds = actor.locationScope?.locationIds ?? [];
     if (!allowedLocationIds.includes(locationId)) {

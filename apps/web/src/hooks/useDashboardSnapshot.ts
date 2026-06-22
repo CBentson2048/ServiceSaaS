@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { userHasRole, userHasAnyRole } from '@sheer/domain';
 import type {
   DashboardInventoryAlertsResponse,
   DashboardKpisResponse,
@@ -41,7 +42,7 @@ export function useDashboardSnapshot(
     let cancelled = false;
 
     async function load() {
-      if (!session?.accessToken || !user || (user.role !== 'owner' && user.role !== 'manager')) {
+      if (!session?.accessToken || !user || !userHasAnyRole(user, ['owner', 'manager'])) {
         setData(emptyDashboardSnapshot());
         return;
       }
@@ -55,7 +56,7 @@ export function useDashboardSnapshot(
         setError(null);
         return;
       }
-      const selectedLocationId = user.role === 'owner' && locationId !== 'all' ? locationId : undefined;
+      const selectedLocationId = userHasRole(user, 'owner') && locationId !== 'all' ? locationId : undefined;
       setIsLoading(true);
       setError(null);
 

@@ -10,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import type { RotaLeaveRequest, RotaShift, StylistMyWeekResponse } from '@sheer/domain';
+import { userHasRole } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { AppButton, EmptyState, Screen } from '@sheer/ui-mobile';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
@@ -125,7 +126,7 @@ export default function RotaScreen() {
   }
 
   const pendingLeaveCount = leaveRequests.filter((request) => request.status === 'pending').length;
-  const showStylistTabs = auth.user?.role === 'stylist';
+  const showStylistTabs = userHasRole(auth.user, 'stylist');
 
   return (
     <ProtectedScreen allowedRoles={['manager', 'stylist']}>

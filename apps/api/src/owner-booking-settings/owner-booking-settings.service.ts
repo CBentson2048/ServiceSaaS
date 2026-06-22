@@ -20,6 +20,7 @@ import type {
   UpsertServiceRequirementRuleRequest,
   UpsertServiceUpgradeSuggestionRequest,
 } from '@sheer/domain';
+import { userHasRole } from '@sheer/domain';
 import { CommunicationSettingsService } from '../communications/communication-settings.service';
 
 interface LocationRow {
@@ -510,7 +511,7 @@ export class OwnerBookingSettingsService {
   }
 
   private assertOwner(actor: AuthUser): void {
-    if (actor.role !== 'owner') {
+    if (!userHasRole(actor, 'owner')) {
       throw new ForbiddenException('Only owners can manage booking settings');
     }
   }

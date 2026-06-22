@@ -16,7 +16,8 @@ function makeService(): OwnerTaxSettingsService {
 function actor(overrides: Partial<AuthUser> = {}): AuthUser {
   return {
     id: 'user-1',
-    role: 'owner',
+    roles: ['owner'],
+    primaryRole: 'owner',
     businessId: 'biz-1',
     allowedLocationIds: ['loc-1'],
     locationScope: { kind: 'all', locationIds: ['loc-1'] },
@@ -30,21 +31,21 @@ describe('OwnerTaxSettingsService — permission enforcement', () => {
   it('rejects a stylist outright', async () => {
     const service = makeService();
     await expect(
-      service.getTaxSettings(actor({ role: 'stylist' }), 'loc-1'),
+      service.getTaxSettings(actor({ roles: ['stylist'], primaryRole: 'stylist' }), 'loc-1'),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it('rejects a manager for a location they do not manage', async () => {
     const service = makeService();
     await expect(
-      service.getTaxSettings(actor({ role: 'manager', allowedLocationIds: ['loc-2'] }), 'loc-1'),
+      service.getTaxSettings(actor({ roles: ['manager'], primaryRole: 'manager', allowedLocationIds: ['loc-2'] }), 'loc-1'),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it('rejects a client', async () => {
     const service = makeService();
     await expect(
-      service.updateTaxSettings(actor({ role: 'client' }), { locationId: 'loc-1', taxEnabled: false }),
+      service.updateTaxSettings(actor({ roles: ['client'], primaryRole: 'client' }), { locationId: 'loc-1', taxEnabled: false }),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 });

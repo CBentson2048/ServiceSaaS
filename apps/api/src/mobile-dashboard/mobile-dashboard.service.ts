@@ -11,6 +11,7 @@ import type {
   MobileStylistDashboardResponse,
   StaffBookingSummary,
 } from '@sheer/domain';
+import { userHasRole } from '@sheer/domain';
 
 interface AppointmentServiceRow {
   service_id?: string | null;
@@ -90,7 +91,7 @@ export class MobileDashboardService {
   }
 
   async client(actor: AuthUser): Promise<MobileClientDashboardResponse> {
-    if (actor.role !== 'client' || !actor.clientProfileId) {
+    if (!userHasRole(actor, 'client') || !actor.clientProfileId) {
       throw new ForbiddenException('Client dashboard requires a client account');
     }
 
@@ -115,7 +116,7 @@ export class MobileDashboardService {
   }
 
   async stylist(actor: AuthUser): Promise<MobileStylistDashboardResponse> {
-    if (actor.role !== 'stylist' || !actor.staffProfileId) {
+    if (!userHasRole(actor, 'stylist') || !actor.staffProfileId) {
       throw new ForbiddenException('Stylist dashboard requires a stylist account');
     }
 
@@ -143,7 +144,7 @@ export class MobileDashboardService {
   }
 
   async manager(actor: AuthUser): Promise<MobileManagerDashboardResponse> {
-    if (actor.role !== 'manager') {
+    if (!userHasRole(actor, 'manager')) {
       throw new ForbiddenException('Manager dashboard requires a manager account');
     }
     const location = actor.locations[0];
@@ -179,7 +180,7 @@ export class MobileDashboardService {
   }
 
   owner(actor: AuthUser): MobileOwnerDashboardResponse {
-    if (actor.role !== 'owner') {
+    if (!userHasRole(actor, 'owner')) {
       throw new ForbiddenException('Owner dashboard requires an owner account');
     }
 

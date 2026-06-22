@@ -10,6 +10,7 @@ import type {
   StaffBookingPaymentMode,
   StaffBookingSource,
 } from '@sheer/domain';
+import { userHasAnyRole } from '@sheer/domain';
 import {
   ApiRequestError,
   createStaffBooking,
@@ -270,8 +271,7 @@ export function NewBookingPage() {
 
   if (
     auth.status === 'authenticated' &&
-    auth.user?.role !== 'owner' &&
-    auth.user?.role !== 'manager'
+    !userHasAnyRole(auth.user, ['owner', 'manager'])
   ) {
     return <Navigate to="/unauthorized" replace />;
   }

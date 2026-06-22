@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { userHasRole } from '@sheer/domain';
 import { formatDate, cn } from '@sheer/utils';
 import { useNavigate } from 'react-router-dom';
 import { AppText } from '../design';
@@ -23,7 +24,7 @@ export function TopBar() {
       .join('')
       .slice(0, 2)
       .toUpperCase() || 'SH';
-  const roleLabel = user?.role === 'owner' ? 'Full business access' : 'Location scoped';
+  const roleLabel = user && userHasRole(user, 'owner') ? 'Full business access' : 'Location scoped';
 
   // Close the dropdown on outside click or Escape.
   useEffect(() => {

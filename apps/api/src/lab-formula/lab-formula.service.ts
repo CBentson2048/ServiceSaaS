@@ -14,6 +14,7 @@ import type {
   LocationProductBillingSettings,
   ProductBillingRule,
 } from '@sheer/domain';
+import { userHasRole } from '@sheer/domain';
 import { buildProductBillingSnapshot } from '../common/product-billing.helper';
 import {
   calculateFormulaBillableChargeCents,
@@ -432,7 +433,7 @@ export class LabFormulaService {
   // it ever leaves the API. Reuses historyForClient (which already scopes a
   // client to their own clientProfileId) and maps to the client-safe shape.
   historyForSelf(actor: AuthUser): ClientLabHistoryResponse {
-    if (actor.role !== 'client' || !actor.clientProfileId) {
+    if (!userHasRole(actor, 'client') || !actor.clientProfileId) {
       throw new ForbiddenException('Lab history requires a client account');
     }
     const records = this.historyForClient(actor, actor.clientProfileId);
@@ -440,7 +441,7 @@ export class LabFormulaService {
   }
 
   historyForClient(actor: AuthUser, clientProfileId: string): FormulaHistoryRecord[] {
-    if (actor.role === 'client' && actor.clientProfileId !== clientProfileId) {
+    if (userHasRole(actor, 'client') && actor.clientProfileId !== clientProfileId) {
       throw new ForbiddenException('Client formula history is outside your scope');
     }
     return Array.from(this.formulas.values())
@@ -519,7 +520,7 @@ export class LabFormulaService {
     if (!locationId) throw new BadRequestException('locationId is required for formula operations');
     this.assertLocationScope(actor, locationId);
 
-    if (actor.role === 'client') {
+    if (userHasRole(actor, 'client')) {
       if (!actor.clientProfileId || dto.clientProfileId !== actor.clientProfileId) {
         throw new ForbiddenException('Client formula scope is limited to your own profile');
       }
@@ -554,10 +555,10 @@ export class LabFormulaService {
       throw new BadRequestException('clientProfileId does not match appointment');
     }
     this.assertLocationScope(actor, data.location_id);
-    if (actor.role === 'stylist' && data.assigned_staff_profile_id !== actor.staffProfileId) {
+    if (userHasRole(actor, 'stylist') && data.assigned_staff_profile_id !== actor.staffProfileId) {
       throw new ForbiddenException('Appointment is outside your stylist scope');
     }
-    if (actor.role === 'client' && data.client_profile_id !== actor.clientProfileId) {
+    if (userHasRole(actor, 'client') && data.client_profile_id !== actor.clientProfileId) {
       throw new ForbiddenException('Appointment is outside your client scope');
     }
 
@@ -594,10 +595,10 @@ export class LabFormulaService {
       throw new BadRequestException('clientProfileId does not match visit');
     }
     this.assertLocationScope(actor, data.location_id);
-    if (actor.role === 'stylist' && data.primary_staff_profile_id !== actor.staffProfileId) {
+    if (userHasRole(actor, 'stylist') && data.primary_staff_profile_id !== actor.staffProfileId) {
       throw new ForbiddenException('Visit is outside your stylist scope');
     }
-    if (actor.role === 'client' && data.client_profile_id !== actor.clientProfileId) {
+    if (userHasRole(actor, 'client') && data.client_profile_id !== actor.clientProfileId) {
       throw new ForbiddenException('Visit is outside your client scope');
     }
 
@@ -762,7 +763,7 @@ export class LabFormulaService {
   }
 
   private assertLocationScope(actor: AuthUser, locationId: string): void {
-    if (actor.role === 'owner') return;
+    if (userHasRole(actor, 'owner')) return;
     if (!actor.allowedLocationIds.includes(locationId)) {
       throw new ForbiddenException('Formula location is outside your scope');
     }
@@ -770,8 +771,8 @@ export class LabFormulaService {
 
   private canReadFormula(actor: AuthUser, formula: FormulaDraft | FormulaHistoryRecord): boolean {
     if (formula.businessId !== actor.businessId) return false;
-    if (actor.role === 'owner') return true;
-    if (actor.role === 'client') return formula.clientProfileId === actor.clientProfileId;
+    if (userHasRole(actor, 'owner')) return true;
+    if (userHasRole(actor, 'client')) return formula.clientProfileId === actor.clientProfileId;
     return Boolean(formula.locationId && actor.allowedLocationIds.includes(formula.locationId));
   }
 
@@ -921,7 +922,8 @@ function toStringValue(value: unknown): string | undefined {
 function toAuthUserFromLabSession(session: LabRuntimeSession): AuthUser {
   return {
     id: session.userProfileId,
-    role: session.role,
+    roles: [session.role],
+    primaryRole: session.role,
     businessId: session.businessId,
     allowedLocationIds: [session.locationId],
     locationScope: { kind: 'locations', locationIds: [session.locationId] },

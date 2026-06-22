@@ -11,6 +11,7 @@ import type {
   SheerLabServiceTypeMetric,
   SheerLabStylistMetric,
 } from '@sheer/domain';
+import { userHasAnyRole, userHasRole } from '@sheer/domain';
 import type { LabRuntimeSession } from '../lab-session/lab-session.service';
 
 interface FormulaAnalyticsRow {
@@ -116,7 +117,7 @@ export class LabAnalyticsService {
     const normalizedRange: SheerLabAnalyticsRange = customWindow ? 'custom' : normalizeRange(range);
     const { rangeStart, rangeEnd } = customWindow ?? rangeWindow(normalizedRange);
     const locationIds = this.resolveLocationScope(actor, requestedLocationId);
-    const scope: 'owner' | 'manager' = actor.role === 'owner' ? 'owner' : 'manager';
+    const scope: 'owner' | 'manager' = userHasRole(actor, 'owner') ? 'owner' : 'manager';
 
     return this.buildAnalyticsResponse(actor.businessId, locationIds, scope, normalizedRange, rangeStart, rangeEnd);
   }
@@ -192,15 +193,15 @@ export class LabAnalyticsService {
   }
 
   private resolveLocationScope(actor: AuthUser, requestedLocationId?: string): string[] {
-    if (actor.role === 'stylist' || actor.role === 'client') {
+    if (userHasAnyRole(actor, ['stylist', 'client'])) {
       throw new ForbiddenException('Sheer Lab analytics are limited to owners and managers');
     }
 
-    if (actor.role !== 'owner' && requestedLocationId && !actor.allowedLocationIds.includes(requestedLocationId)) {
+    if (!userHasRole(actor, 'owner') && requestedLocationId && !actor.allowedLocationIds.includes(requestedLocationId)) {
       throw new ForbiddenException('Location is outside your dashboard scope');
     }
 
-    if (actor.role === 'manager') {
+    if (userHasRole(actor, 'manager')) {
       return requestedLocationId ? [requestedLocationId] : actor.allowedLocationIds;
     }
 

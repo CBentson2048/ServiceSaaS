@@ -9,7 +9,7 @@
     "icon": "./assets/icon.png",
     "newArchEnabled": false,
     "ios": {
-      "supportsTablet": true,
+      "supportsTablet": false,
       "bundleIdentifier": "com.qlooqo.app",
       "icon": "./assets/icon.png",
       "infoPlist": {

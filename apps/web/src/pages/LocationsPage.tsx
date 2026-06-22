@@ -13,7 +13,7 @@ type StatusFilter = 'all' | 'active' | 'inactive';
 
 export function LocationsPage() {
   const auth = useAuth();
-  const role = auth.user?.role;
+  const role = auth.user?.primaryRole;
   const accessToken = auth.session?.accessToken;
   const [locations, setLocations] = useState<BusinessLocation[]>([]);
   const [scope, setScope] = useState<'owner' | 'manager' | null>(null);

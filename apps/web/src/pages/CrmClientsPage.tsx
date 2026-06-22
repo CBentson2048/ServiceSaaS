@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import type { CrmClientSummary } from '@sheer/domain';
+import { userHasRole } from '@sheer/domain';
 import { ApiRequestError, createCrmClient, listCrmClients } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
 
@@ -53,7 +54,7 @@ export function CrmClientsPage() {
     return () => clearTimeout(handle);
   }, [accessToken, search, reload]);
 
-  if (auth.status === 'authenticated' && auth.user?.role === 'client') {
+  if (auth.status === 'authenticated' && userHasRole(auth.user, 'client')) {
     return <Navigate to="/unauthorized" replace />;
   }
 
@@ -97,7 +98,7 @@ export function CrmClientsPage() {
             Search client records, check alerts, and open visit history.
           </p>
         </div>
-        {auth.user?.role !== 'stylist' ? (
+        {!userHasRole(auth.user, 'stylist') ? (
           <button
             type="button"
             className="inline-flex h-10 items-center justify-center rounded-pill bg-primary px-5 text-[13px] font-semibold text-text-on-primary transition hover:bg-primary-deep"

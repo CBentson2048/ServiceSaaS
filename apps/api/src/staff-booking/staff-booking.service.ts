@@ -17,6 +17,7 @@ import type {
   PublicBookingServiceSelectionResponse,
   PublicBookingStylistsResponse,
 } from '@sheer/domain';
+import { userHasRole } from '@sheer/domain';
 import { CrmService } from '../crm/crm.service';
 import { PublicBookingService } from '../public-booking/public-booking.service';
 import type {
@@ -123,7 +124,7 @@ export class StaffBookingService {
   }
 
   private assertLocationScope(actor: AuthUser, locationId: string): void {
-    if (actor.role === 'owner') return;
+    if (userHasRole(actor, 'owner')) return;
     if (!actor.allowedLocationIds.includes(locationId)) {
       throw new ForbiddenException('Location is outside your scope');
     }
@@ -152,7 +153,7 @@ export class StaffBookingService {
       throw new InternalServerErrorException('Unable to resolve client');
     }
     if (!data) throw new NotFoundException('Client not found');
-    if (actor.role === 'owner') return;
+    if (userHasRole(actor, 'owner')) return;
     if (data.primary_location_id && actor.allowedLocationIds.includes(data.primary_location_id)) return;
     if (!data.primary_location_id && actor.allowedLocationIds.includes(locationId)) return;
     throw new ForbiddenException('Client is outside your scope');

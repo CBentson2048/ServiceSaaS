@@ -12,6 +12,7 @@ import type {
   LocationCancellationPolicy,
   UpdateCancellationPolicyRequest,
 } from '@sheer/domain';
+import { userHasRole } from '@sheer/domain';
 
 const HOURS_PER_DAY = 24;
 // Matches the core.location_settings.cancellation_notice_hours column default.
@@ -110,8 +111,8 @@ export class OwnerCancellationPolicyService {
   }
 
   private assertManagementAccess(actor: AuthUser, locationId: string): void {
-    if (actor.role === 'owner') return;
-    if (actor.role === 'manager' && actor.allowedLocationIds.includes(locationId)) return;
+    if (userHasRole(actor, 'owner')) return;
+    if (userHasRole(actor, 'manager') && actor.allowedLocationIds.includes(locationId)) return;
     throw new ForbiddenException(
       'You do not have permission to manage the cancellation policy for this location',
     );

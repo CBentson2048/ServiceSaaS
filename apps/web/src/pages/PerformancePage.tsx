@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { StylistKpiListResponse, StylistKpiResult } from '@sheer/domain';
+import { userHasRole } from '@sheer/domain';
 import { AppText } from '../design';
 import { RangeTabs, rangeToQueryParams, type CustomRange, type DashboardRange } from '../components/dashboard/RangeTabs';
 import { SectionLabel } from '../components/dashboard/SectionLabel';
@@ -137,7 +138,7 @@ export function PerformancePage() {
       <StylistKpiDetailModal
         stylist={selected}
         periodLabel={data ? periodLabel(data) : RANGE_LABEL[range]}
-        canManageBenchmarks={user?.role === 'owner'}
+        canManageBenchmarks={userHasRole(user, 'owner')}
         onClose={() => setSelected(null)}
       />
     </div>

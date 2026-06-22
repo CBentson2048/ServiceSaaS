@@ -8,6 +8,7 @@ import type {
   StaffInvitationWithToken,
   StaffMember,
 } from '@sheer/domain';
+import { userHasRole } from '@sheer/domain';
 import {
   ApiRequestError,
   deactivateStaffMember,
@@ -117,7 +118,7 @@ export function TeamPage() {
         member.fullName,
         member.email,
         member.location?.name ?? '',
-        member.role,
+        member.roles.join(' '),
         member.staffProfile?.displayName ?? '',
       ]
         .join(' ')
@@ -149,7 +150,7 @@ export function TeamPage() {
   const showStaffSection = membershipAllowed === 'all' || membershipAllowed.length > 0;
   const isFiltering = term.length > 0 || statusFilter !== 'all';
 
-  if (auth.status === 'authenticated' && auth.user?.role !== 'owner') {
+  if (auth.status === 'authenticated' && !userHasRole(auth.user, 'owner')) {
     return <Navigate to="/unauthorized" replace />;
   }
 
@@ -402,7 +403,7 @@ function StaffRow({
     .map((part) => part[0]?.toUpperCase() ?? '')
     .join('');
   const statusTone = statusToneFor(member.membershipStatus);
-  const isOwner = member.role === 'owner';
+  const isOwner = member.roles.includes('owner');
 
   return (
     <tr>
@@ -422,9 +423,20 @@ function StaffRow({
           </div>
         </div>
       </td>
-      <td className="px-4 py-3 capitalize text-text-primary">{member.role}</td>
+      <td className="px-4 py-3 text-text-primary">
+        <div className="flex flex-wrap gap-1">
+          {member.roles.map((role) => (
+            <span
+              key={role}
+              className="inline-flex h-5 items-center rounded-pill bg-surface-alt px-2 text-[11px] font-medium capitalize text-text-secondary"
+            >
+              {role}
+            </span>
+          ))}
+        </div>
+      </td>
       <td className="px-4 py-3 text-text-secondary">
-        {member.role === 'owner'
+        {isOwner
           ? 'Business-wide'
           : member.location?.name ?? <span className="text-warning">No location</span>}
       </td>

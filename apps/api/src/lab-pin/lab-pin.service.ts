@@ -16,6 +16,7 @@ import type {
   ListLabPinStatusesResponse,
   UserRole,
 } from '@sheer/domain';
+import { userHasRole, userHasAnyRole } from '@sheer/domain';
 import type { AssignLabPinDto, PinStatusQueryDto, ResetLabPinDto } from './dto';
 
 type PinRole = Extract<UserRole, 'owner' | 'manager' | 'stylist'>;
@@ -148,14 +149,14 @@ export class LabPinService {
     this.assertManagerOrOwner(actor);
     if (query.locationId) await this.assertLocationScope(actor, query.locationId);
 
-    const scope: 'owner' | 'manager' = actor.role === 'owner' ? 'owner' : 'manager';
+    const scope: 'owner' | 'manager' = userHasRole(actor, 'owner') ? 'owner' : 'manager';
 
     // Resolve the locations in play (and their names) up front: a specific
     // location when filtered, a manager's allowed locations, or every business
     // location for an owner.
     const requestedLocationIds = query.locationId
       ? [query.locationId]
-      : actor.role === 'manager'
+      : !userHasRole(actor, 'owner')
         ? actor.allowedLocationIds
         : undefined;
     const locationNames = await this.fetchLocations(actor.businessId, requestedLocationIds);
@@ -164,7 +165,7 @@ export class LabPinService {
 
     // Owners can manage every role; managers manage managers + stylists in
     // their locations but never owner PINs.
-    const membershipRoles: PinRole[] = actor.role === 'owner' ? ['owner', 'manager'] : ['manager'];
+    const membershipRoles: PinRole[] = userHasRole(actor, 'owner') ? ['owner', 'manager'] : ['manager'];
 
     const [stylists, memberships, credentials] = await Promise.all([
       this.fetchBookableStylists(actor.businessId, scopeLocationIds),
@@ -236,13 +237,13 @@ export class LabPinService {
   }
 
   private assertManagerOrOwner(actor: AuthUser): void {
-    if (actor.role !== 'owner' && actor.role !== 'manager') {
+    if (!userHasAnyRole(actor, ['owner', 'manager'])) {
       throw new ForbiddenException('Only owners and managers can manage Lab PINs');
     }
   }
 
   private async assertLocationScope(actor: AuthUser, locationId: string): Promise<void> {
-    if (actor.role !== 'owner' && !actor.allowedLocationIds.includes(locationId)) {
+    if (!userHasRole(actor, 'owner') && !actor.allowedLocationIds.includes(locationId)) {
       throw new ForbiddenException('Location is outside your Lab PIN scope');
     }
     const { data, error } = await this.admin
@@ -281,7 +282,7 @@ export class LabPinService {
     }
 
     if (!role) throw new NotFoundException('Team member not found for this location');
-    if (role === 'owner' && actor.role !== 'owner') {
+    if (role === 'owner' && !userHasRole(actor, 'owner')) {
       throw new ForbiddenException('Only owners can manage owner Lab PINs');
     }
 
@@ -499,7 +500,7 @@ export class LabPinService {
       event_type: eventType,
       metadata_json: {
         actorUserProfileId: actor.id,
-        actorRole: actor.role,
+        actorRole: actor.primaryRole,
       },
     });
 

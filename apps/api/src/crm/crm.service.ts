@@ -33,6 +33,7 @@ import type {
   ListCrmVisitPhotosResponse,
   UpdateCrmClientRequest,
 } from '@sheer/domain';
+import { userHasRole, userHasAnyRole } from '@sheer/domain';
 import type { ListCrmClientsQueryDto } from './dto';
 
 interface ClientProfileRow {
@@ -587,11 +588,11 @@ export class CrmService {
     }
     if (!data) throw new NotFoundException('CRM client not found');
 
-    if (actor.role === 'owner') return data;
+    if (userHasRole(actor, 'owner')) return data;
     if (data.primary_location_id && actor.allowedLocationIds.includes(data.primary_location_id)) {
       return data;
     }
-    if (actor.role === 'stylist' && actor.staffProfileId) {
+    if (userHasRole(actor, 'stylist') && actor.staffProfileId) {
       const hasVisit = await this.hasStylistClientAccess(actor, clientId);
       if (hasVisit) return data;
     }
@@ -948,13 +949,13 @@ export class CrmService {
   }
 
   private resolveReadableLocationIds(actor: AuthUser, requested?: string): string[] | undefined {
-    if (actor.role === 'owner') return requested ? [requested] : undefined;
+    if (userHasRole(actor, 'owner')) return requested ? [requested] : undefined;
     return requested ? [requested] : actor.allowedLocationIds;
   }
 
   private resolveWriteLocation(actor: AuthUser, requested?: string | null): string | undefined {
     if (requested) return requested;
-    if (actor.role !== 'owner' && actor.allowedLocationIds.length === 1) return actor.allowedLocationIds[0];
+    if (!userHasRole(actor, 'owner') && actor.allowedLocationIds.length === 1) return actor.allowedLocationIds[0];
     return undefined;
   }
 
@@ -974,17 +975,21 @@ export class CrmService {
   }
 
   private assertStaffRole(actor: AuthUser): void {
-    if (actor.role === 'client') throw new ForbiddenException('Clients cannot access CRM');
+    // CRM is staff-only. Block users who hold ONLY a client role — a user who is
+    // also an owner/manager/stylist keeps access.
+    if (!userHasAnyRole(actor, ['owner', 'manager', 'stylist'])) {
+      throw new ForbiddenException('Clients cannot access CRM');
+    }
   }
 
   private assertManagerOrOwner(actor: AuthUser): void {
-    if (actor.role !== 'owner' && actor.role !== 'manager') {
+    if (!userHasAnyRole(actor, ['owner', 'manager'])) {
       throw new ForbiddenException('This CRM action requires owner or manager access');
     }
   }
 
   private assertLocationScope(actor: AuthUser, locationId: string): void {
-    if (actor.role === 'owner') return;
+    if (userHasRole(actor, 'owner')) return;
     if (!actor.allowedLocationIds.includes(locationId)) {
       throw new ForbiddenException('Location is outside your CRM scope');
     }
@@ -1225,8 +1230,8 @@ function arrayOf<T>(value: T | T[] | null | undefined): T[] {
 }
 
 function crmScope(actor: AuthUser): CrmStaffScope {
-  if (actor.role === 'owner' || actor.role === 'manager' || actor.role === 'stylist') {
-    return actor.role;
+  if (userHasAnyRole(actor, ['owner', 'manager', 'stylist'])) {
+    return actor.primaryRole as CrmStaffScope;
   }
   throw new ForbiddenException('Clients cannot access CRM');
 }

@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { userHasRole } from '@sheer/domain';
 import { Link } from 'react-router-dom';
 import { ApiRequestError, deleteMyAccount, signInForAccountDeletion } from '../auth/api';
 import { TextField } from '../components/onboarding/FormField';
@@ -53,7 +54,7 @@ export function DeleteAccountPage() {
     setSubmitting(true);
     try {
       const result = await signInForAccountDeletion({ email: trimmedEmail, password });
-      if (result.user.role !== 'client') {
+      if (!userHasRole(result.user, 'client')) {
         // Staff/owner/manager accounts are provisioned and managed by the salon
         // and cannot be self-deleted here — turn them away with a clear message.
         setError(

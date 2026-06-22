@@ -1,6 +1,7 @@
 import { CanActivate, ExecutionContext, ForbiddenException, Injectable, SetMetadata } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { UserRole } from '@sheer/domain';
+import { userHasAnyRole } from '@sheer/domain';
 import type { AuthenticatedRequest } from './types';
 
 const ROLES_KEY = 'sheer:roles';
@@ -24,7 +25,8 @@ export class RolesGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const user = request.auth;
 
-    if (!user || !requiredRoles.includes(user.role)) {
+    // A multi-role user passes if ANY of their active roles is allowed.
+    if (!user || !userHasAnyRole(user, requiredRoles)) {
       throw new ForbiddenException('Role is not allowed for this route');
     }
 

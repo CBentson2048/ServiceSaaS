@@ -7,13 +7,18 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
 import type { ServiceDepositType } from '@sheer/domain';
 
 const DEPOSIT_TYPES = ['none', 'fixed_amount', 'percentage'] as const;
+
+// A #RRGGBB tile colour for the appointment book. `null` clears it.
+const HEX_COLOUR = /^#[0-9a-fA-F]{6}$/;
 
 export class ServiceCategoryQueryDto {
   @IsOptional()
@@ -38,6 +43,11 @@ export class CreateServiceCategoryDto {
   description?: string | null;
 
   @IsOptional()
+  @ValidateIf((o: CreateServiceCategoryDto) => o.colorHex !== null)
+  @Matches(HEX_COLOUR, { message: 'colorHex must be a #RRGGBB hex colour' })
+  colorHex?: string | null;
+
+  @IsOptional()
   @IsBoolean()
   isActive?: boolean;
 
@@ -59,6 +69,11 @@ export class UpdateServiceCategoryDto {
   @IsString()
   @MaxLength(280)
   description?: string | null;
+
+  @IsOptional()
+  @ValidateIf((o: UpdateServiceCategoryDto) => o.colorHex !== null)
+  @Matches(HEX_COLOUR, { message: 'colorHex must be a #RRGGBB hex colour' })
+  colorHex?: string | null;
 
   @IsOptional()
   @IsBoolean()

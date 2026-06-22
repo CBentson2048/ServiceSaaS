@@ -74,6 +74,11 @@ interface DayCalendarBoardProps {
   absences: RotaAbsenceIndicator[];
   /** Appointments already scoped to this day + location. */
   bookings: StaffBookingSummary[];
+  /**
+   * serviceId → category colour (#RRGGBB). A tile is tinted by its first
+   * service's category colour; the thin left bar keeps showing status.
+   */
+  serviceColors?: Map<string, string>;
   selectedBookingId?: string | null;
   onSelectBooking: (booking: StaffBookingSummary) => void;
   /** Tile action menu: mark the client arrived (confirmed → checked in). */
@@ -124,6 +129,7 @@ export function DayCalendarBoard({
   leave,
   absences,
   bookings,
+  serviceColors,
   selectedBookingId,
   onSelectBooking,
   onCheckIn,
@@ -382,6 +388,18 @@ export function DayCalendarBoard({
                 const selected = selectedBookingId === booking.id;
                 const arrived = booking.status === 'checked_in';
                 const widthPct = 100 / laneCount;
+                // Tint the tile body by the first service's category colour. The
+                // thin status bar still shows on the left, filling the rest.
+                const tileColor = booking.serviceIds?.length
+                  ? serviceColors?.get(booking.serviceIds[0])
+                  : undefined;
+                const onDark = tileColor ? hexLuminance(tileColor) < 0.55 : false;
+                const primaryText = tileColor ? (onDark ? '#FFFFFF' : '#101828') : undefined;
+                const mutedText = tileColor
+                  ? onDark
+                    ? 'rgba(255,255,255,0.82)'
+                    : 'rgba(16,24,40,0.66)'
+                  : undefined;
                 return (
                   <button
                     key={booking.id}
@@ -396,16 +414,20 @@ export function DayCalendarBoard({
                       height,
                       left: `calc(${lane * widthPct}% + 3px)`,
                       width: `calc(${widthPct}% - 6px)`,
+                      ...(tileColor ? { backgroundColor: tileColor } : {}),
                     }}
-                    className={`absolute overflow-hidden rounded-lg border text-left transition-all ${
+                    className={`absolute overflow-hidden rounded-lg border text-left shadow-sm transition-all ${
                       selected
-                        ? `z-20 border-primary bg-primary/5 shadow-md ring-2 ring-primary/30`
-                        : `z-10 border-border/70 bg-surface shadow-sm hover:border-border hover:shadow-md`
-                    } ${muted ? 'opacity-60' : ''}`}
+                        ? `z-20 border-primary shadow-md ring-2 ring-primary/40`
+                        : `z-10 border-border/70 hover:border-border hover:shadow-md`
+                    } ${tileColor ? '' : selected ? 'bg-primary/5' : 'bg-surface'} ${muted ? 'opacity-60' : ''}`}
                   >
                     <span className={`absolute inset-y-0 left-0 w-[3px] rounded-l-lg ${accent.bar}`} aria-hidden />
                     <span className="block py-1.5 pl-3 pr-1.5">
-                      <span className="flex items-center gap-1 truncate text-[11px] font-semibold text-text-primary">
+                      <span
+                        className="flex items-center gap-1 truncate text-[11px] font-semibold text-text-primary"
+                        style={primaryText ? { color: primaryText } : undefined}
+                      >
                         {arrived ? (
                           <span
                             className="inline-flex shrink-0 items-center rounded-pill bg-success-soft px-1.5 text-[9px] font-bold uppercase tracking-[0.05em] text-success"
@@ -418,7 +440,10 @@ export function DayCalendarBoard({
                           {formatTime(booking.startsAt)} · {booking.clientDisplayName}
                         </span>
                       </span>
-                      <span className="block truncate text-[10px] text-text-muted">
+                      <span
+                        className="block truncate text-[10px] text-text-muted"
+                        style={mutedText ? { color: mutedText } : undefined}
+                      >
                         {booking.serviceNames.join(', ') || 'Service'}
                       </span>
                     </span>
@@ -972,6 +997,18 @@ function statusAccent(tone: StatusTone): { bar: string } {
     default:
       return { bar: 'bg-border-strong' };
   }
+}
+
+// Relative luminance of a #RRGGBB colour (WCAG), used to pick readable tile
+// text — dark text on light category colours, white text on dark ones.
+function hexLuminance(hex: string): number {
+  const normalized = hex.replace('#', '');
+  if (normalized.length !== 6) return 1;
+  const channel = (start: number) => {
+    const value = parseInt(normalized.slice(start, start + 2), 16) / 255;
+    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4);
 }
 
 function absenceLabel(type: RotaAbsenceIndicator['absenceType']): string {

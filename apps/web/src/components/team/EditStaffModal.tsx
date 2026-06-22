@@ -21,7 +21,7 @@ interface EditStaffModalProps {
 }
 
 interface EditForm {
-  role: InvitableRole;
+  roles: InvitableRole[];
   locationId: string;
   membershipStatus: 'active' | 'suspended' | 'revoked';
   displayName: string;
@@ -33,6 +33,22 @@ interface EditForm {
   averageBillBenchmark: string;
   leaveNotes: string;
   selectedServiceIds: string[];
+  // serviceId -> price text input. Absent/blank means inherit the service base price.
+  servicePrices: Record<string, string>;
+}
+
+// Formats a service's base price for use as the per-stylist input placeholder
+// (the value that applies when the owner leaves the field blank). basePrice is
+// in major currency units, so this does NOT use the cents-based formatMoney.
+function formatBasePrice(service: ManagedService): string {
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: 'currency',
+      currency: service.currencyCode || 'GBP',
+    }).format(service.basePrice);
+  } catch {
+    return String(service.basePrice);
+  }
 }
 
 export function EditStaffModal({
@@ -75,10 +91,11 @@ export function EditStaffModal({
       setForm(null);
       return;
     }
-    const role: InvitableRole =
-      staff.role === 'manager' || staff.role === 'stylist' ? staff.role : 'stylist';
+    const roles = staff.roles.filter(
+      (r): r is InvitableRole => r === 'manager' || r === 'stylist',
+    );
     setForm({
-      role,
+      roles: roles.length > 0 ? roles : ['stylist'],
       locationId: staff.location?.id ?? locations[0]?.id ?? '',
       membershipStatus:
         staff.membershipStatus === 'suspended' || staff.membershipStatus === 'revoked'
@@ -97,6 +114,11 @@ export function EditStaffModal({
           : '0',
       leaveNotes: staff.staffProfile?.leaveNotes ?? '',
       selectedServiceIds: staff.staffProfile?.serviceIds ?? [],
+      servicePrices: Object.fromEntries(
+        (staff.staffProfile?.servicePricing ?? [])
+          .filter((p) => p.priceAmount !== null)
+          .map((p) => [p.serviceId, String(p.priceAmount)]),
+      ),
     });
     setErrors({});
     setSubmitError(null);
@@ -133,6 +155,7 @@ export function EditStaffModal({
 
   function validate(values: EditForm): Record<string, string> {
     const next: Record<string, string> = {};
+    if (values.roles.length === 0) next.roles = 'Select at least one role';
     if (!values.locationId) next.locationId = 'Pick a location';
     if (values.colorHex && !/^#[0-9A-Fa-f]{6}$/.test(values.colorHex.trim()))
       next.colorHex = 'Use a #RRGGBB hex colour';
@@ -142,6 +165,11 @@ export function EditStaffModal({
       next.contractedHours = 'Use 0-168 hours';
     if (Number.isNaN(Number(values.averageBillBenchmark)) || Number(values.averageBillBenchmark) < 0)
       next.averageBillBenchmark = 'Use a non-negative number';
+    const badPrice = values.selectedServiceIds.some((id) => {
+      const raw = values.servicePrices[id]?.trim();
+      return raw ? Number.isNaN(Number(raw)) || Number(raw) < 0 : false;
+    });
+    if (badPrice) next.servicePrices = 'Enter valid, non-negative prices (leave blank to use the base price)';
     return next;
   }
 
@@ -154,19 +182,25 @@ export function EditStaffModal({
 
     setIsSubmitting(true);
     setSubmitError(null);
+    const isStylist = form.roles.includes('stylist');
     const payload: UpdateStaffMemberRequest = {
-      role: form.role,
+      roles: form.roles,
       locationId: form.locationId,
       membershipStatus: form.membershipStatus,
-      displayName: form.role === 'stylist' ? form.displayName.trim() || undefined : undefined,
-      colorHex: form.role === 'stylist' ? form.colorHex.trim() || undefined : undefined,
-      bio: form.role === 'stylist' ? form.bio.trim() || undefined : undefined,
-      isBookable: form.role === 'stylist' ? form.isBookable : undefined,
-      hourlyRate: form.role === 'stylist' ? Number(form.hourlyRate) : undefined,
-      contractedHours: form.role === 'stylist' ? Number(form.contractedHours) : undefined,
-      averageBillBenchmark: form.role === 'stylist' ? Number(form.averageBillBenchmark) : undefined,
-      leaveNotes: form.role === 'stylist' ? form.leaveNotes.trim() || null : undefined,
-      serviceIds: form.role === 'stylist' ? form.selectedServiceIds : undefined,
+      displayName: isStylist ? form.displayName.trim() || undefined : undefined,
+      colorHex: isStylist ? form.colorHex.trim() || undefined : undefined,
+      bio: isStylist ? form.bio.trim() || undefined : undefined,
+      isBookable: isStylist ? form.isBookable : undefined,
+      hourlyRate: isStylist ? Number(form.hourlyRate) : undefined,
+      contractedHours: isStylist ? Number(form.contractedHours) : undefined,
+      averageBillBenchmark: isStylist ? Number(form.averageBillBenchmark) : undefined,
+      leaveNotes: isStylist ? form.leaveNotes.trim() || null : undefined,
+      serviceAssignments: isStylist
+        ? form.selectedServiceIds.map((serviceId) => {
+            const raw = form.servicePrices[serviceId]?.trim();
+            return { serviceId, priceAmount: raw ? Number(raw) : null };
+          })
+        : undefined,
     };
     try {
       const result = await updateStaffMember(accessToken, staff.userProfileId, payload);
@@ -186,7 +220,7 @@ export function EditStaffModal({
       open={open}
       onClose={onClose}
       title={`Edit ${staff.fullName || staff.email}`}
-      description="Owners can change role, location, and membership status."
+      description="Owners can change roles, location, and membership status."
       footer={
         <>
           <button
@@ -210,15 +244,46 @@ export function EditStaffModal({
     >
       <form id="edit-staff-form" onSubmit={onSubmit} className="space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
-          <SelectField
-            label="Role"
-            value={form.role}
-            onValueChange={(v) => setForm({ ...form, role: v as InvitableRole })}
-            options={[
-              { value: 'manager', label: 'Manager' },
-              { value: 'stylist', label: 'Stylist' },
-            ]}
-          />
+          <div>
+            <span className="mb-1.5 block text-[12px] font-medium text-text-secondary">Roles</span>
+            <div className="flex flex-wrap gap-2">
+              {(['manager', 'stylist'] as InvitableRole[]).map((roleOption) => {
+                const checked = form.roles.includes(roleOption);
+                return (
+                  <label
+                    key={roleOption}
+                    className={`inline-flex cursor-pointer items-center gap-2 rounded-pill border px-3 py-1.5 text-[13px] capitalize transition ${
+                      checked
+                        ? 'border-primary bg-primary-soft text-text-primary'
+                        : 'border-border-strong bg-surface text-text-secondary hover:bg-surface-alt'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          roles: event.target.checked
+                            ? [...form.roles, roleOption]
+                            : form.roles.filter((r) => r !== roleOption),
+                        })
+                      }
+                      className="h-4 w-4 rounded border-border-strong text-primary focus:ring-primary"
+                    />
+                    {roleOption}
+                  </label>
+                );
+              })}
+            </div>
+            {errors.roles ? (
+              <p className="mt-1 text-[12px] text-danger">{errors.roles}</p>
+            ) : (
+              <p className="mt-1 text-[12px] text-text-secondary">
+                A member can hold both roles at their location.
+              </p>
+            )}
+          </div>
           <SelectField
             label="Location"
             value={form.locationId}
@@ -242,7 +307,7 @@ export function EditStaffModal({
           />
         </div>
 
-        {form.role === 'stylist' ? (
+        {form.roles.includes('stylist') ? (
           <div className="grid gap-4 sm:grid-cols-2">
             <TextField
               label="Display name"
@@ -347,25 +412,45 @@ export function EditStaffModal({
                       {groupServices.map((service) => {
                         const checked = form.selectedServiceIds.includes(service.id);
                         return (
-                          <label
+                          <div
                             key={service.id}
-                            className="flex cursor-pointer items-center gap-2 px-3 py-2 text-[13px] text-text-primary transition hover:bg-surface-alt"
+                            className="flex items-center gap-2 px-3 py-2 text-[13px] text-text-primary transition hover:bg-surface-alt"
                           >
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={(event) =>
-                                setForm({
-                                  ...form,
-                                  selectedServiceIds: event.target.checked
-                                    ? [...form.selectedServiceIds, service.id]
-                                    : form.selectedServiceIds.filter((id) => id !== service.id),
-                                })
-                              }
-                              className="h-4 w-4 rounded border-border-strong text-primary focus:ring-primary"
-                            />
-                            <span className="flex-1">{service.name}</span>
-                          </label>
+                            <label className="flex flex-1 cursor-pointer items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(event) =>
+                                  setForm({
+                                    ...form,
+                                    selectedServiceIds: event.target.checked
+                                      ? [...form.selectedServiceIds, service.id]
+                                      : form.selectedServiceIds.filter((id) => id !== service.id),
+                                  })
+                                }
+                                className="h-4 w-4 rounded border-border-strong text-primary focus:ring-primary"
+                              />
+                              <span className="flex-1">{service.name}</span>
+                            </label>
+                            {checked ? (
+                              <input
+                                inputMode="decimal"
+                                value={form.servicePrices[service.id] ?? ''}
+                                onChange={(event) =>
+                                  setForm({
+                                    ...form,
+                                    servicePrices: {
+                                      ...form.servicePrices,
+                                      [service.id]: event.target.value.replace(/[^0-9.]/g, ''),
+                                    },
+                                  })
+                                }
+                                placeholder={formatBasePrice(service)}
+                                title="Price for this stylist — leave blank to use the service base price"
+                                className="h-7 w-24 rounded-input border border-border-strong bg-surface px-2 text-right text-[12px] text-text-primary focus:border-primary focus:outline-none"
+                              />
+                            ) : null}
+                          </div>
                         );
                       })}
                     </div>
@@ -377,6 +462,13 @@ export function EditStaffModal({
                 <p className="mt-1.5 text-[12px] text-warning">
                   No services selected — this stylist won&apos;t be bookable for anything until you pick at least one.
                 </p>
+              ) : !servicesLoading && services.length > 0 ? (
+                <p className="mt-1.5 text-[12px] text-text-secondary">
+                  Set a price for this stylist next to each service, or leave it blank to use the service base price.
+                </p>
+              ) : null}
+              {errors.servicePrices ? (
+                <p className="mt-1 text-[12px] text-danger">{errors.servicePrices}</p>
               ) : null}
             </div>
           </div>

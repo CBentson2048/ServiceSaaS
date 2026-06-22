@@ -14,15 +14,41 @@ interface CategoryForm {
   id: string | null;
   name: string;
   description: string;
+  colorHex: string;
   isActive: boolean;
 }
 
-const emptyForm: CategoryForm = { id: null, name: '', description: '', isActive: true };
+// Suggested swatches for quick picking; the colour input still accepts any hex.
+// Each new category defaults to the next swatch so categories start visually distinct.
+const SWATCHES = [
+  '#A78BFA',
+  '#60A5FA',
+  '#34D399',
+  '#FBBF24',
+  '#F87171',
+  '#F472B6',
+  '#22D3EE',
+  '#FB923C',
+  '#A3E635',
+  '#C084FC',
+  '#2DD4BF',
+  '#94A3B8',
+];
+
+const DEFAULT_COLOR = SWATCHES[0];
+
+const emptyForm: CategoryForm = {
+  id: null,
+  name: '',
+  description: '',
+  colorHex: DEFAULT_COLOR,
+  isActive: true,
+};
 
 export function ServiceCategoriesPage() {
   const auth = useAuth();
   const accessToken = auth.session?.accessToken;
-  const role = auth.user?.role;
+  const role = auth.user?.primaryRole;
   const isOwner = role === 'owner';
   const canManage = role === 'owner' || role === 'manager';
   const [categories, setCategories] = useState<ServiceCategory[]>([]);
@@ -68,7 +94,8 @@ export function ServiceCategoriesPage() {
   }
 
   function openCreate() {
-    setForm(emptyForm);
+    // Default to the next swatch so a fresh category starts visually distinct.
+    setForm({ ...emptyForm, colorHex: SWATCHES[categories.length % SWATCHES.length] });
     setShowForm(true);
     setActionMessage(null);
   }
@@ -78,6 +105,7 @@ export function ServiceCategoriesPage() {
       id: category.id,
       name: category.name,
       description: category.description ?? '',
+      colorHex: category.colorHex ?? DEFAULT_COLOR,
       isActive: category.isActive,
     });
     setShowForm(true);
@@ -103,6 +131,7 @@ export function ServiceCategoriesPage() {
       const payload = {
         name: form.name.trim(),
         description: form.description.trim() || null,
+        colorHex: form.colorHex,
         isActive: form.isActive,
       };
       const result = form.id
@@ -178,6 +207,49 @@ export function ServiceCategoriesPage() {
             value={form.description}
             onChange={(value) => setForm((current) => ({ ...current, description: value }))}
           />
+          <div className="text-[12px] font-medium text-text-secondary sm:col-span-2">
+            Calendar colour
+            <p className="mt-0.5 text-[11px] font-normal text-text-muted">
+              Appointments for this category are tinted with this colour on the appointment book.
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              <input
+                type="color"
+                aria-label="Category colour"
+                value={form.colorHex}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, colorHex: event.target.value.toUpperCase() }))
+                }
+                className="h-10 w-12 shrink-0 cursor-pointer rounded-input-lg border border-border-strong bg-surface p-1"
+              />
+              <input
+                type="text"
+                aria-label="Category colour hex"
+                value={form.colorHex}
+                onChange={(event) => setForm((current) => ({ ...current, colorHex: event.target.value.toUpperCase() }))}
+                spellCheck={false}
+                className="h-10 w-28 rounded-input-lg border border-border-strong bg-surface px-3 font-mono text-[13px] uppercase text-text-primary outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+              />
+              <div className="flex flex-wrap gap-1.5">
+                {SWATCHES.map((swatch) => {
+                  const active = swatch.toUpperCase() === form.colorHex.toUpperCase();
+                  return (
+                    <button
+                      key={swatch}
+                      type="button"
+                      aria-label={`Use ${swatch}`}
+                      aria-pressed={active}
+                      onClick={() => setForm((current) => ({ ...current, colorHex: swatch }))}
+                      className={`h-6 w-6 rounded-full border transition ${
+                        active ? 'border-text-primary ring-2 ring-primary/40' : 'border-black/10 hover:scale-110'
+                      }`}
+                      style={{ backgroundColor: swatch }}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          </div>
           <label className="flex items-center gap-2 text-[12px] font-medium text-text-secondary">
             <input
               type="checkbox"
@@ -253,7 +325,16 @@ export function ServiceCategoriesPage() {
             <tbody className="divide-y divide-border">
               {visibleCategories.map((category) => (
                 <tr key={category.id}>
-                  <td className="px-4 py-3 font-medium text-text-primary">{category.name}</td>
+                  <td className="px-4 py-3 font-medium text-text-primary">
+                    <span className="flex items-center gap-2.5">
+                      <span
+                        className="h-3.5 w-3.5 shrink-0 rounded-full border border-black/10"
+                        style={{ backgroundColor: category.colorHex ?? 'transparent' }}
+                        aria-hidden
+                      />
+                      {category.name}
+                    </span>
+                  </td>
                   <td className="px-4 py-3 text-text-secondary">{category.description ?? '—'}</td>
                   <td className="px-4 py-3">
                     {category.isActive ? (

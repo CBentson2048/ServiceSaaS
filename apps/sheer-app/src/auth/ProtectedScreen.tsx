@@ -1,5 +1,6 @@
 import { Redirect } from 'expo-router';
 import type { UserRole } from '@sheer/domain';
+import { userHasAnyRole } from '@sheer/domain';
 import { AppLoadingScreen } from '../components/AppLoadingScreen';
 import { useAuth } from './AuthProvider';
 
@@ -20,7 +21,7 @@ export function ProtectedScreen({
     return <Redirect href="/login" />;
   }
 
-  if (!allowedRoles.includes(auth.user.role)) {
+  if (!userHasAnyRole(auth.user, allowedRoles)) {
     return <Redirect href="/login" />;
   }
 

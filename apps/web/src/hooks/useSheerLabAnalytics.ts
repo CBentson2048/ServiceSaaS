@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { SheerLabAnalyticsRange, SheerLabAnalyticsResponse } from '@sheer/domain';
+import { userHasAnyRole } from '@sheer/domain';
 import { useAuth } from '../auth/AuthProvider';
 import { getSheerLabAnalytics } from '../auth/api';
 import { resolveCustomWindow, type CustomRange } from '../components/dashboard/RangeTabs';
@@ -26,7 +27,7 @@ export function useSheerLabAnalytics(
     let cancelled = false;
 
     async function load() {
-      if (!session?.accessToken || !user || (user.role !== 'owner' && user.role !== 'manager')) {
+      if (!session?.accessToken || !user || !userHasAnyRole(user, ['owner', 'manager'])) {
         setData(null);
         return;
       }

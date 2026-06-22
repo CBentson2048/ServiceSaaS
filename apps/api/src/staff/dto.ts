@@ -14,7 +14,9 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 
 const INVITABLE_ROLES = ['manager', 'stylist'] as const;
 
@@ -111,9 +113,13 @@ export class InspectInvitationQueryDto {
 }
 
 export class UpdateStaffMemberDto {
+  // Full desired set of the member's roles at their location. When present, the
+  // member's role memberships are synced to exactly these (manager and/or stylist).
   @IsOptional()
-  @IsIn(INVITABLE_ROLES)
-  role?: (typeof INVITABLE_ROLES)[number];
+  @IsArray()
+  @ArrayMaxSize(2)
+  @IsIn(INVITABLE_ROLES, { each: true })
+  roles?: (typeof INVITABLE_ROLES)[number][];
 
   @IsOptional()
   @IsUUID()
@@ -166,9 +172,31 @@ export class UpdateStaffMemberDto {
 
   // Full replacement set of services this stylist can perform. When present,
   // eligibility is replaced with exactly these IDs; omit to leave unchanged.
+  // Legacy alias for `serviceAssignments` with no per-stylist prices.
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(500)
   @IsUUID('all', { each: true })
   serviceIds?: string[];
+
+  // Full replacement set of services this stylist can perform, each with an
+  // optional per-stylist price (major currency units; omit/null inherits the
+  // service base price). Takes precedence over `serviceIds` when present.
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(500)
+  @ValidateNested({ each: true })
+  @Type(() => StaffServiceAssignmentDto)
+  serviceAssignments?: StaffServiceAssignmentDto[];
+}
+
+export class StaffServiceAssignmentDto {
+  @IsUUID()
+  serviceId!: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100000)
+  priceAmount?: number | null;
 }

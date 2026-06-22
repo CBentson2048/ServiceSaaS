@@ -41,6 +41,7 @@ import type {
   UpdateShiftRequest,
   WeeklyRotaResponse,
 } from '@sheer/domain';
+import { userHasAnyRole, userHasRole } from '@sheer/domain';
 
 // ---------------------------------------------------------------------------
 // Row types — narrow projections of the rota schema rows the service uses.
@@ -237,7 +238,7 @@ export class RotaService {
       })),
       absences: absences.map(toRotaAbsenceIndicator),
       holidayNoticeDays,
-      scope: actor.role === 'owner' ? 'owner' : 'manager',
+      scope: userHasRole(actor, 'owner') ? 'owner' : 'manager',
     };
   }
 
@@ -563,7 +564,7 @@ export class RotaService {
     if (rawLocationId) {
       this.assertLocationScope(actor, rawLocationId);
       locationId = rawLocationId;
-    } else if (actor.role === 'manager') {
+    } else if (userHasRole(actor, 'manager')) {
       locationId = this.resolveLocationForActor(actor, undefined);
     }
 
@@ -640,7 +641,7 @@ export class RotaService {
     return {
       leaveRequests,
       holidayNoticeDays,
-      scope: actor.role === 'owner' ? 'owner' : 'manager',
+      scope: userHasRole(actor, 'owner') ? 'owner' : 'manager',
     };
   }
 
@@ -1235,7 +1236,7 @@ export class RotaService {
   ): Promise<{ shiftsCreated: number; breaksCreated: number }> {
     const { data, error } = await this.admin.schema('rota').rpc('clone_previous_week', {
       p_actor_user_profile_id: actor.id,
-      p_actor_role: actor.role,
+      p_actor_role: actor.primaryRole,
       p_business_id: actor.businessId,
       p_location_id: locationId,
       p_target_week_start: startOfWeek.toISOString(),
@@ -1296,7 +1297,7 @@ export class RotaService {
 
     const { data, error } = await this.admin.schema('rota').rpc('create_week_from_draft', {
       p_actor_user_profile_id: actor.id,
-      p_actor_role: actor.role,
+      p_actor_role: actor.primaryRole,
       p_business_id: actor.businessId,
       p_location_id: locationId,
       p_target_week_start: startOfWeek.toISOString(),
@@ -1376,13 +1377,13 @@ export class RotaService {
   // -------------------------------------------------------------------------
 
   private assertManagerOrOwner(actor: AuthUser): void {
-    if (actor.role !== 'owner' && actor.role !== 'manager') {
+    if (!userHasAnyRole(actor, ['owner', 'manager'])) {
       throw new ForbiddenException('Rota management is restricted to owners and managers');
     }
   }
 
   private resolveStylistScope(actor: AuthUser): { staffProfileId: string; locationId: string } {
-    if (actor.role !== 'stylist') {
+    if (!userHasRole(actor, 'stylist')) {
       throw new ForbiddenException('Stylist rota access is restricted to stylist accounts');
     }
     if (!actor.staffProfileId) {
@@ -1396,7 +1397,7 @@ export class RotaService {
   }
 
   private assertLocationScope(actor: AuthUser, locationId: string): void {
-    if (actor.role === 'owner') return;
+    if (userHasRole(actor, 'owner')) return;
     if (!actor.allowedLocationIds.includes(locationId)) {
       throw new ForbiddenException('Location is outside your assigned scope');
     }
@@ -1410,7 +1411,9 @@ export class RotaService {
    */
   private resolveLocationForActor(actor: AuthUser, raw: string | undefined): string {
     if (raw) return raw;
-    if (actor.role === 'manager' && actor.allowedLocationIds.length > 0) {
+    // A user who holds a manager role (even if they're also an owner) has a home
+    // location to fall back to; a pure owner must specify the location explicitly.
+    if (userHasRole(actor, 'manager') && actor.allowedLocationIds.length > 0) {
       return actor.allowedLocationIds[0];
     }
     throw new BadRequestException('locationId is required');
@@ -1514,7 +1517,7 @@ export class RotaService {
         business_id: actor.businessId,
         location_id: input.locationId,
         actor_user_profile_id: actor.id,
-        actor_role: actor.role,
+        actor_role: actor.primaryRole,
         entity_type: input.entity,
         entity_id: input.entityId,
         action: input.action,

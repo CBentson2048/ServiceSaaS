@@ -32,7 +32,20 @@ export interface AuthProfileSummary {
 
 export interface AuthUser {
   id: string;
-  role: UserRole;
+  /**
+   * Every active role this user holds in the current business. A single user
+   * can legitimately be owner AND manager AND stylist at once, so this is the
+   * authoritative source for authorization — gate capabilities with
+   * `userHasRole(user, …)` / `userHasAnyRole(user, …)`, never on a single role.
+   * Ordered highest-privilege first (owner > manager > stylist > client).
+   */
+  roles: UserRole[];
+  /**
+   * Highest-privilege role (= `roles[0]`). Use ONLY to pick a default landing
+   * surface and for display/echo — never to gate a capability a secondary role
+   * grants, or a multi-role user silently loses access to it.
+   */
+  primaryRole: UserRole;
   businessId: string;
   businessName?: string;
   businessSlug?: string;
@@ -46,6 +59,45 @@ export interface AuthUser {
   clientCommunicationPreference?: 'whatsapp' | 'sms' | 'email';
   /** IANA timezone for the signed-in user (e.g. 'Europe/London'). Drives app-wide date/time display. */
   timezone?: string;
+}
+
+/**
+ * Role privilege ranking — lower number = higher privilege. The single source
+ * of truth for "primary role" selection across the platform (auth resolution,
+ * surface routing, display). Keep aligned with the membership role enum.
+ */
+export const ROLE_PRIORITY: Record<UserRole, number> = {
+  owner: 0,
+  manager: 1,
+  stylist: 2,
+  client: 3,
+};
+
+/** Sort roles highest-privilege first and drop duplicates. */
+export function sortRolesByPriority(roles: readonly UserRole[]): UserRole[] {
+  return [...new Set(roles)].sort((a, b) => ROLE_PRIORITY[a] - ROLE_PRIORITY[b]);
+}
+
+/** The highest-privilege role in a set (owner > manager > stylist > client). */
+export function pickPrimaryRole(roles: readonly UserRole[]): UserRole {
+  return sortRolesByPriority(roles)[0];
+}
+
+/**
+ * True when the user actively holds the given role. Null-safe: a missing user
+ * (e.g. an optional `auth.user`) returns false, so call sites can pass
+ * `auth.user` directly without a separate guard.
+ */
+export function userHasRole(user: Pick<AuthUser, 'roles'> | null | undefined, role: UserRole): boolean {
+  return !!user && user.roles.includes(role);
+}
+
+/** True when the user actively holds ANY of the given roles. Null-safe (see {@link userHasRole}). */
+export function userHasAnyRole(
+  user: Pick<AuthUser, 'roles'> | null | undefined,
+  roles: readonly UserRole[],
+): boolean {
+  return !!user && user.roles.some((role) => roles.includes(role));
 }
 
 export interface AuthSession {
@@ -694,7 +746,13 @@ export interface StaffMember {
   fullName: string;
   phone?: string;
   avatarUrl?: string;
-  role: UserRole;
+  /**
+   * Every role this member holds at their location, highest-privilege first.
+   * A member can be both manager AND stylist at the same location. Owners
+   * appear as `['owner']`.
+   */
+  roles: UserRole[];
+  /** The highest-privilege membership's id (representative of the member's set). */
   membershipId: string;
   membershipStatus: MembershipStatus;
   location?: BusinessLocationSummary;
@@ -716,6 +774,13 @@ export interface StaffMember {
      * booking.staff_service_eligibility.
      */
     serviceIds?: string[];
+    /**
+     * Per-stylist price overrides for the services this stylist can perform.
+     * `priceAmount` is in major currency units; `null` means the service's base
+     * price applies. Entries mirror `serviceIds`. See
+     * booking.staff_service_eligibility.price_amount.
+     */
+    servicePricing?: { serviceId: string; priceAmount: number | null }[];
   };
   invitedAt?: string;
   activatedAt?: string;
@@ -730,7 +795,12 @@ export interface ListStaffResponse {
 }
 
 export interface UpdateStaffMemberRequest {
-  role?: InvitableRole;
+  /**
+   * Full desired set of the member's roles at their location (manager and/or
+   * stylist). When provided, the member's role memberships are synced to exactly
+   * these. Omit to leave the current roles unchanged (e.g. status-only updates).
+   */
+  roles?: InvitableRole[];
   locationId?: string;
   membershipStatus?: Extract<MembershipStatus, 'active' | 'suspended' | 'revoked'>;
   displayName?: string;
@@ -744,9 +814,17 @@ export interface UpdateStaffMemberRequest {
   /**
    * Full replacement set of services this stylist can perform. When provided,
    * the stylist's service eligibility is replaced with exactly these IDs.
-   * Omit to leave eligibility unchanged.
+   * Omit to leave eligibility unchanged. Legacy alias for `serviceAssignments`
+   * with no per-stylist prices (all prices inherit the service base price).
    */
   serviceIds?: string[];
+  /**
+   * Full replacement set of services this stylist can perform, each with an
+   * optional per-stylist price (`priceAmount` in major currency units;
+   * `null`/omitted inherits the service base price). When provided, replaces the
+   * stylist's eligibility AND prices. Takes precedence over `serviceIds`.
+   */
+  serviceAssignments?: { serviceId: string; priceAmount?: number | null }[];
 }
 
 export interface UpdateStaffMemberResponse {
@@ -1925,6 +2003,8 @@ export interface ServiceCategory {
   businessId: string;
   name: string;
   description?: string;
+  /** #RRGGBB tile colour for the appointment book; undefined uses the neutral default. */
+  colorHex?: string;
   isActive: boolean;
   sortOrder: number;
   createdAt: string;
@@ -1942,6 +2022,7 @@ export interface ServiceCategoryResponse {
 export interface CreateServiceCategoryRequest {
   name: string;
   description?: string | null;
+  colorHex?: string | null;
   isActive?: boolean;
   sortOrder?: number;
 }
@@ -1949,6 +2030,7 @@ export interface CreateServiceCategoryRequest {
 export interface UpdateServiceCategoryRequest {
   name?: string;
   description?: string | null;
+  colorHex?: string | null;
   isActive?: boolean;
   sortOrder?: number;
 }

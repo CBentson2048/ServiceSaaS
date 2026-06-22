@@ -41,12 +41,14 @@ async function requestAndroidBlePermissions(): Promise<BlePermissionState> {
   }
 
   const apiLevel = typeof Platform.Version === 'number' ? Platform.Version : Number(Platform.Version);
+  // API 31+: the manifest declares BLUETOOTH_SCAN with `neverForLocation`, so location is not
+  // required for scanning and ACCESS_FINE_LOCATION is capped at maxSdkVersion=30. Requesting it
+  // here would resolve to `never_ask_again` (no dialog) and poison the aggregate result.
   const permissions =
     apiLevel >= 31
       ? [
           PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
           PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
-          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
         ]
       : [PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION];
 

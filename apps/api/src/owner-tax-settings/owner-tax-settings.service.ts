@@ -9,6 +9,7 @@ import { ConfigService } from '@nestjs/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import {
   defaultLocationTaxSettings,
+  userHasRole,
   type AuthUser,
   type LocationTaxSettings,
   type TaxAppliesTo,
@@ -157,8 +158,8 @@ export class OwnerTaxSettingsService {
   }
 
   private assertManagementAccess(actor: AuthUser, locationId: string): void {
-    if (actor.role === 'owner') return;
-    if (actor.role === 'manager' && actor.allowedLocationIds.includes(locationId)) return;
+    if (userHasRole(actor, 'owner')) return;
+    if (userHasRole(actor, 'manager') && actor.allowedLocationIds.includes(locationId)) return;
     throw new ForbiddenException(
       'You do not have permission to manage tax settings for this location',
     );

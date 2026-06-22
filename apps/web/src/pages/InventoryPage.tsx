@@ -7,6 +7,7 @@ import type {
   InventoryProduct,
   InventoryStockMovement,
 } from '@sheer/domain';
+import { userHasAnyRole, userHasRole } from '@sheer/domain';
 import {
   adjustInventoryStock,
   archiveInventoryProduct,
@@ -57,8 +58,8 @@ type StockHealth = 'healthy' | 'low' | 'critical';
 export function InventoryPage() {
   const auth = useAuth();
   const accessToken = auth.session?.accessToken;
-  const isOwner = auth.user?.role === 'owner';
-  const canManage = auth.user?.role === 'owner' || auth.user?.role === 'manager';
+  const isOwner = userHasRole(auth.user, 'owner');
+  const canManage = userHasAnyRole(auth.user, ['owner', 'manager']);
   // The stock table follows the shared sidebar scope: "All" aggregates every
   // location, a concrete selection narrows to it.
   const { selectedLocationId: scopeLocationId, isAllLocations } = useLocationScope();
@@ -154,7 +155,7 @@ export function InventoryPage() {
     [movements],
   );
 
-  if (auth.status === 'authenticated' && auth.user?.role === 'stylist') {
+  if (auth.status === 'authenticated' && userHasRole(auth.user, 'stylist')) {
     return <Navigate to="/unauthorized" replace />;
   }
 

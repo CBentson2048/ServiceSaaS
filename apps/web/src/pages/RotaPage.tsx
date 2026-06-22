@@ -61,7 +61,7 @@ export function RotaPage() {
   const [shiftEditor, setShiftEditor] = useState<ShiftEditorState>({ open: false });
   const [absenceModal, setAbsenceModal] = useState<AbsenceModalState>({ open: false });
 
-  const role = auth.user?.role;
+  const role = auth.user?.primaryRole;
   const locations = useMemo(() => auth.user?.locations ?? [], [auth.user?.locations]);
   const managerLocationId =
     role === 'manager' ? auth.user?.allowedLocationIds[0] ?? null : null;

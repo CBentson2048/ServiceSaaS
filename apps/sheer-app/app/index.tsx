@@ -15,5 +15,5 @@ export default function EntryRoute() {
 
   // Stylists have no separate dashboard — their home is the performance screen,
   // navigated through the bottom tab bar.
-  return <Redirect href={auth.user.role === 'stylist' ? '/performance' : '/dashboard'} />;
+  return <Redirect href={auth.user.primaryRole === 'stylist' ? '/performance' : '/dashboard'} />;
 }

@@ -13,7 +13,7 @@ export default function LoginScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (auth.user) {
-    return <Redirect href={auth.user.role === 'stylist' ? '/performance' : '/dashboard'} />;
+    return <Redirect href={auth.user.primaryRole === 'stylist' ? '/performance' : '/dashboard'} />;
   }
 
   async function onSubmit() {
@@ -22,7 +22,7 @@ export default function LoginScreen() {
 
     try {
       const signedInUser = await auth.signIn(email, password);
-      router.replace(signedInUser.role === 'stylist' ? '/performance' : '/dashboard');
+      router.replace(signedInUser.primaryRole === 'stylist' ? '/performance' : '/dashboard');
     } catch {
       setError('Sign in failed. Use an active QLOOQO account for this app.');
     } finally {

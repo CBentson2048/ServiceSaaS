@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { StylistKpiListResponse, StylistKpiResult } from '@sheer/domain';
+import { userHasRole } from '@sheer/domain';
 import { cn } from '@sheer/utils';
 import { AppCard, AppText, StatusBadge, type StatusTone } from '../design';
 import { RangeTabs, type DashboardRange } from '../components/dashboard/RangeTabs';
@@ -193,7 +194,7 @@ export function CommissionPage() {
       <StylistKpiDetailModal
         stylist={selected}
         periodLabel={data ? `${new Date(data.periodStart).toLocaleDateString('en-GB')} – ${new Date(data.periodEnd).toLocaleDateString('en-GB')}` : RANGE_LABEL[range]}
-        canManageBenchmarks={user?.role === 'owner'}
+        canManageBenchmarks={userHasRole(user, 'owner')}
         onClose={() => setSelected(null)}
       />
     </div>

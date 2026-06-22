@@ -43,7 +43,7 @@ const emptyForm: ServiceForm = {
 export function ServicesPage() {
   const auth = useAuth();
   const accessToken = auth.session?.accessToken;
-  const role = auth.user?.role;
+  const role = auth.user?.primaryRole;
   const isOwner = role === 'owner';
   const canManage = role === 'owner' || role === 'manager';
   const [services, setServices] = useState<ManagedService[]>([]);

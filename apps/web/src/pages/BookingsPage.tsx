@@ -9,6 +9,7 @@ import type {
   StaffBookingSummary,
   WeeklyRotaResponse,
 } from '@sheer/domain';
+import { userHasAnyRole } from '@sheer/domain';
 import { AppButton, AppCard, Pill, StatusBadge } from '../design';
 import {
   acceptBooking,
@@ -21,6 +22,8 @@ import {
   getStaffBookingSelection,
   getWeeklyRota,
   listBookings,
+  listServiceCategories,
+  listServices,
   markRotaAbsence,
   rejectBooking,
   rescheduleBooking,
@@ -46,6 +49,9 @@ export function BookingsPage() {
   const { resolvedLocationId: selectedLocationId } = useLocationScope();
 
   const [bookings, setBookings] = useState<StaffBookingSummary[]>([]);
+  // serviceId → category colour, so each appointment tile can be tinted by its
+  // (first) service's category on the calendar. Cosmetic — failures are ignored.
+  const [serviceColors, setServiceColors] = useState<Map<string, string>>(() => new Map());
   const [loading, setLoading] = useState(true);
   const [completionLoadingId, setCompletionLoadingId] = useState<string | null>(null);
   const [paymentLoadingId, setPaymentLoadingId] = useState<string | null>(null);
@@ -60,7 +66,7 @@ export function BookingsPage() {
   const [rescheduleLoading, setRescheduleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const isReviewer = auth.user?.role === 'owner' || auth.user?.role === 'manager';
+  const isReviewer = userHasAnyRole(auth.user, ['owner', 'manager']);
 
   // Calendar state. The timetable spans the full page width and appointments
   // are selected straight from the board.
@@ -376,6 +382,37 @@ export function BookingsPage() {
     void reload();
   }, [reload]);
 
+  // Build the serviceId → category-colour map once. Categories own the colour;
+  // a service inherits its category's colour. Business-scoped, so location-agnostic.
+  useEffect(() => {
+    if (!accessToken) return;
+    let cancelled = false;
+    Promise.all([
+      listServiceCategories(accessToken, { includeInactive: true }),
+      listServices(accessToken, { includeInactive: true }),
+    ])
+      .then(([categoryResult, serviceResult]) => {
+        if (cancelled) return;
+        const colorByCategory = new Map<string, string>();
+        for (const category of categoryResult.categories) {
+          if (category.colorHex) colorByCategory.set(category.id, category.colorHex);
+        }
+        const next = new Map<string, string>();
+        for (const service of serviceResult.services) {
+          const color = service.serviceCategoryId ? colorByCategory.get(service.serviceCategoryId) : undefined;
+          if (color) next.set(service.id, color);
+        }
+        setServiceColors(next);
+      })
+      .catch(() => {
+        // Tile colour is purely cosmetic; if the catalogue can't be loaded the
+        // calendar simply falls back to neutral tiles.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken]);
+
   const weekStartIso = useMemo(() => toIsoDate(snapToMonday(day)), [day]);
 
   // Load rota (column roster + working hours + leave/absence) for the calendar.
@@ -543,6 +580,7 @@ export function BookingsPage() {
             leave={rota?.leave ?? []}
             absences={rota?.absences ?? []}
             bookings={calendarBookings}
+            serviceColors={serviceColors}
             selectedBookingId={selectedBookingId}
             onSelectBooking={(booking) => setSelectedBookingId(booking.id)}
             onCheckIn={(booking) => void handleCheckIn(booking)}

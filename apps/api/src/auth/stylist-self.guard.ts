@@ -1,5 +1,6 @@
 import { CanActivate, ExecutionContext, ForbiddenException, Injectable, SetMetadata } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { userHasAnyRole } from '@sheer/domain';
 import type { AuthenticatedRequest } from './types';
 
 const STAFF_PROFILE_PARAM_KEY = 'sheer:staff-profile-param';
@@ -29,7 +30,7 @@ export class StylistSelfGuard implements CanActivate {
       throw new ForbiddenException('Staff scope could not be resolved');
     }
 
-    if (user.role === 'owner' || user.role === 'manager' || user.staffProfileId === staffProfileId) {
+    if (userHasAnyRole(user, ['owner', 'manager']) || user.staffProfileId === staffProfileId) {
       return true;
     }
 
