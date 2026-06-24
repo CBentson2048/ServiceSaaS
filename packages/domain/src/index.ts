@@ -2095,6 +2095,16 @@ export interface UpsertServiceRequest {
   sortOrder?: number;
 }
 
+/**
+ * Persist a new display order for the catalogue. `ids` are the rows in the
+ * desired order; the server assigns sort_order by index and pushes any rows not
+ * listed (e.g. inactive rows hidden in the UI) after them. Shared shape for both
+ * service categories and services.
+ */
+export interface ReorderCatalogueRequest {
+  ids: string[];
+}
+
 // ---------------------------------------------------------------------------
 // Public client booking flow
 // ---------------------------------------------------------------------------
@@ -2122,10 +2132,26 @@ export interface PublicBookingServiceSummary {
   id: string;
   name: string;
   description?: string;
+  /** FK to the managed service category; undefined when uncategorised. */
+  serviceCategoryId?: string;
+  /** Resolved category name, used to group services in the booking flow. */
   category?: string;
+  /** #RRGGBB tint for the category, for section headers. */
+  categoryColorHex?: string;
+  /** Category display order (lower sorts first); undefined when uncategorised. */
+  categorySortOrder?: number;
   estimatedDurationMinutes: number;
   startingPriceAmount: number;
   depositRequiredAmount: number;
+  /**
+   * Deposit policy for this service. Carried so a per-stylist price change can
+   * recompute a percentage deposit off the effective price (see
+   * {@link depositForServicePrice}). Undefined on summaries built before this
+   * field existed (treated as a non-recomputable deposit).
+   */
+  depositType?: ServiceDepositType;
+  /** Deposit value: a fixed amount for `fixed_amount`, a percent for `percentage`. */
+  depositValue?: number;
   currencyCode: string;
 }
 
@@ -2153,6 +2179,15 @@ export interface PublicBookingStylistSummary {
   colorHex?: string;
   bio?: string;
   nextAvailableAt?: string;
+  /**
+   * This stylist's effective price for each selected service — the per-stylist
+   * override where set, otherwise the service base price. Lets the selection UI
+   * show the stylist's price the moment they are picked, without a round-trip.
+   * See booking.staff_service_eligibility.price_amount.
+   */
+  servicePrices?: { serviceId: string; priceAmount: number }[];
+  /** Sum of this stylist's effective per-service prices for the selected services. */
+  totalPriceAmount?: number;
 }
 
 export interface PublicBookingServiceSelectionResponse {
@@ -2193,7 +2228,66 @@ export interface PublicBookingAvailabilityResponse {
   location: PublicBookingLocationSummary;
   services: PublicBookingServiceSummary[];
   totalDurationMinutes: number;
+  /**
+   * Estimated total for the selected services. When the query targets a specific
+   * stylist, `services[].startingPriceAmount` and this total reflect that
+   * stylist's per-service prices; otherwise they are the service base prices.
+   */
+  totalPriceAmount: number;
+  totalDepositRequiredAmount: number;
   slots: PublicBookingAvailabilitySlot[];
+  /**
+   * Per-stylist effective prices for the bookable stylists behind `slots`, so a
+   * "next available" selection can show + charge the stylist actually resolved
+   * for the chosen slot. Look the stylist up by the selected slot's
+   * staffProfileId, then feed `servicePrices` to {@link applyStylistServicePrices}.
+   * Present for both specific-stylist and next-available queries.
+   */
+  stylists?: PublicBookingStylistSummary[];
+}
+
+/**
+ * The deposit due for a service at a (possibly stylist-overridden) price. A
+ * `percentage` deposit follows the effective price; `fixed_amount` and `none`
+ * deposits do not depend on price, so the service's existing
+ * `depositRequiredAmount` is kept. Mirrors the server's calculateServiceDeposit
+ * so the deposit is resolved identically on API + clients once a per-stylist
+ * price override is applied. Rounds percentage deposits to the nearest whole
+ * unit, matching the server.
+ */
+export function depositForServicePrice(
+  service: PublicBookingServiceSummary,
+  priceAmount: number,
+): number {
+  if (service.depositType === 'percentage' && service.depositValue !== undefined) {
+    return Math.max(0, Math.round((priceAmount * service.depositValue) / 100));
+  }
+  return service.depositRequiredAmount;
+}
+
+/**
+ * Returns a copy of `services` with each `startingPriceAmount` replaced by the
+ * stylist's effective price for that service (from
+ * PublicBookingStylistSummary.servicePrices), and `depositRequiredAmount`
+ * recomputed for percentage deposits off that price (see
+ * {@link depositForServicePrice}). Services without an entry keep their base
+ * price + deposit. Shared by web + mobile so per-stylist estimate pricing is
+ * resolved identically everywhere. Returns the original array when there are no
+ * per-stylist prices (e.g. "any available" / next-available before a slot is
+ * resolved).
+ */
+export function applyStylistServicePrices(
+  services: PublicBookingServiceSummary[],
+  servicePrices?: { serviceId: string; priceAmount: number }[] | null,
+): PublicBookingServiceSummary[] {
+  if (!servicePrices || servicePrices.length === 0) return services;
+  const byServiceId = new Map(servicePrices.map((p) => [p.serviceId, p.priceAmount]));
+  return services.map((service) => {
+    const price = byServiceId.get(service.id);
+    return price === undefined
+      ? service
+      : { ...service, startingPriceAmount: price, depositRequiredAmount: depositForServicePrice(service, price) };
+  });
 }
 
 export interface PublicBookingClientDetails {

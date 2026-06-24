@@ -8,6 +8,7 @@ import {
   listServiceCategories,
   listServices,
   listUnassignedServices,
+  reorderServices,
   updateService,
 } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
@@ -57,6 +58,8 @@ export function ServicesPage() {
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<ServiceForm>(emptyForm);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [savingOrder, setSavingOrder] = useState(false);
 
   const reload = useCallback(async () => {
     if (!accessToken) return;
@@ -103,6 +106,10 @@ export function ServicesPage() {
       [service.name, service.description ?? '', service.category ?? ''].join(' ').toLowerCase().includes(term),
     );
   }, [services, search]);
+
+  // Drag-to-reorder is only offered over the full, unfiltered list so the saved
+  // order is unambiguous (the displayed rows are exactly what gets renumbered).
+  const canReorder = canManage && !search.trim();
 
   // Active categories for the dropdown, plus the service's current category if
   // it happens to be inactive (so editing never silently drops the assignment).
@@ -203,6 +210,40 @@ export function ServicesPage() {
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not archive service');
     }
+  }
+
+  async function persistOrder(next: ManagedService[], previous: ManagedService[]) {
+    if (!accessToken) return;
+    setSavingOrder(true);
+    setError(null);
+    setActionMessage(null);
+    try {
+      // Adopt the server's authoritative order rather than the optimistic guess,
+      // so a partial/reconciled save (e.g. inactive rows pushed to the end) is
+      // reflected immediately instead of silently diverging until the next reload.
+      const result = await reorderServices(accessToken, next.map((service) => service.id));
+      setServices(includeInactive ? result.services : result.services.filter((service) => service.isActive));
+      setActionMessage('Service order updated.');
+    } catch (err: unknown) {
+      setServices(previous); // roll back the optimistic move
+      setError(err instanceof Error ? err.message : 'Could not save service order');
+    } finally {
+      setSavingOrder(false);
+    }
+  }
+
+  function handleDrop(targetId: string) {
+    const sourceId = dragId;
+    setDragId(null);
+    if (!sourceId || sourceId === targetId) return;
+    const reordered = moveItem(services, sourceId, targetId);
+    if (!reordered) return;
+    // Keep each row's sortOrder in step with its new index so a later edit
+    // (which re-sorts by sortOrder) doesn't scramble the order back.
+    const renumbered = reordered.map((service, index) => ({ ...service, sortOrder: index }));
+    const previous = services;
+    setServices(renumbered);
+    void persistOrder(renumbered, previous);
   }
 
   return (
@@ -401,6 +442,12 @@ export function ServicesPage() {
         </label>
       </div>
 
+      {canReorder ? (
+        <p className="mb-2 text-[12px] text-text-muted">
+          Drag the ⠿ handle to reorder services. QLOOQO keeps this order when building appointments.
+        </p>
+      ) : null}
+
       <section className="overflow-hidden rounded-card-lg border border-border bg-surface">
         {loading ? (
           <EmptyState title="Loading services…" body="Fetching your service catalogue." />
@@ -419,6 +466,7 @@ export function ServicesPage() {
           <table className="w-full text-left text-[13px]">
             <thead className="bg-surface-alt text-[11px] font-medium uppercase tracking-[0.08em] text-text-secondary">
               <tr>
+                {canReorder ? <th className="w-8 px-2 py-3" aria-label="Reorder" /> : null}
                 <th className="px-4 py-3">Service</th>
                 <th className="px-4 py-3">Category</th>
                 <th className="px-4 py-3">Duration</th>
@@ -429,7 +477,19 @@ export function ServicesPage() {
             </thead>
             <tbody className="divide-y divide-border">
               {visibleServices.map((service) => (
-                <tr key={service.id}>
+                <tr
+                  key={service.id}
+                  draggable={canReorder && !savingOrder}
+                  onDragStart={canReorder ? () => setDragId(service.id) : undefined}
+                  onDragOver={canReorder ? (event) => event.preventDefault() : undefined}
+                  onDrop={canReorder ? () => handleDrop(service.id) : undefined}
+                  className={dragId === service.id ? 'opacity-50' : undefined}
+                >
+                  {canReorder ? (
+                    <td className="cursor-move px-2 py-3 text-center text-[15px] leading-none text-text-muted" aria-hidden>
+                      ⠿
+                    </td>
+                  ) : null}
                   <td className="px-4 py-3 font-medium text-text-primary">{service.name}</td>
                   <td className="px-4 py-3 text-text-secondary">{service.category ?? 'Uncategorised'}</td>
                   <td className="px-4 py-3 text-text-secondary">{service.estimatedDurationMinutes} min</td>
@@ -490,6 +550,18 @@ function upsertService(
     : [...current, saved];
   const filtered = includeInactive ? next : next.filter((entry) => entry.isActive);
   return filtered.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+}
+
+// Returns a copy of `list` with the item `fromId` moved to `toId`'s position,
+// or null when the move is a no-op / either id is missing.
+function moveItem<T extends { id: string }>(list: T[], fromId: string, toId: string): T[] | null {
+  const from = list.findIndex((item) => item.id === fromId);
+  const to = list.findIndex((item) => item.id === toId);
+  if (from === -1 || to === -1 || from === to) return null;
+  const next = [...list];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return next;
 }
 
 function formatMoney(amount: number, currencyCode: string): string {

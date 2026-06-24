@@ -362,7 +362,74 @@ export class ServicesService {
     return { services: missing.map((row) => toService(row, currencyCode, categoryNames)) };
   }
 
+  async reorderCategories(actor: AuthUser, ids: string[]): Promise<ListServiceCategoriesResponse> {
+    this.assertManagerOrOwner(actor);
+    await this.applyReorder('service_categories', actor.businessId, ids);
+    return this.listCategories(actor, { includeInactive: true });
+  }
+
+  async reorderServices(actor: AuthUser, ids: string[]): Promise<ListManagedServicesResponse> {
+    this.assertManagerOrOwner(actor);
+    await this.applyReorder('services', actor.businessId, ids);
+    return this.listServices(actor, { includeInactive: true });
+  }
+
   // --- Helpers --------------------------------------------------------------
+
+  /**
+   * Persists a new display order for a catalogue table. The submitted ids are
+   * assigned sort_order 0..n-1 in the given order; any other rows for the
+   * business keep their relative order and are pushed after them, so the result
+   * is always a clean, collision-free sequence regardless of which subset the
+   * caller reordered (e.g. when inactive rows are hidden in the UI).
+   */
+  private async applyReorder(
+    table: 'services' | 'service_categories',
+    businessId: string,
+    ids: string[],
+  ): Promise<void> {
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from(table)
+      .select('id')
+      .eq('business_id', businessId)
+      .order('sort_order', { ascending: true })
+      .order('name', { ascending: true })
+      .returns<{ id: string }[]>();
+    if (error) {
+      this.logger.error(`applyReorder(${table}) load failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to reorder catalogue');
+    }
+
+    const existing = new Set((data ?? []).map((row) => row.id));
+    const seen = new Set<string>();
+    const ordered: string[] = [];
+    for (const id of ids) {
+      if (existing.has(id) && !seen.has(id)) {
+        seen.add(id);
+        ordered.push(id);
+      }
+    }
+    for (const row of data ?? []) {
+      if (!seen.has(row.id)) ordered.push(row.id);
+    }
+
+    const results = await Promise.all(
+      ordered.map((id, index) =>
+        this.admin
+          .schema('booking')
+          .from(table)
+          .update({ sort_order: index })
+          .eq('id', id)
+          .eq('business_id', businessId),
+      ),
+    );
+    const failed = results.find((result) => result.error);
+    if (failed?.error) {
+      this.logger.error(`applyReorder(${table}) update failed: ${failed.error.message}`);
+      throw new InternalServerErrorException('Unable to reorder catalogue');
+    }
+  }
 
   private async respondWithService(businessId: string, row: ServiceRow): Promise<ManagedServiceResponse> {
     const [currencyCode, categoryNames] = await Promise.all([

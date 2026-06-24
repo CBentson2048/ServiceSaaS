@@ -2,13 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Redirect, router } from 'expo-router';
-import type { PublicBookingAvailabilitySlot } from '@sheer/domain';
+import type { PublicBookingAvailabilitySlot, PublicBookingStylistSummary } from '@sheer/domain';
 import { palette, spacing } from '@sheer/design-tokens';
 import { AppButton, Card, EmptyState } from '@sheer/ui-mobile';
 import { ProtectedScreen } from '../../src/auth/ProtectedScreen';
 import { useAuth } from '../../src/auth/AuthProvider';
 import * as api from '../../src/auth/api';
-import { totalPrice, useBookingFlow } from '../../src/booking/BookingFlowProvider';
+import { effectiveServices, totalPrice, useBookingFlow } from '../../src/booking/BookingFlowProvider';
 import { bookingStyles as styles, formatDuration, formatMoney } from '../../src/booking/bookingStyles';
 
 export default function BookingDateTimeScreen() {
@@ -16,6 +16,9 @@ export default function BookingDateTimeScreen() {
   const accessToken = auth.session?.accessToken ?? '';
   const { draft, updateDraft } = useBookingFlow();
   const [slots, setSlots] = useState<PublicBookingAvailabilitySlot[]>([]);
+  // Per-stylist pricing for the bookable stylists, so the picked slot's stylist
+  // re-prices the services to match what the server will charge.
+  const [stylists, setStylists] = useState<PublicBookingStylistSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // The day whose time slots are shown in the list below the strip.
@@ -27,6 +30,8 @@ export default function BookingDateTimeScreen() {
   const [calMonth, setCalMonth] = useState<MonthRef>(() => monthRefOf(new Date()));
 
   const location = draft.location;
+  // Per-stylist prices once a specific stylist is selected; base prices otherwise.
+  const pricedServices = useMemo(() => effectiveServices(draft), [draft]);
   const today = useMemo(() => startOfToday(), []);
   const currentMonthIndex = monthIndex(today.getFullYear(), today.getMonth());
 
@@ -58,6 +63,7 @@ export default function BookingDateTimeScreen() {
       // Keep the server-driven slot logic intact (15-min granularity, capability
       // and rota checks all happen API-side). We just cap the client list.
       setSlots(result.slots.slice(0, 240));
+      setStylists(result.stylists ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load available times');
     } finally {
@@ -258,7 +264,14 @@ export default function BookingDateTimeScreen() {
                         selected={
                           selected?.startAt === slot.startAt && selected.staffProfileId === slot.staffProfileId
                         }
-                        onPress={() => updateDraft({ selectedSlot: slot })}
+                        onPress={() => {
+                          // Resolve the picked slot's stylist so the footer/review totals + deposit
+                          // reflect that stylist's prices — what the server will actually charge.
+                          const resolved = stylists.find(
+                            (stylist) => stylist.staffProfileId === slot.staffProfileId,
+                          );
+                          updateDraft({ selectedSlot: slot, slotServicePrices: resolved?.servicePrices });
+                        }}
                       />
                     ))}
                   </View>
@@ -280,7 +293,8 @@ export default function BookingDateTimeScreen() {
             <View>
               <Text style={[styles.footerSummaryLabel, { textAlign: 'right' }]}>Total price</Text>
               <Text style={styles.footerPriceValue}>
-                {formatMoney(totalPrice(draft.services), location.currencyCode)}
+                {/* Total reflects the selected stylist's prices once one is chosen. */}
+                {formatMoney(totalPrice(pricedServices), location.currencyCode)}
               </Text>
             </View>
           </View>

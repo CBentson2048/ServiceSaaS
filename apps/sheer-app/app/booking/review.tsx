@@ -9,7 +9,13 @@ import { AppButton } from '@sheer/ui-mobile';
 import { ProtectedScreen } from '../../src/auth/ProtectedScreen';
 import { useAuth } from '../../src/auth/AuthProvider';
 import * as api from '../../src/auth/api';
-import { totalDeposit, totalDuration, totalPrice, useBookingFlow } from '../../src/booking/BookingFlowProvider';
+import {
+  effectiveServices,
+  totalDeposit,
+  totalDuration,
+  totalPrice,
+  useBookingFlow,
+} from '../../src/booking/BookingFlowProvider';
 import {
   bookingStyles as styles,
   formatDateTime,
@@ -37,8 +43,14 @@ export default function BookingReviewScreen() {
   if (draft.services.length === 0) return <Redirect href="/booking/services" />;
   if (!slot) return <Redirect href="/booking/date-time" />;
 
-  const deposit = totalDeposit(draft.services);
-  const price = totalPrice(draft.services);
+  // Per-stylist prices for the stylist resolved for the picked slot (base prices
+  // before a slot is picked). Both the price AND the deposit follow these — the
+  // deposit gate must match the server, which recomputes a percentage deposit
+  // off the stylist's price and rejects a "deposit-free" booking whose deposit
+  // is actually > 0.
+  const pricedServices = effectiveServices(draft);
+  const deposit = totalDeposit(pricedServices);
+  const price = totalPrice(pricedServices);
   const duration = totalDuration(draft.services);
 
   async function confirm() {
@@ -158,7 +170,8 @@ export default function BookingReviewScreen() {
           <View style={s.sectionGap}>
             <Text style={styles.groupLabel}>Your selection</Text>
             <View style={styles.selectionCard}>
-              {draft.services.map((service, index) => (
+              {/* Each line shows the selected stylist's price once one is chosen. */}
+              {pricedServices.map((service, index) => (
                 <View key={service.id}>
                   {index > 0 ? <View style={styles.divider} /> : null}
                   <ServiceLine service={service} />

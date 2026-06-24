@@ -872,6 +872,18 @@ export async function deleteServiceCategory(
   });
 }
 
+/** Persist a new display order for service categories. `ids` is the full list in the desired order. */
+export async function reorderServiceCategories(
+  accessToken: string,
+  ids: string[],
+): Promise<ListServiceCategoriesResponse> {
+  return request<ListServiceCategoriesResponse>('/services/categories/reorder', {
+    method: 'PATCH',
+    accessToken,
+    body: { ids },
+  });
+}
+
 // --- Services ---------------------------------------------------------------
 
 export async function listServices(
@@ -920,6 +932,18 @@ export async function archiveService(
   return request<ManagedServiceResponse>(`/services/${encodeURIComponent(serviceId)}/archive`, {
     method: 'POST',
     accessToken,
+  });
+}
+
+/** Persist a new display order for services. `ids` is the full list in the desired order. */
+export async function reorderServices(
+  accessToken: string,
+  ids: string[],
+): Promise<ListManagedServicesResponse> {
+  return request<ListManagedServicesResponse>('/services/reorder', {
+    method: 'PATCH',
+    accessToken,
+    body: { ids },
   });
 }
 

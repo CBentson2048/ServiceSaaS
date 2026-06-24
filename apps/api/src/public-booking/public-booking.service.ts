@@ -36,7 +36,7 @@ import type {
   StartPublicBookingCheckoutRequest,
   StartPublicBookingCheckoutResponse,
 } from '@sheer/domain';
-import { userHasRole } from '@sheer/domain';
+import { depositForServicePrice, userHasRole } from '@sheer/domain';
 import { BookingNotificationService } from '../communications/booking-notification.service';
 import { RebookingService } from '../rebooking/rebooking.service';
 import { StripeService, type StripePaymentIntent } from '../stripe/stripe.service';
@@ -78,13 +78,22 @@ interface LocationRow {
   }[] | null;
 }
 
+interface ServiceCategoryEmbed {
+  id: string;
+  name: string;
+  color_hex: string | null;
+  sort_order: number;
+}
+
 interface ServiceRow {
   id: string;
   business_id: string;
   location_id: string | null;
   name: string;
   description: string | null;
-  category: string | null;
+  service_category_id: string | null;
+  // Managed category embedded via the service_category_id FK (booking schema).
+  service_categories: ServiceCategoryEmbed | ServiceCategoryEmbed[] | null;
   estimated_duration_minutes: number;
   base_price: number | string;
   deposit_type: 'none' | 'fixed_amount' | 'percentage';
@@ -212,13 +221,15 @@ interface DepositRow {
 
 const LOCATION_COLUMNS =
   'id,business_id,name,slug,timezone,is_active,address_line_1,address_line_2,city,region,postal_code,country_code,phone,businesses!inner(slug,default_currency_code),location_settings(online_booking_enabled,allow_next_available,appointment_slot_minutes,same_day_booking_cutoff_minutes,cancellation_notice_hours,currency_code)';
-const SERVICE_COLUMNS =
-  'id,business_id,location_id,name,description,category,estimated_duration_minutes,base_price,deposit_type,deposit_value,is_active,sort_order';
+// Services embed their managed category (booking.service_categories) via the
+// service_category_id FK so the booking flow can group + colour by category.
+// Same-schema embed (booking → booking), so PostgREST resolves it inline.
+const SERVICE_FIELDS =
+  'id,business_id,location_id,name,description,service_category_id,estimated_duration_minutes,base_price,deposit_type,deposit_value,is_active,sort_order,service_categories(id,name,color_hex,sort_order)';
+const SERVICE_COLUMNS = SERVICE_FIELDS;
 const STAFF_COLUMNS = 'id,display_name,color_hex,bio';
-const REQUIREMENT_RULE_COLUMNS =
-  'id,trigger_service_id,title,description,service_requirement_options(service_id,services(id,business_id,location_id,name,description,category,estimated_duration_minutes,base_price,deposit_type,deposit_value,is_active,sort_order))';
-const UPGRADE_SUGGESTION_COLUMNS =
-  'id,trigger_service_id,suggested_service_id,title,description,suggested_service:services!service_upgrade_suggestions_suggested_service_id_fkey(id,business_id,location_id,name,description,category,estimated_duration_minutes,base_price,deposit_type,deposit_value,is_active,sort_order)';
+const REQUIREMENT_RULE_COLUMNS = `id,trigger_service_id,title,description,service_requirement_options(service_id,services(${SERVICE_FIELDS}))`;
+const UPGRADE_SUGGESTION_COLUMNS = `id,trigger_service_id,suggested_service_id,title,description,suggested_service:services!service_upgrade_suggestions_suggested_service_id_fkey(${SERVICE_FIELDS})`;
 const SHIFT_COLUMNS = 'id,staff_profile_id,scheduled_start_at,scheduled_end_at';
 const BREAK_COLUMNS = 'shift_id,started_at,ended_at';
 const APPOINTMENT_COLUMNS = 'assigned_staff_profile_id,scheduled_start_at,scheduled_end_at';
@@ -312,18 +323,31 @@ export class PublicBookingService {
       { firstOnly: true },
     );
 
-    const stylists = staff.map<PublicBookingStylistSummary>((row) => ({
-      staffProfileId: row.id,
-      displayName: row.display_name,
-      colorHex: row.color_hex ?? undefined,
-      bio: row.bio ?? undefined,
-      nextAvailableAt: nextAvailableByStaff.get(row.id)?.[0],
-    }));
+    const pricesByStaff = await this.fetchStylistServicePrices(
+      location.businessId,
+      staff.map((row) => row.id),
+      services,
+    );
+
+    const stylists = staff.map<PublicBookingStylistSummary>((row) => {
+      const servicePrices = pricesByStaff.get(row.id) ?? [];
+      return {
+        staffProfileId: row.id,
+        displayName: row.display_name,
+        colorHex: row.color_hex ?? undefined,
+        bio: row.bio ?? undefined,
+        nextAvailableAt: nextAvailableByStaff.get(row.id)?.[0],
+        servicePrices,
+        totalPriceAmount: servicePrices.reduce((sum, price) => sum + price.priceAmount, 0),
+      };
+    });
 
     return {
       location,
       services,
       totalDurationMinutes,
+      // Top-level totals stay at base price — the "from" estimate shown before a
+      // stylist is picked. Per-stylist totals live on each stylist entry.
       totalPriceAmount: totalPrice(services),
       totalDepositRequiredAmount: calculateDepositAmount(services),
       stylists,
@@ -352,6 +376,19 @@ export class PublicBookingService {
 
     if (query.stylistId && requestedStaffIds.length === 0) {
       throw new NotFoundException('Stylist is not available for online booking at this location');
+    }
+
+    // Per-stylist effective prices for every bookable stylist behind the slots,
+    // so a next-available selection can show + charge the stylist actually
+    // resolved for the chosen slot. Computed from base prices BEFORE the
+    // specific-stylist override below so per-service fallbacks stay at base.
+    const pricesByStaff = await this.fetchStylistServicePrices(location.businessId, requestedStaffIds, services);
+
+    // A specific stylist is targeted: switch the estimate to that stylist's
+    // per-service prices so the displayed total matches what they will be
+    // charged. With no stylist (any/next-available) prices stay at base.
+    if (query.stylistId) {
+      await this.applyStylistServicePricing(location.businessId, query.stylistId, services);
     }
 
     const dateFrom = parseDate(query.dateFrom, 'dateFrom');
@@ -394,7 +431,31 @@ export class PublicBookingService {
       })
       .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
 
-    return { location, services, totalDurationMinutes, slots };
+    const stylists = requestedStaffIds
+      .map<PublicBookingStylistSummary | null>((staffProfileId) => {
+        const staffRow = staffById.get(staffProfileId);
+        if (!staffRow) return null;
+        const servicePrices = pricesByStaff.get(staffProfileId) ?? [];
+        return {
+          staffProfileId,
+          displayName: staffRow.display_name,
+          colorHex: staffRow.color_hex ?? undefined,
+          bio: staffRow.bio ?? undefined,
+          servicePrices,
+          totalPriceAmount: servicePrices.reduce((sum, price) => sum + price.priceAmount, 0),
+        };
+      })
+      .filter((stylist): stylist is PublicBookingStylistSummary => stylist !== null);
+
+    return {
+      location,
+      services,
+      totalDurationMinutes,
+      totalPriceAmount: totalPrice(services),
+      totalDepositRequiredAmount: calculateDepositAmount(services),
+      slots,
+      stylists,
+    };
   }
 
   async createAppointment(input: CreatePublicBookingRequest): Promise<CreatePublicBookingResponse> {
@@ -853,9 +914,11 @@ export class PublicBookingService {
 
   /**
    * Overrides each service's price with the chosen stylist's per-stylist price
-   * (booking.staff_service_eligibility.price_amount) where one is set. A NULL
-   * price leaves the service base price untouched. Mutates `services` in place so
-   * totals and the snapshotted appointment/attempt service prices follow.
+   * (booking.staff_service_eligibility.price_amount) where one is set, and
+   * recomputes a percentage deposit off that effective price so the deposit
+   * charged/persisted matches the stylist's price. A NULL price leaves the
+   * service base price + deposit untouched. Mutates `services` in place so totals
+   * and the snapshotted appointment/attempt service prices + deposits follow.
    */
   private async applyStylistServicePricing(
     businessId: string,
@@ -881,8 +944,55 @@ export class PublicBookingService {
     }
     for (const service of services) {
       const override = priceByService.get(service.id);
-      if (override !== undefined) service.startingPriceAmount = override;
+      if (override !== undefined) {
+        service.startingPriceAmount = override;
+        service.depositRequiredAmount = depositForServicePrice(service, override);
+      }
     }
+  }
+
+  /**
+   * Bulk per-stylist effective prices for the selection UI. For each stylist and
+   * each selected service returns the per-stylist override where set, otherwise
+   * the service base price — so the picker can show a stylist's price the moment
+   * they are selected. One query across all the listed stylists.
+   */
+  private async fetchStylistServicePrices(
+    businessId: string,
+    staffProfileIds: string[],
+    services: PublicBookingServiceSummary[],
+  ): Promise<Map<string, { serviceId: string; priceAmount: number }[]>> {
+    const result = new Map<string, { serviceId: string; priceAmount: number }[]>();
+    if (staffProfileIds.length === 0 || services.length === 0) return result;
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('staff_service_eligibility')
+      .select('staff_profile_id,service_id,price_amount')
+      .eq('business_id', businessId)
+      .in('staff_profile_id', staffProfileIds)
+      .in('service_id', services.map((service) => service.id))
+      .returns<{ staff_profile_id: string; service_id: string; price_amount: number | string | null }[]>();
+    if (error) {
+      this.logger.error(`fetchStylistServicePrices failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load stylist pricing');
+    }
+    const overrideByStaffService = new Map<string, number>();
+    for (const row of data ?? []) {
+      if (row.price_amount !== null) {
+        overrideByStaffService.set(`${row.staff_profile_id}:${row.service_id}`, Number(row.price_amount));
+      }
+    }
+    for (const staffProfileId of staffProfileIds) {
+      result.set(
+        staffProfileId,
+        services.map((service) => ({
+          serviceId: service.id,
+          priceAmount:
+            overrideByStaffService.get(`${staffProfileId}:${service.id}`) ?? service.startingPriceAmount,
+        })),
+      );
+    }
+    return result;
   }
 
   private async assertStaffEligibleForServices(
@@ -2115,14 +2225,22 @@ export class PublicBookingService {
 }
 
 function toServiceSummary(row: ServiceRow, currencyCode: string): PublicBookingServiceSummary {
+  const category = first(row.service_categories);
   return {
     id: row.id,
     name: row.name,
     description: row.description ?? undefined,
-    category: row.category ?? undefined,
+    serviceCategoryId: row.service_category_id ?? undefined,
+    category: category?.name ?? undefined,
+    categoryColorHex: category?.color_hex ?? undefined,
+    categorySortOrder: category?.sort_order ?? undefined,
     estimatedDurationMinutes: row.estimated_duration_minutes,
     startingPriceAmount: Number(row.base_price),
     depositRequiredAmount: calculateServiceDeposit(row),
+    // Carried so a per-stylist price override can recompute a percentage deposit
+    // off the effective price (depositForServicePrice / applyStylistServicePricing).
+    depositType: row.deposit_type,
+    depositValue: Number(row.deposit_value),
     currencyCode,
   };
 }

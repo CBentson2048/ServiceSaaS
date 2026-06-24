@@ -12,7 +12,7 @@ import { AppButton, Card, EmptyState } from '@sheer/ui-mobile';
 import { ProtectedScreen } from '../../src/auth/ProtectedScreen';
 import { useAuth } from '../../src/auth/AuthProvider';
 import * as api from '../../src/auth/api';
-import { totalDuration, totalPrice, useBookingFlow } from '../../src/booking/BookingFlowProvider';
+import { effectiveServices, totalDuration, totalPrice, useBookingFlow } from '../../src/booking/BookingFlowProvider';
 import { bookingStyles as styles, formatDateTime, formatDuration, formatMoney } from '../../src/booking/bookingStyles';
 
 export default function BookingServicesScreen() {
@@ -30,10 +30,22 @@ export default function BookingServicesScreen() {
 
   const location = draft.location;
   const selectedIds = useMemo(() => new Set(draft.services.map((service) => service.id)), [draft.services]);
+  // Effective (per-stylist) prices for the SELECTED services: once a specific
+  // stylist is chosen these are that stylist's prices, otherwise base prices.
+  const pricedServices = useMemo(() => effectiveServices(draft), [draft]);
+  // Map of serviceId -> effective price so each selected card shows the chosen
+  // stylist's price; unselected catalog cards keep their base "from" price.
+  const effectivePriceById = useMemo(
+    () => new Map(pricedServices.map((service) => [service.id, service.startingPriceAmount])),
+    [pricedServices],
+  );
   const serviceIdsKey = useMemo(
     () => draft.services.map((service) => service.id).sort().join(','),
     [draft.services],
   );
+  // Group the catalogue under category headers, ordered by the category order
+  // configured by the salon. Services keep their (sort_order) order within each.
+  const groupedServices = useMemo(() => groupServicesByCategory(services), [services]);
 
   const loadServices = useCallback(async () => {
     if (!accessToken || !location) return;
@@ -89,19 +101,19 @@ export default function BookingServicesScreen() {
       ? draft.services.filter((item) => item.id !== service.id)
       : [...draft.services, service];
     // Service change invalidates stylist/time selection.
-    updateDraft({ services: next, stylist: undefined, selectedSlot: undefined });
+    updateDraft({ services: next, stylist: undefined, selectedSlot: undefined, slotServicePrices: undefined });
   }
 
   function addUpgrade(service: PublicBookingServiceSummary) {
-    updateDraft({ services: [...draft.services, service], stylist: undefined, selectedSlot: undefined });
+    updateDraft({ services: [...draft.services, service], stylist: undefined, selectedSlot: undefined, slotServicePrices: undefined });
   }
 
   function chooseNextAvailable() {
-    updateDraft({ staffRequestMode: 'next_available', stylist: undefined, selectedSlot: undefined });
+    updateDraft({ staffRequestMode: 'next_available', stylist: undefined, selectedSlot: undefined, slotServicePrices: undefined });
   }
 
   function chooseStylist(stylist: PublicBookingStylistSummary) {
-    updateDraft({ staffRequestMode: 'specific_staff', stylist, selectedSlot: undefined });
+    updateDraft({ staffRequestMode: 'specific_staff', stylist, selectedSlot: undefined, slotServicePrices: undefined });
   }
 
   const upgrades = draft.upgradeSuggestions.filter(
@@ -165,15 +177,40 @@ export default function BookingServicesScreen() {
           ) : services.length === 0 ? (
             <EmptyState title="No services available" body="This salon does not have online services available yet." />
           ) : (
-            <View style={styles.serviceGrid}>
-              {services.map((service) => (
-                <ServiceCard
-                  key={service.id}
-                  service={service}
-                  selected={selectedIds.has(service.id)}
-                  onPress={() => toggleService(service)}
-                />
-              ))}
+            <View style={s.categoryList}>
+              {groupedServices.map((group) => {
+                // Hide the header only when the whole catalogue is uncategorised.
+                const showHeader = groupedServices.length > 1 || group.key !== UNCATEGORISED_KEY;
+                return (
+                  <View key={group.key} style={s.categoryBlock}>
+                    {showHeader ? (
+                      <View style={s.categoryHeader}>
+                        {group.colorHex ? (
+                          <View style={[s.categoryDot, { backgroundColor: group.colorHex }]} />
+                        ) : null}
+                        <Text style={s.categoryTitle}>{group.name}</Text>
+                      </View>
+                    ) : null}
+                    <View style={styles.serviceGrid}>
+                      {group.services.map((service) => (
+                        <ServiceCard
+                          key={service.id}
+                          service={service}
+                          selected={selectedIds.has(service.id)}
+                          // When this service is selected and a specific stylist is chosen,
+                          // show that stylist's price; otherwise the base "from" price.
+                          priceAmount={
+                            selectedIds.has(service.id)
+                              ? effectivePriceById.get(service.id) ?? service.startingPriceAmount
+                              : service.startingPriceAmount
+                          }
+                          onPress={() => toggleService(service)}
+                        />
+                      ))}
+                    </View>
+                  </View>
+                );
+              })}
             </View>
           )}
 
@@ -245,7 +282,8 @@ export default function BookingServicesScreen() {
             <Text style={s.footerHint} numberOfLines={1}>
               {draft.services.length} service{draft.services.length === 1 ? '' : 's'} ·{' '}
               {formatDuration(totalDuration(draft.services))} ·{' '}
-              {formatMoney(totalPrice(draft.services), location.currencyCode)}
+              {/* Total uses the selected stylist's prices once one is chosen. */}
+              {formatMoney(totalPrice(pricedServices), location.currencyCode)}
             </Text>
           ) : (
             <Text style={s.footerHintMuted}>Pick at least one service to continue</Text>
@@ -262,10 +300,14 @@ export default function BookingServicesScreen() {
 function ServiceCard({
   service,
   selected,
+  priceAmount,
   onPress,
 }: {
   service: PublicBookingServiceSummary;
   selected: boolean;
+  // Effective price to display: the selected stylist's price when one is chosen,
+  // otherwise the service base price.
+  priceAmount: number;
   onPress: () => void;
 }) {
   return (
@@ -286,7 +328,7 @@ function ServiceCard({
         {service.name}
       </Text>
       <Text style={styles.serviceMeta}>{formatDuration(service.estimatedDurationMinutes)}</Text>
-      <Text style={styles.servicePrice}>From {formatMoney(service.startingPriceAmount, service.currencyCode)}</Text>
+      <Text style={styles.servicePrice}>From {formatMoney(priceAmount, service.currencyCode)}</Text>
     </Pressable>
   );
 }
@@ -426,6 +468,43 @@ function serviceEmoji(service: PublicBookingServiceSummary): string {
   return '💇';
 }
 
+// ── Category grouping ─────────────────────────────────────────────────────────────
+
+const UNCATEGORISED_KEY = '__uncategorised';
+
+interface ServiceGroup {
+  key: string;
+  name: string;
+  colorHex?: string;
+  sortOrder: number;
+  services: PublicBookingServiceSummary[];
+}
+
+// Buckets services under their category, ordered by the salon-configured category
+// order (uncategorised last). Service order within a category is preserved from
+// the API (service sort_order), so the configured sequence is respected.
+function groupServicesByCategory(services: PublicBookingServiceSummary[]): ServiceGroup[] {
+  const groups = new Map<string, ServiceGroup>();
+  for (const service of services) {
+    const key = service.serviceCategoryId ?? UNCATEGORISED_KEY;
+    let group = groups.get(key);
+    if (!group) {
+      group = {
+        key,
+        name: service.category ?? 'Other',
+        colorHex: service.categoryColorHex,
+        sortOrder: service.categorySortOrder ?? Number.MAX_SAFE_INTEGER,
+        services: [],
+      };
+      groups.set(key, group);
+    }
+    group.services.push(service);
+  }
+  return Array.from(groups.values()).sort(
+    (a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name),
+  );
+}
+
 // ── Screen styles ──────────────────────────────────────────────────────────────
 
 const BG = '#18141F';
@@ -471,6 +550,11 @@ const s = StyleSheet.create({
     paddingBottom: spacing.xl,
   },
   sectionGap: { gap: spacing.md },
+  categoryList: { gap: spacing.base },
+  categoryBlock: { gap: spacing.sm },
+  categoryHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.sm },
+  categoryDot: { width: 10, height: 10, borderRadius: 5 },
+  categoryTitle: { color: palette.white, fontSize: 14, fontWeight: '700', letterSpacing: -0.2 },
   stylistList: { gap: spacing.md },
   stylistHint: {
     padding: spacing.base,

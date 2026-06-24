@@ -35,6 +35,7 @@ import { appConfig } from '../../config/appConfig';
 import { formatClock, initials, roleLabel } from '../Home/dashboardHelpers';
 import { featureFlags } from '../../config/featureFlags';
 import { labTheme } from '../../theme/labTheme';
+import { BrandMark } from '../shared/BrandMark';
 
 const T = labTheme;
 const C = T.colors;
@@ -616,9 +617,7 @@ function TopBar({ session, online }: { session?: PinUnlockResponse; online: bool
         <StatusChip label={online ? 'Connected' : 'Offline'} tone={online ? 'success' : 'neutral'} />
       </View>
       <View style={styles.brandRow}>
-        <View style={styles.brandMark}>
-          <Text style={styles.brandMarkText}>Q</Text>
-        </View>
+        <BrandMark size={30} />
         <Text style={styles.brandText}>QLOOQO LAB</Text>
       </View>
       <View style={styles.topSideRight}>
@@ -1742,15 +1741,6 @@ const styles = StyleSheet.create({
   topSideLeft: { flex: 1, alignItems: 'flex-start' },
   topSideRight: { flex: 1, alignItems: 'flex-end' },
   brandRow: { flexDirection: 'row', alignItems: 'center', gap: T.spacing.sm },
-  brandMark: {
-    width: 30,
-    height: 30,
-    borderRadius: T.radius.sm,
-    backgroundColor: C.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  brandMarkText: { color: C.textOnPrimary, fontSize: 16, fontWeight: '800' },
   brandText: { color: C.textPrimary, fontSize: 17, fontWeight: '800', letterSpacing: 1 },
   userRow: { flexDirection: 'row', alignItems: 'center', gap: T.spacing.sm, maxWidth: 220 },
   userText: { alignItems: 'flex-end' },

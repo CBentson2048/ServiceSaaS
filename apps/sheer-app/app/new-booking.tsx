@@ -10,7 +10,7 @@ import type {
   StaffBookingPaymentMode,
   StaffBookingSource,
 } from '@sheer/domain';
-import { userHasRole } from '@sheer/domain';
+import { applyStylistServicePrices, userHasRole } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { AppButton, Card, EmptyState, Screen, SectionHeader } from '@sheer/ui-mobile';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
@@ -92,11 +92,25 @@ export default function NewBookingScreen() {
 
   const currencyCode = selection?.location.currencyCode ?? 'GBP';
 
+  // The specific stylist the user picked (null for "any available").
+  const selectedStylist = useMemo(
+    () => (stylistChoice === ANY_STYLIST ? null : stylists.find((s) => s.staffProfileId === stylistChoice) ?? null),
+    [stylistChoice, stylists],
+  );
+
+  // All price displays/totals use the selected stylist's per-service prices when a
+  // specific stylist is chosen; otherwise the helper returns the base services.
+  const pricedServices = useMemo(
+    () => applyStylistServicePrices(selection?.services ?? [], selectedStylist?.servicePrices),
+    [selection?.services, selectedStylist],
+  );
+
   const selectedServices = useMemo(
-    () => (selection?.services ?? []).filter((service) => selectedServiceIds.includes(service.id)),
-    [selection, selectedServiceIds],
+    () => pricedServices.filter((service) => selectedServiceIds.includes(service.id)),
+    [pricedServices, selectedServiceIds],
   );
   const totalDurationMinutes = selectedServices.reduce((sum, s) => sum + s.estimatedDurationMinutes, 0);
+  // Reflects the selected stylist's prices when one is chosen, else base prices.
   const totalPriceAmount = selectedServices.reduce((sum, s) => sum + s.startingPriceAmount, 0);
   const totalDepositAmount = selectedServices.reduce((sum, s) => sum + s.depositRequiredAmount, 0);
 
@@ -427,11 +441,12 @@ export default function NewBookingScreen() {
           <Text style={s.step}>2 · Services</Text>
           {loadingSelection ? (
             <ActivityIndicator color={palette.brand[300]} />
-          ) : (selection?.services.length ?? 0) === 0 ? (
+          ) : pricedServices.length === 0 ? (
             <Text style={s.muted}>No bookable services at this location.</Text>
           ) : (
             <View style={s.gap}>
-              {selection?.services.map((service) => {
+              {/* pricedServices uses the selected stylist's per-service price when one is chosen. */}
+              {pricedServices.map((service) => {
                 const active = selectedServiceIds.includes(service.id);
                 return (
                   <Pressable
@@ -442,6 +457,7 @@ export default function NewBookingScreen() {
                     <View style={s.flex}>
                       <Text style={s.serviceName}>{service.name}</Text>
                       <Text style={s.muted}>
+                        {/* startingPriceAmount reflects the selected stylist's price when one is chosen. */}
                         {service.estimatedDurationMinutes} min · {formatMoney(service.startingPriceAmount, service.currencyCode)}
                         {service.depositRequiredAmount > 0
                           ? ` · dep ${formatMoney(service.depositRequiredAmount, service.currencyCode)}`

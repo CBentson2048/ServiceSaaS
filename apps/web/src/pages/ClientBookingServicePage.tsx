@@ -9,6 +9,7 @@ import type {
   PublicBookingStylistSummary,
   PublicBookingUpgradeSuggestion,
 } from '@sheer/domain';
+import { applyStylistServicePrices } from '@sheer/domain';
 import { cn } from '@sheer/utils';
 import {
   ApiRequestError,
@@ -56,9 +57,37 @@ export function ClientBookingServicePage() {
     () => selectedServiceIds.map((id) => services.find((service) => service.id === id)).filter((service): service is PublicBookingServiceSummary => Boolean(service)),
     [selectedServiceIds, services],
   );
+  // The specific stylist the user picked (if any). "Next available" / no choice has no per-stylist prices.
+  const selectedStylist = useMemo<PublicBookingStylistSummary | null>(
+    () =>
+      stylistChoice?.mode === 'specific_staff'
+        ? stylists.find((stylist) => stylist.staffProfileId === stylistChoice.staffProfileId) ?? null
+        : null,
+    [stylistChoice, stylists],
+  );
+  // When a specific stylist is selected, every displayed price + total uses THAT stylist's per-service
+  // price; otherwise (any-available / next-available / nothing picked) base prices are kept.
+  const pricedSelectedServices = useMemo(
+    () => applyStylistServicePrices(selectedServices, selectedStylist?.servicePrices),
+    [selectedServices, selectedStylist],
+  );
+  // Per-service-id effective price (selected stylist's price when one is chosen, base price otherwise),
+  // used to render each service card's price including unselected cards.
+  const pricedServices = useMemo(
+    () => applyStylistServicePrices(services, selectedStylist?.servicePrices),
+    [services, selectedStylist],
+  );
+  const priceByServiceId = useMemo(
+    () => new Map(pricedServices.map((service) => [service.id, service.startingPriceAmount])),
+    [pricedServices],
+  );
   const selectedServiceIdSet = useMemo(() => new Set(selectedServiceIds), [selectedServiceIds]);
+  // Group the catalogue under category headers, ordered by the salon-configured
+  // category order; services keep their (sort_order) order within each category.
+  const groupedServices = useMemo(() => groupServicesByCategory(services), [services]);
   const totalDurationMinutes = selectedServices.reduce((sum, service) => sum + service.estimatedDurationMinutes, 0);
-  const totalPriceAmount = selectedServices.reduce((sum, service) => sum + service.startingPriceAmount, 0);
+  // Estimated total uses the selected stylist's prices when one is chosen, base prices otherwise.
+  const totalPriceAmount = pricedSelectedServices.reduce((sum, service) => sum + service.startingPriceAmount, 0);
   const applicableRequirements = useMemo(
     () => finishingRequirements.filter((rule) => selectedServiceIdSet.has(rule.triggerServiceId)),
     [finishingRequirements, selectedServiceIdSet],
@@ -163,7 +192,8 @@ export function ClientBookingServicePage() {
       locationId: location.id,
       location,
       serviceIds: selectedServices.map((service) => service.id),
-      services: selectedServices,
+      // Persist the selected stylist's per-service prices so downstream steps (review) show the stylist's total.
+      services: pricedSelectedServices,
       finishingRequirements,
       upgradeSuggestions,
       staffRequestMode: stylistChoice.mode,
@@ -200,11 +230,19 @@ export function ClientBookingServicePage() {
         return;
       }
 
+      // Re-price to the stylist actually resolved for this slot so the review
+      // total + deposit match what the server will charge (next-available skips
+      // the date-time page, so this is the only place to apply it).
+      const resolvedStylist = result.stylists?.find(
+        (stylist) => stylist.staffProfileId === selectedSlot.staffProfileId,
+      );
+      const pricedServices = applyStylistServicePrices(currentServices, resolvedStylist?.servicePrices);
+
       const selection: ClientBookingSelection = {
         locationId: currentLocation.id,
         location: currentLocation,
         serviceIds: currentServices.map((service) => service.id),
-        services: currentServices,
+        services: pricedServices,
         finishingRequirements,
         upgradeSuggestions,
         staffRequestMode: 'next_available',
@@ -276,15 +314,39 @@ export function ClientBookingServicePage() {
                 body="This location does not have online-bookable services yet."
               />
             ) : (
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
-                {services.map((service) => (
-                  <ServiceCard
-                    key={service.id}
-                    service={service}
-                    selected={selectedServiceIdSet.has(service.id)}
-                    onSelect={() => selectService(service.id)}
-                  />
-                ))}
+              <div className="space-y-5">
+                {groupedServices.map((group) => {
+                  // Hide the header only when the whole catalogue is uncategorised.
+                  const showHeader = groupedServices.length > 1 || group.key !== UNCATEGORISED_KEY;
+                  return (
+                    <div key={group.key}>
+                      {showHeader ? (
+                        <div className="mb-2 flex items-center gap-2">
+                          {group.colorHex ? (
+                            <span
+                              className="h-2.5 w-2.5 shrink-0 rounded-full"
+                              style={{ backgroundColor: group.colorHex }}
+                              aria-hidden
+                            />
+                          ) : null}
+                          <h3 className="text-[13px] font-semibold text-text-primary">{group.name}</h3>
+                        </div>
+                      ) : null}
+                      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
+                        {group.services.map((service) => (
+                          <ServiceCard
+                            key={service.id}
+                            service={service}
+                            // Display the selected stylist's per-service price when one is chosen; base price otherwise.
+                            priceAmount={priceByServiceId.get(service.id) ?? service.startingPriceAmount}
+                            selected={selectedServiceIdSet.has(service.id)}
+                            onSelect={() => selectService(service.id)}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </section>
@@ -438,12 +500,49 @@ export function ClientBookingServicePage() {
   );
 }
 
+const UNCATEGORISED_KEY = '__uncategorised';
+
+interface ServiceGroup {
+  key: string;
+  name: string;
+  colorHex?: string;
+  sortOrder: number;
+  services: PublicBookingServiceSummary[];
+}
+
+// Buckets services under their category, ordered by the salon-configured category
+// order (uncategorised last). Service order within a category is preserved from
+// the API (service sort_order), so the configured sequence is respected.
+function groupServicesByCategory(services: PublicBookingServiceSummary[]): ServiceGroup[] {
+  const groups = new Map<string, ServiceGroup>();
+  for (const service of services) {
+    const key = service.serviceCategoryId ?? UNCATEGORISED_KEY;
+    let group = groups.get(key);
+    if (!group) {
+      group = {
+        key,
+        name: service.category ?? 'Other',
+        colorHex: service.categoryColorHex,
+        sortOrder: service.categorySortOrder ?? Number.MAX_SAFE_INTEGER,
+        services: [],
+      };
+      groups.set(key, group);
+    }
+    group.services.push(service);
+  }
+  return Array.from(groups.values()).sort(
+    (a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name),
+  );
+}
+
 function ServiceCard({
   service,
+  priceAmount,
   selected,
   onSelect,
 }: {
   service: PublicBookingServiceSummary;
+  priceAmount: number;
   selected: boolean;
   onSelect: () => void;
 }) {
@@ -465,7 +564,8 @@ function ServiceCard({
           {formatDuration(service.estimatedDurationMinutes)}
         </div>
         <div className="mt-1 text-[12px] font-medium text-primary">
-          {formatPrice(service.startingPriceAmount, service.currencyCode)}
+          {/* Uses the selected stylist's per-service price when one is chosen; base price otherwise. */}
+          {formatPrice(priceAmount, service.currencyCode)}
         </div>
       </AppCard>
     </button>

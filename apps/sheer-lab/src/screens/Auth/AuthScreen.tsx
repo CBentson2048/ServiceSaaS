@@ -12,6 +12,7 @@ import { getActiveLabSession, unlockLabSession } from '../../features/sheer-lab/
 import { useDeviceSession } from '../../features/sheer-lab/DeviceSessionProvider';
 import { useApiClient } from '../../lib/api/ApiProvider';
 import { labTheme } from '../../theme/labTheme';
+import { BrandMark } from '../shared/BrandMark';
 
 type AuthScreenProps = NativeStackScreenProps<RootStackParamList, 'Auth'>;
 
@@ -107,7 +108,7 @@ export function AuthScreen({ navigation }: AuthScreenProps): React.JSX.Element {
       >
         {/* Brand header */}
         <View style={styles.header}>
-          <BrandMark />
+          <BrandMark size={64} radius={32} />
           <Text style={styles.wordmark}>SHEER LAB</Text>
           <Text style={styles.welcome}>Welcome back</Text>
           <View style={styles.locationChip}>
@@ -277,19 +278,6 @@ function computeLayout(width: number): {
   return { hPadding, cardWidth, keySize, digitFont };
 }
 
-/** Brand pulse mark — an activity/measurement motif drawn with plain Views (no asset/icon lib). */
-function BrandMark(): React.JSX.Element {
-  return (
-    <View style={styles.brandMark}>
-      <View style={styles.pulse}>
-        {[10, 20, 30, 16, 8].map((height, index) => (
-          <View key={index} style={[styles.pulseBar, { height }]} />
-        ))}
-      </View>
-    </View>
-  );
-}
-
 /** Small padlock glyph drawn with Views for the secured-location chip. */
 function LockGlyph(): React.JSX.Element {
   return (
@@ -377,27 +365,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: labTheme.spacing.sm,
     paddingTop: labTheme.spacing.lg,
-  },
-  brandMark: {
-    width: 64,
-    height: 64,
-    borderRadius: labTheme.radius.full,
-    borderWidth: 1.5,
-    borderColor: labTheme.colors.primary,
-    backgroundColor: labTheme.colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pulse: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    height: 32,
-  },
-  pulseBar: {
-    width: 3,
-    borderRadius: labTheme.radius.full,
-    backgroundColor: labTheme.colors.primary,
   },
   wordmark: {
     color: labTheme.colors.textPrimary,

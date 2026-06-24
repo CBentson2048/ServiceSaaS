@@ -10,7 +10,7 @@ import type {
   StaffBookingPaymentMode,
   StaffBookingSource,
 } from '@sheer/domain';
-import { userHasAnyRole } from '@sheer/domain';
+import { applyStylistServicePrices, userHasAnyRole } from '@sheer/domain';
 import {
   ApiRequestError,
   createStaffBooking,
@@ -121,14 +121,36 @@ export function NewBookingPage() {
 
   const currencyCode = selection?.location.currencyCode ?? 'GBP';
 
-  const selectedServices = useMemo(
-    () => (selection?.services ?? []).filter((service) => selectedServiceIds.includes(service.id)),
-    [selection, selectedServiceIds],
+  // The specific stylist the user picked (if any). When ANY_STYLIST is selected
+  // this is undefined and base prices are used.
+  const selectedStylist = useMemo(
+    () =>
+      stylistChoice === ANY_STYLIST
+        ? undefined
+        : stylists.find((stylist) => stylist.staffProfileId === stylistChoice),
+    [stylistChoice, stylists],
   );
+
+  // Prices shown everywhere reflect the selected stylist's per-service prices
+  // once a specific stylist is chosen; with ANY_STYLIST the helper returns the
+  // base services unchanged so we revert to "from" estimates.
+  const pricedServices = useMemo(
+    () => applyStylistServicePrices(selection?.services ?? [], selectedStylist?.servicePrices),
+    [selection, selectedStylist],
+  );
+
+  const selectedServices = useMemo(
+    () => pricedServices.filter((service) => selectedServiceIds.includes(service.id)),
+    [pricedServices, selectedServiceIds],
+  );
+  // Group the catalogue under category headers, ordered by the salon-configured
+  // category order; services keep their (sort_order) order within each category.
+  const groupedServices = useMemo(() => groupServicesByCategory(pricedServices), [pricedServices]);
   const totalDurationMinutes = useMemo(
     () => selectedServices.reduce((sum, service) => sum + service.estimatedDurationMinutes, 0),
     [selectedServices],
   );
+  // Uses the selected stylist's price when one is chosen (via pricedServices).
   const totalPriceAmount = useMemo(
     () => selectedServices.reduce((sum, service) => sum + service.startingPriceAmount, 0),
     [selectedServices],
@@ -585,40 +607,67 @@ export function NewBookingPage() {
           <p className="text-[13px] text-text-secondary">No bookable services at this location.</p>
         ) : (
           <>
-            <ul className="grid gap-2 sm:grid-cols-2">
-              {selection?.services.map((service) => (
-                <li key={service.id}>
-                  <label
-                    className={`flex cursor-pointer items-start gap-3 rounded-input-lg border px-3 py-2.5 transition ${
-                      selectedServiceIds.includes(service.id)
-                        ? 'border-primary bg-primary/5'
-                        : 'border-border-strong bg-surface hover:bg-surface-alt'
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedServiceIds.includes(service.id)}
-                      onChange={() => toggleService(service.id)}
-                      className="mt-0.5 h-4 w-4 rounded border-border-strong text-primary focus:ring-primary/20"
-                    />
-                    <span className="flex-1">
-                      <span className="block text-[13px] font-medium text-text-primary">
-                        {service.name}
-                      </span>
-                      <span className="block text-[12px] text-text-secondary">
-                        {service.estimatedDurationMinutes} min ·{' '}
-                        {formatMoney(service.startingPriceAmount, service.currencyCode)}
-                        {service.depositRequiredAmount > 0
-                          ? ` · deposit ${formatMoney(service.depositRequiredAmount, service.currencyCode)}`
-                          : ''}
-                      </span>
-                    </span>
-                  </label>
-                </li>
-              ))}
-            </ul>
+            {/* pricedServices applies the selected stylist's per-service price
+                when a specific stylist is chosen; base prices otherwise. */}
+            <div className="space-y-4">
+              {groupedServices.map((group) => {
+                // Hide the header only when the whole catalogue is uncategorised.
+                const showHeader = groupedServices.length > 1 || group.key !== UNCATEGORISED_KEY;
+                return (
+                  <div key={group.key}>
+                    {showHeader ? (
+                      <div className="mb-2 flex items-center gap-2">
+                        {group.colorHex ? (
+                          <span
+                            className="h-2.5 w-2.5 shrink-0 rounded-full"
+                            style={{ backgroundColor: group.colorHex }}
+                            aria-hidden
+                          />
+                        ) : null}
+                        <h3 className="text-[12px] font-semibold uppercase tracking-[0.06em] text-text-secondary">
+                          {group.name}
+                        </h3>
+                      </div>
+                    ) : null}
+                    <ul className="grid gap-2 sm:grid-cols-2">
+                      {group.services.map((service) => (
+                        <li key={service.id}>
+                          <label
+                            className={`flex cursor-pointer items-start gap-3 rounded-input-lg border px-3 py-2.5 transition ${
+                              selectedServiceIds.includes(service.id)
+                                ? 'border-primary bg-primary/5'
+                                : 'border-border-strong bg-surface hover:bg-surface-alt'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedServiceIds.includes(service.id)}
+                              onChange={() => toggleService(service.id)}
+                              className="mt-0.5 h-4 w-4 rounded border-border-strong text-primary focus:ring-primary/20"
+                            />
+                            <span className="flex-1">
+                              <span className="block text-[13px] font-medium text-text-primary">
+                                {service.name}
+                              </span>
+                              <span className="block text-[12px] text-text-secondary">
+                                {service.estimatedDurationMinutes} min ·{' '}
+                                {formatMoney(service.startingPriceAmount, service.currencyCode)}
+                                {service.depositRequiredAmount > 0
+                                  ? ` · deposit ${formatMoney(service.depositRequiredAmount, service.currencyCode)}`
+                                  : ''}
+                              </span>
+                            </span>
+                          </label>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              })}
+            </div>
             {selectedServiceIds.length > 0 ? (
               <p className="mt-3 text-[12px] font-medium text-text-secondary">
+                {/* totalPriceAmount reflects the selected stylist's prices when one is chosen. */}
                 {selectedServiceIds.length} service{selectedServiceIds.length > 1 ? 's' : ''} ·{' '}
                 {totalDurationMinutes} min · {formatMoney(totalPriceAmount, currencyCode)}
                 {totalDepositAmount > 0
@@ -772,6 +821,41 @@ export function NewBookingPage() {
         </button>
       </div>
     </div>
+  );
+}
+
+const UNCATEGORISED_KEY = '__uncategorised';
+
+interface ServiceGroup {
+  key: string;
+  name: string;
+  colorHex?: string;
+  sortOrder: number;
+  services: PublicBookingServiceSummary[];
+}
+
+// Buckets services under their category, ordered by the salon-configured category
+// order (uncategorised last). Service order within a category is preserved from
+// the API (service sort_order), so the configured sequence is respected.
+function groupServicesByCategory(services: PublicBookingServiceSummary[]): ServiceGroup[] {
+  const groups = new Map<string, ServiceGroup>();
+  for (const service of services) {
+    const key = service.serviceCategoryId ?? UNCATEGORISED_KEY;
+    let group = groups.get(key);
+    if (!group) {
+      group = {
+        key,
+        name: service.category ?? 'Other',
+        colorHex: service.categoryColorHex,
+        sortOrder: service.categorySortOrder ?? Number.MAX_SAFE_INTEGER,
+        services: [],
+      };
+      groups.set(key, group);
+    }
+    group.services.push(service);
+  }
+  return Array.from(groups.values()).sort(
+    (a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name),
   );
 }
 

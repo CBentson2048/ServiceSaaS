@@ -30,5 +30,25 @@ target 'SheerLabNative' do
       :mac_catalyst_enabled => false,
       # :ccache_enabled => true
     )
+
+    # x86_64 iOS Simulator workaround (Intel Macs).
+    # react-native-ble-plx's MultiplatformBleAdapter (Swift) emits a back-deploy stub
+    # `__swift_coroFrameAllocStub` that references the newer runtime symbol
+    # `_swift_coroFrameAlloc`. The arm64 simulator linker treats that reference as weak,
+    # but the x86_64 simulator linker treats it as a hard "Undefined symbol" and fails the
+    # app link. `-U` lets the linker resolve it dynamically (the stub falls back to plain
+    # allocation when the symbol is absent). Harmless no-op on arm64/device.
+    coro_flag = '-Wl,-U,_swift_coroFrameAlloc'
+    installer.aggregate_targets.each do |aggregate_target|
+      project = aggregate_target.user_project
+      project.native_targets.each do |native_target|
+        native_target.build_configurations.each do |build_config|
+          ldflags = build_config.build_settings['OTHER_LDFLAGS'] ||= ['$(inherited)']
+          ldflags = build_config.build_settings['OTHER_LDFLAGS'] = [ldflags] if ldflags.is_a?(String)
+          ldflags << coro_flag unless ldflags.include?(coro_flag)
+        end
+      end
+      project.save
+    end
   end
 end

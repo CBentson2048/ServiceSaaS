@@ -275,6 +275,7 @@
 					"$(inherited)",
 					"-ObjC",
 					"-lc++",
+					"-Wl,-U,_swift_coroFrameAlloc",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.blesheer.app;
 				PRODUCT_NAME = SheerLab;
@@ -306,6 +307,7 @@
 					"$(inherited)",
 					"-ObjC",
 					"-lc++",
+					"-Wl,-U,_swift_coroFrameAlloc",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.blesheer.app;
 				PRODUCT_NAME = SheerLab;

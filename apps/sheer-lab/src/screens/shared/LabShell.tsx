@@ -17,8 +17,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { RootStackParamList } from '../../app/navigation/routes';
 import { featureFlags } from '../../config/featureFlags';
+import type { BleConnectionStatus } from '../../features/ble/types';
 import { logoutLabSession } from '../../features/sheer-lab/labSession';
 import { labLightTheme } from '../../theme/labTheme';
+import { BrandMark } from './BrandMark';
 
 export const t = labLightTheme;
 export const c = t.colors;
@@ -109,7 +111,8 @@ function isManagedNav(key: NavKey): boolean {
 export interface LabShellProps {
   active: NavKey;
   session?: PinUnlockResponse;
-  bleConnected: boolean;
+  /** Live Bluetooth/scale connection state — drives the header status badge. */
+  bleStatus: BleConnectionStatus;
   refreshing?: boolean;
   onRefresh?: () => void;
   footer?: React.ReactNode;
@@ -119,7 +122,7 @@ export interface LabShellProps {
 export function LabShell({
   active,
   session,
-  bleConnected,
+  bleStatus,
   refreshing,
   onRefresh,
   footer,
@@ -158,7 +161,7 @@ export function LabShell({
       <StatusBar barStyle="light-content" backgroundColor={c.background} />
       <TopBar
         session={session}
-        bleConnected={bleConnected}
+        bleStatus={bleStatus}
         onRefresh={onRefresh}
         onSettings={() => navigation.navigate('Settings')}
       />
@@ -201,28 +204,27 @@ export function LabShell({
 
 function TopBar({
   session,
-  bleConnected,
+  bleStatus,
   onRefresh,
   onSettings,
 }: {
   session?: PinUnlockResponse;
-  bleConnected: boolean;
+  bleStatus: BleConnectionStatus;
   onRefresh?: () => void;
   onSettings: () => void;
 }): React.JSX.Element {
   const online = session?.status === 'active';
+  const scale = bleBadge(bleStatus);
   return (
     <View style={styles.topBar}>
       <View style={styles.brandRow}>
-        <View style={styles.brandMark}>
-          <Text style={styles.brandMarkText}>Q</Text>
-        </View>
+        <BrandMark size={30} />
         <Text style={styles.brandText}>QLOOQO LAB</Text>
-        <Pill label={online ? 'Connected' : 'Offline'} tone={online ? 'success' : 'neutral'} subtle />
+        <Pill label={scale.label} tone={scale.tone} subtle />
       </View>
 
       <View style={styles.topActions}>
-        <Pill label={bleConnected ? 'Scale linked' : 'Scale off'} tone={bleConnected ? 'success' : 'neutral'} subtle />
+        <Pill label={online ? 'Online' : 'Offline'} tone={online ? 'success' : 'neutral'} subtle />
         {onRefresh ? (
           <Pressable accessibilityRole="button" onPress={onRefresh} style={styles.iconButton} hitSlop={8}>
             <Text style={styles.iconButtonGlyph}>⟳</Text>
@@ -375,6 +377,26 @@ export function Pill({
   );
 }
 
+// Maps the live BLE connection state to a header badge. Single source of truth
+// so the dashboard (HomeScreen) and every LabShell screen render identical copy.
+export function bleBadge(status: BleConnectionStatus): { label: string; tone: StatusTone } {
+  switch (status) {
+    case 'connected':
+      return { label: 'Scale connected', tone: 'success' };
+    case 'scanning':
+      return { label: 'Scanning…', tone: 'warning' };
+    case 'connecting':
+    case 'discovering':
+      return { label: 'Connecting…', tone: 'warning' };
+    case 'reconnecting':
+      return { label: 'Reconnecting…', tone: 'warning' };
+    case 'error':
+      return { label: 'Scale error', tone: 'danger' };
+    default:
+      return { label: 'Scale off', tone: 'neutral' };
+  }
+}
+
 export function toneStyle(tone: StatusTone): { text: string; bg: string; border: string } {
   switch (tone) {
     case 'success':
@@ -433,15 +455,6 @@ const styles = StyleSheet.create({
     gap: t.spacing.sm,
   },
   brandRow: { flexDirection: 'row', alignItems: 'center', gap: t.spacing.sm },
-  brandMark: {
-    width: 30,
-    height: 30,
-    borderRadius: t.radius.sm,
-    backgroundColor: c.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  brandMarkText: { color: c.textOnPrimary, fontSize: 16, fontWeight: '700' },
   brandText: { color: c.textPrimary, fontSize: t.typography.fontSize.subtitle, fontWeight: '700', letterSpacing: 1 },
   topActions: { flexDirection: 'row', alignItems: 'center', gap: t.spacing.sm, flexWrap: 'wrap' },
   iconButton: {

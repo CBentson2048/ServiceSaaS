@@ -6,6 +6,7 @@ import {
   createServiceCategory,
   deleteServiceCategory,
   listServiceCategories,
+  reorderServiceCategories,
   updateServiceCategory,
 } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
@@ -60,6 +61,8 @@ export function ServiceCategoriesPage() {
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<CategoryForm>(emptyForm);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [savingOrder, setSavingOrder] = useState(false);
 
   const reload = useCallback(async () => {
     if (!accessToken) return;
@@ -88,6 +91,10 @@ export function ServiceCategoriesPage() {
       [category.name, category.description ?? ''].join(' ').toLowerCase().includes(term),
     );
   }, [categories, search]);
+
+  // Drag-to-reorder is only offered over the full, unfiltered list so the saved
+  // order is unambiguous (the displayed rows are exactly what gets renumbered).
+  const canReorder = canManage && !search.trim();
 
   if (auth.status === 'authenticated' && role !== 'owner' && role !== 'manager') {
     return <Navigate to="/unauthorized" replace />;
@@ -159,6 +166,40 @@ export function ServiceCategoriesPage() {
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not delete category');
     }
+  }
+
+  async function persistOrder(next: ServiceCategory[], previous: ServiceCategory[]) {
+    if (!accessToken) return;
+    setSavingOrder(true);
+    setError(null);
+    setActionMessage(null);
+    try {
+      // Adopt the server's authoritative order rather than the optimistic guess,
+      // so a partial/reconciled save (e.g. inactive rows pushed to the end) is
+      // reflected immediately instead of silently diverging until the next reload.
+      const result = await reorderServiceCategories(accessToken, next.map((category) => category.id));
+      setCategories(includeInactive ? result.categories : result.categories.filter((category) => category.isActive));
+      setActionMessage('Category order updated.');
+    } catch (err: unknown) {
+      setCategories(previous); // roll back the optimistic move
+      setError(err instanceof Error ? err.message : 'Could not save category order');
+    } finally {
+      setSavingOrder(false);
+    }
+  }
+
+  function handleDrop(targetId: string) {
+    const sourceId = dragId;
+    setDragId(null);
+    if (!sourceId || sourceId === targetId) return;
+    const reordered = moveItem(categories, sourceId, targetId);
+    if (!reordered) return;
+    // Keep each row's sortOrder in step with its new index so a later edit
+    // (which re-sorts by sortOrder) doesn't scramble the order back.
+    const renumbered = reordered.map((category, index) => ({ ...category, sortOrder: index }));
+    const previous = categories;
+    setCategories(renumbered);
+    void persistOrder(renumbered, previous);
   }
 
   return (
@@ -297,6 +338,12 @@ export function ServiceCategoriesPage() {
         </label>
       </div>
 
+      {canReorder ? (
+        <p className="mb-2 text-[12px] text-text-muted">
+          Drag the ⠿ handle to reorder categories. This order is used across the booking flow.
+        </p>
+      ) : null}
+
       <section className="overflow-hidden rounded-card-lg border border-border bg-surface">
         {loading ? (
           <EmptyState title="Loading categories…" body="Fetching service categories." />
@@ -315,6 +362,7 @@ export function ServiceCategoriesPage() {
           <table className="w-full text-left text-[13px]">
             <thead className="bg-surface-alt text-[11px] font-medium uppercase tracking-[0.08em] text-text-secondary">
               <tr>
+                {canReorder ? <th className="w-8 px-2 py-3" aria-label="Reorder" /> : null}
                 <th className="px-4 py-3">Name</th>
                 <th className="px-4 py-3">Description</th>
                 <th className="px-4 py-3">Status</th>
@@ -324,7 +372,19 @@ export function ServiceCategoriesPage() {
             </thead>
             <tbody className="divide-y divide-border">
               {visibleCategories.map((category) => (
-                <tr key={category.id}>
+                <tr
+                  key={category.id}
+                  draggable={canReorder && !savingOrder}
+                  onDragStart={canReorder ? () => setDragId(category.id) : undefined}
+                  onDragOver={canReorder ? (event) => event.preventDefault() : undefined}
+                  onDrop={canReorder ? () => handleDrop(category.id) : undefined}
+                  className={dragId === category.id ? 'opacity-50' : undefined}
+                >
+                  {canReorder ? (
+                    <td className="cursor-move px-2 py-3 text-center text-[15px] leading-none text-text-muted" aria-hidden>
+                      ⠿
+                    </td>
+                  ) : null}
                   <td className="px-4 py-3 font-medium text-text-primary">
                     <span className="flex items-center gap-2.5">
                       <span
@@ -390,7 +450,19 @@ function upsertCategory(
     ? current.map((entry) => (entry.id === saved.id ? saved : entry))
     : [...current, saved];
   const filtered = includeInactive ? next : next.filter((entry) => entry.isActive);
-  return filtered.sort((a, b) => a.name.localeCompare(b.name));
+  return filtered.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+}
+
+// Returns a copy of `list` with the item `fromId` moved to `toId`'s position,
+// or null when the move is a no-op / either id is missing.
+function moveItem<T extends { id: string }>(list: T[], fromId: string, toId: string): T[] | null {
+  const from = list.findIndex((item) => item.id === fromId);
+  const to = list.findIndex((item) => item.id === toId);
+  if (from === -1 || to === -1 || from === to) return null;
+  const next = [...list];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return next;
 }
 
 function TextInput({

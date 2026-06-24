@@ -1,5 +1,7 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMinSize,
+  IsArray,
   IsBoolean,
   IsEnum,
   IsInt,
@@ -84,6 +86,14 @@ export class UpdateServiceCategoryDto {
   @IsInt()
   @Min(0)
   sortOrder?: number;
+}
+
+// Body for the reorder endpoints: catalogue ids in the desired display order.
+export class ReorderDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsUUID(undefined, { each: true })
+  ids!: string[];
 }
 
 export class ServiceQueryDto {

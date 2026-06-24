@@ -167,7 +167,7 @@ export function BillingRulesScreen({ navigation }: BillingRulesScreenProps): Rea
 
   if (forbidden) {
     return (
-      <LabShell active="billing" session={session} bleConnected={ble.status === 'connected'}>
+      <LabShell active="billing" session={session} bleStatus={ble.status}>
         <View style={styles.lockCard}>
           <Text style={styles.lockGlyph}>🔒</Text>
           <Text style={styles.lockTitle}>Billing rules are owner & manager only</Text>
@@ -186,7 +186,7 @@ export function BillingRulesScreen({ navigation }: BillingRulesScreenProps): Rea
     <LabShell
       active="billing"
       session={session}
-      bleConnected={ble.status === 'connected'}
+      bleStatus={ble.status}
       refreshing={refreshing}
       onRefresh={handleRefresh}
     >

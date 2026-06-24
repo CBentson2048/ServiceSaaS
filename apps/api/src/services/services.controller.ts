@@ -12,6 +12,7 @@ import { RequireRoles, RolesGuard } from '../auth/roles.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import {
   CreateServiceCategoryDto,
+  ReorderDto,
   ServiceCategoryQueryDto,
   ServiceQueryDto,
   UpdateServiceCategoryDto,
@@ -41,6 +42,15 @@ export class ServicesController {
     @Body() dto: CreateServiceCategoryDto,
   ): Promise<ServiceCategoryResponse> {
     return this.services.createCategory(actor, dto);
+  }
+
+  // Declared before `categories/:id` so "reorder" is not matched as an id.
+  @Patch('categories/reorder')
+  reorderCategories(
+    @CurrentUser() actor: AuthUser,
+    @Body() dto: ReorderDto,
+  ): Promise<ListServiceCategoriesResponse> {
+    return this.services.reorderCategories(actor, dto.ids);
   }
 
   @Patch('categories/:id')
@@ -73,6 +83,12 @@ export class ServicesController {
   @Post()
   createService(@CurrentUser() actor: AuthUser, @Body() dto: UpsertServiceDto): Promise<ManagedServiceResponse> {
     return this.services.createService(actor, dto);
+  }
+
+  // Declared before `:id` so "reorder" is not matched as a service id.
+  @Patch('reorder')
+  reorderServices(@CurrentUser() actor: AuthUser, @Body() dto: ReorderDto): Promise<ListManagedServicesResponse> {
+    return this.services.reorderServices(actor, dto.ids);
   }
 
   @Patch(':id')

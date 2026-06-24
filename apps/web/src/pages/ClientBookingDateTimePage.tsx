@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import type { PublicBookingAvailabilitySlot } from '@sheer/domain';
+import type { PublicBookingAvailabilitySlot, PublicBookingStylistSummary } from '@sheer/domain';
+import { applyStylistServicePrices } from '@sheer/domain';
 import { cn } from '@sheer/utils';
 import { ApiRequestError, getPublicBookingAvailability } from '../auth/api';
 import { AppButton, AppCard } from '../design';
@@ -15,6 +16,9 @@ export function ClientBookingDateTimePage() {
   const selection = readClientBookingSelection();
   const [dateFrom, setDateFrom] = useState(() => toDateInput(new Date()));
   const [slots, setSlots] = useState<PublicBookingAvailabilitySlot[]>([]);
+  // Per-stylist pricing for the bookable stylists, so the picked slot's stylist
+  // re-prices the services to match what the server will charge.
+  const [stylists, setStylists] = useState<PublicBookingStylistSummary[]>([]);
   const [selectedSlot, setSelectedSlot] = useState<PublicBookingAvailabilitySlot | null>(
     selection?.selectedSlot ?? null,
   );
@@ -49,6 +53,7 @@ export function ClientBookingDateTimePage() {
         });
         if (cancelled) return;
         setSlots(result.slots);
+        setStylists(result.stylists ?? []);
         setSelectedSlot((current) =>
           current && result.slots.some((slot) => sameSlot(slot, current)) ? current : null,
         );
@@ -67,10 +72,15 @@ export function ClientBookingDateTimePage() {
   if (!selection?.locationId || serviceIds.length === 0) return <Navigate to="/book/location" replace />;
 
   function continueNext() {
-    if (!selectedSlot) return;
+    if (!selectedSlot || !selection) return;
+    // Re-price the services to the stylist actually resolved for this slot so the
+    // review total + deposit match what the server will charge. No-op when that
+    // stylist has no per-service overrides.
+    const resolved = stylists.find((stylist) => stylist.staffProfileId === selectedSlot.staffProfileId);
     updateClientBookingSelection({
       selectedSlot,
       staffProfileId: selectedSlot.staffProfileId,
+      services: applyStylistServicePrices(selection.services ?? [], resolved?.servicePrices),
     });
     navigate('/login?booking=1');
   }

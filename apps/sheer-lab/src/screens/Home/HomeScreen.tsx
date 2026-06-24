@@ -25,9 +25,12 @@ import { featureFlags } from '../../config/featureFlags';
 import { getLabAnalyticsSummaryForSession } from '../../features/analytics/analyticsApi';
 import { listTodaysLabAppointmentsForSession } from '../../features/appointments/appointmentsApi';
 import { useBleScale } from '../../features/ble/hooks/useBleScale';
+import type { BleConnectionStatus } from '../../features/ble/types';
 import { listLabInventoryStockForSession } from '../../features/inventory/productsApi';
 import { getActiveLabSession, logoutLabSession } from '../../features/sheer-lab/labSession';
 import { labLightTheme } from '../../theme/labTheme';
+import { BrandMark } from '../shared/BrandMark';
+import { bleBadge } from '../shared/LabShell';
 import {
   activeStatusBadge,
   completedStatusBadge,
@@ -326,7 +329,7 @@ export function HomeScreen({ navigation }: HomeScreenProps): React.JSX.Element {
   return (
     <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
       <StatusBar barStyle="light-content" backgroundColor={c.background} />
-      <TopBar session={session} bleConnected={scale.connected} onRefresh={handleRefresh} onSettings={() => goToRoute('Settings')} />
+      <TopBar session={session} bleStatus={ble.status} onRefresh={handleRefresh} onSettings={() => goToRoute('Settings')} />
 
       <View style={[styles.body, showSidebar ? styles.bodyRow : styles.bodyColumn]}>
         {showSidebar ? (
@@ -416,28 +419,27 @@ function mapScaleState(ble: ReturnType<typeof useBleScale>): ScaleView {
 
 function TopBar({
   session,
-  bleConnected,
+  bleStatus,
   onRefresh,
   onSettings,
 }: {
   session?: PinUnlockResponse;
-  bleConnected: boolean;
+  bleStatus: BleConnectionStatus;
   onRefresh: () => void;
   onSettings: () => void;
 }): React.JSX.Element {
   const online = session?.status === 'active';
+  const scaleBadge = bleBadge(bleStatus);
   return (
     <View style={styles.topBar}>
       <View style={styles.brandRow}>
-        <View style={styles.brandMark}>
-          <Text style={styles.brandMarkText}>Q</Text>
-        </View>
+        <BrandMark size={30} />
         <Text style={styles.brandText}>QLOOQO LAB</Text>
-        <Pill label={online ? 'Connected' : 'Offline'} tone={online ? 'success' : 'neutral'} subtle />
+        <Pill label={scaleBadge.label} tone={scaleBadge.tone} subtle />
       </View>
 
       <View style={styles.topActions}>
-        <Pill label={bleConnected ? 'Scale linked' : 'Scale off'} tone={bleConnected ? 'success' : 'neutral'} subtle />
+        <Pill label={online ? 'Online' : 'Offline'} tone={online ? 'success' : 'neutral'} subtle />
         <Pressable accessibilityRole="button" onPress={onRefresh} style={styles.iconButton} hitSlop={8}>
           <Text style={styles.iconButtonGlyph}>⟳</Text>
         </Pressable>
@@ -1058,19 +1060,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: t.spacing.sm,
-  },
-  brandMark: {
-    width: 30,
-    height: 30,
-    borderRadius: t.radius.sm,
-    backgroundColor: c.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  brandMarkText: {
-    color: c.textOnPrimary,
-    fontSize: 16,
-    fontWeight: '700',
   },
   brandText: {
     color: c.textPrimary,

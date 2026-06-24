@@ -83,7 +83,9 @@ export function RootNavigator(): React.JSX.Element {
           component={UpdateFormulaScreen}
           options={{ title: 'Update Formula', headerShown: false }}
         />
-        <Stack.Screen name="Formula" component={FormulaScreen} options={{ title: 'Formula' }} />
+        {/* These screens render their own branded TopBar, so the native stack
+            header is hidden to avoid a stacked double header. */}
+        <Stack.Screen name="Formula" component={FormulaScreen} options={{ title: 'Formula', headerShown: false }} />
         <Stack.Screen
           name="MixFinalized"
           component={MixFinalizedScreen}
@@ -92,7 +94,7 @@ export function RootNavigator(): React.JSX.Element {
         <Stack.Screen
           name="FormulaHistory"
           component={FormulaHistoryScreen}
-          options={{ title: 'Formula History' }}
+          options={{ title: 'Formula History', headerShown: false }}
         />
         <Stack.Screen name="Inventory" component={InventoryScreen} options={{ title: 'Inventory', headerShown: false }} />
         <Stack.Screen name="BillingRules" component={BillingRulesScreen} options={{ title: 'Billing Rules', headerShown: false }} />

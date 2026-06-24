@@ -145,6 +145,8 @@ export function ClientBookingReviewPage() {
         <Summary label="Location" value={currentSelection.location.name} />
         <Summary label="Services" value={currentSelection.services.map((service) => service.name).join(', ')} />
         <Summary label="Duration" value={formatDuration(totalDuration(currentSelection.services))} />
+        {/* services[].startingPriceAmount already reflects the selected stylist's per-service price
+            (the service page persisted the stylist-priced services); base prices for next-available. */}
         <Summary label="Estimated total" value={formatMoney(totalPrice(currentSelection.services), currentSelection.location.currencyCode)} />
         <Summary label="When" value={`${formatDate(currentSelection.selectedSlot.startAt)} at ${formatTime(currentSelection.selectedSlot.startAt)}`} />
         <Summary label="Stylist" value={currentSelection.selectedSlot.stylistName} />

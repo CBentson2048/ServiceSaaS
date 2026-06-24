@@ -138,7 +138,7 @@ export function NewMixScreen({ navigation }: NewMixScreenProps): React.JSX.Eleme
   );
 
   return (
-    <LabShell active="new-mix" session={session} bleConnected={bleConnected} footer={footer}>
+    <LabShell active="new-mix" session={session} bleStatus={ble.status} footer={footer}>
       <Stepper activeStep={activeStep} />
 
       {error ? <Text style={styles.errorText}>{error}</Text> : null}

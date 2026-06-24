@@ -77,9 +77,11 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
+    // namespace = internal R/BuildConfig package (left as-is to avoid moving Kotlin sources);
+    // applicationId = the published Google Play identity, unified to com.blesheer.app.
     namespace "com.sheer.lab"
     defaultConfig {
-        applicationId "com.sheer.lab"
+        applicationId "com.blesheer.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
@@ -92,15 +94,35 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        release {
+            // Google Play upload key. Generate the keystore with `keytool` and put the
+            // credentials in ~/.gradle/gradle.properties (NEVER commit the keystore or
+            // passwords):
+            //   SHEER_LAB_UPLOAD_STORE_FILE=/absolute/path/to/sheer-lab-upload.keystore
+            //   SHEER_LAB_UPLOAD_STORE_PASSWORD=...
+            //   SHEER_LAB_UPLOAD_KEY_ALIAS=sheer-lab-upload
+            //   SHEER_LAB_UPLOAD_KEY_PASSWORD=...
+            if (project.hasProperty('SHEER_LAB_UPLOAD_STORE_FILE')) {
+                storeFile file(project.property('SHEER_LAB_UPLOAD_STORE_FILE'))
+                storePassword project.property('SHEER_LAB_UPLOAD_STORE_PASSWORD')
+                keyAlias project.property('SHEER_LAB_UPLOAD_KEY_ALIAS')
+                keyPassword project.property('SHEER_LAB_UPLOAD_KEY_PASSWORD')
+            }
+        }
     }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
+            // Allow http://localhost / LAN dev API during development only.
+            manifestPlaceholders = [usesCleartextTraffic: "true"]
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
+            // Sign with the real upload key when its credentials are configured; otherwise
+            // fall back to debug signing so local `assembleRelease`/`bundleRelease` smoke
+            // tests still work. A debug-signed AAB CANNOT be uploaded to Google Play.
+            signingConfig project.hasProperty('SHEER_LAB_UPLOAD_STORE_FILE') ? signingConfigs.release : signingConfigs.debug
+            // Release talks to the Railway HTTPS production API — disallow cleartext.
+            manifestPlaceholders = [usesCleartextTraffic: "false"]
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
         }
