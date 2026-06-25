@@ -349,26 +349,28 @@ export class LabAppointmentsService {
 
   async todayForLabSession(session: LabRuntimeSession): Promise<ListStaffBookingsResponse> {
     const { rangeStart, rangeEnd } = todayRange();
-    let query = this.admin
+
+    // Every Lab session — stylist, manager, or owner — only sees the appointments
+    // assigned to its OWN chair. A session whose user has no staff profile at this
+    // location owns no appointments, so the schedule is empty rather than falling
+    // back to the whole location's list.
+    const staffProfileId = session.staffProfileId;
+    if (!staffProfileId) {
+      return { bookings: [], scope: session.role, rangeStart, rangeEnd };
+    }
+
+    const { data, error } = await this.admin
       .schema('booking')
       .from('appointments')
       .select(LIST_COLUMNS)
       .eq('business_id', session.businessId)
       .eq('location_id', session.locationId)
+      .eq('assigned_staff_profile_id', staffProfileId)
       .gte('scheduled_start_at', rangeStart)
       .lt('scheduled_start_at', rangeEnd)
       .in('status', ACTIVE_BOOKING_STATUSES)
-      .order('scheduled_start_at', { ascending: true });
-
-    // A stylist session only sees its own chair; an owner/manager session sees
-    // the whole location's schedule (they have no assigned-stylist profile and
-    // are supervising the station, not mixing a single client's colour).
-    if (session.role === 'stylist') {
-      const staffProfileId = await this.fetchStaffProfileIdForSession(session);
-      query = query.eq('assigned_staff_profile_id', staffProfileId);
-    }
-
-    const { data, error } = await query.returns<AppointmentRow[]>();
+      .order('scheduled_start_at', { ascending: true })
+      .returns<AppointmentRow[]>();
     if (error) {
       this.logger.error(`todayForLabSession failed: ${error.message}`);
       throw new InternalServerErrorException('Unable to load scheduled clients');
@@ -441,22 +443,23 @@ export class LabAppointmentsService {
   }
 
   async detailForLabSession(session: LabRuntimeSession, id: string): Promise<StaffBookingDetail> {
-    let query = this.admin
+    // Every Lab session can only open an appointment assigned to its OWN chair,
+    // matching the per-stylist scoping of the schedule list. A session with no
+    // staff profile at this location owns no appointments.
+    const staffProfileId = session.staffProfileId;
+    if (!staffProfileId) {
+      throw new NotFoundException('Scheduled client not found for this Lab session');
+    }
+
+    const { data, error } = await this.admin
       .schema('booking')
       .from('appointments')
       .select(DETAIL_COLUMNS)
       .eq('id', id)
       .eq('business_id', session.businessId)
-      .eq('location_id', session.locationId);
-
-    // Stylists are scoped to their own chair; owners/managers can open any
-    // booking at the station's location.
-    if (session.role === 'stylist') {
-      const staffProfileId = await this.fetchStaffProfileIdForSession(session);
-      query = query.eq('assigned_staff_profile_id', staffProfileId);
-    }
-
-    const { data, error } = await query.maybeSingle<AppointmentRow>();
+      .eq('location_id', session.locationId)
+      .eq('assigned_staff_profile_id', staffProfileId)
+      .maybeSingle<AppointmentRow>();
 
     if (error) {
       this.logger.error(`detailForLabSession failed: ${error.message}`);
@@ -2178,24 +2181,6 @@ export class LabAppointmentsService {
       byClient.set(row.client_profile_id, toPatchTestSummary(row));
     }
     return byClient;
-  }
-
-  private async fetchStaffProfileIdForSession(session: LabRuntimeSession): Promise<string> {
-    const { data, error } = await this.admin
-      .schema('core')
-      .from('staff_profiles')
-      .select('id')
-      .eq('business_id', session.businessId)
-      .eq('user_profile_id', session.userProfileId)
-      .eq('primary_location_id', session.locationId)
-      .maybeSingle<{ id: string }>();
-
-    if (error) {
-      this.logger.error(`fetchStaffProfileIdForSession failed: ${error.message}`);
-      throw new InternalServerErrorException('Unable to validate stylist session');
-    }
-    if (!data) throw new ForbiddenException('Stylist profile is not valid for this Lab session location');
-    return data.id;
   }
 
   private resolveLocationForActor(actor: AuthUser, locationId?: string): string | undefined {

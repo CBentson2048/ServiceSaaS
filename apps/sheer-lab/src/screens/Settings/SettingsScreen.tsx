@@ -33,6 +33,12 @@ export function SettingsScreen(): React.JSX.Element {
         onPress={ble.startScan}
       />
       <LabButton
+        label="Tare / Zero scale"
+        variant="secondary"
+        onPress={ble.tare}
+        disabled={ble.status !== 'connected'}
+      />
+      <LabButton
         label="Disconnect scale"
         variant="secondary"
         onPress={ble.disconnect}

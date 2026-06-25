@@ -14,6 +14,7 @@ export function useBleScale() {
   const connect = useCallback((deviceId: string) => bleManagerService.connect(deviceId), []);
   const disconnect = useCallback(() => bleManagerService.disconnect(), []);
   const setManualWeight = useCallback((grams: number) => bleManagerService.setManualWeight(grams), []);
+  const tare = useCallback(() => bleManagerService.tare(), []);
 
   return {
     ...state,
@@ -23,5 +24,6 @@ export function useBleScale() {
     connect,
     disconnect,
     setManualWeight,
+    tare,
   };
 }

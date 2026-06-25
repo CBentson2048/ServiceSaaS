@@ -37,6 +37,12 @@ export function DevicePairingScreen(): React.JSX.Element {
           disabled={busy}
         />
         <LabButton
+          label="Tare / Zero scale"
+          variant="secondary"
+          onPress={ble.tare}
+          disabled={ble.status !== 'connected'}
+        />
+        <LabButton
           label="Disconnect"
           variant="secondary"
           onPress={ble.disconnect}

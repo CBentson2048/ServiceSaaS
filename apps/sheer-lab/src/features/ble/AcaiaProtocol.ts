@@ -17,6 +17,10 @@ const HEARTBEAT = [0xef, 0xdd, 0x00, 0x02, 0x00, 0x02, 0x00];
 const NOTIFICATION_REQUEST = [
   0xef, 0xdd, 0x0c, 0x09, 0x00, 0x01, 0x01, 0x02, 0x02, 0x05, 0x03, 0x04, 0x15, 0x06,
 ];
+// Tare (zero) command: encode(msgType=0x04, payload=[0x00]) with the same even/odd
+// checksum framing as HEARTBEAT (last two bytes). Acaia scales stream absolute
+// weight, so this is what resets an empty pan to 0.0 g.
+const TARE = [0xef, 0xdd, 0x04, 0x00, 0x00, 0x00];
 
 export const ACAIA_HEARTBEAT_INTERVAL_MS = 2750;
 
@@ -82,6 +86,18 @@ export async function sendAcaiaHeartbeat(
   binding: AcaiaCharacteristicBinding,
 ): Promise<void> {
   await writeAcaiaCommand(device, binding, HEARTBEAT, 'heartbeat');
+}
+
+export async function sendAcaiaTare(
+  device: Device,
+  binding: AcaiaCharacteristicBinding,
+): Promise<void> {
+  await writeAcaiaCommand(device, binding, TARE, 'tare');
+}
+
+/** Raw decoded bytes of a notification payload — exposed for diagnostic logging. */
+export function acaiaPacketBytes(base64Payload: string): number[] {
+  return [...Buffer.from(base64Payload, 'base64')];
 }
 
 export function decodeAcaiaWeightPacket(base64Payload: string): BleWeightReading | null {

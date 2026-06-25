@@ -4,9 +4,11 @@ import { BleManager, State, type Subscription } from 'react-native-ble-plx';
 import { logger } from '../../lib/logging/logger';
 import {
   ACAIA_HEARTBEAT_INTERVAL_MS,
+  acaiaPacketBytes,
   decodeAcaiaWeightPacket,
   discoverAcaiaCharacteristics,
   sendAcaiaHeartbeat,
+  sendAcaiaTare,
   startAcaiaSession,
 } from './AcaiaProtocol';
 import { sortAcaiaDevices, toDeviceSummary } from './deviceFilters';
@@ -115,7 +117,7 @@ class BleManagerService {
     logger.info('BLE scan stopped');
   }
 
-  async connect(deviceId: string): Promise<void> {
+  async connect(deviceId: string, options?: { isReconnect?: boolean }): Promise<void> {
     this.stopScan();
     this.clearReconnect();
     this.manuallyDisconnecting = false;
@@ -139,6 +141,14 @@ class BleManagerService {
       await startAcaiaSession(discoveredDevice, binding);
       this.startHeartbeat(discoveredDevice, binding);
       this.startNotifications(discoveredDevice, binding);
+
+      // Auto-zero on a fresh, user-initiated connect so an empty pan reads 0.0 g.
+      // Skipped on auto-reconnect to avoid wiping an in-progress measurement.
+      if (!options?.isReconnect) {
+        await sendAcaiaTare(discoveredDevice, binding).catch((error) => {
+          logger.warn('Acaia auto-tare failed', { error: toErrorMessage(error) });
+        });
+      }
 
       discoveredDevice.onDisconnected((error) => {
         this.handleDisconnect(error);
@@ -183,6 +193,22 @@ class BleManagerService {
     logger.info('Manual weight entered', { reading });
   }
 
+  async tare(): Promise<void> {
+    const device = this.connectedDevice;
+    const binding = bleScaleStore.getState().activeBinding;
+    if (!device || !binding) {
+      logger.warn('Tare ignored — no scale connected');
+      return;
+    }
+
+    try {
+      await sendAcaiaTare(device, binding);
+      logger.info('Acaia tare sent by user');
+    } catch (error) {
+      logger.warn('Acaia tare failed', { error: toErrorMessage(error) });
+    }
+  }
+
   dispose(): void {
     this.stopScan();
     this.clearRuntimeHandles();
@@ -206,8 +232,16 @@ class BleManagerService {
         const payload = characteristic?.value;
         if (!payload) return;
 
+        // Temporary diagnostic: log raw bytes + decoded grams for every packet so
+        // the decoder can be validated against a real Acaia (empty-scale offset check).
+        const bytes = acaiaPacketBytes(payload);
         const reading = decodeAcaiaWeightPacket(payload);
-        logger.info('Acaia packet received', { parsed: Boolean(reading) });
+        logger.info('Acaia packet received', {
+          bytes,
+          length: bytes.length,
+          parsed: Boolean(reading),
+          grams: reading?.grams,
+        });
 
         if (reading) {
           bleScaleStore.setState({
@@ -257,7 +291,7 @@ class BleManagerService {
     }
 
     this.reconnectTimeout = setTimeout(() => {
-      this.connect(deviceId).catch((connectError) => {
+      this.connect(deviceId, { isReconnect: true }).catch((connectError) => {
         bleScaleStore.setState({
           status: 'error',
           error: toErrorMessage(connectError, 'Reconnect failed. Manual entry remains available.'),
