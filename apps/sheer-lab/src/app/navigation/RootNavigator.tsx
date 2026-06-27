@@ -44,9 +44,10 @@ export function RootNavigator(): React.JSX.Element {
       <Stack.Navigator
         initialRouteName={routeName}
         screenOptions={{
-          headerStyle: { backgroundColor: labTheme.colors.background },
-          headerTintColor: labTheme.colors.textPrimary,
-          headerTitleStyle: { fontWeight: '700' },
+          // Every screen renders its own branded header (the app TopBar, or the
+          // slim brand bar in LabScreen), so the native stack header is hidden
+          // app-wide to avoid a bare/duplicate header.
+          headerShown: false,
           contentStyle: { backgroundColor: labTheme.colors.background },
         }}
       >

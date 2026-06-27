@@ -1,17 +1,28 @@
-import { ForbiddenException, Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type {
   AppointmentStatus,
   AuthUser,
+  ClientVisitColourFormula,
+  ClientVisitDetail,
+  ClientVisitServiceLine,
   CrmVisitSummary,
+  LocationTaxSettings,
   MobileClientDashboardResponse,
   MobileManagerDashboardResponse,
   MobileOwnerDashboardResponse,
   MobileStylistDashboardResponse,
   StaffBookingSummary,
 } from '@sheer/domain';
-import { userHasRole } from '@sheer/domain';
+import { calculateTaxForCategory, userHasRole } from '@sheer/domain';
+import { OwnerTaxSettingsService } from '../owner-tax-settings/owner-tax-settings.service';
 
 interface AppointmentServiceRow {
   service_id?: string | null;
@@ -63,6 +74,70 @@ interface VisitRow {
   created_at: string;
 }
 
+interface StaffNameRow {
+  id: string;
+  display_name: string;
+}
+
+interface AppointmentServiceDetailRow {
+  service_name_snapshot: string;
+  price_amount: number | string;
+  duration_minutes: number;
+  sequence_no: number;
+}
+
+interface SalonPaymentRow {
+  amount_cents: number;
+  currency_code: string;
+  payment_method: string;
+  paid_at: string;
+}
+
+interface FormulaRow {
+  id: string;
+  saved_at: string | null;
+  billable_charge_cents: number | null;
+}
+
+interface FormulaItemRow {
+  formula_id: string;
+  product_name: string;
+  brand: string | null;
+  shade: string | null;
+  developer: string | null;
+  ratio: string | null;
+  processing_time_minutes: number | null;
+  captured_grams: number | string | null;
+  cost_cents: number | null;
+}
+
+/** Pre-tax service line read from the appointment, before the price policy is applied. */
+interface RawServiceLine {
+  name: string;
+  priceNetCents?: number;
+  durationMinutes?: number;
+}
+
+/** Pre-tax colour item; `costCents` is the weight used to split the formula charge. */
+interface RawColourItem {
+  productName: string;
+  brand?: string;
+  shade?: string;
+  developer?: string;
+  ratio?: string;
+  processingTimeMinutes?: number;
+  grams?: number;
+  costCents: number;
+}
+
+interface RawColourFormula {
+  id: string;
+  savedAt?: string;
+  /** Net customer charge for the whole formula (cost + the location's markup rule). */
+  billableChargeCents: number;
+  items: RawColourItem[];
+}
+
 interface ShiftRow {
   staff_profile_id: string;
 }
@@ -82,7 +157,10 @@ export class MobileDashboardService {
   private readonly logger = new Logger(MobileDashboardService.name);
   private readonly admin: SupabaseClient;
 
-  constructor(config: ConfigService) {
+  constructor(
+    config: ConfigService,
+    private readonly taxSettings: OwnerTaxSettingsService,
+  ) {
     const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
     this.admin = createClient(supabaseUrl, serviceRoleKey, {
@@ -265,12 +343,203 @@ export class MobileDashboardService {
       .select(VISIT_COLUMNS)
       .eq('business_id', businessId)
       .eq('client_profile_id', clientProfileId)
+      // Visit history shows completed services only — exclude in-flight
+      // (checked_in / in_progress) and cancelled visits. Matches the
+      // "completed visit" definition used by KPI and rebooking services.
+      .in('status', ['completed', 'awaiting_payment', 'paid'])
       .order('created_at', { ascending: false })
       .limit(5)
       .returns<VisitRow[]>();
     if (error) this.throwQueryError('fetchClientVisitHistory', error.message);
 
-    return (data ?? []).map(toVisitSummary);
+    const visits = (data ?? []).map(toVisitSummary);
+    const staffNames = await this.fetchStaffNames(
+      businessId,
+      visits.map((visit) => visit.primaryStaffProfileId).filter((id): id is string => Boolean(id)),
+    );
+    return visits.map((visit) =>
+      visit.primaryStaffProfileId
+        ? { ...visit, stylistName: staffNames.get(visit.primaryStaffProfileId) }
+        : visit,
+    );
+  }
+
+  async clientVisitDetail(actor: AuthUser, visitId: string): Promise<ClientVisitDetail> {
+    if (!userHasRole(actor, 'client') || !actor.clientProfileId) {
+      throw new ForbiddenException('Visit details require a client account');
+    }
+
+    const { data: visit, error } = await this.admin
+      .schema('booking')
+      .from('visits')
+      .select(VISIT_COLUMNS)
+      .eq('business_id', actor.businessId)
+      .eq('client_profile_id', actor.clientProfileId)
+      .eq('id', visitId)
+      .maybeSingle<VisitRow>();
+    if (error) this.throwQueryError('clientVisitDetail', error.message);
+    if (!visit) throw new NotFoundException('Visit not found');
+
+    // billing.* and lab.* tables can't be embedded in a booking.* query, so the
+    // services, stylist name, payment, colour formulas and tax policy are fetched
+    // separately and stitched here.
+    const [serviceLines, stylistName, payment, rawFormulas, taxSettings] = await Promise.all([
+      visit.appointment_id ? this.fetchAppointmentServices(visit.appointment_id) : Promise.resolve([]),
+      visit.primary_staff_profile_id
+        ? this.fetchStaffName(actor.businessId, visit.primary_staff_profile_id)
+        : Promise.resolve(undefined),
+      this.fetchVisitPayment(visitId),
+      this.fetchVisitColourFormulas(visitId),
+      this.taxSettings.resolveLocationTaxSettings(actor.businessId, visit.location_id),
+    ]);
+
+    // Every displayed price is VAT-inclusive per the location's tax policy: net
+    // service/charge amounts pass through the shared tax layer to their gross
+    // figure (a no-op for tax-disabled locations). VAT is baked in, never a line.
+    const services: ClientVisitServiceLine[] = serviceLines.map((line) => ({
+      name: line.name,
+      durationMinutes: line.durationMinutes,
+      priceAmount:
+        line.priceNetCents != null
+          ? calculateTaxForCategory(line.priceNetCents, 'service', taxSettings).grossCents / 100
+          : undefined,
+    }));
+    const colourFormulas = rawFormulas.map((formula) => toColourFormula(formula, taxSettings));
+
+    const summary = toVisitSummary(visit);
+    const colourCount = colourFormulas.reduce((total, formula) => total + formula.items.length, 0);
+    const taxLabel =
+      taxSettings.taxEnabled && taxSettings.taxRatePercent > 0
+        ? taxSettings.taxLabel?.trim() || 'VAT'
+        : undefined;
+
+    // The bill total is the sum of the gross prices shown above. salon_payments
+    // only records the balance collected at the till; the rest was a deposit
+    // paid at booking. Deriving the deposit this way keeps the receipt footing
+    // (total = deposit + balance) regardless of how the deposit was taken.
+    const totalCents =
+      sumGrossCents(services.map((service) => service.priceAmount)) +
+      colourFormulas.reduce((sum, formula) => sum + sumGrossCents(formula.items.map((item) => item.priceAmount)), 0);
+    const amountPaidCents = payment ? payment.amount_cents : undefined;
+    const depositCents =
+      amountPaidCents != null ? Math.max(0, totalCents - amountPaidCents) : undefined;
+
+    return {
+      id: summary.id,
+      status: summary.status,
+      occurredAt: summary.occurredAt,
+      stylistName,
+      serviceSummary: summary.serviceSummary,
+      services,
+      colourFormulas,
+      colourCount,
+      taxLabel,
+      totalAmount: totalCents > 0 ? totalCents / 100 : undefined,
+      depositAmount: depositCents ? depositCents / 100 : undefined,
+      amountPaid: amountPaidCents != null ? amountPaidCents / 100 : undefined,
+      currencyCode: payment?.currency_code ?? undefined,
+      paymentMethod: payment?.payment_method ?? undefined,
+      paidAt: payment?.paid_at ?? undefined,
+    };
+  }
+
+  private async fetchAppointmentServices(appointmentId: string): Promise<RawServiceLine[]> {
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('appointment_services')
+      .select('service_name_snapshot,price_amount,duration_minutes,sequence_no')
+      .eq('appointment_id', appointmentId)
+      .order('sequence_no', { ascending: true })
+      .returns<AppointmentServiceDetailRow[]>();
+    if (error) this.throwQueryError('fetchAppointmentServices', error.message);
+    return (data ?? []).map((row) => {
+      const netCents = Math.round(Number(row.price_amount) * 100);
+      return {
+        name: row.service_name_snapshot,
+        priceNetCents: Number.isFinite(netCents) ? netCents : undefined,
+        durationMinutes: row.duration_minutes || undefined,
+      };
+    });
+  }
+
+  private async fetchStaffName(businessId: string, staffProfileId: string): Promise<string | undefined> {
+    const names = await this.fetchStaffNames(businessId, [staffProfileId]);
+    return names.get(staffProfileId);
+  }
+
+  private async fetchStaffNames(businessId: string, staffProfileIds: string[]): Promise<Map<string, string>> {
+    const ids = Array.from(new Set(staffProfileIds.filter(Boolean)));
+    if (ids.length === 0) return new Map();
+    const { data, error } = await this.admin
+      .schema('core')
+      .from('staff_profiles')
+      .select('id,display_name')
+      .eq('business_id', businessId)
+      .in('id', ids)
+      .returns<StaffNameRow[]>();
+    if (error) this.throwQueryError('fetchStaffNames', error.message);
+    return new Map((data ?? []).map((row) => [row.id, row.display_name]));
+  }
+
+  private async fetchVisitPayment(visitId: string): Promise<SalonPaymentRow | undefined> {
+    const { data, error } = await this.admin
+      .schema('billing')
+      .from('salon_payments')
+      .select('amount_cents,currency_code,payment_method,paid_at')
+      .eq('visit_id', visitId)
+      .maybeSingle<SalonPaymentRow>();
+    if (error) this.throwQueryError('fetchVisitPayment', error.message);
+    return data ?? undefined;
+  }
+
+  private async fetchVisitColourFormulas(visitId: string): Promise<RawColourFormula[]> {
+    const { data: formulas, error: formulasError } = await this.admin
+      .schema('lab')
+      .from('formulas')
+      .select('id,saved_at,billable_charge_cents')
+      .eq('visit_id', visitId)
+      .eq('status', 'saved')
+      .order('saved_at', { ascending: false })
+      .returns<FormulaRow[]>();
+    if (formulasError) this.throwQueryError('fetchVisitColourFormulas', formulasError.message);
+
+    const rows = formulas ?? [];
+    if (rows.length === 0) return [];
+
+    const { data: items, error: itemsError } = await this.admin
+      .schema('lab')
+      .from('formula_items')
+      .select('formula_id,product_name,brand,shade,developer,ratio,processing_time_minutes,captured_grams,cost_cents')
+      .in(
+        'formula_id',
+        rows.map((row) => row.id),
+      )
+      .returns<FormulaItemRow[]>();
+    if (itemsError) this.throwQueryError('fetchVisitColourFormulas', itemsError.message);
+
+    const itemsByFormula = new Map<string, RawColourItem[]>();
+    for (const item of items ?? []) {
+      const list = itemsByFormula.get(item.formula_id) ?? [];
+      const grams = Number(item.captured_grams);
+      list.push({
+        productName: item.product_name,
+        brand: item.brand ?? undefined,
+        shade: item.shade ?? undefined,
+        developer: item.developer ?? undefined,
+        ratio: item.ratio ?? undefined,
+        processingTimeMinutes: item.processing_time_minutes ?? undefined,
+        grams: Number.isFinite(grams) && grams > 0 ? grams : undefined,
+        costCents: Math.max(0, item.cost_cents ?? 0),
+      });
+      itemsByFormula.set(item.formula_id, list);
+    }
+
+    return rows.map((row) => ({
+      id: row.id,
+      savedAt: row.saved_at ?? undefined,
+      billableChargeCents: Math.max(0, row.billable_charge_cents ?? 0),
+      items: itemsByFormula.get(row.id) ?? [],
+    }));
   }
 
   private async fetchStaffTodayAppointments(
@@ -450,6 +719,58 @@ function toVisitSummary(row: VisitRow): CrmVisitSummary {
     serviceSummary: row.service_summary ?? undefined,
     clientVisibleSummary: row.client_visible_summary ?? undefined,
   };
+}
+
+/** Sum already-gross major-unit amounts back into whole cents, ignoring gaps. */
+function sumGrossCents(amounts: Array<number | undefined>): number {
+  return amounts.reduce((sum: number, amount) => sum + (amount != null ? Math.round(amount * 100) : 0), 0);
+}
+
+function toColourFormula(formula: RawColourFormula, taxSettings: LocationTaxSettings): ClientVisitColourFormula {
+  // The customer charge for the whole colour formula (product cost + the
+  // location's markup rule) made VAT-inclusive, then split across products by
+  // cost weight so each colour shows its share of the gross charge.
+  const grossChargeCents = calculateTaxForCategory(formula.billableChargeCents, 'retail', taxSettings).grossCents;
+  const allocations = allocateByWeight(
+    grossChargeCents,
+    formula.items.map((item) => item.costCents),
+  );
+  return {
+    id: formula.id,
+    savedAt: formula.savedAt,
+    items: formula.items.map((item, idx) => ({
+      productName: item.productName,
+      brand: item.brand,
+      shade: item.shade,
+      developer: item.developer,
+      ratio: item.ratio,
+      processingTimeMinutes: item.processingTimeMinutes,
+      grams: item.grams,
+      priceAmount: allocations[idx] > 0 ? allocations[idx] / 100 : undefined,
+    })),
+  };
+}
+
+/**
+ * Split a gross charge across line items proportionally to their weights, in
+ * whole cents. The rounding remainder goes to the largest shares first so the
+ * per-item prices always foot back to `totalCents`. Falls back to an even split
+ * when there is no weight to go on (e.g. a fixed uplift on zero-cost products).
+ */
+function allocateByWeight(totalCents: number, weights: number[]): number[] {
+  const n = weights.length;
+  if (n === 0) return [];
+  if (totalCents <= 0) return weights.map(() => 0);
+  const weightSum = weights.reduce((sum, w) => sum + Math.max(0, w), 0);
+  const effective = weightSum > 0 ? weights.map((w) => Math.max(0, w)) : weights.map(() => 1);
+  const effectiveSum = weightSum > 0 ? weightSum : n;
+  const out = effective.map((w) => Math.floor((totalCents * w) / effectiveSum));
+  let remainder = totalCents - out.reduce((sum, c) => sum + c, 0);
+  const order = effective.map((_, i) => i).sort((a, b) => effective[b] - effective[a]);
+  for (let k = 0; k < order.length && remainder > 0; k++, remainder--) {
+    out[order[k]] += 1;
+  }
+  return out;
 }
 
 function arrayOf<T>(value: T[] | T | null | undefined): T[] {

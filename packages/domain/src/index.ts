@@ -928,6 +928,8 @@ export interface UpdateCurrentProfileRequest {
   communicationPreference?: CommunicationPreference;
   /** IANA timezone (e.g. 'Europe/London'). */
   timezone?: string;
+  /** Staff self-editable bio. Ignored for non-staff accounts. */
+  bio?: string | null;
 }
 
 export interface AdminUpdateProfileRequest {
@@ -1776,6 +1778,69 @@ export interface ClientLabFormulaSummary {
 
 export interface ClientLabHistoryResponse {
   formulas: ClientLabFormulaSummary[];
+}
+
+/** One service performed during a visit (snapshot taken at booking time). */
+export interface ClientVisitServiceLine {
+  name: string;
+  priceAmount?: number;
+  durationMinutes?: number;
+}
+
+/**
+ * A single colour product used in a visit's formula. Unlike the cost-stripped
+ * `ClientLabFormulaItem` (client Lab tab), the visit detail also exposes the
+ * amount used and its recorded cost.
+ */
+export interface ClientVisitColourItem {
+  productName: string;
+  brand?: string;
+  shade?: string;
+  developer?: string;
+  ratio?: string;
+  processingTimeMinutes?: number;
+  /** Grams of product used in the finalized mix. */
+  grams?: number;
+  /** Recorded cost for this colour, in major currency units. */
+  priceAmount?: number;
+}
+
+export interface ClientVisitColourFormula {
+  id: string;
+  savedAt?: string;
+  items: ClientVisitColourItem[];
+}
+
+/**
+ * Full detail for a single past visit shown when a client taps a row in their
+ * visit history: the services performed, the stylist, the colour products used,
+ * and how much was paid.
+ */
+export interface ClientVisitDetail {
+  id: string;
+  status: string;
+  occurredAt: string;
+  stylistName?: string;
+  serviceSummary?: string;
+  services: ClientVisitServiceLine[];
+  /** Saved colour formulas recorded against this visit; each lists its products. */
+  colourFormulas: ClientVisitColourFormula[];
+  /** Total count of colour products used across every formula on the visit. */
+  colourCount: number;
+  /**
+   * Tax label (e.g. "VAT") when the location applies tax and all displayed
+   * service/colour prices are tax-inclusive; undefined when tax is disabled.
+   */
+  taxLabel?: string;
+  /** Full bill (services + colours, VAT-inclusive), in major currency units. */
+  totalAmount?: number;
+  /** Deposit paid at booking (= total − balance collected at checkout). */
+  depositAmount?: number;
+  /** Balance collected at checkout (salon_payments), in major currency units. */
+  amountPaid?: number;
+  currencyCode?: string;
+  paymentMethod?: string;
+  paidAt?: string;
 }
 
 export interface MobileStylistDashboardResponse {

@@ -25,12 +25,10 @@ import { featureFlags } from '../../config/featureFlags';
 import { getLabAnalyticsSummaryForSession } from '../../features/analytics/analyticsApi';
 import { listTodaysLabAppointmentsForSession } from '../../features/appointments/appointmentsApi';
 import { useBleScale } from '../../features/ble/hooks/useBleScale';
-import type { BleConnectionStatus } from '../../features/ble/types';
 import { listLabInventoryStockForSession } from '../../features/inventory/productsApi';
 import { getActiveLabSession, logoutLabSession } from '../../features/sheer-lab/labSession';
 import { labLightTheme } from '../../theme/labTheme';
-import { BrandMark } from '../shared/BrandMark';
-import { bleBadge } from '../shared/LabShell';
+import { TopBar } from '../shared/LabShell';
 import {
   activeStatusBadge,
   completedStatusBadge,
@@ -45,7 +43,6 @@ import {
   initials,
   isActiveBooking,
   isCompletedBooking,
-  roleLabel,
   sortStockForDisplay,
   stockFill,
   sumProductUsageGrams,
@@ -417,52 +414,6 @@ function mapScaleState(ble: ReturnType<typeof useBleScale>): ScaleView {
 // Chrome: top bar, sidebar, mobile nav
 // ---------------------------------------------------------------------------
 
-function TopBar({
-  session,
-  bleStatus,
-  onRefresh,
-  onSettings,
-}: {
-  session?: PinUnlockResponse;
-  bleStatus: BleConnectionStatus;
-  onRefresh: () => void;
-  onSettings: () => void;
-}): React.JSX.Element {
-  const online = session?.status === 'active';
-  const scaleBadge = bleBadge(bleStatus);
-  return (
-    <View style={styles.topBar}>
-      <View style={styles.brandRow}>
-        <BrandMark size={30} />
-        <Text style={styles.brandText}>QLOOQO LAB</Text>
-        <Pill label={scaleBadge.label} tone={scaleBadge.tone} subtle />
-      </View>
-
-      <View style={styles.topActions}>
-        <Pill label={online ? 'Online' : 'Offline'} tone={online ? 'success' : 'neutral'} subtle />
-        <Pressable accessibilityRole="button" onPress={onRefresh} style={styles.iconButton} hitSlop={8}>
-          <Text style={styles.iconButtonGlyph}>⟳</Text>
-        </Pressable>
-        <Pressable accessibilityRole="button" onPress={onSettings} style={styles.iconButton} hitSlop={8}>
-          <Text style={styles.iconButtonGlyph}>⚙︎</Text>
-        </Pressable>
-        {session ? (
-          <View style={styles.userRow}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{initials(session.displayName)}</Text>
-            </View>
-            <View>
-              <Text style={styles.userName} numberOfLines={1}>
-                {session.displayName}
-              </Text>
-              <Text style={styles.userRole}>{roleLabel(session.role)}</Text>
-            </View>
-          </View>
-        ) : null}
-      </View>
-    </View>
-  );
-}
 
 function Sidebar({
   width,

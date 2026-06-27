@@ -31,6 +31,7 @@ interface EditForm {
   lastName: string;
   phone: string;
   communicationPreference: CommPref;
+  bio: string;
 }
 
 // ── Root screen ───────────────────────────────────────────────────────────────
@@ -88,6 +89,7 @@ export default function ProfileScreen() {
       lastName: p.identity.lastName,
       phone: p.identity.phone ?? '',
       communicationPreference: p.clientProfile?.communicationPreference ?? 'email',
+      bio: p.staffProfile?.bio ?? '',
     });
     setSaveError(null);
     setSaveSuccess(false);
@@ -114,6 +116,8 @@ export default function ProfileScreen() {
         lastName: form.lastName.trim(),
         phone: form.phone.trim() || null,
         communicationPreference: isClient ? form.communicationPreference : undefined,
+        // Staff-only: pay/hours stay employer-controlled, but bio is self-editable.
+        bio: profile.staffProfile ? form.bio.trim() || null : undefined,
       });
       setProfile(result.profile);
       setEditing(false);
@@ -286,19 +290,21 @@ export default function ProfileScreen() {
                 </View>
               ) : null}
 
-              {/* ── Profile tabs ── */}
-              <View style={s.tabBar}>
-                {(['profile', 'visits', 'lab'] as ProfileTab[]).map((t) => (
-                  <Pressable key={t} onPress={() => setTab(t)} style={s.tabItem}>
-                    <Text style={[s.tabText, tab === t && s.tabTextActive]}>
-                      {t.charAt(0).toUpperCase() + t.slice(1)}
-                    </Text>
-                    {tab === t ? <View style={s.tabUnderline} /> : null}
-                  </Pressable>
-                ))}
-              </View>
+              {/* ── Profile tabs (clients only — stylists have no visit/lab history) ── */}
+              {isClient ? (
+                <View style={s.tabBar}>
+                  {(['profile', 'visits', 'lab'] as ProfileTab[]).map((t) => (
+                    <Pressable key={t} onPress={() => setTab(t)} style={s.tabItem}>
+                      <Text style={[s.tabText, tab === t && s.tabTextActive]}>
+                        {t.charAt(0).toUpperCase() + t.slice(1)}
+                      </Text>
+                      {tab === t ? <View style={s.tabUnderline} /> : null}
+                    </Pressable>
+                  ))}
+                </View>
+              ) : null}
 
-              {tab === 'profile' ? (
+              {!isClient || tab === 'profile' ? (
                 <ContactSection
                   profile={profile}
                   editing={editing}
@@ -312,9 +318,9 @@ export default function ProfileScreen() {
                   onChangeForm={(patch) => setForm((f) => f ? { ...f, ...patch } : f)}
                 />
               ) : tab === 'visits' ? (
-                <VisitsTab accessToken={accessToken} isClient={isClient} />
+                <VisitsTab accessToken={accessToken} />
               ) : (
-                <LabTab accessToken={accessToken} isClient={isClient} />
+                <LabTab accessToken={accessToken} />
               )}
 
               {/* ── Account actions ── */}
@@ -392,7 +398,7 @@ function ContactSection({
   onSave: () => void;
   onChangeForm: (patch: Partial<EditForm>) => void;
 }) {
-  const { identity, clientProfile: client } = profile;
+  const { identity, clientProfile: client, staffProfile: staff } = profile;
   const hasPatchAlert = (client?.expiredPatchTests ?? 0) > 0;
 
   return (
@@ -402,7 +408,7 @@ function ContactSection({
         {/* Section header row with Edit / Save+Cancel */}
         <View style={s.sectionHeaderRow}>
           <Text style={s.sectionLabel}>CONTACT</Text>
-          {isClient && !editing ? (
+          {(isClient || staff) && !editing ? (
             <Pressable
               onPress={onStartEdit}
               style={({ pressed }) => [s.editBtn, pressed && s.pressed]}
@@ -477,8 +483,10 @@ function ContactSection({
                   accent
                 />
               ) : null}
-              <ReadOnlyRow label="Home salon" value={homeSalonLabel(profile)} bold />
-              <ReadOnlyRow label="Client since" value={clientSince()} bold isLast />
+              <ReadOnlyRow label="Home salon" value={homeSalonLabel(profile)} bold isLast={!client} />
+              {client ? (
+                <ReadOnlyRow label="Client since" value={clientSince()} bold isLast />
+              ) : null}
             </>
           ) : (
             <>
@@ -495,12 +503,57 @@ function ContactSection({
                   />
                 </>
               ) : null}
-              <ReadOnlyRow label="Home salon" value={homeSalonLabel(profile)} bold />
-              <ReadOnlyRow label="Client since" value={clientSince()} bold isLast />
+              <ReadOnlyRow label="Home salon" value={homeSalonLabel(profile)} bold isLast={!client} />
+              {client ? (
+                <ReadOnlyRow label="Client since" value={clientSince()} bold isLast />
+              ) : null}
             </>
           )}
         </View>
       </View>
+
+      {/* ── Employment (stylists) ── */}
+      {staff ? (
+        <View style={s.section}>
+          <Text style={s.sectionLabel}>EMPLOYMENT</Text>
+          <View style={s.sectionCard}>
+            <ReadOnlyRow
+              label="Hourly rate"
+              value={staff.hourlyRate > 0 ? `${formatMoney(staff.hourlyRate, 'GBP')} / hr` : '—'}
+              accent
+            />
+            <ReadOnlyRow
+              label="Weekly agreed hours"
+              value={staff.contractedHours > 0 ? `${formatHours(staff.contractedHours)} / week` : '—'}
+              bold
+              isLast
+            />
+          </View>
+        </View>
+      ) : null}
+
+      {/* ── Bio (stylists) ── */}
+      {staff && (editing || staff.bio) ? (
+        <View style={s.section}>
+          <Text style={s.sectionLabel}>BIO</Text>
+          {editing && form ? (
+            <View style={s.sectionCard}>
+              <EditField
+                label="About you"
+                value={form.bio}
+                onChangeText={(v) => onChangeForm({ bio: v })}
+                placeholder="Tell clients a little about yourself…"
+                multiline
+                isLast
+              />
+            </View>
+          ) : (
+            <View style={s.notesCard}>
+              <Text style={s.notesText}>{staff.bio}</Text>
+            </View>
+          )}
+        </View>
+      ) : null}
 
       {/* ── Allergy & patch test ── */}
       {client ? (
@@ -543,19 +596,20 @@ function ContactSection({
 
 // ── Visits tab ──────────────────────────────────────────────────────────────
 
-function VisitsTab({ accessToken, isClient }: { accessToken: string; isClient: boolean }) {
+function VisitsTab({ accessToken }: { accessToken: string }) {
   const [visits, setVisits] = useState<CrmVisitSummary[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    if (!accessToken || !isClient) {
+    if (!accessToken) {
       setLoading(false);
       return;
     }
     setLoading(true);
     setError(null);
     try {
+      // visitHistory is already scoped server-side to completed services.
       const result = await api.getMobileDashboard(accessToken, 'client');
       if (result.role === 'client') setVisits(result.visitHistory);
     } catch (err) {
@@ -563,17 +617,12 @@ function VisitsTab({ accessToken, isClient }: { accessToken: string; isClient: b
     } finally {
       setLoading(false);
     }
-  }, [accessToken, isClient]);
+  }, [accessToken]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  if (!isClient) {
-    return (
-      <EmptyTab icon="📋" title="No visits" body="Visit history is available on client accounts." />
-    );
-  }
   if (loading) return <TabLoading label="Loading visits…" />;
   if (error) return <TabError message={error} onRetry={() => void load()} />;
   if (!visits || visits.length === 0) {
@@ -592,7 +641,10 @@ function VisitsTab({ accessToken, isClient }: { accessToken: string; isClient: b
 function ProfileVisitRow({ visit, isLast }: { visit: CrmVisitSummary; isLast: boolean }) {
   const tone = visitTone(visit.status);
   return (
-    <View style={[s.recordRow, isLast && s.recordRowLast]}>
+    <Pressable
+      onPress={() => router.push(`/client/visit-detail?id=${encodeURIComponent(visit.id)}`)}
+      style={({ pressed }) => [s.recordRow, isLast && s.recordRowLast, pressed && s.pressed]}
+    >
       <View style={[s.recordAccent, tone === 'success' ? s.accentGreen : tone === 'warning' ? s.accentAmber : s.accentGray]} />
       <View style={s.recordBody}>
         <View style={s.recordTitleRow}>
@@ -606,36 +658,29 @@ function ProfileVisitRow({ visit, isLast }: { visit: CrmVisitSummary; isLast: bo
           </View>
         </View>
         <View style={s.recordMeta}>
-          <Text style={s.recordMetaText}>{formatDate(visit.occurredAt)}</Text>
+          <Text style={s.recordMetaText}>{formatDateTime(visit.occurredAt)}</Text>
           {visit.stylistName ? (
             <>
               <View style={s.recordMetaDot} />
               <Text style={s.recordMetaText}>with {visit.stylistName}</Text>
             </>
           ) : null}
-          {visit.priceAmount != null ? (
-            <>
-              <View style={s.recordMetaDot} />
-              <Text style={s.recordMetaPrice}>
-                {formatMoney(visit.priceAmount, visit.currencyCode ?? 'GBP')}
-              </Text>
-            </>
-          ) : null}
         </View>
       </View>
-    </View>
+      <Text style={s.recordChevron}>›</Text>
+    </Pressable>
   );
 }
 
 // ── Lab tab ───────────────────────────────────────────────────────────────────
 
-function LabTab({ accessToken, isClient }: { accessToken: string; isClient: boolean }) {
+function LabTab({ accessToken }: { accessToken: string }) {
   const [formulas, setFormulas] = useState<ClientLabFormulaSummary[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    if (!accessToken || !isClient) {
+    if (!accessToken) {
       setLoading(false);
       return;
     }
@@ -649,17 +694,12 @@ function LabTab({ accessToken, isClient }: { accessToken: string; isClient: bool
     } finally {
       setLoading(false);
     }
-  }, [accessToken, isClient]);
+  }, [accessToken]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  if (!isClient) {
-    return (
-      <EmptyTab icon="🧪" title="No lab records" body="Colour records are available on client accounts." />
-    );
-  }
   if (loading) return <TabLoading label="Loading lab history…" />;
   if (error) return <TabError message={error} onRetry={() => void load()} />;
   if (!formulas || formulas.length === 0) {
@@ -778,25 +818,33 @@ function EditField({
   onChangeText,
   keyboardType = 'default',
   autoFocus = false,
+  multiline = false,
+  placeholder,
+  isLast = false,
 }: {
   label: string;
   value: string;
   onChangeText: (v: string) => void;
   keyboardType?: 'default' | 'phone-pad' | 'email-address';
   autoFocus?: boolean;
+  multiline?: boolean;
+  placeholder?: string;
+  isLast?: boolean;
 }) {
   const [focused, setFocused] = useState(false);
   return (
-    <View style={s.editFieldWrap}>
+    <View style={[s.editFieldWrap, isLast && s.editFieldWrapLast]}>
       <Text style={s.editFieldLabel}>{label}</Text>
       <TextInput
         value={value}
         onChangeText={onChangeText}
         keyboardType={keyboardType}
         autoFocus={autoFocus}
-        autoCapitalize={keyboardType === 'email-address' ? 'none' : 'words'}
+        autoCapitalize={keyboardType === 'email-address' ? 'none' : multiline ? 'sentences' : 'words'}
+        placeholder={placeholder}
         placeholderTextColor="rgba(255,255,255,0.25)"
-        style={[s.editInput, focused && s.editInputFocused]}
+        multiline={multiline}
+        style={[s.editInput, multiline && s.editInputMultiline, focused && s.editInputFocused]}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
       />
@@ -921,8 +969,20 @@ function formatDate(iso: string): string {
   });
 }
 
+function formatDateTime(iso: string): string {
+  const d = new Date(iso);
+  const date = d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  return `${date} · ${time}`;
+}
+
 function formatStatus(value: string): string {
   return value.split('_').map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
+}
+
+function formatHours(hours: number): string {
+  const value = Number.isInteger(hours) ? String(hours) : hours.toFixed(1);
+  return `${value} hrs`;
 }
 
 function formatMoney(amount: number, currency: string): string {
@@ -1217,6 +1277,8 @@ const s = StyleSheet.create({
     borderBottomColor: BORDER_MED,
     gap: 5,
   },
+  editFieldWrapLast: { borderBottomWidth: 0 },
+  editInputMultiline: { minHeight: 96, paddingTop: spacing.sm, textAlignVertical: 'top' },
   editFieldLabel: {
     color: 'rgba(255,255,255,0.38)',
     fontSize: 10,
@@ -1401,7 +1463,7 @@ const s = StyleSheet.create({
   recordMeta: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
   recordMetaText: { color: 'rgba(255,255,255,0.45)', fontSize: 12 },
   recordMetaDot: { width: 3, height: 3, borderRadius: 1.5, backgroundColor: 'rgba(255,255,255,0.2)' },
-  recordMetaPrice: { color: BRAND_LIGHT, fontSize: 12, fontWeight: '700' },
+  recordChevron: { color: 'rgba(255,255,255,0.22)', fontSize: 20, paddingRight: spacing.xs },
 
   // ── Lab cards
   labList: { marginHorizontal: spacing.base, gap: spacing.sm },

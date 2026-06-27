@@ -32,10 +32,10 @@ import { useFormulaDraft } from '../../features/formulas/useFormulaDraft';
 import { listLabInventoryProducts } from '../../features/inventory/productsApi';
 import { getActiveLabSession, logoutLabSession } from '../../features/sheer-lab/labSession';
 import { appConfig } from '../../config/appConfig';
-import { formatClock, initials, roleLabel } from '../Home/dashboardHelpers';
+import { formatClock } from '../Home/dashboardHelpers';
 import { featureFlags } from '../../config/featureFlags';
 import { labTheme } from '../../theme/labTheme';
-import { BrandMark } from '../shared/BrandMark';
+import { TopBar } from '../shared/LabShell';
 
 const T = labTheme;
 const C = T.colors;
@@ -522,7 +522,7 @@ export function FormulaScreen({ navigation, route }: FormulaScreenProps): React.
   return (
     <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
       <StatusBar barStyle="light-content" backgroundColor={C.surface} />
-      <TopBar session={session} online={session?.status === 'active'} />
+      <TopBar session={session} bleStatus={ble.status} />
 
       <View style={[styles.body, layout.showSidebar ? styles.bodyRow : styles.bodyColumn]}>
         {layout.showSidebar ? (
@@ -610,34 +610,6 @@ export function FormulaScreen({ navigation, route }: FormulaScreenProps): React.
 // Chrome — top bar, sidebar, mobile nav, footer
 // ---------------------------------------------------------------------------
 
-function TopBar({ session, online }: { session?: PinUnlockResponse; online: boolean }): React.JSX.Element {
-  return (
-    <View style={styles.topBar}>
-      <View style={styles.topSideLeft}>
-        <StatusChip label={online ? 'Connected' : 'Offline'} tone={online ? 'success' : 'neutral'} />
-      </View>
-      <View style={styles.brandRow}>
-        <BrandMark size={30} />
-        <Text style={styles.brandText}>QLOOQO LAB</Text>
-      </View>
-      <View style={styles.topSideRight}>
-        {session ? (
-          <View style={styles.userRow}>
-            <View style={styles.userText}>
-              <Text style={styles.userName} numberOfLines={1}>
-                {session.displayName}
-              </Text>
-              <Text style={styles.userRole}>{roleLabel(session.role)}</Text>
-            </View>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{initials(session.displayName)}</Text>
-            </View>
-          </View>
-        ) : null}
-      </View>
-    </View>
-  );
-}
 
 function Sidebar({
   width,

@@ -135,7 +135,25 @@ export class ProfileService {
       await this.updateOwnClientProfile(actor, actor.clientProfileId, input);
     }
 
+    // Staff may self-edit their bio only. Pay/hours stay employer-controlled
+    // and are not exposed on this endpoint.
+    if (input.bio !== undefined && actor.staffProfileId) {
+      await this.updateOwnStaffBio(actor.staffProfileId, input.bio);
+    }
+
     return { profile: await this.getCurrentProfile(actor) };
+  }
+
+  private async updateOwnStaffBio(staffProfileId: string, bio: string | null): Promise<void> {
+    const { error } = await this.admin
+      .schema('core')
+      .from('staff_profiles')
+      .update({ bio: cleanOptional(bio), updated_at: new Date().toISOString() })
+      .eq('id', staffProfileId);
+    if (error) {
+      this.logger.error(`updateOwnStaffBio failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to update staff profile');
+    }
   }
 
   /**

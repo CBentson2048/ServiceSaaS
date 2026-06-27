@@ -274,8 +274,26 @@ export default function NewBookingScreen() {
     }
   }
 
+  // Returns the first missing-field message, or null when the booking is ready
+  // to submit. Drives both the inline validation message and the submit guard so
+  // the "Create booking" button can never silently do nothing.
+  function getValidationError(): string | null {
+    if (!accessToken) return 'Your session has expired. Please sign in again.';
+    if (!locationId) return 'Please select a location before creating the booking.';
+    if (!selectedClient) return 'Please select a client before creating the booking.';
+    if (selectedServiceIds.length === 0) return 'Please select at least one service before creating the booking.';
+    if (!selectedSlot) return 'Please select an appointment time before creating the booking.';
+    return null;
+  }
+
   async function handleSubmit() {
-    if (!accessToken || !selectedClient || !selectedSlot || selectedServiceIds.length === 0) return;
+    const validationError = getValidationError();
+    if (validationError || !selectedSlot || !selectedClient) {
+      // selectedSlot/selectedClient are re-checked here to satisfy the type
+      // narrowing below; getValidationError already covers the user-facing path.
+      setError(validationError ?? 'Please complete all required fields before creating the booking.');
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
@@ -295,7 +313,9 @@ export default function NewBookingScreen() {
       });
       setCreated(result);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not create the booking');
+      // Surface failed API responses to the user and log for diagnostics.
+      console.error('[new-booking] createStaffBooking failed', err);
+      setError(err instanceof Error ? err.message : 'Could not create the booking. Please try again.');
     } finally {
       setSubmitting(false);
     }
@@ -318,7 +338,10 @@ export default function NewBookingScreen() {
   }
 
   const showTabs = userHasRole(auth.user, 'stylist');
-  const canSubmit = Boolean(selectedClient) && selectedServiceIds.length > 0 && Boolean(selectedSlot) && !submitting;
+  // Whether every required field is present. Used only to hint the user (the
+  // button stays pressable so an invalid press always surfaces a clear message).
+  const isComplete =
+    Boolean(selectedClient) && selectedServiceIds.length > 0 && Boolean(selectedSlot) && Boolean(locationId);
   const dateOptions = useMemo(() => buildDateOptions(14), []);
 
   if (created) {
@@ -611,9 +634,13 @@ export default function NewBookingScreen() {
             {selectedClient ? selectedClient.displayName : 'No client'} · {selectedServiceIds.length} service
             {selectedServiceIds.length === 1 ? '' : 's'} · {selectedSlot ? formatDateTime(selectedSlot.startAt) : 'no time'}
           </Text>
+          {!isComplete ? (
+            <Text style={s.hint}>Complete client, service and appointment time to book.</Text>
+          ) : null}
+          {error ? <Text style={s.error}>{error}</Text> : null}
           <AppButton
             label={submitting ? 'Booking…' : 'Create booking'}
-            disabled={!canSubmit}
+            disabled={submitting}
             onPress={() => void handleSubmit()}
           />
         </Card>
@@ -735,6 +762,7 @@ const s = StyleSheet.create({
     marginTop: spacing.xs,
   },
   muted: { color: 'rgba(255,255,255,0.68)', fontSize: 13 },
+  hint: { color: 'rgba(255,255,255,0.55)', fontSize: 12, fontStyle: 'italic' },
   error: { color: palette.danger[300], fontWeight: '700' },
   link: { color: palette.brand[300], fontWeight: '800', fontSize: 13 },
   input: {

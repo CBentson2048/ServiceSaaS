@@ -37,13 +37,10 @@ import {
   formatGrams,
   formatMoney,
   getInventoryTier,
-  initials,
-  roleLabel,
-  type StatusTone,
 } from '../Home/dashboardHelpers';
 import { featureFlags } from '../../config/featureFlags';
 import { labTheme } from '../../theme/labTheme';
-import { BrandMark } from '../shared/BrandMark';
+import { TopBar } from '../shared/LabShell';
 
 const T = labTheme;
 const C = T.colors;
@@ -364,7 +361,7 @@ export function BuildFormulaScreen({ navigation, route }: BuildFormulaScreenProp
   return (
     <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
       <StatusBar barStyle="light-content" backgroundColor={C.surface} />
-      <TopBar session={session} online={session?.status === 'active'} />
+      <TopBar session={session} bleStatus={ble.status} />
 
       <View style={[styles.body, layout.showSidebar ? styles.bodyRow : styles.bodyColumn]}>
         {layout.showSidebar ? (
@@ -421,37 +418,6 @@ export function BuildFormulaScreen({ navigation, route }: BuildFormulaScreenProp
 // ---------------------------------------------------------------------------
 // Chrome — top bar, sidebar, mobile nav, footer
 // ---------------------------------------------------------------------------
-
-function TopBar({ session, online }: { session?: PinUnlockResponse; online: boolean }): React.JSX.Element {
-  return (
-    <View style={styles.topBar}>
-      <View style={styles.topSideLeft}>
-        <Pill label={online ? 'Connected' : 'Offline'} tone={online ? 'success' : 'neutral'} />
-      </View>
-
-      <View style={styles.brandRow}>
-        <BrandMark size={30} />
-        <Text style={styles.brandText}>QLOOQO LAB</Text>
-      </View>
-
-      <View style={styles.topSideRight}>
-        {session ? (
-          <View style={styles.userRow}>
-            <View style={styles.userText}>
-              <Text style={styles.userName} numberOfLines={1}>
-                {session.displayName}
-              </Text>
-              <Text style={styles.userRole}>{roleLabel(session.role)}</Text>
-            </View>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{initials(session.displayName)}</Text>
-            </View>
-          </View>
-        ) : null}
-      </View>
-    </View>
-  );
-}
 
 function Sidebar({
   width,
@@ -908,30 +874,6 @@ function BottomBar({
 // Shared primitives + helpers
 // ---------------------------------------------------------------------------
 
-function Pill({ label, tone }: { label: string; tone: StatusTone }): React.JSX.Element {
-  const palette = toneStyle(tone);
-  return (
-    <View style={[styles.pill, { backgroundColor: palette.bg, borderColor: palette.border }]}>
-      <View style={[styles.pillDot, { backgroundColor: palette.text }]} />
-      <Text style={[styles.pillText, { color: palette.text }]}>{label}</Text>
-    </View>
-  );
-}
-
-function toneStyle(tone: StatusTone): { text: string; bg: string; border: string } {
-  switch (tone) {
-    case 'success':
-      return { text: C.success.text, bg: C.success.bg, border: C.success.border };
-    case 'warning':
-      return { text: C.warning.text, bg: C.warning.bg, border: C.warning.border };
-    case 'danger':
-      return { text: C.danger.text, bg: C.danger.bg, border: C.danger.border };
-    case 'brand':
-      return { text: C.primary, bg: C.primarySoft, border: C.primarySoft };
-    default:
-      return { text: C.textSecondary, bg: C.surfaceAlt, border: C.border };
-  }
-}
 
 function parseGrams(value: string): number {
   const grams = Number(value);

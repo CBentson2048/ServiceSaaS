@@ -2,6 +2,7 @@ import type React from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -9,8 +10,10 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
 
 import { labTheme } from '../../theme/labTheme';
+import { BrandMark } from './BrandMark';
 
 /** Width (pt) at/above which we treat the iPad as a large surface (Pro / landscape). */
 const LARGE_SCREEN_WIDTH = 1024;
@@ -40,9 +43,28 @@ export function LabScreen({
 }: LabScreenProps): React.JSX.Element {
   const { width } = useWindowDimensions();
   const isLarge = width >= LARGE_SCREEN_WIDTH;
+  const navigation = useNavigation();
+  const canGoBack = navigation.canGoBack();
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      {/* Slim branded bar — keeps these utility/config screens visually in step
+          with the main app's header, with a back affordance when pushed. */}
+      <View style={styles.topBar}>
+        {canGoBack ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+            onPress={() => navigation.goBack()}
+            hitSlop={10}
+            style={styles.backButton}
+          >
+            <Text style={styles.backGlyph}>‹</Text>
+          </Pressable>
+        ) : null}
+        <BrandMark size={26} />
+        <Text style={styles.brandText}>QLOOQO LAB</Text>
+      </View>
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView
           contentContainerStyle={[
@@ -72,6 +94,30 @@ const styles = StyleSheet.create({
   },
   flex: {
     flex: 1,
+  },
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: labTheme.spacing.sm,
+    paddingHorizontal: labTheme.spacing.lg,
+    paddingVertical: labTheme.spacing.md,
+    backgroundColor: labTheme.colors.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: labTheme.colors.border,
+  },
+  backButton: { paddingRight: labTheme.spacing.xs },
+  backGlyph: {
+    color: labTheme.colors.primary,
+    fontSize: 30,
+    lineHeight: 30,
+    fontWeight: '300',
+    marginTop: -2,
+  },
+  brandText: {
+    color: labTheme.colors.textPrimary,
+    fontSize: labTheme.typography.fontSize.subtitle,
+    fontWeight: '700',
+    letterSpacing: 1,
   },
   content: {
     flexGrow: 1,

@@ -1,6 +1,7 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, UseGuards } from '@nestjs/common';
 import type {
   AuthUser,
+  ClientVisitDetail,
   MobileClientDashboardResponse,
   MobileManagerDashboardResponse,
   MobileOwnerDashboardResponse,
@@ -20,6 +21,15 @@ export class MobileDashboardController {
   @RequireRoles('client')
   client(@CurrentUser() actor: AuthUser): Promise<MobileClientDashboardResponse> {
     return this.mobileDashboard.client(actor);
+  }
+
+  @Get('client/visits/:visitId')
+  @RequireRoles('client')
+  clientVisitDetail(
+    @CurrentUser() actor: AuthUser,
+    @Param('visitId') visitId: string,
+  ): Promise<ClientVisitDetail> {
+    return this.mobileDashboard.clientVisitDetail(actor, visitId);
   }
 
   @Get('stylist')

@@ -236,7 +236,10 @@ function VisitCard({
 }) {
   const tone = visitTone(visit.status);
   return (
-    <View style={[s.visitCard, isLast && s.visitCardLast]}>
+    <Pressable
+      onPress={() => router.push(`/client/visit-detail?id=${encodeURIComponent(visit.id)}`)}
+      style={({ pressed }) => [s.visitCard, isLast && s.visitCardLast, pressed && s.pressed]}
+    >
       {/* Left accent bar */}
       <View style={[s.visitAccent, tone === 'success' ? s.accentGreen : tone === 'warning' ? s.accentAmber : s.accentGray]} />
 
@@ -255,7 +258,7 @@ function VisitCard({
 
         {/* Meta row */}
         <View style={s.visitMeta}>
-          <Text style={s.visitMetaText}>{formatDate(visit.occurredAt)}</Text>
+          <Text style={s.visitMetaText}>{formatDateTime(visit.occurredAt)}</Text>
           {visit.stylistName ? (
             <>
               <View style={s.visitMetaDot} />
@@ -281,7 +284,7 @@ function VisitCard({
       </View>
 
       <Text style={s.visitChevron}>›</Text>
-    </View>
+    </Pressable>
   );
 }
 
@@ -299,6 +302,13 @@ function formatDate(iso: string): string {
     month: 'short',
     year: 'numeric',
   });
+}
+
+function formatDateTime(iso: string): string {
+  const d = new Date(iso);
+  const date = d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  return `${date} · ${time}`;
 }
 
 function formatStatus(value: string): string {

@@ -42,13 +42,13 @@ import {
   initials,
   isActiveBooking,
   isCompletedBooking,
-  roleLabel,
   sumProductUsageGrams,
   type StatusTone,
 } from '../Home/dashboardHelpers';
 import { featureFlags } from '../../config/featureFlags';
 import { labTheme } from '../../theme/labTheme';
-import { BrandMark } from '../shared/BrandMark';
+import { useBleScale } from '../../features/ble/hooks/useBleScale';
+import { TopBar } from '../shared/LabShell';
 
 const T = labTheme;
 const C = T.colors;
@@ -188,6 +188,7 @@ export function FormulaHistoryScreen({ navigation }: FormulaHistoryScreenProps):
   const layout = getLayout(width);
 
   const [session, setSession] = useState<PinUnlockResponse | undefined>();
+  const ble = useBleScale();
   const [bookings, setBookings] = useState<StaffBookingSummary[]>([]);
   // `null` = analytics deliberately withheld (stylist session, 403);
   // `undefined` = not loaded yet or failed to load.
@@ -389,7 +390,7 @@ export function FormulaHistoryScreen({ navigation }: FormulaHistoryScreenProps):
   return (
     <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
       <StatusBar barStyle="light-content" backgroundColor={C.surface} />
-      <TopBar session={session} online={session?.status === 'active'} />
+      <TopBar session={session} bleStatus={ble.status} />
 
       <View style={[styles.body, layout.showSidebar ? styles.bodyRow : styles.bodyColumn]}>
         {layout.showSidebar ? (
@@ -454,34 +455,6 @@ export function FormulaHistoryScreen({ navigation }: FormulaHistoryScreenProps):
 // Chrome — top bar, sidebar, mobile nav, footer
 // ---------------------------------------------------------------------------
 
-function TopBar({ session, online }: { session?: PinUnlockResponse; online: boolean }): React.JSX.Element {
-  return (
-    <View style={styles.topBar}>
-      <View style={styles.topSideLeft}>
-        <StatusChip label={online ? 'Connected' : 'Offline'} tone={online ? 'success' : 'neutral'} />
-      </View>
-      <View style={styles.brandRow}>
-        <BrandMark size={30} />
-        <Text style={styles.brandText}>QLOOQO LAB</Text>
-      </View>
-      <View style={styles.topSideRight}>
-        {session ? (
-          <View style={styles.userRow}>
-            <View style={styles.userText}>
-              <Text style={styles.userName} numberOfLines={1}>
-                {session.displayName}
-              </Text>
-              <Text style={styles.userRole}>{roleLabel(session.role)}</Text>
-            </View>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{initials(session.displayName)}</Text>
-            </View>
-          </View>
-        ) : null}
-      </View>
-    </View>
-  );
-}
 
 function Sidebar({
   width,

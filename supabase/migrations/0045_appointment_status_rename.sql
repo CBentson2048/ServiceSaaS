@@ -61,14 +61,16 @@ end $$;
 -- isn't already on it. Remaps every existing row in the cast.
 do $$
 begin
-  if exists (
-    select 1 from pg_type
-    where typname = 'appointment_status_enum_new'
-      and typnamespace = 'booking'::regnamespace
-  ) and (
-    select atttypid::regtype from pg_attribute
-    where attrelid = 'booking.appointments'::regclass and attname = 'status'
-  ) <> 'booking.appointment_status_enum_new'::regtype then
+  -- NB: use to_regtype() (returns NULL for a missing type) rather than a
+  -- '...'::regtype literal cast. The literal cast RAISES 42704 when the type is
+  -- absent and, being a constant, is folded at plan time BEFORE the AND can
+  -- short-circuit on the exists() guard — so the whole IF fails on a clean prod
+  -- where _new was never created.
+  if to_regtype('booking.appointment_status_enum_new') is not null
+     and (
+       select atttypid::regtype from pg_attribute
+       where attrelid = 'booking.appointments'::regclass and attname = 'status'
+     ) is distinct from to_regtype('booking.appointment_status_enum_new') then
     alter table booking.appointments
       alter column status type booking.appointment_status_enum_new
       using (

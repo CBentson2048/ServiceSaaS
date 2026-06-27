@@ -63,6 +63,11 @@ export class UpdateCurrentProfileDto {
   @MinLength(1)
   @MaxLength(64)
   timezone?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  bio?: string | null;
 }
 
 export class AdminUpdateProfileDto {

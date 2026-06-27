@@ -202,7 +202,14 @@ export function LabShell({
 // Chrome pieces
 // ---------------------------------------------------------------------------
 
-function TopBar({
+// Shared top bar for every Lab screen, kept to a single row. Left: a stack with
+// the QLOOQO LAB title on top and the Bluetooth scale-state badge beneath it.
+// Right (vertically centred): the optional reload, the settings button, then the
+// user avatar at the far end. There is intentionally no session/online badge, and
+// the user's name is not shown — just the avatar. `onSettings` is optional — when
+// omitted the bar navigates to Settings itself, so screens that don't manage
+// navigation can still drop it in with just session + bleStatus.
+export function TopBar({
   session,
   bleStatus,
   onRefresh,
@@ -211,39 +218,33 @@ function TopBar({
   session?: PinUnlockResponse;
   bleStatus: BleConnectionStatus;
   onRefresh?: () => void;
-  onSettings: () => void;
+  onSettings?: () => void;
 }): React.JSX.Element {
-  const online = session?.status === 'active';
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const scale = bleBadge(bleStatus);
+  const handleSettings = onSettings ?? (() => navigation.navigate('Settings'));
   return (
     <View style={styles.topBar}>
-      <View style={styles.brandRow}>
-        <BrandMark size={30} />
-        <Text style={styles.brandText}>QLOOQO LAB</Text>
+      <View style={styles.brandBlock}>
+        <View style={styles.brandRow}>
+          <BrandMark size={30} />
+          <Text style={styles.brandText}>QLOOQO LAB</Text>
+        </View>
         <Pill label={scale.label} tone={scale.tone} subtle />
       </View>
 
       <View style={styles.topActions}>
-        <Pill label={online ? 'Online' : 'Offline'} tone={online ? 'success' : 'neutral'} subtle />
         {onRefresh ? (
           <Pressable accessibilityRole="button" onPress={onRefresh} style={styles.iconButton} hitSlop={8}>
             <Text style={styles.iconButtonGlyph}>⟳</Text>
           </Pressable>
         ) : null}
-        <Pressable accessibilityRole="button" onPress={onSettings} style={styles.iconButton} hitSlop={8}>
+        <Pressable accessibilityRole="button" onPress={handleSettings} style={styles.iconButton} hitSlop={8}>
           <Text style={styles.iconButtonGlyph}>⚙︎</Text>
         </Pressable>
         {session ? (
-          <View style={styles.userRow}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{initials(session.displayName)}</Text>
-            </View>
-            <View>
-              <Text style={styles.userName} numberOfLines={1}>
-                {session.displayName}
-              </Text>
-              <Text style={styles.userRole}>{roleLabel(session.role)}</Text>
-            </View>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{initials(session.displayName)}</Text>
           </View>
         ) : null}
       </View>
@@ -442,6 +443,8 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   contentWrap: { width: '100%', maxWidth: 1600, alignSelf: 'center' },
 
+  // Single row — never wraps. Items are vertically centred, so the right-hand
+  // controls sit centred against the taller brand block on the left.
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -451,12 +454,14 @@ const styles = StyleSheet.create({
     backgroundColor: c.surface,
     borderBottomWidth: 1,
     borderBottomColor: c.border,
-    flexWrap: 'wrap',
     gap: t.spacing.sm,
   },
+  // Left stack: title row on top, scale-state badge beneath it.
+  brandBlock: { alignItems: 'flex-start', gap: 4 },
   brandRow: { flexDirection: 'row', alignItems: 'center', gap: t.spacing.sm },
   brandText: { color: c.textPrimary, fontSize: t.typography.fontSize.subtitle, fontWeight: '700', letterSpacing: 1 },
-  topActions: { flexDirection: 'row', alignItems: 'center', gap: t.spacing.sm, flexWrap: 'wrap' },
+  // Right controls: reload, settings, then the avatar at the far end.
+  topActions: { flexDirection: 'row', alignItems: 'center', gap: t.spacing.sm },
   iconButton: {
     width: 36,
     height: 36,

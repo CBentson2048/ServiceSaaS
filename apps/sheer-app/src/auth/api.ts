@@ -1,5 +1,6 @@
 import type {
   CancelAppointmentResponse,
+  ClientVisitDetail,
   CreateMyLeaveRequest,
   ClientLabHistoryResponse,
   CreateCrmClientRequest,
@@ -115,6 +116,12 @@ export async function deleteMyAccount(accessToken: string): Promise<void> {
 // The caller's own colour/formula history — a cost-stripped view for clients.
 export async function getMyLabHistory(accessToken: string): Promise<ClientLabHistoryResponse> {
   return request<ClientLabHistoryResponse>('/lab/formulas/me/history', { accessToken });
+}
+
+export async function getMyVisitDetail(accessToken: string, visitId: string): Promise<ClientVisitDetail> {
+  return request<ClientVisitDetail>(`/mobile-dashboard/client/visits/${encodeURIComponent(visitId)}`, {
+    accessToken,
+  });
 }
 
 export async function getMyWeek(

@@ -40,6 +40,7 @@ import { ServiceCategoriesPage } from './pages/ServiceCategoriesPage';
 import { ServiceManagementPage } from './pages/ServiceManagementPage';
 import { ServicesPage } from './pages/ServicesPage';
 import { SheerLabPage } from './pages/SheerLabPage';
+import { SupportPage } from './pages/SupportPage';
 import { TeamPage } from './pages/TeamPage';
 import { UnauthorizedPage } from './pages/UnauthorizedPage';
 
@@ -77,6 +78,13 @@ export function App() {
         OUTSIDE the dashboard ProtectedRoute so it is reachable without a session.
       */}
       <Route path="/privacy-policy" element={<PrivacyPolicyPage />} />
+      {/*
+        Public support page (App Store Guideline 1.5 — Support URL).
+        This is the URL given to App Store Connect (https://qlooqo.com/support);
+        mounted OUTSIDE the dashboard ProtectedRoute so it is reachable without
+        a session, alongside the privacy-policy and delete-account pages.
+      */}
+      <Route path="/support" element={<SupportPage />} />
       <Route path="/book/location" element={<ClientBookingLocationPage />} />
       <Route path="/book/service" element={<ClientBookingServicePage />} />
       <Route path="/book/date-time" element={<ClientBookingDateTimePage />} />
