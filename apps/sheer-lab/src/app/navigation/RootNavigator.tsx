@@ -54,7 +54,7 @@ export function RootNavigator(): React.JSX.Element {
         <Stack.Screen
           name="DeviceResolving"
           component={DeviceResolvingScreen}
-          options={{ title: 'Sheer Lab' }}
+          options={{ title: 'QLOOQO LAB' }}
         />
         <Stack.Screen
           name="DeviceRegistration"
@@ -66,7 +66,7 @@ export function RootNavigator(): React.JSX.Element {
           component={DeviceBlockedScreen}
           options={{ title: 'Device Blocked' }}
         />
-        <Stack.Screen name="Auth" component={AuthScreen} options={{ title: 'Sheer Lab', headerShown: false }} />
+        <Stack.Screen name="Auth" component={AuthScreen} options={{ title: 'QLOOQO LAB', headerShown: false }} />
         <Stack.Screen name="Home" component={HomeScreen} options={{ title: 'Lab Home', headerShown: false }} />
         <Stack.Screen name="NewMix" component={NewMixScreen} options={{ title: 'New Mix', headerShown: false }} />
         <Stack.Screen

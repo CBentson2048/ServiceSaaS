@@ -109,7 +109,7 @@ export function AuthScreen({ navigation }: AuthScreenProps): React.JSX.Element {
         {/* Brand header */}
         <View style={styles.header}>
           <BrandMark size={64} radius={32} />
-          <Text style={styles.wordmark}>SHEER LAB</Text>
+          <Text style={styles.wordmark}>QLOOQO LAB</Text>
           <Text style={styles.welcome}>Welcome back</Text>
           <View style={styles.locationChip}>
             <LockGlyph />

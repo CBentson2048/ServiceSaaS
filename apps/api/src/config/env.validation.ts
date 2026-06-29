@@ -64,7 +64,7 @@ export class EnvConfig {
   @IsString()
   RESEND_FROM_EMAIL?: string;
 
-  /** Bare-email alias for RESEND_FROM_EMAIL. The API wraps it as `Sheer <addr>` for RFC 5322. */
+  /** Bare-email alias for RESEND_FROM_EMAIL. The API wraps it as `QLOOQO <addr>` for RFC 5322. */
   @IsOptional()
   @IsString()
   RESEND_FROM?: string;

@@ -365,7 +365,12 @@ export function BuildFormulaScreen({ navigation, route }: BuildFormulaScreenProp
 
       <View style={[styles.body, layout.showSidebar ? styles.bodyRow : styles.bodyColumn]}>
         {layout.showSidebar ? (
-          <Sidebar width={layout.sidebarWidth} onNav={goToRoute} onSignOut={handleSignOut} />
+          <Sidebar
+            width={layout.sidebarWidth}
+            onNav={goToRoute}
+            onSignOut={handleSignOut}
+            canManageOps={session?.role === 'owner' || session?.role === 'manager'}
+          />
         ) : null}
 
         <View style={styles.mainArea}>
@@ -376,7 +381,13 @@ export function BuildFormulaScreen({ navigation, route }: BuildFormulaScreenProp
             keyboardShouldPersistTaps="handled"
           >
             <View style={[styles.contentWrap, { gap: layout.gap }]}>
-              {!layout.showSidebar ? <NavScroller onNav={goToRoute} onSignOut={handleSignOut} /> : null}
+              {!layout.showSidebar ? (
+                <NavScroller
+                  onNav={goToRoute}
+                  onSignOut={handleSignOut}
+                  canManageOps={session?.role === 'owner' || session?.role === 'manager'}
+                />
+              ) : null}
 
               <Header
                 clientName={entryContext.clientName}
@@ -423,15 +434,17 @@ function Sidebar({
   width,
   onNav,
   onSignOut,
+  canManageOps,
 }: {
   width: number;
   onNav: (target: NavTarget) => void;
   onSignOut: () => void;
+  canManageOps: boolean;
 }): React.JSX.Element {
   return (
     <View style={[styles.sidebar, { width }]}>
       <View style={styles.sidebarNav}>
-        {NAV_ITEMS.map((item) => {
+        {NAV_ITEMS.filter((item) => item.key !== 'inventory' || canManageOps).map((item) => {
           const active = item.target.kind === 'current';
           const soon = item.target.kind === 'soon';
           return (
@@ -463,9 +476,11 @@ function Sidebar({
 function NavScroller({
   onNav,
   onSignOut,
+  canManageOps,
 }: {
   onNav: (target: NavTarget) => void;
   onSignOut: () => void;
+  canManageOps: boolean;
 }): React.JSX.Element {
   return (
     <ScrollView
@@ -474,7 +489,7 @@ function NavScroller({
       contentContainerStyle={styles.navScroller}
       style={styles.navScrollerWrap}
     >
-      {NAV_ITEMS.map((item) => {
+      {NAV_ITEMS.filter((item) => item.key !== 'inventory' || canManageOps).map((item) => {
         const active = item.target.kind === 'current';
         const soon = item.target.kind === 'soon';
         return (

@@ -175,7 +175,10 @@ function buildNavItems(canManageInventory: boolean): NavEntry[] {
     // Billing Rules and Audit Trail are hidden from the nav behind feature flags
     // for every role; their entries stay so the feature can be restored later.
   ] satisfies NavEntry[]).filter(
-    (item) => (item.key !== 'billing' || featureFlags.billingRules) && (item.key !== 'audit' || featureFlags.auditTrail),
+    (item) =>
+      (item.key !== 'inventory' || canManageInventory) &&
+      (item.key !== 'billing' || featureFlags.billingRules) &&
+      (item.key !== 'audit' || featureFlags.auditTrail),
   );
 }
 

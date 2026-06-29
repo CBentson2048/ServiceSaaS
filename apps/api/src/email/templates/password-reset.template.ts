@@ -48,7 +48,7 @@ export function renderPasswordResetEmail(input: PasswordResetEmailInput): Render
   const expires = formatExpiry(input.expiresAt);
   const requestIp = input.requestIp?.trim();
 
-  const subject = 'Reset your Sheer password';
+  const subject = 'Reset your QLOOQO password';
 
   const html = `<!doctype html>
 <html lang="en">
@@ -58,14 +58,14 @@ export function renderPasswordResetEmail(input: PasswordResetEmailInput): Render
     <title>${escapeHtml(subject)}</title>
   </head>
   <body style="margin:0;padding:0;background-color:#F5F4F8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;color:${BRAND_DARK};">
-    <div style="display:none;max-height:0;overflow:hidden;opacity:0;">Reset your Sheer password. This link expires on ${escapeHtml(expires)}.</div>
+    <div style="display:none;max-height:0;overflow:hidden;opacity:0;">Reset your QLOOQO password. This link expires on ${escapeHtml(expires)}.</div>
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F5F4F8;padding:32px 16px;">
       <tr>
         <td align="center">
           <table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;width:100%;background-color:#FFFFFF;border:1px solid ${BORDER};border-radius:16px;overflow:hidden;">
             <tr>
               <td style="padding:28px 32px 0 32px;">
-                <div style="font-size:18px;font-weight:600;color:${BRAND_COLOR};letter-spacing:0.4px;">SHEER</div>
+                <div style="font-size:18px;font-weight:600;color:${BRAND_COLOR};letter-spacing:0.4px;">QLOOQO</div>
               </td>
             </tr>
             <tr>
@@ -78,7 +78,7 @@ export function renderPasswordResetEmail(input: PasswordResetEmailInput): Render
             <tr>
               <td style="padding:8px 32px 0 32px;">
                 <p style="margin:0;font-size:14px;line-height:22px;color:${BRAND_DARK};">
-                  We received a request to reset the password for your Sheer account. Click the button below to set a new password.
+                  We received a request to reset the password for your QLOOQO account. Click the button below to set a new password.
                 </p>
               </td>
             </tr>
@@ -136,7 +136,7 @@ export function renderPasswordResetEmail(input: PasswordResetEmailInput): Render
             </tr>
           </table>
           <div style="max-width:560px;width:100%;margin:16px auto 0 auto;font-size:11px;line-height:16px;color:${MUTED};text-align:center;">
-            Sent by Sheer.
+            Sent by QLOOQO.
           </div>
         </td>
       </tr>
@@ -147,7 +147,7 @@ export function renderPasswordResetEmail(input: PasswordResetEmailInput): Render
   const textLines = [
     `Hi ${greeting},`,
     '',
-    'We received a request to reset the password for your Sheer account.',
+    'We received a request to reset the password for your QLOOQO account.',
     '',
     'Reset your password:',
     input.resetUrl,
@@ -156,7 +156,7 @@ export function renderPasswordResetEmail(input: PasswordResetEmailInput): Render
     requestIp ? `Request origin IP: ${requestIp}.` : '',
     "Didn't request a reset? You can safely ignore this email.",
     '',
-    '— Sheer',
+    '— QLOOQO',
   ].filter(Boolean);
 
   return { subject, html, text: textLines.join('\n') };

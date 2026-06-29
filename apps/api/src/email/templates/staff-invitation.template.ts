@@ -65,7 +65,7 @@ export function renderStaffInvitationEmail(input: StaffInvitationEmailInput): Re
   const role = roleLabel(input.role);
   const expires = formatExpiry(input.expiresAt);
 
-  const subject = `You're invited to join ${business} on Sheer`;
+  const subject = `You're invited to join ${business} on QLOOQO`;
 
   const introLine = inviter
     ? `${escapeHtml(inviter)} has invited you to join <strong>${escapeHtml(business)}</strong> as a <strong>${escapeHtml(role)}</strong>${location ? ` at <strong>${escapeHtml(location)}</strong>` : ''}.`
@@ -90,7 +90,7 @@ export function renderStaffInvitationEmail(input: StaffInvitationEmailInput): Re
           <table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;width:100%;background-color:#FFFFFF;border:1px solid ${BORDER};border-radius:16px;overflow:hidden;">
             <tr>
               <td style="padding:28px 32px 0 32px;">
-                <div style="font-size:18px;font-weight:600;color:${BRAND_COLOR};letter-spacing:0.4px;">SHEER</div>
+                <div style="font-size:18px;font-weight:600;color:${BRAND_COLOR};letter-spacing:0.4px;">QLOOQO</div>
               </td>
             </tr>
             <tr>
@@ -143,7 +143,7 @@ export function renderStaffInvitationEmail(input: StaffInvitationEmailInput): Re
             </tr>
           </table>
           <div style="max-width:560px;width:100%;margin:16px auto 0 auto;font-size:11px;line-height:16px;color:${MUTED};text-align:center;">
-            Sent by Sheer on behalf of ${escapeHtml(business)}.
+            Sent by QLOOQO on behalf of ${escapeHtml(business)}.
           </div>
         </td>
       </tr>
@@ -162,7 +162,7 @@ export function renderStaffInvitationEmail(input: StaffInvitationEmailInput): Re
     `This invitation expires on ${expires}.`,
     "If you weren't expecting it, you can safely ignore this email.",
     '',
-    `— Sheer, on behalf of ${business}`,
+    `— QLOOQO, on behalf of ${business}`,
   ];
 
   return { subject, html, text: textLines.join('\n') };

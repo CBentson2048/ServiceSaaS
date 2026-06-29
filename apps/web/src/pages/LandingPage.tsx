@@ -51,7 +51,7 @@ const STATS = [
 const FLOW_STEPS = [
   ['Choose', 'Pick a location, service, stylist, and real appointment time.'],
   ['Confirm', 'Create or sign in to a client account and pay the required deposit.'],
-  ['Return', 'Use the Sheer App recommendation after booking for future visits.'],
+  ['Return', 'Use the QLOOQO App recommendation after booking for future visits.'],
 ];
 
 const PREVIEW_EVENTS = [
@@ -75,9 +75,9 @@ export function LandingPage() {
           className="inline-flex items-center gap-2 text-[18px] font-semibold tracking-tight text-[#1C1628]"
         >
           <span className="grid h-9 w-9 place-items-center rounded-full bg-[#1C1628] text-[13px] text-white">
-            Sh
+            Q
           </span>
-          <span>Sheer</span>
+          <span>QLOOQO</span>
         </button>
         <div className="flex items-center gap-2 rounded-pill border border-white/70 bg-white/65 p-1 shadow-card backdrop-blur">
           <AppButton variant="ghost" size="sm" onClick={() => navigate('/book/location')}>
@@ -108,7 +108,7 @@ export function LandingPage() {
             tone="secondary"
             className="mt-5 max-w-xl text-[16px] leading-7"
           >
-            Sheer connects owner setup, rota-backed availability, client booking, and app follow-up without forcing customers through an install before they confirm.
+            QLOOQO connects owner setup, rota-backed availability, client booking, and app follow-up without forcing customers through an install before they confirm.
           </AppText>
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
             <AppButton size="lg" onClick={() => navigate('/owner/onboarding')}>
@@ -165,7 +165,7 @@ export function LandingPage() {
           <div className="border-b border-border bg-white px-6 py-5">
             <div className="flex items-center justify-between gap-4">
               <div>
-                <div className="text-[13px] font-semibold text-[#1C1628]">Today at Sheer Studio</div>
+                <div className="text-[13px] font-semibold text-[#1C1628]">Today at QLOOQO Studio</div>
                 <div className="mt-1 text-[12px] leading-5 text-text-secondary">
                   A confirmed colour appointment from live availability.
                 </div>

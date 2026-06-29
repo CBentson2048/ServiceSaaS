@@ -82,7 +82,10 @@ function buildNavItems(canManageOps: boolean): NavEntry[] {
   // Billing Rules and Audit Trail are hidden from the UI behind their feature
   // flags for every role until the flags are flipped on.
   return items.filter(
-    (item) => (item.key !== 'billing' || featureFlags.billingRules) && (item.key !== 'audit' || featureFlags.auditTrail),
+    (item) =>
+      (item.key !== 'inventory' || canManageOps) &&
+      (item.key !== 'billing' || featureFlags.billingRules) &&
+      (item.key !== 'audit' || featureFlags.auditTrail),
   );
 }
 
@@ -100,6 +103,7 @@ function buildQuickTools(canManageOps: boolean): NavEntry[] {
   // for every role until the flags are flipped on.
   return tools.filter(
     (tool) =>
+      (tool.key !== 'add-inventory' || canManageOps) &&
       (tool.key !== 'billing-settings' || featureFlags.billingRules) &&
       (tool.key !== 'lab-audit' || featureFlags.auditTrail),
   );

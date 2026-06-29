@@ -233,7 +233,6 @@ export function MixFinalizedScreen({ navigation }: MixFinalizedScreenProps): Rea
       durationLabel={durationLabel}
       currencyCode={draft.currencyCode}
       remixBaseline={draft.remixBaseline}
-      onReport={(kind) => setMessage(`${kind} export is coming soon — the lab report is logged for audit.`)}
     />
   );
 
@@ -255,7 +254,12 @@ export function MixFinalizedScreen({ navigation }: MixFinalizedScreenProps): Rea
 
       <View style={[styles.body, layout.showSidebar ? styles.bodyRow : styles.bodyColumn]}>
         {layout.showSidebar ? (
-          <Sidebar width={layout.sidebarWidth} onNav={goToRoute} onSignOut={handleSignOut} />
+          <Sidebar
+            width={layout.sidebarWidth}
+            onNav={goToRoute}
+            onSignOut={handleSignOut}
+            canManageOps={session?.role === 'owner' || session?.role === 'manager'}
+          />
         ) : null}
 
         <View style={styles.mainArea}>
@@ -266,7 +270,13 @@ export function MixFinalizedScreen({ navigation }: MixFinalizedScreenProps): Rea
             keyboardShouldPersistTaps="handled"
           >
             <View style={[styles.contentWrap, { gap: layout.gap, maxWidth: layout.contentWidth || undefined }]}>
-              {!layout.showSidebar ? <NavScroller onNav={goToRoute} onSignOut={handleSignOut} /> : null}
+              {!layout.showSidebar ? (
+                <NavScroller
+                  onNav={goToRoute}
+                  onSignOut={handleSignOut}
+                  canManageOps={session?.role === 'owner' || session?.role === 'manager'}
+                />
+              ) : null}
 
               <FinalizedHero />
 
@@ -330,7 +340,6 @@ function SessionLabReport({
   durationLabel,
   currencyCode,
   remixBaseline,
-  onReport,
 }: {
   reportRef: string;
   clientName: string;
@@ -344,7 +353,6 @@ function SessionLabReport({
   durationLabel: string;
   currencyCode: string;
   remixBaseline?: FormulaRemixBaseline;
-  onReport: (kind: 'PDF' | 'Print') => void;
 }): React.JSX.Element {
   return (
     <View style={styles.card}>
@@ -352,10 +360,6 @@ function SessionLabReport({
         <View style={styles.reportHeadText}>
           <Text style={styles.cardEyebrow}>Session Lab Report</Text>
           <Text style={styles.reportRef}>REF: {reportRef}</Text>
-        </View>
-        <View style={styles.reportHeadActions}>
-          <GhostButton glyph="⤓" label="PDF" onPress={() => onReport('PDF')} />
-          <GhostButton glyph="⎙" label="Print" onPress={() => onReport('Print')} />
         </View>
       </View>
 
@@ -596,15 +600,17 @@ function Sidebar({
   width,
   onNav,
   onSignOut,
+  canManageOps,
 }: {
   width: number;
   onNav: (target: NavTarget) => void;
   onSignOut: () => void;
+  canManageOps: boolean;
 }): React.JSX.Element {
   return (
     <View style={[styles.sidebar, { width }]}>
       <View style={styles.sidebarNav}>
-        {NAV_ITEMS.map((item) => {
+        {NAV_ITEMS.filter((item) => item.key !== 'inventory' || canManageOps).map((item) => {
           const active = item.target.kind === 'current';
           const soon = item.target.kind === 'soon';
           return (
@@ -635,9 +641,11 @@ function Sidebar({
 function NavScroller({
   onNav,
   onSignOut,
+  canManageOps,
 }: {
   onNav: (target: NavTarget) => void;
   onSignOut: () => void;
+  canManageOps: boolean;
 }): React.JSX.Element {
   return (
     <ScrollView
@@ -646,7 +654,7 @@ function NavScroller({
       contentContainerStyle={styles.navScroller}
       style={styles.navScrollerWrap}
     >
-      {NAV_ITEMS.map((item) => {
+      {NAV_ITEMS.filter((item) => item.key !== 'inventory' || canManageOps).map((item) => {
         const active = item.target.kind === 'current';
         const soon = item.target.kind === 'soon';
         return (
@@ -698,27 +706,6 @@ function Footer({
 // ---------------------------------------------------------------------------
 // Shared primitives
 // ---------------------------------------------------------------------------
-
-function GhostButton({
-  glyph,
-  label,
-  onPress,
-}: {
-  glyph: string;
-  label: string;
-  onPress: () => void;
-}): React.JSX.Element {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={onPress}
-      style={({ pressed }) => [styles.ghostButton, pressed && styles.ghostButtonPressed]}
-    >
-      <Text style={styles.ghostButtonGlyph}>{glyph}</Text>
-      <Text style={styles.ghostButtonText}>{label}</Text>
-    </Pressable>
-  );
-}
 
 
 // ---------------------------------------------------------------------------
@@ -900,21 +887,6 @@ const styles = StyleSheet.create({
   reportHead: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: T.spacing.sm },
   reportHeadText: { gap: 2, flexShrink: 1 },
   reportRef: { color: C.textSecondary, fontSize: 13, fontWeight: '700', letterSpacing: 0.4 },
-  reportHeadActions: { flexDirection: 'row', gap: T.spacing.sm },
-  ghostButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingVertical: T.spacing.sm,
-    paddingHorizontal: T.spacing.md,
-    borderRadius: T.radius.full,
-    borderWidth: 1,
-    borderColor: C.borderStrong,
-    backgroundColor: C.inputBg,
-  },
-  ghostButtonPressed: { opacity: 0.7 },
-  ghostButtonGlyph: { color: C.textSecondary, fontSize: 14 },
-  ghostButtonText: { color: C.textPrimary, fontSize: 12, fontWeight: '800' },
 
   metaRow: {
     flexDirection: 'row',

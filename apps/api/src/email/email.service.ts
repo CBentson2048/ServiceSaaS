@@ -92,19 +92,19 @@ export class EmailService {
  *
  * Resolution order:
  *   1. RESEND_FROM_EMAIL (preferred) — may already be RFC 5322 formatted
- *      (e.g. `Sheer <noreply@yourdomain.com>`).
+ *      (e.g. `QLOOQO <noreply@yourdomain.com>`).
  *   2. RESEND_FROM (alias) — typically a bare email; we wrap it as
- *      `Sheer <addr>` so Resend accepts it.
+ *      `QLOOQO <addr>` so Resend accepts it.
  *   3. Fallback to the Resend test sender, which can only deliver to the
  *      Resend account owner's verified address.
  */
 function resolveResendFromAddress(config: ConfigService): string {
   const raw = (config.get<string>('RESEND_FROM_EMAIL') ?? config.get<string>('RESEND_FROM'))?.trim();
   if (!raw) {
-    return 'Sheer <onboarding@resend.dev>';
+    return 'QLOOQO <onboarding@resend.dev>';
   }
   if (/^[^\s<]+@[^\s>]+$/.test(raw)) {
-    return `Sheer <${raw}>`;
+    return `QLOOQO <${raw}>`;
   }
   return raw;
 }

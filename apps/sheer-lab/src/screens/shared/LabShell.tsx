@@ -268,7 +268,7 @@ function Sidebar({
   return (
     <View style={[styles.sidebar, { width }]}>
       <View style={styles.sidebarNav}>
-        {VISIBLE_NAV_ITEMS.map((item) => {
+        {VISIBLE_NAV_ITEMS.filter((item) => item.key !== 'inventory' || canManageOps).map((item) => {
           const isActive = item.key === active;
           const soon = !item.route || (isManagedNav(item.key) && !canManageOps);
           return (
@@ -315,7 +315,7 @@ function NavScroller({
       contentContainerStyle={styles.navScroller}
       style={styles.navScrollerWrap}
     >
-      {VISIBLE_NAV_ITEMS.map((item) => {
+      {VISIBLE_NAV_ITEMS.filter((item) => item.key !== 'inventory' || canManageOps).map((item) => {
         const isActive = item.key === active;
         const soon = !item.route || (isManagedNav(item.key) && !canManageOps);
         return (
