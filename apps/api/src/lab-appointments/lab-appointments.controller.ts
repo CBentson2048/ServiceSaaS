@@ -10,6 +10,7 @@ import type {
   ListStaffBookingsResponse,
   RejectBookingResponse,
   RescheduleAppointmentResponse,
+  SheerLabAnalyticsRange,
   StaffBookingDetail,
 } from '@sheer/domain';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -148,6 +149,19 @@ export class LabSessionAppointmentsController {
   async today(@Param('sessionId') sessionId: string): Promise<ListStaffBookingsResponse> {
     const session = await this.labSessionService.assertActiveSession(sessionId);
     return this.labAppointmentsService.todayForLabSession(session);
+  }
+
+  // Formula-history feed: same per-chair scoping as /today, but accepts a range
+  // (today | week | month) or an explicit from/to custom window.
+  @Get(':sessionId/appointments')
+  async appointments(
+    @Param('sessionId') sessionId: string,
+    @Query('range') range: SheerLabAnalyticsRange = 'today',
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ): Promise<ListStaffBookingsResponse> {
+    const session = await this.labSessionService.assertActiveSession(sessionId);
+    return this.labAppointmentsService.appointmentsForLabSession(session, range, from, to);
   }
 
   @Get(':sessionId/:id')

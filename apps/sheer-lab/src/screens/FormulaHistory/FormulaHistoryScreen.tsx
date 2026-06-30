@@ -22,7 +22,15 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { RootStackParamList } from '../../app/navigation/routes';
 import { getLabAnalyticsSummaryForSession } from '../../features/analytics/analyticsApi';
-import { listTodaysLabAppointmentsForSession } from '../../features/appointments/appointmentsApi';
+import {
+  type LabCustomRange,
+  type LabPeriod,
+  periodPossessive,
+  periodSuffix,
+  resolveLabCustomWindow,
+} from '../../features/analytics/period';
+import { listLabAppointmentsForSession } from '../../features/appointments/appointmentsApi';
+import { PeriodSelector } from './PeriodSelector';
 import {
   getLabSessionBillingBreakdown,
   type LabSessionBillingBreakdown,
@@ -53,15 +61,27 @@ import { TopBar } from '../shared/LabShell';
 const T = labTheme;
 const C = T.colors;
 
+const PAGE_SIZE_OPTIONS = [5, 10, 15, 20, 50] as const;
+const DEFAULT_PAGE_SIZE = 20;
+
+interface SessionPaginationState {
+  page: number;
+  pageSize: number;
+  total: number;
+  pageCount: number;
+}
+
 type FormulaHistoryScreenProps = NativeStackScreenProps<RootStackParamList, 'FormulaHistory'>;
 type ChipTone = StatusTone;
 
 // ---------------------------------------------------------------------------
 // Real-data note
 //
-// The lab-session token can only reach two history-relevant endpoints:
-//   • today's lab appointments  (listTodaysLabAppointmentsForSession)
-//   • colour-bar analytics      (getLabAnalyticsSummaryForSession, owner/manager)
+// The lab-session token can only reach two history-relevant endpoints, both
+// scoped to the active chair and to the selected period (day / week / month /
+// custom):
+//   • lab appointments over a range  (listLabAppointmentsForSession)
+//   • colour-bar analytics           (getLabAnalyticsSummaryForSession, owner/manager)
 // Per-formula breakdowns / grams / activity live in a JWT-only store that this
 // station cannot read, so this screen never fabricates them — sessions are
 // derived from real appointments and the metrics from real analytics, with
@@ -200,6 +220,10 @@ export function FormulaHistoryScreen({ navigation }: FormulaHistoryScreenProps):
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
+  const [period, setPeriod] = useState<LabPeriod>('today');
+  const [customRange, setCustomRange] = useState<LabCustomRange>({ from: '', to: '' });
   const [selectedId, setSelectedId] = useState<string | undefined>();
   const [now, setNow] = useState<Date>(() => new Date());
   // Real billing breakdowns, cached per appointment id. `'loading'`/`'error'`
@@ -208,6 +232,11 @@ export function FormulaHistoryScreen({ navigation }: FormulaHistoryScreenProps):
   const [billingByAppt, setBillingByAppt] = useState<
     Record<string, LabSessionBillingBreakdown | 'loading' | 'error'>
   >({});
+
+  // Period-aware copy ("today" / "this week" / …) and a flag for the in-between
+  // state where Custom is picked but both dates aren't chosen yet.
+  const suffix = periodSuffix(period);
+  const awaitingCustom = period === 'custom' && !resolveLabCustomWindow(customRange);
 
   const load = useCallback(async () => {
     setError(undefined);
@@ -219,16 +248,25 @@ export function FormulaHistoryScreen({ navigation }: FormulaHistoryScreenProps):
       }
       setSession(activeSession);
 
+      // Custom period needs both ends chosen; until then, hold off fetching and
+      // present an empty view rather than a misleading partial window.
+      const customWindow = period === 'custom' ? resolveLabCustomWindow(customRange) : undefined;
+      if (period === 'custom' && !customWindow) {
+        setBookings([]);
+        setAnalytics(undefined);
+        return;
+      }
+
       const [appointments, analyticsResult] = await Promise.allSettled([
-        listTodaysLabAppointmentsForSession(activeSession.sessionId),
-        getLabAnalyticsSummaryForSession(activeSession.sessionId, 'today'),
+        listLabAppointmentsForSession(activeSession.sessionId, period, customWindow ?? undefined),
+        getLabAnalyticsSummaryForSession(activeSession.sessionId, period, customWindow ?? undefined),
       ]);
 
       setBookings(appointments.status === 'fulfilled' ? appointments.value.bookings : []);
       setAnalytics(analyticsResult.status === 'fulfilled' ? analyticsResult.value : undefined);
 
       if (appointments.status === 'rejected') {
-        setError("Could not load today's sessions. Pull to refresh to try again.");
+        setError('Could not load sessions for this period. Pull to refresh to try again.');
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not load formula history');
@@ -236,7 +274,7 @@ export function FormulaHistoryScreen({ navigation }: FormulaHistoryScreenProps):
       setLoading(false);
       setRefreshing(false);
     }
-  }, [navigation]);
+  }, [navigation, period, customRange]);
 
   useEffect(() => {
     void load();
@@ -263,17 +301,48 @@ export function FormulaHistoryScreen({ navigation }: FormulaHistoryScreenProps):
     );
   }, [bookings, search]);
 
-  const groups = useMemo<SessionGroupView[]>(() => {
+  // One canonical order — live "in the chair" sessions first, then completed
+  // (most recent first) — so client-side pagination slices a stable list.
+  const orderedSessions = useMemo(() => {
     const active = filtered.filter(isActiveBooking);
     const completed = filtered
       .filter(isCompletedBooking)
       .sort((a, b) => completedSortKey(b) - completedSortKey(a));
+    return [...active, ...completed];
+  }, [filtered]);
+
+  const total = orderedSessions.length;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+
+  // The visible page, re-split into the familiar In-the-chair / Completed
+  // groups so the list keeps its headers. Counts shown per group reflect the
+  // current page; the "Showing X–Y of N" line gives the full total.
+  const groups = useMemo<SessionGroupView[]>(() => {
+    const start = (page - 1) * pageSize;
+    const slice = orderedSessions.slice(start, start + pageSize);
+    const active = slice.filter(isActiveBooking);
+    const completed = slice.filter(isCompletedBooking);
     const result: SessionGroupView[] = [
       { key: 'active', label: 'In the chair', bookings: active },
-      { key: 'completed', label: 'Completed today', bookings: completed },
+      { key: 'completed', label: `Completed ${suffix}`, bookings: completed },
     ];
     return result.filter((group) => group.bookings.length > 0);
-  }, [filtered]);
+  }, [orderedSessions, page, pageSize, suffix]);
+
+  const pagination = useMemo<SessionPaginationState>(
+    () => ({ page, pageSize, total, pageCount }),
+    [page, pageSize, total, pageCount],
+  );
+
+  // A new search / period changes the result set — restart at page 1.
+  useEffect(() => {
+    setPage(1);
+  }, [search, period, customRange]);
+
+  // Safety net: if the data shrank below the current page, snap back.
+  useEffect(() => {
+    if (page > pageCount) setPage(pageCount);
+  }, [page, pageCount]);
 
   const selected = useMemo(
     () => filtered.find((entry) => entry.id === selectedId) ?? filtered[0],
@@ -351,8 +420,9 @@ export function FormulaHistoryScreen({ navigation }: FormulaHistoryScreenProps):
         filtered.filter(isCompletedBooking).length,
         analytics,
         Boolean(canSeeFinance),
+        suffix,
       ),
-    [filtered, analytics, canSeeFinance],
+    [filtered, analytics, canSeeFinance, suffix],
   );
 
   const canManageInventory = session?.role === 'owner' || session?.role === 'manager';
@@ -411,14 +481,36 @@ export function FormulaHistoryScreen({ navigation }: FormulaHistoryScreenProps):
             <View style={[styles.contentWrap, { gap: layout.gap }]}>
               {!layout.showSidebar ? <NavScroller items={navItems} onNav={goToRoute} onSignOut={handleSignOut} /> : null}
 
-              <HistoryHeader search={search} onSearchChange={setSearch} onRefresh={handleRefresh} />
+              <HistoryHeader
+                search={search}
+                onSearchChange={setSearch}
+                onRefresh={handleRefresh}
+                period={period}
+                onPeriodChange={setPeriod}
+                customRange={customRange}
+                onCustomRangeChange={setCustomRange}
+                subtitle={`Review ${periodPossessive(period)} mixing sessions, appointment status, and billing performance.`}
+              />
 
               {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
               {layout.showRail ? (
                 <View style={[styles.columns, { gap: layout.gap }]}>
                   <View style={styles.listColumn}>
-                    <SessionList groups={groups} selectedId={selected?.id} onSelect={setSelectedId} />
+                    <SessionList
+                    groups={groups}
+                    pagination={pagination}
+                    pageSizeOptions={PAGE_SIZE_OPTIONS}
+                    onPageChange={setPage}
+                    onPageSizeChange={(size) => {
+                      setPageSize(size);
+                      setPage(1);
+                    }}
+                    selectedId={selected?.id}
+                    onSelect={setSelectedId}
+                    periodSuffix={suffix}
+                    awaitingCustom={awaitingCustom}
+                  />
                   </View>
                   <View style={{ width: layout.railWidth }}>
                     <SessionAuditCard
@@ -432,7 +524,20 @@ export function FormulaHistoryScreen({ navigation }: FormulaHistoryScreenProps):
                 </View>
               ) : (
                 <View style={[styles.column, { gap: layout.gap }]}>
-                  <SessionList groups={groups} selectedId={selected?.id} onSelect={setSelectedId} />
+                  <SessionList
+                    groups={groups}
+                    pagination={pagination}
+                    pageSizeOptions={PAGE_SIZE_OPTIONS}
+                    onPageChange={setPage}
+                    onPageSizeChange={(size) => {
+                      setPageSize(size);
+                      setPage(1);
+                    }}
+                    selectedId={selected?.id}
+                    onSelect={setSelectedId}
+                    periodSuffix={suffix}
+                    awaitingCustom={awaitingCustom}
+                  />
                   <SessionAuditCard
                     booking={selected}
                     now={now}
@@ -546,10 +651,20 @@ function HistoryHeader({
   search,
   onSearchChange,
   onRefresh,
+  period,
+  onPeriodChange,
+  customRange,
+  onCustomRangeChange,
+  subtitle,
 }: {
   search: string;
   onSearchChange: (value: string) => void;
   onRefresh: () => void;
+  period: LabPeriod;
+  onPeriodChange: (next: LabPeriod) => void;
+  customRange: LabCustomRange;
+  onCustomRangeChange: (next: LabCustomRange) => void;
+  subtitle: string;
 }): React.JSX.Element {
   return (
     <View style={styles.header}>
@@ -559,11 +674,16 @@ function HistoryHeader({
         </View>
         <View style={styles.flexItem}>
           <Text style={styles.headerTitle}>Formula History</Text>
-          <Text style={styles.headerSubtitle}>
-            {"Review today's mixing sessions, appointment status, and billing performance."}
-          </Text>
+          <Text style={styles.headerSubtitle}>{subtitle}</Text>
         </View>
       </View>
+
+      <PeriodSelector
+        period={period}
+        onPeriodChange={onPeriodChange}
+        customRange={customRange}
+        onCustomRangeChange={onCustomRangeChange}
+      />
 
       <View style={styles.searchRow}>
         <View style={styles.searchField}>
@@ -605,41 +725,177 @@ function Footer({ now, online }: { now: Date; online: boolean }): React.JSX.Elem
 
 function SessionList({
   groups,
+  pagination,
+  pageSizeOptions,
+  onPageChange,
+  onPageSizeChange,
   selectedId,
   onSelect,
+  periodSuffix,
+  awaitingCustom,
 }: {
   groups: SessionGroupView[];
+  pagination: SessionPaginationState;
+  pageSizeOptions: readonly number[];
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
   selectedId?: string;
   onSelect: (id: string) => void;
+  periodSuffix: string;
+  awaitingCustom: boolean;
 }): React.JSX.Element {
   return (
     <View style={styles.listCard}>
-      {groups.length === 0 ? (
+      {pagination.total === 0 ? (
         <Text style={styles.emptyText}>
-          No mixing sessions yet today. Completed and in-progress appointments will appear here.
+          {awaitingCustom
+            ? 'Choose a start and end date to view that period.'
+            : `No mixing sessions ${periodSuffix}. Completed and in-progress appointments will appear here.`}
         </Text>
       ) : (
-        groups.map((group) => (
-          <View key={group.key} style={styles.group}>
-            <View style={styles.groupHead}>
-              <Text style={styles.groupLabel}>{group.label}</Text>
-              <Text style={styles.groupCount}>{group.bookings.length}</Text>
+        <>
+          {groups.map((group) => (
+            <View key={group.key} style={styles.group}>
+              <View style={styles.groupHead}>
+                <Text style={styles.groupLabel}>{group.label}</Text>
+                <Text style={styles.groupCount}>{group.bookings.length}</Text>
+              </View>
+              <View style={styles.groupList}>
+                {group.bookings.map((entry) => (
+                  <SessionRow
+                    key={entry.id}
+                    booking={entry}
+                    active={entry.id === selectedId}
+                    onPress={() => onSelect(entry.id)}
+                  />
+                ))}
+              </View>
             </View>
-            <View style={styles.groupList}>
-              {group.bookings.map((entry) => (
-                <SessionRow
-                  key={entry.id}
-                  booking={entry}
-                  active={entry.id === selectedId}
-                  onPress={() => onSelect(entry.id)}
-                />
-              ))}
-            </View>
-          </View>
-        ))
+          ))}
+          <SessionPagination
+            pagination={pagination}
+            pageSizeOptions={pageSizeOptions}
+            onPageChange={onPageChange}
+            onPageSizeChange={onPageSizeChange}
+          />
+        </>
       )}
     </View>
   );
+}
+
+// Client-side pager for the session list: a rows-per-page selector plus a
+// windowed set of page buttons (with ellipses) and the visible range. The data
+// for a period is fetched whole, so paging is purely local.
+function SessionPagination({
+  pagination,
+  pageSizeOptions,
+  onPageChange,
+  onPageSizeChange,
+}: {
+  pagination: SessionPaginationState;
+  pageSizeOptions: readonly number[];
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
+}): React.JSX.Element {
+  const { page, pageSize, total, pageCount } = pagination;
+  const firstRow = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const lastRow = Math.min(page * pageSize, total);
+  const pages = pageWindow(page, pageCount);
+
+  return (
+    <View style={styles.pagination}>
+      <View style={styles.pageSizeRow}>
+        <Text style={styles.pageSizeLabel}>Rows per page</Text>
+        <View style={styles.pageSizeChips}>
+          {pageSizeOptions.map((option) => {
+            const active = option === pageSize;
+            return (
+              <Pressable
+                key={option}
+                accessibilityRole="button"
+                onPress={() => onPageSizeChange(option)}
+                style={[styles.pageSizeChip, active && styles.pageSizeChipActive]}
+              >
+                <Text style={[styles.pageSizeChipText, active && styles.pageSizeChipTextActive]}>
+                  {option}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+
+      <View style={styles.pageNavRow}>
+        <Text style={styles.pageInfo}>
+          Showing {firstRow}–{lastRow} of {total}
+        </Text>
+        <View style={styles.pageNav}>
+          <PageNavButton label="‹" disabled={page <= 1} onPress={() => onPageChange(page - 1)} />
+          {pages.map((entry, index) =>
+            entry === 'ellipsis' ? (
+              <Text key={`gap-${index}`} style={styles.pageEllipsis}>
+                …
+              </Text>
+            ) : (
+              <PageNavButton
+                key={entry}
+                label={String(entry)}
+                active={entry === page}
+                onPress={() => onPageChange(entry)}
+              />
+            ),
+          )}
+          <PageNavButton
+            label="›"
+            disabled={page >= pageCount}
+            onPress={() => onPageChange(page + 1)}
+          />
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function PageNavButton({
+  label,
+  active = false,
+  disabled = false,
+  onPress,
+}: {
+  label: string;
+  active?: boolean;
+  disabled?: boolean;
+  onPress: () => void;
+}): React.JSX.Element {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      disabled={disabled}
+      onPress={onPress}
+      style={[styles.pageBtn, active && styles.pageBtnActive, disabled && styles.pageBtnDisabled]}
+    >
+      <Text style={[styles.pageBtnText, active && styles.pageBtnTextActive]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+// Compact page list: first & last, the current page and its neighbours, and
+// 'ellipsis' markers for the gaps. Mirrors the web Client Hub pager.
+function pageWindow(current: number, pageCount: number): Array<number | 'ellipsis'> {
+  if (pageCount <= 7) {
+    return Array.from({ length: pageCount }, (_, i) => i + 1);
+  }
+  const wanted = new Set<number>([1, pageCount, current, current - 1, current + 1]);
+  const sorted = [...wanted].filter((p) => p >= 1 && p <= pageCount).sort((a, b) => a - b);
+  const result: Array<number | 'ellipsis'> = [];
+  let previous = 0;
+  for (const p of sorted) {
+    if (p - previous > 1) result.push('ellipsis');
+    result.push(p);
+    previous = p;
+  }
+  return result;
 }
 
 function SessionRow({
@@ -898,10 +1154,11 @@ function buildMetrics(
   completedCount: number,
   analytics: SheerLabAnalyticsResponse | null | undefined,
   canSeeFinance: boolean,
+  suffix: string,
 ): HistoryMetric[] {
   const metrics: HistoryMetric[] = [
     { key: 'active', label: 'In the chair', value: String(activeCount), glyph: '◷', tone: 'brand' },
-    { key: 'completed', label: 'Completed today', value: String(completedCount), glyph: '✓', tone: 'success' },
+    { key: 'completed', label: `Completed ${suffix}`, value: String(completedCount), glyph: '✓', tone: 'success' },
   ];
 
   if (analytics) {
@@ -915,7 +1172,7 @@ function buildMetrics(
     });
     metrics.push({
       key: 'billed',
-      label: 'Billed today',
+      label: `Billed ${suffix}`,
       value: formatMoney(analytics.summary.colourRevenueCents, analytics.summary.currencyCode),
       hint: `${formatPercent(analytics.summary.grossMarginPercent)} margin`,
       tone: 'success',
@@ -931,7 +1188,7 @@ function buildMetrics(
     });
     metrics.push({
       key: 'billed',
-      label: 'Billed today',
+      label: `Billed ${suffix}`,
       value: canSeeFinance ? 'Unavailable' : 'Managers only',
       glyph: '▤',
       locked: true,
@@ -1262,6 +1519,55 @@ const styles = StyleSheet.create({
 
   emptyText: { color: C.textMuted, fontSize: 13, lineHeight: 19 },
   errorText: { color: C.danger.text, fontSize: 13, fontWeight: '700' },
+
+  // Pagination
+  pagination: {
+    gap: T.spacing.md,
+    paddingTop: T.spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: C.border,
+  },
+  pageSizeRow: { flexDirection: 'row', alignItems: 'center', gap: T.spacing.sm, flexWrap: 'wrap' },
+  pageSizeLabel: { color: C.textMuted, fontSize: 12, fontWeight: '700' },
+  pageSizeChips: { flexDirection: 'row', gap: T.spacing.xs, flexWrap: 'wrap' },
+  pageSizeChip: {
+    minWidth: 36,
+    paddingHorizontal: T.spacing.sm,
+    paddingVertical: 6,
+    borderRadius: T.radius.full,
+    borderWidth: 1,
+    borderColor: C.borderStrong,
+    backgroundColor: C.inputBg,
+    alignItems: 'center',
+  },
+  pageSizeChipActive: { borderColor: C.primary, backgroundColor: C.primarySoft },
+  pageSizeChipText: { color: C.textSecondary, fontSize: 13, fontWeight: '700' },
+  pageSizeChipTextActive: { color: C.primary },
+  pageNavRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: T.spacing.md,
+    flexWrap: 'wrap',
+  },
+  pageInfo: { color: C.textMuted, fontSize: 12, fontWeight: '600' },
+  pageNav: { flexDirection: 'row', alignItems: 'center', gap: T.spacing.xs, flexWrap: 'wrap' },
+  pageBtn: {
+    minWidth: 36,
+    height: 36,
+    paddingHorizontal: T.spacing.sm,
+    borderRadius: T.radius.card,
+    borderWidth: 1,
+    borderColor: C.borderStrong,
+    backgroundColor: C.inputBg,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pageBtnActive: { borderColor: C.primary, backgroundColor: C.primary },
+  pageBtnDisabled: { opacity: 0.4 },
+  pageBtnText: { color: C.textSecondary, fontSize: 14, fontWeight: '700' },
+  pageBtnTextActive: { color: C.textOnPrimary },
+  pageEllipsis: { color: C.textMuted, fontSize: 14, paddingHorizontal: 2 },
 
   // Audit rail
   auditCard: {

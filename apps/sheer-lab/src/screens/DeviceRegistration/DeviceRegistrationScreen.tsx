@@ -2,6 +2,7 @@ import type React from 'react';
 import { useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { REVIEW_MODE_ENABLED } from '../../config/reviewMode'; // REVIEW MODE — delete with the feature
 import { useDeviceSession } from '../../features/sheer-lab/DeviceSessionProvider';
 import { registerDeviceWithToken } from '../../features/sheer-lab/deviceSession';
 import { labTheme } from '../../theme/labTheme';
@@ -14,7 +15,7 @@ const CONTENT_WIDTH = 540;
 const MONOSPACE = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' });
 
 export function DeviceRegistrationScreen(): React.JSX.Element {
-  const { refreshDeviceSession } = useDeviceSession();
+  const { refreshDeviceSession, enterReviewMode } = useDeviceSession();
   const [token, setToken] = useState('');
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(false);
@@ -127,6 +128,15 @@ export function DeviceRegistrationScreen(): React.JSX.Element {
       <Text style={styles.meta}>
         The token is stored only in Keychain or Keystore-backed storage. Stylist PINs are never stored on this iPad.
       </Text>
+
+      {/* REVIEW MODE — delete with the feature (see src/config/reviewMode.ts). */}
+      {REVIEW_MODE_ENABLED ? (
+        <View style={styles.reviewMode}>
+          <Text style={styles.reviewModeLabel}>App Store review</Text>
+          <LabButton label="Review mode" variant="secondary" onPress={enterReviewMode} disabled={busy} />
+          <Text style={styles.meta}>Skips device setup and opens the Kensington PIN screen. A Kensington PIN is still required.</Text>
+        </View>
+      ) : null}
     </LabScreen>
   );
 }
@@ -221,5 +231,20 @@ const styles = StyleSheet.create({
     color: labTheme.colors.textMuted,
     fontSize: labTheme.typography.fontSize.caption,
     lineHeight: labTheme.typography.lineHeight.caption,
+  },
+  // REVIEW MODE — delete with the feature.
+  reviewMode: {
+    gap: labTheme.spacing.sm,
+    marginTop: labTheme.spacing.lg,
+    paddingTop: labTheme.spacing.lg,
+    borderTopWidth: 1,
+    borderTopColor: labTheme.colors.border,
+  },
+  reviewModeLabel: {
+    color: labTheme.colors.textSecondary,
+    fontSize: labTheme.typography.fontSize.small,
+    fontWeight: '700',
+    letterSpacing: labTheme.typography.letterSpacing.wide,
+    textTransform: 'uppercase',
   },
 });

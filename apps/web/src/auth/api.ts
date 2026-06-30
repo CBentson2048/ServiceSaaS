@@ -389,11 +389,13 @@ export async function createStaffBooking(
 
 export async function listCrmClients(
   accessToken: string,
-  params: { q?: string; locationId?: string } = {},
+  params: { q?: string; locationId?: string; page?: number; pageSize?: number } = {},
 ): Promise<ListCrmClientsResponse> {
   const search = new URLSearchParams();
   if (params.q) search.set('q', params.q);
   if (params.locationId) search.set('locationId', params.locationId);
+  if (params.page) search.set('page', String(params.page));
+  if (params.pageSize) search.set('pageSize', String(params.pageSize));
   const query = search.toString();
   return request<ListCrmClientsResponse>(`/crm/clients${query ? `?${query}` : ''}`, {
     accessToken,

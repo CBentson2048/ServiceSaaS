@@ -128,12 +128,15 @@ export class LabAnalyticsService {
   async summaryForLabSession(
     session: LabRuntimeSession,
     range: SheerLabAnalyticsRange,
+    from?: string,
+    to?: string,
   ): Promise<SheerLabAnalyticsResponse> {
     if (session.role !== 'owner' && session.role !== 'manager') {
       throw new ForbiddenException('Sheer Lab analytics are limited to owners and managers');
     }
-    const normalizedRange = normalizeRange(range);
-    const { rangeStart, rangeEnd } = rangeWindow(normalizedRange);
+    const customWindow = resolveCustomWindow(from, to);
+    const normalizedRange: SheerLabAnalyticsRange = customWindow ? 'custom' : normalizeRange(range);
+    const { rangeStart, rangeEnd } = customWindow ?? rangeWindow(normalizedRange);
     const scope: 'owner' | 'manager' = session.role === 'owner' ? 'owner' : 'manager';
 
     return this.buildAnalyticsResponse(

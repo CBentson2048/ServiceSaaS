@@ -2708,9 +2708,25 @@ export interface CrmClientDetailResponse {
   photos: CrmVisitPhoto[];
 }
 
+export interface CrmClientsPagination {
+  /** Total clients matching the query across all pages. */
+  total: number;
+  /** 1-based index of the returned page. */
+  page: number;
+  /** Page size used for this response. */
+  pageSize: number;
+  /** Total number of pages (>= 1, even when total is 0). */
+  pageCount: number;
+}
+
 export interface ListCrmClientsResponse {
   clients: CrmClientSummary[];
   scope: 'owner' | 'manager' | 'stylist';
+  /**
+   * Present on the CRM Client Hub listing (server-side paginated). The staff
+   * booking client search reuses this response shape but omits it.
+   */
+  pagination?: CrmClientsPagination;
 }
 
 export interface ListCrmClientNotesResponse {

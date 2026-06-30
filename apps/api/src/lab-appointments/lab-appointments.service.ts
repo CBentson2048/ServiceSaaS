@@ -26,6 +26,7 @@ import type {
   RejectBookingResponse,
   RescheduleAppointmentRequest,
   RescheduleAppointmentResponse,
+  SheerLabAnalyticsRange,
   StaffBookingPatchTestSummary,
   StaffBookingDetail,
   StaffBookingSummary,
@@ -348,12 +349,22 @@ export class LabAppointmentsService {
   }
 
   async todayForLabSession(session: LabRuntimeSession): Promise<ListStaffBookingsResponse> {
-    const { rangeStart, rangeEnd } = todayRange();
+    return this.appointmentsForLabSession(session, 'today');
+  }
 
-    // Every Lab session — stylist, manager, or owner — only sees the appointments
-    // assigned to its OWN chair. A session whose user has no staff profile at this
-    // location owns no appointments, so the schedule is empty rather than falling
-    // back to the whole location's list.
+  // Formula-history feed for the active Lab station, scoped to the session's OWN
+  // chair. `range` widens the window beyond the default single day (week / month),
+  // and an explicit from/to pair drives a custom window. Per-chair scoping is
+  // identical for every role — stylists, managers, and owners each see only their
+  // own appointments; a session with no staff profile at this location is empty.
+  async appointmentsForLabSession(
+    session: LabRuntimeSession,
+    range: SheerLabAnalyticsRange = 'today',
+    from?: string,
+    to?: string,
+  ): Promise<ListStaffBookingsResponse> {
+    const { rangeStart, rangeEnd } = labAppointmentRange(range, from, to);
+
     const staffProfileId = session.staffProfileId;
     if (!staffProfileId) {
       return { bookings: [], scope: session.role, rangeStart, rangeEnd };
@@ -372,7 +383,7 @@ export class LabAppointmentsService {
       .order('scheduled_start_at', { ascending: true })
       .returns<AppointmentRow[]>();
     if (error) {
-      this.logger.error(`todayForLabSession failed: ${error.message}`);
+      this.logger.error(`appointmentsForLabSession failed: ${error.message}`);
       throw new InternalServerErrorException('Unable to load scheduled clients');
     }
 
@@ -2206,6 +2217,46 @@ function todayRange(): { rangeStart: string; rangeEnd: string } {
   const end = new Date(start.getTime());
   end.setDate(end.getDate() + 1);
   return { rangeStart: start.toISOString(), rangeEnd: end.toISOString() };
+}
+
+// Half-open [start, end) window for the Lab formula-history feed. Mirrors the
+// lab-analytics window math so the appointment list and the summary cards agree:
+// weeks start Monday, months run from the 1st. A valid explicit from/to pair wins.
+function labAppointmentRange(
+  range: SheerLabAnalyticsRange,
+  from?: string,
+  to?: string,
+): { rangeStart: string; rangeEnd: string } {
+  const custom = resolveCustomDateWindow(from, to);
+  if (custom) return custom;
+
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  if (range === 'week') {
+    const daysSinceMonday = (start.getDay() + 6) % 7;
+    start.setDate(start.getDate() - daysSinceMonday);
+  }
+  if (range === 'month') {
+    start.setDate(1);
+  }
+  const end = new Date(start);
+  end.setDate(end.getDate() + (range === 'week' ? 7 : range === 'month' ? daysInMonth(start) : 1));
+  return { rangeStart: start.toISOString(), rangeEnd: end.toISOString() };
+}
+
+function resolveCustomDateWindow(
+  from: string | undefined,
+  to: string | undefined,
+): { rangeStart: string; rangeEnd: string } | null {
+  if (!from || !to) return null;
+  const start = new Date(from);
+  const end = new Date(to);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start >= end) return null;
+  return { rangeStart: start.toISOString(), rangeEnd: end.toISOString() };
+}
+
+function daysInMonth(date: Date): number {
+  return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
 }
 
 function parseFutureDate(value: string): Date {

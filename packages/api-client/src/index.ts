@@ -32,6 +32,7 @@ import type {
   UpdateStaffMemberRequest,
   UpdateStaffMemberResponse,
   ListStaffBookingsResponse,
+  SheerLabAnalyticsRange,
   AppointmentCompletionResponse,
   AppointmentPaymentConfirmationRequest,
   AppointmentPaymentConfirmationResponse,
@@ -157,6 +158,11 @@ export interface LabPinClient {
 export interface LabAppointmentClient {
   today: (locationId?: string) => Promise<ListStaffBookingsResponse>;
   todayForSession: (sessionId: string) => Promise<ListStaffBookingsResponse>;
+  /** Formula-history feed for a Lab session, scoped to its own chair, over a range or custom from/to window. */
+  appointmentsForSession: (
+    sessionId: string,
+    params?: { range?: SheerLabAnalyticsRange; from?: string; to?: string },
+  ) => Promise<ListStaffBookingsResponse>;
   detail: (appointmentId: string) => Promise<StaffBookingDetail>;
   detailForSession: (sessionId: string, appointmentId: string) => Promise<StaffBookingDetail>;
   complete: (appointmentId: string) => Promise<AppointmentCompletionResponse>;
@@ -307,6 +313,14 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         ),
       todayForSession: (sessionId) =>
         request(`/lab/appointments/session/${encodeURIComponent(sessionId)}/today`),
+      appointmentsForSession: (sessionId, params) => {
+        const parts: string[] = [];
+        if (params?.range) parts.push(`range=${encodeURIComponent(params.range)}`);
+        if (params?.from) parts.push(`from=${encodeURIComponent(params.from)}`);
+        if (params?.to) parts.push(`to=${encodeURIComponent(params.to)}`);
+        const qs = parts.length ? `?${parts.join('&')}` : '';
+        return request(`/lab/appointments/session/${encodeURIComponent(sessionId)}/appointments${qs}`);
+      },
       detail: (appointmentId) => request(`/lab/appointments/${encodeURIComponent(appointmentId)}`),
       detailForSession: (sessionId, appointmentId) =>
         request(

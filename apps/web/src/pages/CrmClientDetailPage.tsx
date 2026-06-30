@@ -9,7 +9,7 @@ import type {
   CrmVisitPhoto,
   CrmVisitSummary,
 } from '@sheer/domain';
-import { userHasRole } from '@sheer/domain';
+import { userHasAnyRole } from '@sheer/domain';
 import {
   ApiRequestError,
   createCrmClientAllergy,
@@ -65,7 +65,12 @@ export function CrmClientDetailPage() {
     [detail],
   );
 
-  if (auth.status === 'authenticated' && userHasRole(auth.user, 'client')) {
+  // Staff-only: block users with NO staff role. An owner/manager/stylist who is
+  // also a client keeps access (mirrors backend CrmService.assertStaffRole).
+  if (
+    auth.status === 'authenticated' &&
+    !userHasAnyRole(auth.user, ['owner', 'manager', 'stylist'])
+  ) {
     return <Navigate to="/unauthorized" replace />;
   }
 
@@ -205,7 +210,7 @@ export function CrmClientDetailPage() {
                 value={allergyName}
                 onChange={setAllergyName}
                 onSubmit={handleAddAllergy}
-                canWrite={!userHasRole(auth.user, 'stylist')}
+                canWrite={userHasAnyRole(auth.user, ['owner', 'manager'])}
               />
               <PatchTests
                 patchTests={detail.patchTests}
@@ -214,7 +219,7 @@ export function CrmClientDetailPage() {
                 onStatusChange={setPatchStatus}
                 onPerformedAtChange={setPatchPerformedAt}
                 onSubmit={handleAddPatchTest}
-                canWrite={!userHasRole(auth.user, 'stylist')}
+                canWrite={userHasAnyRole(auth.user, ['owner', 'manager'])}
               />
               <Photos photos={detail.photos} />
               <GdprFoundation pendingRequests={detail.profile.gdpr.pendingRequests} />

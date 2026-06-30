@@ -19,6 +19,7 @@ import type {
   CrmClientDetailResponse,
   CrmClientNote,
   CrmClientProfile,
+  CrmClientsPagination,
   CrmClientSummary,
   CrmMessageLog,
   CrmPatchTestRecord,
@@ -203,6 +204,11 @@ interface GdprRequestRow {
 const CLIENT_COLUMNS =
   'id,business_id,client_code,user_profile_id,primary_location_id,first_name,last_name,email,phone,date_of_birth,communication_preference,notes,marketing_opt_in,source,tags,metadata,created_at,updated_at';
 
+// Default preserves the previous hard cap so the staff booking client search
+// (which reuses listClients without a pageSize) behaves exactly as before.
+const DEFAULT_CLIENTS_PAGE_SIZE = 50;
+const MAX_CLIENTS_PAGE_SIZE = 100;
+
 type CrmStaffScope = 'owner' | 'manager' | 'stylist';
 
 @Injectable()
@@ -226,17 +232,30 @@ export class CrmService {
     const requestedLocationId = query.locationId;
     if (requestedLocationId) this.assertLocationScope(actor, requestedLocationId);
 
+    const pageSize = clampInt(query.pageSize ?? DEFAULT_CLIENTS_PAGE_SIZE, 1, MAX_CLIENTS_PAGE_SIZE);
+    const page = Math.max(1, Math.trunc(query.page ?? 1));
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+
     let request = this.admin
       .schema('core')
       .from('client_profiles')
-      .select(CLIENT_COLUMNS)
+      // `count: 'exact'` returns the total matching rows (ignoring the range)
+      // so the client can render real pagination, not just the current slice.
+      .select(CLIENT_COLUMNS, { count: 'exact' })
       .eq('business_id', actor.businessId)
       .order('updated_at', { ascending: false })
-      .limit(50);
+      .range(from, to);
 
     const locationIds = this.resolveReadableLocationIds(actor, requestedLocationId);
     if (locationIds) {
-      if (locationIds.length === 0) return { clients: [], scope: crmScope(actor) };
+      if (locationIds.length === 0) {
+        return {
+          clients: [],
+          scope: crmScope(actor),
+          pagination: buildClientsPagination(0, page, pageSize),
+        };
+      }
       request = request.in('primary_location_id', locationIds);
     }
 
@@ -248,7 +267,7 @@ export class CrmService {
       );
     }
 
-    const { data, error } = await request.returns<ClientProfileRow[]>();
+    const { data, error, count } = await request.returns<ClientProfileRow[]>();
     if (error) {
       this.logger.error(`listClients failed: ${error.message}`);
       throw new InternalServerErrorException('Unable to load CRM clients');
@@ -270,6 +289,7 @@ export class CrmService {
         }),
       ),
       scope: crmScope(actor),
+      pagination: buildClientsPagination(count ?? rows.length, page, pageSize),
     };
   }
 
@@ -1217,6 +1237,25 @@ function cleanOptional(
 
 function escapeIlike(value: string): string {
   return value.replace(/[%_]/g, (char) => `\\${char}`);
+}
+
+function clampInt(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, Math.trunc(value)));
+}
+
+function buildClientsPagination(
+  total: number,
+  page: number,
+  pageSize: number,
+): CrmClientsPagination {
+  const safeTotal = Math.max(0, total);
+  return {
+    total: safeTotal,
+    page,
+    pageSize,
+    pageCount: Math.max(1, Math.ceil(safeTotal / pageSize)),
+  };
 }
 
 function first<T>(value: T | T[] | null | undefined): T | undefined {

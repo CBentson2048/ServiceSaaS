@@ -38,8 +38,10 @@ export class LabSessionAnalyticsController {
   async summary(
     @Param('sessionId') sessionId: string,
     @Query('range') range: SheerLabAnalyticsRange = 'today',
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ): Promise<SheerLabAnalyticsResponse> {
     const session = await this.labSessionService.assertActiveSession(sessionId);
-    return this.labAnalytics.summaryForLabSession(session, range);
+    return this.labAnalytics.summaryForLabSession(session, range, from, to);
   }
 }

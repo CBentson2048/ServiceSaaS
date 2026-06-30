@@ -4,13 +4,17 @@ import {
   IsBoolean,
   IsEmail,
   IsIn,
+  IsInt,
   IsISO8601,
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   MaxLength,
+  Min,
   MinLength,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import type {
   CrmAllergySeverity,
   CrmNoteType,
@@ -32,6 +36,21 @@ export class ListCrmClientsQueryDto {
   @IsOptional()
   @IsUUID()
   locationId?: string;
+
+  /** 1-based page index. Defaults to 1 when omitted. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  /** Rows per page. Clamped server-side to [1, 100]. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  pageSize?: number;
 }
 
 export class CreateCrmClientDto {
