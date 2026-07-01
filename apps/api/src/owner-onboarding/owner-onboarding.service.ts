@@ -24,30 +24,6 @@ interface BootstrapRow {
   membership_id: string;
 }
 
-/** Project ref embedded in Supabase JWT (unsigned payload parse only). */
-function supabaseJwtProjectRef(jwt: string): string | null {
-  try {
-    const parts = jwt.split('.');
-    if (parts.length < 2) return null;
-    const payloadJson = Buffer.from(parts[1], 'base64url').toString('utf8');
-    const payload = JSON.parse(payloadJson) as { ref?: string };
-    return typeof payload.ref === 'string' ? payload.ref : null;
-  } catch {
-    return null;
-  }
-}
-
-/** Project ref from https://<ref>.supabase.co (null if custom host). */
-function supabaseProjectRefFromApiUrl(urlString: string): string | null {
-  try {
-    const host = new URL(urlString).hostname;
-    const m = /^([^.]+)\.supabase\.co$/i.exec(host);
-    return m ? m[1] : null;
-  } catch {
-    return null;
-  }
-}
-
 const RESERVED_SLUGS = new Set([
   'admin',
   'api',
@@ -136,49 +112,6 @@ export class OwnerOnboardingService {
     this.admin = createClient(supabaseUrl, serviceRoleKey, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
-
-    // #region agent log
-    let supabaseHost = '';
-    try {
-      supabaseHost = new URL(supabaseUrl).hostname;
-    } catch {
-      supabaseHost = 'invalid-url';
-    }
-    const jwtProjectRef = supabaseJwtProjectRef(serviceRoleKey);
-    const urlProjectRef = supabaseProjectRefFromApiUrl(supabaseUrl);
-    this.agentDebugLog({
-      hypothesisId: 'H-env-url',
-      location: 'owner-onboarding.service.ts:constructor',
-      message: 'OwnerOnboardingService Supabase init',
-      data: {
-        supabaseHost,
-        cwd: process.cwd(),
-        schemaTarget: 'core',
-        jwtProjectRef,
-        urlProjectRef,
-        jwtRefMatchesUrlRef:
-          jwtProjectRef != null && urlProjectRef != null && jwtProjectRef === urlProjectRef,
-      },
-    });
-    // #endregion
-  }
-
-  /** Debug NDJSON via session ingest (no secrets / no PII). */
-  private agentDebugLog(payload: Record<string, unknown>): void {
-    // #region agent log
-    void fetch('http://127.0.0.1:7865/ingest/cd5618e6-8bac-4625-993a-cc18e9434dcd', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Debug-Session-Id': '3cec66',
-      },
-      body: JSON.stringify({
-        sessionId: '3cec66',
-        timestamp: Date.now(),
-        ...payload,
-      }),
-    }).catch(() => {});
-    // #endregion
   }
 
   getBootstrap(): OwnerOnboardingBootstrap {
@@ -202,20 +135,6 @@ export class OwnerOnboardingService {
       .maybeSingle<{ id: string }>();
 
     if (error) {
-      // #region agent log
-      const pe = error as { message?: string; code?: string; details?: string; hint?: string };
-      this.agentDebugLog({
-        hypothesisId: 'H-postgrest',
-        location: 'owner-onboarding.service.ts:checkBusinessSlug',
-        message: 'checkBusinessSlug Supabase error',
-        data: {
-          code: pe.code,
-          details: pe.details,
-          hint: pe.hint,
-          errMessage: pe.message,
-        },
-      });
-      // #endregion
       this.logger.error(`checkBusinessSlug query failed: ${error.message}`);
       throw new InternalServerErrorException('Unable to check slug availability');
     }
@@ -356,20 +275,6 @@ export class OwnerOnboardingService {
       .maybeSingle<{ id: string }>();
 
     if (error) {
-      // #region agent log
-      const pe = error as { message?: string; code?: string; details?: string; hint?: string };
-      this.agentDebugLog({
-        hypothesisId: 'H-postgrest',
-        location: 'owner-onboarding.service.ts:assertEmailNotTaken',
-        message: 'assertEmailNotTaken Supabase error',
-        data: {
-          code: pe.code,
-          details: pe.details,
-          hint: pe.hint,
-          errMessage: pe.message,
-        },
-      });
-      // #endregion
       this.logger.error(`assertEmailNotTaken query failed: ${error.message}`);
       throw new InternalServerErrorException('Unable to verify email availability');
     }

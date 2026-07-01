@@ -18,12 +18,14 @@ import type {
   ManagedServiceResponse,
   ServiceCategory,
   ServiceCategoryResponse,
+  ServiceSegment,
   UnassignedServicesResponse,
 } from '@sheer/domain';
 import type {
   CreateServiceCategoryDto,
   ServiceCategoryQueryDto,
   ServiceQueryDto,
+  ServiceSegmentInputDto,
   UpdateServiceCategoryDto,
   UpsertServiceDto,
 } from './dto';
@@ -59,9 +61,21 @@ interface ServiceRow {
   updated_at: string;
 }
 
+interface SegmentRow {
+  id: string;
+  business_id: string;
+  service_id: string;
+  name: string;
+  duration_minutes: number;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
 const CATEGORY_COLUMNS = 'id,business_id,name,description,color_hex,is_active,sort_order,created_at,updated_at';
 const SERVICE_COLUMNS =
   'id,business_id,location_id,name,description,service_category_id,estimated_duration_minutes,processing_time_minutes,base_price,deposit_type,deposit_value,requires_patch_test,is_active,sort_order,created_at,updated_at';
+const SEGMENT_COLUMNS = 'id,business_id,service_id,name,duration_minutes,sort_order,created_at,updated_at';
 
 @Injectable()
 export class ServicesService {
@@ -214,11 +228,16 @@ export class ServicesService {
       throw new InternalServerErrorException('Unable to load services');
     }
     const rows = data ?? [];
-    const [currencyCode, categoryNames] = await Promise.all([
+    const [currencyCode, categoryNames, segmentsByService] = await Promise.all([
       this.fetchBusinessCurrency(actor.businessId),
       this.fetchCategoryNames(actor.businessId, rows.map((row) => row.service_category_id)),
+      this.fetchSegments(actor.businessId, rows.map((row) => row.id)),
     ]);
-    return { services: rows.map((row) => toService(row, currencyCode, categoryNames)) };
+    return {
+      services: rows.map((row) =>
+        toService(row, currencyCode, categoryNames, segmentsByService.get(row.id) ?? []),
+      ),
+    };
   }
 
   async createService(actor: AuthUser, dto: UpsertServiceDto): Promise<ManagedServiceResponse> {
@@ -250,7 +269,8 @@ export class ServicesService {
       this.logger.error(`createService failed: ${error?.message ?? 'no row'}`);
       throw new InternalServerErrorException('Unable to create service');
     }
-    return this.respondWithService(actor.businessId, data);
+    await this.applySegments(actor.businessId, data.id, dto.segments);
+    return this.respondWithService(actor.businessId, data.id);
   }
 
   async updateService(actor: AuthUser, serviceId: string, dto: UpsertServiceDto): Promise<ManagedServiceResponse> {
@@ -273,7 +293,8 @@ export class ServicesService {
       throw new InternalServerErrorException('Unable to update service');
     }
     if (!data) throw new NotFoundException('Service not found');
-    return this.respondWithService(actor.businessId, data);
+    await this.applySegments(actor.businessId, data.id, dto.segments);
+    return this.respondWithService(actor.businessId, data.id);
   }
 
   async archiveService(actor: AuthUser, serviceId: string): Promise<ManagedServiceResponse> {
@@ -292,7 +313,7 @@ export class ServicesService {
       throw new InternalServerErrorException('Unable to archive service');
     }
     if (!data) throw new NotFoundException('Service not found');
-    return this.respondWithService(actor.businessId, data);
+    return this.respondWithService(actor.businessId, data.id);
   }
 
   /**
@@ -355,6 +376,8 @@ export class ServicesService {
     const missing = rows.filter((row) => !coveredServiceIds.has(row.id));
     if (missing.length === 0) return { services: [] };
 
+    // Segments are irrelevant to the unassigned-stylist warning, so they are left
+    // empty here rather than paying for an extra fetch.
     const [currencyCode, categoryNames] = await Promise.all([
       this.fetchBusinessCurrency(actor.businessId),
       this.fetchCategoryNames(actor.businessId, missing.map((row) => row.service_category_id)),
@@ -431,12 +454,88 @@ export class ServicesService {
     }
   }
 
-  private async respondWithService(businessId: string, row: ServiceRow): Promise<ManagedServiceResponse> {
-    const [currencyCode, categoryNames] = await Promise.all([
+  // Re-selects the service by id (rather than trusting a row captured before an
+  // applySegments call) so the response always reflects the post-write state,
+  // including an estimated_duration_minutes just recomputed from its segments.
+  private async respondWithService(businessId: string, serviceId: string): Promise<ManagedServiceResponse> {
+    const { data: row, error } = await this.admin
+      .schema('booking')
+      .from('services')
+      .select(SERVICE_COLUMNS)
+      .eq('id', serviceId)
+      .eq('business_id', businessId)
+      .maybeSingle<ServiceRow>();
+    if (error) {
+      this.logger.error(`respondWithService load failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load service');
+    }
+    if (!row) throw new NotFoundException('Service not found');
+    const [currencyCode, categoryNames, segmentsByService] = await Promise.all([
       this.fetchBusinessCurrency(businessId),
       this.fetchCategoryNames(businessId, [row.service_category_id]),
+      this.fetchSegments(businessId, [serviceId]),
     ]);
-    return { service: toService(row, currencyCode, categoryNames) };
+    return {
+      service: toService(row, currencyCode, categoryNames, segmentsByService.get(serviceId) ?? []),
+    };
+  }
+
+  /**
+   * Loads segments for the given services, grouped by service_id and ordered by
+   * sort_order. One query serves both the list view and single-service responses.
+   */
+  private async fetchSegments(
+    businessId: string,
+    serviceIds: string[],
+  ): Promise<Map<string, ServiceSegment[]>> {
+    const ids = Array.from(new Set(serviceIds.filter((id): id is string => Boolean(id))));
+    if (ids.length === 0) return new Map();
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('service_segments')
+      .select(SEGMENT_COLUMNS)
+      .eq('business_id', businessId)
+      .in('service_id', ids)
+      .order('sort_order', { ascending: true })
+      .returns<SegmentRow[]>();
+    if (error) {
+      this.logger.error(`fetchSegments failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load service segments');
+    }
+    const map = new Map<string, ServiceSegment[]>();
+    for (const row of data ?? []) {
+      const list = map.get(row.service_id);
+      if (list) list.push(toSegment(row));
+      else map.set(row.service_id, [toSegment(row)]);
+    }
+    return map;
+  }
+
+  /**
+   * Replaces a service's segments via the transactional RPC. Undefined leaves the
+   * existing segments untouched; an empty array clears them; a non-empty array
+   * replaces them and re-derives the service's estimated_duration_minutes. The RPC
+   * scopes every statement by (business, service) so a mismatched pair no-ops.
+   */
+  private async applySegments(
+    businessId: string,
+    serviceId: string,
+    segments: ServiceSegmentInputDto[] | undefined,
+  ): Promise<void> {
+    if (segments === undefined) return;
+    const payload = segments.map((segment) => ({
+      name: segment.name.trim(),
+      durationMinutes: segment.durationMinutes,
+    }));
+    const { error } = await this.admin.schema('booking').rpc('set_service_segments', {
+      p_business_id: businessId,
+      p_service_id: serviceId,
+      p_segments: payload,
+    });
+    if (error) {
+      this.logger.error(`set_service_segments RPC failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to save service segments');
+    }
   }
 
   private async generateServiceSlug(businessId: string, locationId: string | null, name: string): Promise<string> {
@@ -583,7 +682,12 @@ function toCategory(row: CategoryRow): ServiceCategory {
   };
 }
 
-function toService(row: ServiceRow, currencyCode: string, categoryNames?: Map<string, string>): ManagedService {
+function toService(
+  row: ServiceRow,
+  currencyCode: string,
+  categoryNames?: Map<string, string>,
+  segments: ServiceSegment[] = [],
+): ManagedService {
   return {
     id: row.id,
     businessId: row.business_id,
@@ -601,6 +705,20 @@ function toService(row: ServiceRow, currencyCode: string, categoryNames?: Map<st
     isActive: row.is_active,
     sortOrder: row.sort_order,
     currencyCode,
+    segments,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toSegment(row: SegmentRow): ServiceSegment {
+  return {
+    id: row.id,
+    businessId: row.business_id,
+    serviceId: row.service_id,
+    name: row.name,
+    durationMinutes: row.duration_minutes,
+    sortOrder: row.sort_order,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

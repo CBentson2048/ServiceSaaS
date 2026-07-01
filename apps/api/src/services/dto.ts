@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   ArrayMinSize,
   IsArray,
   IsBoolean,
@@ -14,6 +15,7 @@ import {
   Min,
   MinLength,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
 import type { ServiceDepositType } from '@sheer/domain';
 
@@ -115,6 +117,19 @@ export class ServiceQueryDto {
   includeInactive?: boolean;
 }
 
+// One ordered segment of a service (a named step with its own time).
+export class ServiceSegmentInputDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(120)
+  name!: string;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  durationMinutes!: number;
+}
+
 export class UpsertServiceDto {
   @IsString()
   @MinLength(1)
@@ -174,4 +189,14 @@ export class UpsertServiceDto {
   @IsInt()
   @Min(0)
   sortOrder?: number;
+
+  // Ordered segments to replace the service's set (array order = display order).
+  // Non-empty => estimatedDurationMinutes is derived from their sum. Empty array
+  // clears segments; omit the field to leave existing segments unchanged.
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => ServiceSegmentInputDto)
+  segments?: ServiceSegmentInputDto[];
 }

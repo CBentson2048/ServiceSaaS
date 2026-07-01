@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type SVGProps } from 'react';
+import { Fragment, useEffect, useRef, useState, type SVGProps } from 'react';
 import type {
   RotaAbsenceIndicator,
   RotaLeaveIndicator,
@@ -20,6 +20,9 @@ function CalendarEmptyIcon(props: SVGProps<SVGSVGElement>) {
 // Vertical zoom: taller hour rows make appointment blocks easier to read and
 // let the board fill the (now much wider) right-hand content area.
 const HOUR_PX = 60;
+// Each hour is ruled into four 15-minute rows to match the 15-minute booking
+// grid. QUARTER_PX is the pixel height of one 15-minute slot.
+const QUARTER_PX = HOUR_PX / 4;
 const MIN_BLOCK_PX = 30;
 const DEFAULT_START_HOUR = 9;
 const DEFAULT_END_HOUR = 18;
@@ -142,7 +145,7 @@ export function DayCalendarBoard({
   onAddBookout,
 }: DayCalendarBoardProps) {
   // A live clock so the "now" line tracks the current time. Updates once a
-  // minute — fine for a calendar that snaps to half-hour gridlines.
+  // minute — fine for a calendar ruled in 15-minute gridlines.
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const id = window.setInterval(() => setNow(new Date()), 60_000);
@@ -205,6 +208,9 @@ export function DayCalendarBoard({
   const { startHour, endHour } = resolveWindow(columns, day);
   const hours = range(startHour, endHour);
   const totalHeight = (endHour - startHour) * HOUR_PX;
+  // Internal 15-minute gridline positions. Index 0 (top edge) and the final
+  // tick (bottom edge) are skipped — the header/board borders cover those.
+  const quarterTicks = range(1, (endHour - startHour) * 4);
 
   function openSlotMenu(event: React.MouseEvent<HTMLDivElement>, column: ColumnModel) {
     if (!createEnabled || !column.staffProfileId) return;
@@ -265,15 +271,16 @@ export function DayCalendarBoard({
   return (
     <div className="min-h-0 flex-1 overflow-auto rounded-2xl border border-border bg-surface shadow-sm">
       <div ref={boardRef} className="relative flex" style={{ minWidth: minBoardWidth }}>
-        {/* Time axis */}
+        {/* Time axis — hour labels only; the 15-minute ruling lives in the
+            stylist columns, not in this rail. */}
         <div className="sticky left-0 z-30 w-16 shrink-0 border-r border-border/60 bg-surface">
           <div className={`${HEADER_HEIGHT} border-b border-border/60`} />
-          <div className="relative">
+          <div className="relative" style={{ height: totalHeight }}>
             {hours.map((hour) => (
               <div
                 key={hour}
-                style={{ height: HOUR_PX }}
-                className="border-t border-border/40 pr-2 pt-1.5 text-right text-[10px] font-medium text-text-muted"
+                style={{ top: (hour - startHour) * HOUR_PX }}
+                className="absolute right-0 pr-2 pt-1 text-right text-[10px] font-medium text-text-muted"
               >
                 {hourLabel(hour)}
               </div>
@@ -305,24 +312,11 @@ export function DayCalendarBoard({
               style={{ height: totalHeight }}
               onClick={(event) => openSlotMenu(event, column)}
             >
-              {/* Hour gridlines */}
-              {hours.map((hour, idx) => (
-                <div
-                  key={hour}
-                  style={{ height: HOUR_PX }}
-                  className={idx === 0 ? '' : 'border-t border-border/30'}
-                />
-              ))}
-
-              {/* Half-hour sub-gridlines */}
-              {hours.map((hour) => (
-                <div
-                  key={`half-${hour}`}
-                  style={{ top: (hour - startHour) * HOUR_PX + HOUR_PX / 2, height: 0 }}
-                  className="absolute inset-x-0 border-t border-dashed border-border/20"
-                  aria-hidden
-                />
-              ))}
+              {/* 15-minute gridlines. Every quarter-hour is ruled; the hour
+                  boundary reads strongest, then the half-hour, then the
+                  quarters — all in a light-black tint so appointment tiles
+                  stay dominant. */}
+              <QuarterHourGridlines ticks={quarterTicks} />
 
               {/* Working-hours shading. */}
               {column.shifts.map((shift) => {
@@ -401,8 +395,17 @@ export function DayCalendarBoard({
                     : 'rgba(16,24,40,0.66)'
                   : undefined;
                 return (
+                  <Fragment key={booking.id}>
+                  {/* Opaque backing over the appointment's slot so the 15-minute
+                      gridlines never show on a booked block (covers the tile's
+                      body and its side gutter, and shows through translucent
+                      cancelled/no-show tiles too). */}
+                  <div
+                    className="absolute bg-surface"
+                    style={{ top, height, left: `${lane * widthPct}%`, width: `${widthPct}%` }}
+                    aria-hidden
+                  />
                   <button
-                    key={booking.id}
                     type="button"
                     onClick={(event) => {
                       // Don't let a block click also open the empty-slot create menu.
@@ -448,6 +451,7 @@ export function DayCalendarBoard({
                       </span>
                     </span>
                   </button>
+                  </Fragment>
                 );
               })}
             </div>
@@ -520,6 +524,33 @@ export function DayCalendarBoard({
         ) : null}
       </div>
     </div>
+  );
+}
+
+/**
+ * Horizontal 15-minute gridlines, absolutely positioned within a relative,
+ * fixed-height container (the time axis or a stylist column). Ticks are
+ * 15-minute indices from the window start; every 4th tick is an hour
+ * boundary and every 2nd is the half-hour. Lines are drawn in a light-black
+ * tint with the hour strongest so the ruling stays subtle under tiles.
+ */
+function QuarterHourGridlines({ ticks }: { ticks: number[] }) {
+  return (
+    <>
+      {ticks.map((tick) => {
+        const isHour = tick % 4 === 0;
+        const isHalf = tick % 4 === 2;
+        const color = isHour ? 'rgba(0,0,0,0.16)' : isHalf ? 'rgba(0,0,0,0.10)' : 'rgba(0,0,0,0.06)';
+        return (
+          <div
+            key={`grid-${tick}`}
+            className="pointer-events-none absolute inset-x-0"
+            style={{ top: tick * QUARTER_PX, height: 0, borderTop: `1px solid ${color}` }}
+            aria-hidden
+          />
+        );
+      })}
+    </>
   );
 }
 

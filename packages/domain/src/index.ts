@@ -2102,6 +2102,33 @@ export interface UpdateServiceCategoryRequest {
 
 export type ServiceDepositType = 'none' | 'fixed_amount' | 'percentage';
 
+/**
+ * An ordered step within a service (e.g. "Apply colour"), with its own time to
+ * complete. When a service has segments, its total duration is the sum of its
+ * segment durations.
+ */
+export interface ServiceSegment {
+  id: string;
+  businessId: string;
+  serviceId: string;
+  name: string;
+  /** Time to complete this segment, in minutes (always ≥ 1). */
+  durationMinutes: number;
+  /** Position within the service, 0-based; the display order. */
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * A segment to persist as part of an upsert. Order is taken from the array
+ * position, so no explicit sortOrder is sent.
+ */
+export interface ServiceSegmentInput {
+  name: string;
+  durationMinutes: number;
+}
+
 /** A bookable service in the managed catalogue. */
 export interface ManagedService {
   id: string;
@@ -2124,6 +2151,11 @@ export interface ManagedService {
   isActive: boolean;
   sortOrder: number;
   currencyCode: string;
+  /**
+   * Ordered segments that make up the service. Empty when the service has no
+   * breakdown, in which case estimatedDurationMinutes is a manual value.
+   */
+  segments: ServiceSegment[];
   createdAt: string;
   updatedAt: string;
 }
@@ -2158,6 +2190,14 @@ export interface UpsertServiceRequest {
   requiresPatchTest?: boolean;
   isActive?: boolean;
   sortOrder?: number;
+  /**
+   * Ordered segments to replace the service's current set (array order = display
+   * order). When non-empty, estimatedDurationMinutes is derived server-side from
+   * the sum of these segments. An empty array clears all segments (the manual
+   * estimatedDurationMinutes then applies). Omit the field entirely to leave the
+   * service's existing segments unchanged.
+   */
+  segments?: ServiceSegmentInput[];
 }
 
 /**

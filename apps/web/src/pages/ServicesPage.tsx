@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, Link } from 'react-router-dom';
 import type { ManagedService, ServiceCategory, ServiceDepositType, UpsertServiceRequest } from '@sheer/domain';
 import {
@@ -13,6 +13,15 @@ import {
 } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
 
+// A single segment being edited in the form. `key` is a stable client-side id for
+// React lists and drag-reorder (new rows have no server id yet); `durationMinutes`
+// is kept as a string like the other inputs and parsed on save.
+interface SegmentDraft {
+  key: string;
+  name: string;
+  durationMinutes: string;
+}
+
 interface ServiceForm {
   id: string | null;
   name: string;
@@ -25,6 +34,7 @@ interface ServiceForm {
   depositValue: string;
   requiresPatchTest: boolean;
   isActive: boolean;
+  segments: SegmentDraft[];
 }
 
 const emptyForm: ServiceForm = {
@@ -39,6 +49,7 @@ const emptyForm: ServiceForm = {
   depositValue: '',
   requiresPatchTest: false,
   isActive: true,
+  segments: [],
 };
 
 export function ServicesPage() {
@@ -60,6 +71,10 @@ export function ServicesPage() {
   const [form, setForm] = useState<ServiceForm>(emptyForm);
   const [dragId, setDragId] = useState<string | null>(null);
   const [savingOrder, setSavingOrder] = useState(false);
+  const [segDragKey, setSegDragKey] = useState<string | null>(null);
+  // Monotonic counter for fresh segment keys (avoids reusing an id across adds).
+  const segKeyRef = useRef(0);
+  const nextSegmentKey = useCallback(() => `seg-${(segKeyRef.current += 1)}`, []);
 
   const reload = useCallback(async () => {
     if (!accessToken) return;
@@ -122,6 +137,14 @@ export function ServicesPage() {
     return options.sort((a, b) => a.name.localeCompare(b.name));
   }, [categories, form.serviceCategoryId]);
 
+  // When a service has segments, its duration is the live sum of them; the manual
+  // Duration field is then read-only. Empty rows count as 0 until a time is entered.
+  const hasSegments = form.segments.length > 0;
+  const segmentTotalMinutes = form.segments.reduce((sum, segment) => {
+    const minutes = Number(segment.durationMinutes);
+    return sum + (Number.isFinite(minutes) && minutes > 0 ? minutes : 0);
+  }, 0);
+
   if (auth.status === 'authenticated' && role !== 'owner' && role !== 'manager') {
     return <Navigate to="/unauthorized" replace />;
   }
@@ -145,9 +168,42 @@ export function ServicesPage() {
       depositValue: service.depositValue ? String(service.depositValue) : '',
       requiresPatchTest: service.requiresPatchTest,
       isActive: service.isActive,
+      segments: service.segments.map((segment) => ({
+        key: segment.id,
+        name: segment.name,
+        durationMinutes: String(segment.durationMinutes),
+      })),
     });
     setShowForm(true);
     setActionMessage(null);
+  }
+
+  function addSegment() {
+    setForm((current) => ({
+      ...current,
+      segments: [...current.segments, { key: nextSegmentKey(), name: '', durationMinutes: '' }],
+    }));
+  }
+
+  function updateSegment(key: string, patch: Partial<Pick<SegmentDraft, 'name' | 'durationMinutes'>>) {
+    setForm((current) => ({
+      ...current,
+      segments: current.segments.map((segment) => (segment.key === key ? { ...segment, ...patch } : segment)),
+    }));
+  }
+
+  function removeSegment(key: string) {
+    setForm((current) => ({
+      ...current,
+      segments: current.segments.filter((segment) => segment.key !== key),
+    }));
+  }
+
+  function handleSegmentDrop(targetKey: string) {
+    const sourceKey = segDragKey;
+    setSegDragKey(null);
+    if (!sourceKey || sourceKey === targetKey) return;
+    setForm((current) => ({ ...current, segments: moveByKey(current.segments, sourceKey, targetKey) }));
   }
 
   function closeForm() {
@@ -162,10 +218,32 @@ export function ServicesPage() {
       setError('Service name is required.');
       return;
     }
-    const duration = Number(form.estimatedDurationMinutes);
-    if (!Number.isFinite(duration) || duration < 1) {
-      setError('Duration must be at least 1 minute.');
-      return;
+    // With segments, the total duration is derived from their sum; without any,
+    // the manual Duration field governs (validated exactly as before).
+    const hasSegments = form.segments.length > 0;
+    let durationMinutes: number;
+    let segmentsPayload: { name: string; durationMinutes: number }[] = [];
+    if (hasSegments) {
+      const parsed = form.segments.map((segment) => ({
+        name: segment.name.trim(),
+        durationMinutes: Number(segment.durationMinutes),
+      }));
+      if (parsed.some((segment) => !segment.name)) {
+        setError('Every segment needs a name.');
+        return;
+      }
+      if (parsed.some((segment) => !Number.isInteger(segment.durationMinutes) || segment.durationMinutes < 1)) {
+        setError('Each segment must be a whole number of minutes (at least 1).');
+        return;
+      }
+      segmentsPayload = parsed;
+      durationMinutes = parsed.reduce((sum, segment) => sum + segment.durationMinutes, 0);
+    } else {
+      durationMinutes = Number(form.estimatedDurationMinutes);
+      if (!Number.isFinite(durationMinutes) || durationMinutes < 1) {
+        setError('Duration must be at least 1 minute.');
+        return;
+      }
     }
     setSaving(true);
     setError(null);
@@ -175,13 +253,16 @@ export function ServicesPage() {
         name: form.name.trim(),
         description: form.description.trim() || null,
         serviceCategoryId: form.serviceCategoryId || null,
-        estimatedDurationMinutes: duration,
+        estimatedDurationMinutes: durationMinutes,
         processingTimeMinutes: form.processingTimeMinutes ? Number(form.processingTimeMinutes) : undefined,
         basePrice: form.basePrice ? Number(form.basePrice) : 0,
         depositType: form.depositType,
         depositValue: form.depositType === 'none' ? 0 : form.depositValue ? Number(form.depositValue) : 0,
         requiresPatchTest: form.requiresPatchTest,
         isActive: form.isActive,
+        // Always sent so the set is authoritative: an empty array clears segments
+        // and lets the manual duration above apply.
+        segments: segmentsPayload,
       };
       const result = form.id
         ? await updateService(accessToken, form.id, payload)
@@ -345,13 +426,25 @@ export function ServicesPage() {
             value={form.description}
             onChange={(value) => setForm((current) => ({ ...current, description: value }))}
           />
-          <TextInput
-            label="Duration (minutes)"
-            type="number"
-            value={form.estimatedDurationMinutes}
-            onChange={(value) => setForm((current) => ({ ...current, estimatedDurationMinutes: value }))}
-            required
-          />
+          {hasSegments ? (
+            <label className="text-[12px] font-medium text-text-secondary">
+              Duration (minutes)
+              <div className="mt-1 flex h-10 w-full items-center rounded-input-lg border border-border bg-surface-alt px-3 text-[13px] text-text-primary">
+                {segmentTotalMinutes} min
+              </div>
+              <span className="mt-1 block text-[11px] font-normal text-text-muted">
+                Calculated from {form.segments.length} segment{form.segments.length === 1 ? '' : 's'}
+              </span>
+            </label>
+          ) : (
+            <TextInput
+              label="Duration (minutes)"
+              type="number"
+              value={form.estimatedDurationMinutes}
+              onChange={(value) => setForm((current) => ({ ...current, estimatedDurationMinutes: value }))}
+              required
+            />
+          )}
           <TextInput
             label="Processing time (minutes)"
             type="number"
@@ -404,6 +497,81 @@ export function ServicesPage() {
             />
             Active
           </label>
+
+          <div className="sm:col-span-2">
+            <div className="mb-1.5 flex items-center justify-between gap-3">
+              <span className="text-[12px] font-medium text-text-secondary">Segments</span>
+              {hasSegments ? (
+                <span className="inline-flex items-center rounded-pill border border-border-strong bg-surface-alt px-2.5 py-1 text-[12px] font-medium text-text-secondary">
+                  Total {segmentTotalMinutes} min · {form.segments.length} segment
+                  {form.segments.length === 1 ? '' : 's'}
+                </span>
+              ) : null}
+            </div>
+            <p className="mb-2.5 text-[12px] text-text-muted">
+              Break the service into ordered steps, each with its own time. When a service has segments its
+              duration is their sum. Drag the ⠿ handle to reorder.
+            </p>
+            {hasSegments ? (
+              <ul className="mb-2.5 flex flex-col gap-2">
+                {form.segments.map((segment, index) => (
+                  <li
+                    key={segment.key}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={() => handleSegmentDrop(segment.key)}
+                    className={`flex items-center gap-2 rounded-input-lg border border-border-strong bg-surface p-2 transition ${
+                      segDragKey === segment.key ? 'opacity-50' : ''
+                    }`}
+                  >
+                    <span
+                      draggable
+                      onDragStart={() => setSegDragKey(segment.key)}
+                      onDragEnd={() => setSegDragKey(null)}
+                      aria-label="Drag to reorder segment"
+                      className="cursor-move select-none px-1 text-[15px] leading-none text-text-muted"
+                    >
+                      ⠿
+                    </span>
+                    <span className="w-5 shrink-0 text-center text-[12px] font-medium text-text-muted">{index + 1}</span>
+                    <input
+                      type="text"
+                      value={segment.name}
+                      placeholder="Segment name"
+                      onChange={(event) => updateSegment(segment.key, { name: event.target.value })}
+                      className="h-9 min-w-0 flex-1 rounded-input-lg border border-border-strong bg-surface px-3 text-[13px] text-text-primary outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                    />
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <input
+                        type="number"
+                        min={1}
+                        value={segment.durationMinutes}
+                        placeholder="15"
+                        onChange={(event) => updateSegment(segment.key, { durationMinutes: event.target.value })}
+                        className="h-9 w-20 rounded-input-lg border border-border-strong bg-surface px-2.5 text-[13px] text-text-primary outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                      />
+                      <span className="text-[12px] text-text-muted">min</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeSegment(segment.key)}
+                      aria-label={`Remove segment${segment.name ? ` ${segment.name}` : ''}`}
+                      className="ml-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-input border border-transparent text-[14px] leading-none text-text-muted transition hover:border-danger-border hover:bg-danger-soft hover:text-danger"
+                    >
+                      ✕
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            <button
+              type="button"
+              onClick={addSegment}
+              className="inline-flex h-9 items-center justify-center gap-1 rounded-pill border border-dashed border-border-strong bg-surface px-4 text-[13px] font-medium text-text-secondary transition hover:border-primary hover:text-primary"
+            >
+              + Add segment
+            </button>
+          </div>
+
           <div className="flex items-end justify-end gap-2 sm:col-span-2">
             <button
               type="button"
@@ -492,7 +660,14 @@ export function ServicesPage() {
                   ) : null}
                   <td className="px-4 py-3 font-medium text-text-primary">{service.name}</td>
                   <td className="px-4 py-3 text-text-secondary">{service.category ?? 'Uncategorised'}</td>
-                  <td className="px-4 py-3 text-text-secondary">{service.estimatedDurationMinutes} min</td>
+                  <td className="px-4 py-3 text-text-secondary">
+                    {service.estimatedDurationMinutes} min
+                    {service.segments.length > 0 ? (
+                      <span className="ml-1.5 text-[12px] text-text-muted">
+                        · {service.segments.length} segment{service.segments.length === 1 ? '' : 's'}
+                      </span>
+                    ) : null}
+                  </td>
                   <td className="px-4 py-3 text-text-secondary">
                     {formatMoney(service.basePrice, service.currencyCode)}
                   </td>
@@ -558,6 +733,18 @@ function moveItem<T extends { id: string }>(list: T[], fromId: string, toId: str
   const from = list.findIndex((item) => item.id === fromId);
   const to = list.findIndex((item) => item.id === toId);
   if (from === -1 || to === -1 || from === to) return null;
+  const next = [...list];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return next;
+}
+
+// Segment drafts reorder on their client `key` (they have no server id yet).
+// Returns the list unchanged on a no-op so setForm stays idempotent.
+function moveByKey(list: SegmentDraft[], fromKey: string, toKey: string): SegmentDraft[] {
+  const from = list.findIndex((item) => item.key === fromKey);
+  const to = list.findIndex((item) => item.key === toKey);
+  if (from === -1 || to === -1 || from === to) return list;
   const next = [...list];
   const [moved] = next.splice(from, 1);
   next.splice(to, 0, moved);

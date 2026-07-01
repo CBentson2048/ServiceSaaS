@@ -238,7 +238,16 @@
       "Bash(node -e \"const w=require\\('./apps/web/package.json'\\);const m=require\\('./apps/sheer-app/package.json'\\);console.log\\('web domain:',\\(w.dependencies||{}\\)['@sheer/domain']\\);console.log\\('mobile domain:',\\(m.dependencies||{}\\)['@sheer/domain']\\)\")",
       "Bash(node -e \"const p=require\\('./apps/api/package.json'\\);console.log\\('api test:',p.scripts.test\\);console.log\\('jest?',!!\\(p.devDependencies&&\\(p.devDependencies.jest||p.devDependencies.vitest\\)\\), p.devDependencies&&p.devDependencies.vitest?'vitest':'jest'\\)\")",
       "Bash(pnpm --filter @sheer/api run test)",
-      "Bash(python3 -c \"import sys,json; print\\(json.dumps\\(json.load\\(sys.stdin\\).get\\('scripts',{}\\),indent=2\\)\\)\")"
+      "Bash(python3 -c \"import sys,json; print\\(json.dumps\\(json.load\\(sys.stdin\\).get\\('scripts',{}\\),indent=2\\)\\)\")",
+      "Bash(node -e \"const p=require\\('./packages/domain/package.json'\\); console.log\\(JSON.stringify\\(p.scripts,null,2\\)\\); console.log\\('main:',p.main,'types:',p.types\\)\")",
+      "Bash(node -e \"const p=require\\('./apps/api/package.json'\\); console.log\\(JSON.stringify\\(p.scripts,null,2\\)\\)\")",
+      "Bash(node -e \"const p=require\\('./apps/web/package.json'\\); console.log\\(JSON.stringify\\(p.scripts,null,2\\)\\)\")",
+      "Bash(echo \"web tsc -b exit: $?\")",
+      "Bash(echo \"api tsc -b exit: $?\")",
+      "Bash(ls apps/api/src/services/)",
+      "Bash(grep -rln \"services.service\\\\|ServicesService\\\\|respondWithService\" apps/api/src --include='*.spec.ts')",
+      "Bash(echo \"web eslint exit: $?\")",
+      "Bash(echo \"api eslint exit: $?\")"
     ],
     "additionalDirectories": [
       "/Users/shiny/Documents/Sheer/sheer-platform/apps/web/src/auth",
