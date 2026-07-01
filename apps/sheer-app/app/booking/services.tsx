@@ -3,6 +3,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Redirect, router } from 'expo-router';
 import type {
+  PublicBookingAvailabilitySlot,
   PublicBookingServiceSummary,
   PublicBookingStylistSummary,
   PublicBookingUpgradeSuggestion,
@@ -27,6 +28,12 @@ export default function BookingServicesScreen() {
   const [stylists, setStylists] = useState<PublicBookingStylistSummary[]>([]);
   const [stylistsLoading, setStylistsLoading] = useState(false);
   const [stylistsError, setStylistsError] = useState<string | null>(null);
+
+  // Resolving the soonest slot for a "Next available" booking — mirrors the web
+  // flow: auto-pick the earliest slot across the lookahead window and skip the
+  // date/time calendar entirely.
+  const [resolving, setResolving] = useState(false);
+  const [resolveError, setResolveError] = useState<string | null>(null);
 
   const location = draft.location;
   const selectedIds = useMemo(() => new Set(draft.services.map((service) => service.id)), [draft.services]);
@@ -94,6 +101,12 @@ export default function BookingServicesScreen() {
     void loadStylists();
   }, [loadStylists]);
 
+  // A changed service/stylist selection invalidates any stale "no availability"
+  // message left over from a previous Next-available attempt.
+  useEffect(() => {
+    setResolveError(null);
+  }, [serviceIdsKey, draft.staffRequestMode, draft.stylist]);
+
   if (!location) return <Redirect href="/booking/location" />;
 
   function toggleService(service: PublicBookingServiceSummary) {
@@ -133,8 +146,42 @@ export default function BookingServicesScreen() {
   const stylistChosen = draft.staffRequestMode === 'next_available' || Boolean(draft.stylist);
   const canContinue = hasServices && !missing && stylistChosen;
 
-  function continueToDateTime() {
-    if (canContinue) router.push('/booking/date-time');
+  // A specific stylist routes through the date/time picker. "Next available"
+  // matches the web flow: resolve the soonest slot across the lookahead window
+  // right here and jump straight to review, skipping the calendar.
+  async function continueFromServices() {
+    if (!canContinue || resolving) return;
+    if (draft.staffRequestMode !== 'next_available') {
+      router.push('/booking/date-time');
+      return;
+    }
+    if (!accessToken || !location) return;
+    setResolving(true);
+    setResolveError(null);
+    try {
+      const { dateFrom, dateTo } = nextAvailableSearchRange();
+      const result = await api.getMobileBookingAvailability(accessToken, {
+        locationId: location.id,
+        serviceIds: draft.services.map((service) => service.id),
+        nextAvailable: true,
+        dateFrom,
+        dateTo,
+      });
+      const slot = earliestSlot(result.slots);
+      if (!slot) {
+        setResolveError('No upcoming availability was found. Try a specific stylist or different services.');
+        return;
+      }
+      // Resolve the stylist behind the picked slot so the review totals + deposit
+      // reflect that stylist's prices — what the server will actually charge.
+      const resolved = result.stylists?.find((stylist) => stylist.staffProfileId === slot.staffProfileId);
+      updateDraft({ selectedSlot: slot, slotServicePrices: resolved?.servicePrices });
+      router.push('/booking/review');
+    } catch (err) {
+      setResolveError(err instanceof Error ? err.message : 'Could not find the next available slot.');
+    } finally {
+      setResolving(false);
+    }
   }
 
   return (
@@ -278,7 +325,11 @@ export default function BookingServicesScreen() {
 
         {/* ── Pinned footer ── */}
         <SafeAreaView edges={['bottom']} style={s.footer}>
-          {hasServices ? (
+          {resolveError ? (
+            <Text style={s.footerError} numberOfLines={2}>
+              {resolveError}
+            </Text>
+          ) : hasServices ? (
             <Text style={s.footerHint} numberOfLines={1}>
               {draft.services.length} service{draft.services.length === 1 ? '' : 's'} ·{' '}
               {formatDuration(totalDuration(draft.services))} ·{' '}
@@ -288,11 +339,32 @@ export default function BookingServicesScreen() {
           ) : (
             <Text style={s.footerHintMuted}>Pick at least one service to continue</Text>
           )}
-          <AppButton label="Continue  →" disabled={!canContinue} onPress={continueToDateTime} />
+          <AppButton
+            label={resolving ? 'Finding next available…' : 'Continue  →'}
+            disabled={!canContinue || resolving}
+            onPress={() => void continueFromServices()}
+          />
         </SafeAreaView>
       </SafeAreaView>
     </ProtectedScreen>
   );
+}
+
+// ── Next-available resolution helpers ───────────────────────────────────────────
+
+/** Lookahead window for the soonest-slot search (mirrors the web booking flow). */
+function nextAvailableSearchRange(): { dateFrom: string; dateTo: string } {
+  const from = new Date();
+  const to = new Date(from);
+  to.setDate(to.getDate() + 60);
+  return { dateFrom: from.toISOString(), dateTo: to.toISOString() };
+}
+
+/** The earliest slot by start time (the server already sorts; sort again defensively). */
+function earliestSlot(
+  slots: PublicBookingAvailabilitySlot[],
+): PublicBookingAvailabilitySlot | undefined {
+  return [...slots].sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())[0];
 }
 
 // ── Service card (2-col grid) ───────────────────────────────────────────────────
@@ -576,4 +648,5 @@ const s = StyleSheet.create({
   },
   footerHint: { color: BRAND_LIGHT, fontSize: 12, fontWeight: '700', textAlign: 'center' },
   footerHintMuted: { color: 'rgba(255,255,255,0.4)', fontSize: 12, fontWeight: '600', textAlign: 'center' },
+  footerError: { color: palette.danger[300], fontSize: 12, fontWeight: '700', textAlign: 'center' },
 });

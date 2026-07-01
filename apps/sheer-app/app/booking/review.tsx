@@ -41,7 +41,15 @@ export default function BookingReviewScreen() {
 
   if (!location) return <Redirect href="/booking/location" />;
   if (draft.services.length === 0) return <Redirect href="/booking/services" />;
-  if (!slot) return <Redirect href="/booking/date-time" />;
+  // A next-available booking has no calendar step — if the slot is missing
+  // (deep-link / stale state) send the client back to services to re-resolve it,
+  // rather than the date/time picker they intentionally skipped.
+  if (!slot)
+    return (
+      <Redirect
+        href={draft.staffRequestMode === 'next_available' ? '/booking/services' : '/booking/date-time'}
+      />
+    );
 
   // Per-stylist prices for the stylist resolved for the picked slot (base prices
   // before a slot is picked). Both the price AND the deposit follow these — the
