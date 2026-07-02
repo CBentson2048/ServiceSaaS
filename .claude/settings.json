@@ -247,7 +247,8 @@
       "Bash(ls apps/api/src/services/)",
       "Bash(grep -rln \"services.service\\\\|ServicesService\\\\|respondWithService\" apps/api/src --include='*.spec.ts')",
       "Bash(echo \"web eslint exit: $?\")",
-      "Bash(echo \"api eslint exit: $?\")"
+      "Bash(echo \"api eslint exit: $?\")",
+      "Bash(xargs ls -la)"
     ],
     "additionalDirectories": [
       "/Users/shiny/Documents/Sheer/sheer-platform/apps/web/src/auth",

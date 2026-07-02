@@ -263,7 +263,7 @@ export class CrmService {
     if (search) {
       const escaped = escapeIlike(search);
       request = request.or(
-        `first_name.ilike.%${escaped}%,last_name.ilike.%${escaped}%,email.ilike.%${escaped}%,phone.ilike.%${escaped}%`,
+        `first_name.ilike.%${escaped}%,last_name.ilike.%${escaped}%,email.ilike.%${escaped}%,phone.ilike.%${escaped}%,client_code.ilike.%${escaped}%`,
       );
     }
 

@@ -217,7 +217,7 @@ export function CrmClientsPage() {
       >
         <input
           type="search"
-          placeholder="Search by name, phone, or email"
+          placeholder="Search by name, phone, email, or Q code"
           value={search}
           onChange={(event) => {
             setSearch(event.target.value);

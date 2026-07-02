@@ -279,8 +279,10 @@ export function DayCalendarBoard({
             {hours.map((hour) => (
               <div
                 key={hour}
+                // Centre the label on its hour line (leading-none avoids the
+                // inherited 1.5 line-height that otherwise drifts it toward :15).
                 style={{ top: (hour - startHour) * HOUR_PX }}
-                className="absolute right-0 pr-2 pt-1 text-right text-[10px] font-medium text-text-muted"
+                className="absolute right-0 -translate-y-1/2 pr-2 text-right text-[10px] font-medium leading-none text-text-muted"
               >
                 {hourLabel(hour)}
               </div>
