@@ -341,6 +341,7 @@ export function TeamPage() {
                   <StaffRow
                     key={member.userProfileId}
                     member={member}
+                    isCurrentUser={auth.user?.id === member.userProfileId}
                     busy={busyUserId === member.userProfileId}
                     onEdit={() => setEditingStaff(member)}
                     onDeactivate={() => handleDeactivate(member)}
@@ -385,12 +386,14 @@ export function TeamPage() {
 
 function StaffRow({
   member,
+  isCurrentUser,
   busy,
   onEdit,
   onDeactivate,
   onReactivate,
 }: {
   member: StaffMember;
+  isCurrentUser: boolean;
   busy: boolean;
   onEdit: () => void;
   onDeactivate: () => void;
@@ -450,7 +453,20 @@ function StaffRow({
       <td className="px-4 py-3 text-right">
         <div className="inline-flex items-center justify-end gap-1.5">
           {isOwner ? (
-            <span className="text-[12px] text-text-muted">Owner — protected</span>
+            // The owner can edit their OWN row to take the stylist role, but
+            // never deactivate themselves and never touch another owner.
+            isCurrentUser ? (
+              <button
+                type="button"
+                className="h-8 rounded-pill border border-border-strong bg-surface px-3 text-[12px] font-medium text-text-secondary transition hover:bg-surface-alt disabled:opacity-60"
+                onClick={onEdit}
+                disabled={busy}
+              >
+                Edit
+              </button>
+            ) : (
+              <span className="text-[12px] text-text-muted">Owner — protected</span>
+            )
           ) : (
             <>
               <button

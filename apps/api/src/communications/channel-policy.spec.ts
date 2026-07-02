@@ -106,8 +106,23 @@ describe('resolveChannelPlan (WhatsApp → Email → SMS, preference picks the s
     });
   });
 
-  it('does not deliver to an SMS-preferring client when SMS is disabled', () => {
-    expect(resolveChannelPlan(settings(), 'sms', phoneOnly).deliverable).toBe(false);
+  it('SMS preference delivers SMS as PRIMARY without the smsFallbackEnabled toggle (explicit choice)', () => {
+    // smsFallbackEnabled is OFF here; an explicit SMS preference still gets SMS, mirroring email.
+    expect(resolveChannelPlan(settings(), 'sms', phoneOnly)).toEqual({
+      deliverable: true,
+      primary: 'sms',
+      fallbacks: [],
+    });
+  });
+
+  it('SMS-preferring client is undeliverable only when they have no valid phone', () => {
+    expect(resolveChannelPlan(settings(), 'sms', emailOnly).deliverable).toBe(false);
+  });
+
+  it('does NOT add SMS as a downstream fallback without the smsFallbackEnabled toggle', () => {
+    // WhatsApp-preferring: SMS is only a fallback here, so it still requires the toggle.
+    const plan = resolveChannelPlan(settings({ emailFallbackEnabled: true }), 'whatsapp', reachable);
+    expect(plan).toEqual({ deliverable: true, primary: 'whatsapp', fallbacks: ['email'] });
   });
 
   it('routes a no-phone WhatsApp-preferring client to Email when email is enabled + valid', () => {

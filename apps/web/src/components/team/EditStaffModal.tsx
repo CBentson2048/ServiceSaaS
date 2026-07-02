@@ -94,9 +94,16 @@ export function EditStaffModal({
     const roles = staff.roles.filter(
       (r): r is InvitableRole => r === 'manager' || r === 'stylist',
     );
+    // An owner editing themselves keeps owner access implicitly. Their staff
+    // roles start from whatever they already hold (possibly none = owner-only),
+    // and they pick which location the stylist role attaches to — auto-selected
+    // for a single-location business, blank (forces a choice) when there's more.
+    const editingOwner = staff.roles.includes('owner');
     setForm({
-      roles: roles.length > 0 ? roles : ['stylist'],
-      locationId: staff.location?.id ?? locations[0]?.id ?? '',
+      roles: roles.length > 0 ? roles : editingOwner ? [] : ['stylist'],
+      locationId:
+        staff.location?.id ??
+        (editingOwner && locations.length > 1 ? '' : locations[0]?.id ?? ''),
       membershipStatus:
         staff.membershipStatus === 'suspended' || staff.membershipStatus === 'revoked'
           ? staff.membershipStatus
@@ -153,23 +160,35 @@ export function EditStaffModal({
     );
   }
 
+  // Owners editing themselves keep owner access; they can only add/drop the
+  // stylist role at a location (Manager is redundant for an owner, so it's
+  // hidden). An owner may also drop to owner-only (no staff roles).
+  const isOwner = staff.roles.includes('owner');
+  const roleOptions: InvitableRole[] = isOwner ? ['stylist'] : ['manager', 'stylist'];
+
   function validate(values: EditForm): Record<string, string> {
     const next: Record<string, string> = {};
-    if (values.roles.length === 0) next.roles = 'Select at least one role';
-    if (!values.locationId) next.locationId = 'Pick a location';
-    if (values.colorHex && !/^#[0-9A-Fa-f]{6}$/.test(values.colorHex.trim()))
-      next.colorHex = 'Use a #RRGGBB hex colour';
-    if (Number.isNaN(Number(values.hourlyRate)) || Number(values.hourlyRate) < 0)
-      next.hourlyRate = 'Use a non-negative number';
-    if (Number.isNaN(Number(values.contractedHours)) || Number(values.contractedHours) < 0 || Number(values.contractedHours) > 168)
-      next.contractedHours = 'Use 0-168 hours';
-    if (Number.isNaN(Number(values.averageBillBenchmark)) || Number(values.averageBillBenchmark) < 0)
-      next.averageBillBenchmark = 'Use a non-negative number';
-    const badPrice = values.selectedServiceIds.some((id) => {
-      const raw = values.servicePrices[id]?.trim();
-      return raw ? Number.isNaN(Number(raw)) || Number(raw) < 0 : false;
-    });
-    if (badPrice) next.servicePrices = 'Enter valid, non-negative prices (leave blank to use the base price)';
+    if (!isOwner && values.roles.length === 0) next.roles = 'Select at least one role';
+    if (values.roles.length > 0 && !values.locationId) next.locationId = 'Pick a location';
+    // The fields below are stylist-only: they're rendered AND submitted solely
+    // when the stylist role is selected. Only validate them then, or a stale
+    // (now-hidden) value would silently block an owner/manager-only save with no
+    // visible error to correct.
+    if (values.roles.includes('stylist')) {
+      if (values.colorHex && !/^#[0-9A-Fa-f]{6}$/.test(values.colorHex.trim()))
+        next.colorHex = 'Use a #RRGGBB hex colour';
+      if (Number.isNaN(Number(values.hourlyRate)) || Number(values.hourlyRate) < 0)
+        next.hourlyRate = 'Use a non-negative number';
+      if (Number.isNaN(Number(values.contractedHours)) || Number(values.contractedHours) < 0 || Number(values.contractedHours) > 168)
+        next.contractedHours = 'Use 0-168 hours';
+      if (Number.isNaN(Number(values.averageBillBenchmark)) || Number(values.averageBillBenchmark) < 0)
+        next.averageBillBenchmark = 'Use a non-negative number';
+      const badPrice = values.selectedServiceIds.some((id) => {
+        const raw = values.servicePrices[id]?.trim();
+        return raw ? Number.isNaN(Number(raw)) || Number(raw) < 0 : false;
+      });
+      if (badPrice) next.servicePrices = 'Enter valid, non-negative prices (leave blank to use the base price)';
+    }
     return next;
   }
 
@@ -185,7 +204,10 @@ export function EditStaffModal({
     const isStylist = form.roles.includes('stylist');
     const payload: UpdateStaffMemberRequest = {
       roles: form.roles,
-      locationId: form.locationId,
+      // Omit when blank so an owner-only save (no location picked yet) doesn't
+      // trip the endpoint's UUID validation; validate() guarantees a location
+      // whenever a role is selected.
+      locationId: form.locationId || undefined,
       membershipStatus: form.membershipStatus,
       displayName: isStylist ? form.displayName.trim() || undefined : undefined,
       colorHex: isStylist ? form.colorHex.trim() || undefined : undefined,
@@ -219,8 +241,12 @@ export function EditStaffModal({
     <Modal
       open={open}
       onClose={onClose}
-      title={`Edit ${staff.fullName || staff.email}`}
-      description="Owners can change roles, location, and membership status."
+      title={isOwner ? 'Your stylist role' : `Edit ${staff.fullName || staff.email}`}
+      description={
+        isOwner
+          ? 'Take the stylist role at one of your locations so you can be booked. You keep full owner access.'
+          : 'Owners can change roles, location, and membership status.'
+      }
       footer={
         <>
           <button
@@ -247,7 +273,15 @@ export function EditStaffModal({
           <div>
             <span className="mb-1.5 block text-[12px] font-medium text-text-secondary">Roles</span>
             <div className="flex flex-wrap gap-2">
-              {(['manager', 'stylist'] as InvitableRole[]).map((roleOption) => {
+              {isOwner ? (
+                <span
+                  className="inline-flex items-center gap-2 rounded-pill border border-border-strong bg-surface-alt px-3 py-1.5 text-[13px] capitalize text-text-secondary"
+                  title="Owner access can't be removed here"
+                >
+                  Owner
+                </span>
+              ) : null}
+              {roleOptions.map((roleOption) => {
                 const checked = form.roles.includes(roleOption);
                 return (
                   <label
@@ -280,7 +314,9 @@ export function EditStaffModal({
               <p className="mt-1 text-[12px] text-danger">{errors.roles}</p>
             ) : (
               <p className="mt-1 text-[12px] text-text-secondary">
-                A member can hold both roles at their location.
+                {isOwner
+                  ? 'Turn on Stylist to be bookable at the selected location. Turn it off to stay owner-only.'
+                  : 'A member can hold both roles at their location.'}
               </p>
             )}
           </div>
@@ -289,22 +325,26 @@ export function EditStaffModal({
             value={form.locationId}
             onValueChange={(v) => setForm({ ...form, locationId: v })}
             options={locationOptions}
+            placeholder="Select a location"
             error={errors.locationId}
+            hint={isOwner ? "The location you'll take appointments at as a stylist." : undefined}
           />
-          <SelectField
-            label="Membership status"
-            value={form.membershipStatus}
-            onValueChange={(v) =>
-              setForm({ ...form, membershipStatus: v as EditForm['membershipStatus'] })
-            }
-            options={[
-              { value: 'active', label: 'Active' },
-              { value: 'suspended', label: 'Suspended' },
-              { value: 'revoked', label: 'Revoked' },
-            ]}
-            className="sm:col-span-2"
-            hint="Suspended team members keep their history but cannot sign in until reactivated."
-          />
+          {isOwner ? null : (
+            <SelectField
+              label="Membership status"
+              value={form.membershipStatus}
+              onValueChange={(v) =>
+                setForm({ ...form, membershipStatus: v as EditForm['membershipStatus'] })
+              }
+              options={[
+                { value: 'active', label: 'Active' },
+                { value: 'suspended', label: 'Suspended' },
+                { value: 'revoked', label: 'Revoked' },
+              ]}
+              className="sm:col-span-2"
+              hint="Suspended team members keep their history but cannot sign in until reactivated."
+            />
+          )}
         </div>
 
         {form.roles.includes('stylist') ? (

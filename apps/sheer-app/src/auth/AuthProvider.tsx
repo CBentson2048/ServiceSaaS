@@ -20,6 +20,11 @@ interface AuthState {
   session: AuthSession | null;
   signIn: (email: string, password: string) => Promise<AuthUser>;
   signOut: () => Promise<void>;
+  // Patch the in-memory auth user so surfaces that read auth.user (e.g. the
+  // booking review's communication preference) reflect a just-saved profile
+  // change without waiting for a re-bootstrap. Only the session is persisted;
+  // getCurrentUser re-fetches the authoritative user on next launch.
+  updateUser: (patch: Partial<AuthUser>) => void;
 }
 
 const AuthContext = createContext<AuthState | undefined>(undefined);
@@ -107,9 +112,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await authApi.logout(currentSession?.accessToken, currentSession?.refreshToken).catch(() => undefined);
   }, [clearSession, session]);
 
+  const updateUser = useCallback((patch: Partial<AuthUser>) => {
+    setUser((current) => (current ? { ...current, ...patch } : current));
+  }, []);
+
   const value = useMemo<AuthState>(
-    () => ({ status, user, session, signIn, signOut }),
-    [session, signIn, signOut, status, user],
+    () => ({ status, user, session, signIn, signOut, updateUser }),
+    [session, signIn, signOut, status, updateUser, user],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

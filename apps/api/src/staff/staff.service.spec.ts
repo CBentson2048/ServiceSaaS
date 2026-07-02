@@ -13,6 +13,43 @@
  *   - cover guard rails (assertOwner / location-in-business / no double invite).
  */
 
+import { staleMembershipIds } from './staff.service';
+
+// Pure guard behind the owner+stylist feature: an owner may take the stylist
+// role on themselves via the Team page, and syncing their manager/stylist role
+// SET must NEVER delete their (business-wide) owner membership. This is the one
+// catastrophic path — losing ownership mid-request — so it is unit-tested for
+// real rather than left as an integration `it.todo`.
+describe('staleMembershipIds', () => {
+  const owner = { id: 'm-owner', role: 'owner' as const };
+  const stylist = { id: 'm-stylist', role: 'stylist' as const };
+  const manager = { id: 'm-manager', role: 'manager' as const };
+
+  it('never removes the owner membership, even when only stylist is kept', () => {
+    // Owner adds the stylist role: keptIds holds the (new/updated) stylist row.
+    const result = staleMembershipIds([owner, stylist], new Set([stylist.id]));
+    expect(result).toEqual([]);
+  });
+
+  it('never removes the owner membership when the owner drops to owner-only', () => {
+    // Owner turns stylist OFF: nothing is kept, but the owner row survives and
+    // only the stylist row is deleted.
+    const result = staleMembershipIds([owner, stylist], new Set());
+    expect(result).toEqual([stylist.id]);
+  });
+
+  it('removes non-owner roles that are no longer desired', () => {
+    // Regular member drops manager, keeps stylist.
+    const result = staleMembershipIds([manager, stylist], new Set([stylist.id]));
+    expect(result).toEqual([manager.id]);
+  });
+
+  it('keeps every membership whose id is in keptIds', () => {
+    const result = staleMembershipIds([manager, stylist], new Set([manager.id, stylist.id]));
+    expect(result).toEqual([]);
+  });
+});
+
 describe('StaffService — invitations', () => {
   it.todo('owner can create a stylist invitation for a location in their business');
   it.todo('owner can create a manager invitation for a location in their business');
@@ -53,7 +90,7 @@ describe('StaffService — staff management', () => {
   it.todo('owner can change role between manager and stylist');
   it.todo('owner can change location to another location in the same business');
   it.todo('cannot promote a member to owner via update');
-  it.todo('cannot edit owner accounts via the staff endpoint');
+  it.todo("cannot edit ANOTHER owner's account via the staff endpoint (self-edit is allowed)");
   it.todo('deactivateStaff sets membership status to suspended');
   it.todo('reactivateStaff sets membership status to active');
   it.todo('listStaff returns memberships hydrated with profiles, staffProfiles, and locations');
@@ -78,9 +115,26 @@ describe('StaffService — multi-role members', () => {
   it.todo('update that drops stylist removes the stylist membership and keeps manager');
   it.todo('removing the stylist role downgrades the staff profile to non-bookable (kept for history)');
   it.todo('adding the stylist role (re)creates a bookable staff profile, preserving existing fields');
-  it.todo('update with empty roles[] is rejected (a member must keep at least one role)');
+  it.todo('update with empty roles[] is rejected for a NON-owner member (must keep at least one role)');
   it.todo('changing location moves ALL of the member\'s role memberships to the new location');
   it.todo('status-only update (deactivate/reactivate) applies to every role the member holds');
   it.todo('updating a member never touches their owner membership and cannot grant owner');
   it.todo('existing membership activated_at is preserved across edits');
+});
+
+describe('StaffService — owner as stylist (self-service)', () => {
+  // An owner may take the stylist role at one of their locations via the Team
+  // page (owner + stylist), keeping full owner access. See staleMembershipIds
+  // for the unit-tested owner-preservation guard.
+  it.todo('owner editing THEMSELVES with roles:[stylist] adds a stylist membership at the chosen location');
+  it.todo('owner self-edit keeps the owner membership row (location_id stays NULL) — never deleted');
+  it.todo('owner self-edit with roles:[stylist] creates a bookable staff_profile at the chosen location');
+  it.todo('owner reverting to owner-only (roles:[]) removes the stylist membership but keeps ownership');
+  it.todo('owner reverting to owner-only downgrades the staff profile to non-bookable (kept for history)');
+  it.todo('owner self-edit ignores membershipStatus and always runs active (owner cannot deactivate self)');
+  it.todo('owner-only self-edit (empty roles) does NOT require a location');
+  it.todo('stylist self-edit requires a location that belongs to the business');
+  it.todo('an owner editing a DIFFERENT owner is still rejected (403)');
+  it.todo('a non-owner cannot reach the endpoint (assertOwner / RequireRoles)');
+  it.todo('after taking stylist, findStaffMember returns roles [owner, stylist] with primaryRole owner');
 });

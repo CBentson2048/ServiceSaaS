@@ -103,10 +103,25 @@ export function ProfilePage() {
       setProfile(result.profile);
       setForm(next);
       setInitialForm(next);
-      // Push the new timezone into the live session so the navbar clock and
-      // other timezone-aware surfaces update without a re-login.
-      if (auth.session && auth.user && auth.user.timezone !== next.timezone) {
-        auth.applyAuthenticatedSession(auth.session, { ...auth.user, timezone: next.timezone });
+      // Push the saved fields into the live session so surfaces that read the
+      // in-memory auth user update without a re-login: the navbar clock reads
+      // timezone, and the booking flow seeds its communication preference from
+      // auth.user.clientCommunicationPreference (LoginPage/ClientBookingReviewPage).
+      if (auth.session && auth.user) {
+        const isClient = result.profile.identity.role === 'client';
+        const nextUser = {
+          ...auth.user,
+          timezone: next.timezone,
+          clientCommunicationPreference: isClient
+            ? next.communicationPreference
+            : auth.user.clientCommunicationPreference,
+        };
+        if (
+          nextUser.timezone !== auth.user.timezone ||
+          nextUser.clientCommunicationPreference !== auth.user.clientCommunicationPreference
+        ) {
+          auth.applyAuthenticatedSession(auth.session, nextUser);
+        }
       }
       setMessage('Your profile has been updated.');
     } catch (err) {

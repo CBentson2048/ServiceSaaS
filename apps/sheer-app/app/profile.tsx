@@ -120,6 +120,15 @@ export default function ProfileScreen() {
         bio: profile.staffProfile ? form.bio.trim() || null : undefined,
       });
       setProfile(result.profile);
+      // Sync the saved preference into the live auth user so the booking review
+      // (which reads auth.user.clientCommunicationPreference for both the shown
+      // preference and the submitted booking) reflects it without an app restart.
+      if (isClient) {
+        auth.updateUser({
+          clientCommunicationPreference:
+            result.profile.clientProfile?.communicationPreference ?? form.communicationPreference,
+        });
+      }
       setEditing(false);
       setForm(null);
       setSaveSuccess(true);

@@ -37,7 +37,8 @@ const CANONICAL_ORDER: DeliveryChannel[] = ['whatsapp', 'email', 'sms'];
  *      • WhatsApp: the location lists `whatsapp` in `enabledChannels` and the client has a valid phone.
  *      • Email:    the client has a valid email AND (the client *prefers* email — their explicit
  *                  primary, no toggle needed — OR `emailFallbackEnabled` for email as a fallback).
- *      • SMS:      `smsFallbackEnabled` and the client has a valid phone.
+ *      • SMS:      the client has a valid phone AND (the client *prefers* SMS — their explicit
+ *                  primary, no toggle needed — OR `smsFallbackEnabled` for SMS as a fallback).
  *  - The first surviving channel is the `primary`; the rest (in order) are the lazy `fallbacks`.
  *
  * Pure and synchronous so the scheduler (to pick the primary channel) and the dispatcher / delivery
@@ -54,13 +55,16 @@ export function resolveChannelPlan(
 
   const startIndex = preferenceStartIndex(preference);
   const prefersEmail = CANONICAL_ORDER[startIndex] === 'email';
+  const prefersSms = CANONICAL_ORDER[startIndex] === 'sms';
 
   const available: Record<DeliveryChannel, boolean> = {
     whatsapp: settings.enabledChannels.includes('whatsapp') && contact.phoneValid,
     // Email is usable as the client's PRIMARY when they explicitly prefer it (no toggle needed);
     // `emailFallbackEnabled` additionally allows email as a downstream fallback after WhatsApp.
     email: contact.emailValid && (prefersEmail || settings.emailFallbackEnabled === true),
-    sms: settings.smsFallbackEnabled === true && contact.phoneValid,
+    // SMS mirrors email: usable as the client's PRIMARY when they explicitly prefer it (no toggle
+    // needed); `smsFallbackEnabled` additionally allows SMS as a downstream fallback.
+    sms: contact.phoneValid && (prefersSms || settings.smsFallbackEnabled === true),
   };
 
   const chain = CANONICAL_ORDER.slice(startIndex).filter((c) => available[c]);

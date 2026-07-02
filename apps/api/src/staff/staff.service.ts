@@ -513,50 +513,62 @@ export class StaffService {
     input: UpdateStaffMemberRequest,
   ): Promise<UpdateStaffMemberResponse> {
     this.assertOwner(actor);
-    if (targetUserId === actor.id) {
-      throw new ForbiddenException('Owners cannot edit their own membership through this endpoint');
-    }
+    const isSelf = targetUserId === actor.id;
 
     const memberships = await this.fetchUserMemberships(actor.businessId, targetUserId);
     if (memberships.length === 0) {
       throw new NotFoundException('Staff member not found');
     }
-    if (memberships.some((m) => m.role === 'owner')) {
+    // An owner may edit their OWN account — to add or drop the stylist role at a
+    // location they work from — but never another owner's account. The owner
+    // membership itself is always preserved (see syncMembershipRoles).
+    const targetIsOwner = memberships.some((m) => m.role === 'owner');
+    if (targetIsOwner && !isSelf) {
       throw new ForbiddenException('Owner accounts cannot be modified via the staff endpoint');
     }
 
     // Desired role SET at the member's (single) location. A member can hold both
-    // manager and stylist. Default to the current roles when the caller only
-    // changes status/location (e.g. deactivate/reactivate).
+    // manager and stylist. When `roles` is omitted, keep the current roles (e.g.
+    // deactivate/reactivate only touch status). An explicitly empty set means "no
+    // staff roles" — valid only for an owner reverting to owner-only.
     const currentRoles = memberships
       .map((m) => m.role)
       .filter((r): r is InvitableRole => r === 'manager' || r === 'stylist');
-    const desiredRoles = Array.from(
-      new Set(input.roles && input.roles.length > 0 ? input.roles : currentRoles),
-    );
-    if (desiredRoles.length === 0) {
-      throw new BadRequestException('Select at least one role');
-    }
+    const desiredRoles = Array.from(new Set(input.roles ?? currentRoles));
     for (const role of desiredRoles) {
       if (role !== 'manager' && role !== 'stylist') {
         throw new BadRequestException('Roles must be manager or stylist');
       }
     }
+    if (desiredRoles.length === 0 && !targetIsOwner) {
+      throw new BadRequestException('Select at least one role');
+    }
 
+    // A location is only required while the member keeps a location-scoped staff
+    // role. An owner dropping to owner-only needs none — their owner row is
+    // business-wide (location_id NULL).
     const newLocationId =
       input.locationId ?? memberships.find((m) => m.location_id)?.location_id ?? undefined;
-    if (!newLocationId) throw new BadRequestException('Location is required for staff');
-    await this.assertLocationInBusiness(actor.businessId, newLocationId);
+    if (desiredRoles.length > 0 && !newLocationId) {
+      throw new BadRequestException('Location is required for staff');
+    }
+    if (newLocationId) await this.assertLocationInBusiness(actor.businessId, newLocationId);
 
+    // An owner can never suspend/revoke themselves through this endpoint; their
+    // own edits always run as 'active'. For others, default to current status.
     const currentStatus = memberships[0].status;
-    const newStatus =
-      input.membershipStatus ?? (currentStatus === 'invited' ? 'active' : currentStatus);
+    const newStatus = isSelf
+      ? 'active'
+      : input.membershipStatus ?? (currentStatus === 'invited' ? 'active' : currentStatus);
     if (newStatus !== 'active' && newStatus !== 'suspended' && newStatus !== 'revoked') {
       throw new BadRequestException('Invalid membership status');
     }
 
-    await this.syncMembershipRoles(actor, targetUserId, memberships, desiredRoles, newLocationId, newStatus);
-    await this.syncStaffProfile(actor.businessId, targetUserId, newLocationId, desiredRoles, newStatus, input);
+    // `newLocationId` is only read by the sync helpers when a location-scoped
+    // role/profile is being written, which the guard above guarantees is set.
+    const syncLocationId = newLocationId ?? '';
+    await this.syncMembershipRoles(actor, targetUserId, memberships, desiredRoles, syncLocationId, newStatus);
+    await this.syncStaffProfile(actor.businessId, targetUserId, syncLocationId, desiredRoles, newStatus, input);
 
     await this.updateStaffBusinessFields(actor.businessId, targetUserId, input);
 
@@ -957,7 +969,10 @@ export class StaffService {
       }
     }
 
-    const staleIds = existing.filter((m) => !keptIds.has(m.id)).map((m) => m.id);
+    // NEVER remove the owner membership (see staleMembershipIds): deleting the
+    // owner row — which is never in `desiredRoles` — would strip ownership
+    // mid-request when an owner edits their own staff roles.
+    const staleIds = staleMembershipIds(existing, keptIds);
     if (staleIds.length > 0) {
       const { error } = await this.admin
         .schema('core')
@@ -1314,6 +1329,21 @@ function pickAcceptRow(value: unknown): AcceptRpcRow | undefined {
  */
 function isWebSurfaceRole(role: UserRole): boolean {
   return role === 'owner' || role === 'manager';
+}
+
+/**
+ * Membership rows to delete when syncing a member's manager/stylist role SET.
+ * The owner membership is ALWAYS preserved: it is never part of the desired
+ * (manager/stylist) roles, so without this guard an owner editing their own
+ * staff roles would have their ownership row deleted mid-request.
+ */
+export function staleMembershipIds(
+  existing: ReadonlyArray<{ id: string; role: 'owner' | 'manager' | 'stylist' | 'client' }>,
+  keptIds: ReadonlySet<string>,
+): string[] {
+  return existing
+    .filter((m) => m.role !== 'owner' && !keptIds.has(m.id))
+    .map((m) => m.id);
 }
 
 function roleOrder(role: 'owner' | 'manager' | 'stylist' | 'client'): number {
