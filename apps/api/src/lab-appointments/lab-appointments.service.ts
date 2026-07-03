@@ -433,7 +433,12 @@ export class LabAppointmentsService {
     rawLocationId?: string,
   ): TQuery {
     const locationId = this.resolveLocationForActor(actor, rawLocationId);
-    if (userHasRole(actor, 'stylist')) {
+    // Privilege-tier scope: owner/manager moderation wins. The stylist-only
+    // narrowing (own column) applies ONLY to a pure stylist — so an owner (or
+    // manager) who ALSO holds the stylist role still moderates the whole book
+    // instead of being trapped in their own column. See [[user-role-model]].
+    const isModerator = userHasAnyRole(actor, ['owner', 'manager']);
+    if (userHasRole(actor, 'stylist') && !isModerator) {
       if (!actor.staffProfileId) {
         throw new ForbiddenException('Stylist profile could not be resolved');
       }
@@ -1595,7 +1600,10 @@ export class LabAppointmentsService {
 
   private assertCanCompleteAppointment(actor: AuthUser, appointment: AppointmentRow): void {
     this.assertCanAccessAppointment(actor, appointment);
-    if (userHasRole(actor, 'stylist')) {
+    // Owner/manager may complete any appointment they can access; the own-only
+    // limit is for a pure stylist. An owner/manager who also styles is not capped
+    // to their own column. See [[user-role-model]].
+    if (userHasRole(actor, 'stylist') && !userHasAnyRole(actor, ['owner', 'manager'])) {
       if (!actor.staffProfileId) throw new ForbiddenException('Stylist profile could not be resolved');
       if (appointment.assigned_staff_profile_id !== actor.staffProfileId) {
         throw new ForbiddenException('Stylists can only complete appointments assigned to themselves');
@@ -1605,7 +1613,7 @@ export class LabAppointmentsService {
 
   private assertCanConfirmPayment(actor: AuthUser, appointment: AppointmentRow): void {
     this.assertCanAccessAppointment(actor, appointment);
-    if (userHasRole(actor, 'stylist')) {
+    if (userHasRole(actor, 'stylist') && !userHasAnyRole(actor, ['owner', 'manager'])) {
       if (!actor.staffProfileId) throw new ForbiddenException('Stylist profile could not be resolved');
       if (appointment.assigned_staff_profile_id !== actor.staffProfileId) {
         throw new ForbiddenException('Stylists can only confirm payment for their own appointments');
