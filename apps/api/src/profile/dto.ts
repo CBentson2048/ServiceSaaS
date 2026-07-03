@@ -13,6 +13,7 @@ import {
   MinLength,
 } from 'class-validator';
 import type { CommunicationPreference } from '@sheer/domain';
+import { IsPhoneField } from '../communications/phone-field.decorator';
 
 const COMMUNICATION_PREFERENCES: CommunicationPreference[] = ['whatsapp', 'sms', 'email'];
 
@@ -47,6 +48,7 @@ export class UpdateCurrentProfileDto {
   @IsOptional()
   @IsString()
   @MaxLength(40)
+  @IsPhoneField()
   phone?: string | null;
 
   @IsOptional()
@@ -86,6 +88,7 @@ export class AdminUpdateProfileDto {
   @IsOptional()
   @IsString()
   @MaxLength(40)
+  @IsPhoneField()
   phone?: string | null;
 
   @IsOptional()

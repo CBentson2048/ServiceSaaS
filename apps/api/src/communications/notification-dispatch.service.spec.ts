@@ -94,7 +94,7 @@ function baseState(over: Partial<State> = {}): State {
     location: { name: 'Sheer Soho', timezone: 'Europe/London' },
     client: {
       first_name: 'Sam',
-      phone: '+447700900123',
+      phone: '+447725485160',
       email: 'sam@example.com',
       communication_preference: 'whatsapp',
     },
@@ -230,7 +230,7 @@ describe('NotificationDispatchService channel + fallback behaviour', () => {
   it('skips (does not escalate) a stray WhatsApp event for an SMS-preferring client', async () => {
     const state = baseState({
       appointment: { ...baseState().appointment!, communication_preference: 'sms' },
-      client: { first_name: 'Sam', phone: '+447700900123', email: 'sam@example.com', communication_preference: 'sms' },
+      client: { first_name: 'Sam', phone: '+447725485160', email: 'sam@example.com', communication_preference: 'sms' },
     });
     const { d, whatsapp } = makeDispatcher(state, settings());
     await run(d, event()); // whatsapp-channel event, but WhatsApp is not in this client's chain
@@ -255,7 +255,7 @@ describe('NotificationDispatchService channel + fallback behaviour', () => {
   it('delivers via email (EmailService) when the client prefers email', async () => {
     const state = baseState({
       appointment: { ...baseState().appointment!, communication_preference: 'email' },
-      client: { first_name: 'Sam', phone: '+447700900123', email: 'sam@example.com', communication_preference: 'email' },
+      client: { first_name: 'Sam', phone: '+447725485160', email: 'sam@example.com', communication_preference: 'email' },
     });
     // emailFallbackEnabled is OFF — an explicit email preference still delivers over email.
     const { d, email, whatsapp, sms } = makeDispatcher(state, settings());
@@ -287,7 +287,7 @@ describe('NotificationDispatchService channel + fallback behaviour', () => {
   it('skips an email event truthfully when the client has no valid email', async () => {
     const state = baseState({
       appointment: { ...baseState().appointment!, communication_preference: 'email' },
-      client: { first_name: 'Sam', phone: '+447700900123', email: null, communication_preference: 'email' },
+      client: { first_name: 'Sam', phone: '+447725485160', email: null, communication_preference: 'email' },
     });
     const { d, email } = makeDispatcher(state, settings());
     await run(d, event({ channel: 'email' }));

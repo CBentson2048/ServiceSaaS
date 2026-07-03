@@ -428,7 +428,51 @@ export function DayCalendarBoard({
                     } ${tileColor ? '' : selected ? 'bg-primary/5' : 'bg-surface'} ${muted ? 'opacity-60' : ''}`}
                   >
                     <span className={`absolute inset-y-0 left-0 w-[3px] rounded-l-lg ${accent.bar}`} aria-hidden />
-                    <span className="block py-1.5 pl-3 pr-1.5">
+                    {/* Segment split: every service is broken into its segments (and
+                        each service is divided from the next). Stylist-free
+                        "development" time is hatched so the bookable gap is visible.
+                        Sits behind the header label (which is lifted to z-[1]); band
+                        names are right-aligned to clear the left-aligned header. */}
+                    {(() => {
+                      const bands = segmentBands(booking, height);
+                      if (bands.length === 0) return null;
+                      return (
+                        <span aria-hidden className="pointer-events-none absolute inset-y-0 left-[3px] right-0 z-0">
+                          {bands.map((band, i) => (
+                            <span
+                              key={i}
+                              className="absolute left-0 right-0 overflow-hidden"
+                              style={{
+                                top: band.topPx,
+                                height: Math.max(0, band.heightPx),
+                                ...(band.isStylistFree
+                                  ? {
+                                      backgroundColor: 'rgba(255,255,255,0.42)',
+                                      backgroundImage:
+                                        'repeating-linear-gradient(45deg, rgba(71,84,103,0.30) 0, rgba(71,84,103,0.30) 5px, transparent 5px, transparent 10px)',
+                                    }
+                                  : {}),
+                                // Firmer divider between services, dashed between segments.
+                                ...(i > 0
+                                  ? band.isServiceStart
+                                    ? { borderTop: '1px solid rgba(16,24,40,0.35)' }
+                                    : { borderTop: '1px dashed rgba(16,24,40,0.20)' }
+                                  : {}),
+                              }}
+                            >
+                              {band.heightPx >= 13 ? (
+                                <span
+                                  className="absolute right-1 top-1/2 max-w-[85%] -translate-y-1/2 truncate rounded-sm bg-surface/70 px-1 text-[9px] font-semibold uppercase tracking-[0.03em] text-text-secondary"
+                                >
+                                  {band.isStylistFree ? `${band.name || 'Development'} · free` : band.name}
+                                </span>
+                              ) : null}
+                            </span>
+                          ))}
+                        </span>
+                      );
+                    })()}
+                    <span className="relative z-[1] block py-1.5 pl-3 pr-1.5">
                       <span
                         className="flex items-center gap-1 truncate text-[11px] font-semibold text-text-primary"
                         style={primaryText ? { color: primaryText } : undefined}
@@ -884,6 +928,56 @@ function layoutBlocks(bookings: StaffBookingSummary[], startHour: number, totalH
     lane: item.lane,
     laneCount,
   }));
+}
+
+interface SegmentBand {
+  topPx: number;
+  heightPx: number;
+  isStylistFree: boolean;
+  name: string;
+  /** True for the first band of a service after the first — draws a firmer divider. */
+  isServiceStart: boolean;
+}
+
+// Splits an appointment's tile into labelled sub-bands so the whole timeline is
+// visible: one band per service SEGMENT (e.g. Application → Development → Toner),
+// and a single service-level band for any service that has no segment breakdown.
+// Positions are proportional to the appointment's span so bands line up within
+// whatever height the tile was given. Returns [] only when there is nothing to
+// split (a single segment-less service, or no per-service data) — the tile then
+// renders as one solid block, unchanged.
+function segmentBands(booking: StaffBookingSummary, tileHeight: number): SegmentBand[] {
+  const services = booking.services ?? [];
+  if (services.length === 0) return [];
+  const bookingStart = new Date(booking.startsAt).getTime();
+  const totalMs = new Date(booking.endsAt).getTime() - bookingStart;
+  if (!(totalMs > 0)) return [];
+  const band = (startMs: number, endMs: number, isStylistFree: boolean, name: string, isServiceStart: boolean) => ({
+    topPx: ((startMs - bookingStart) / totalMs) * tileHeight,
+    heightPx: ((endMs - startMs) / totalMs) * tileHeight,
+    isStylistFree,
+    name,
+    isServiceStart,
+  });
+  const bands: SegmentBand[] = [];
+  services.forEach((service, serviceIndex) => {
+    const serviceStart = new Date(service.startsAt).getTime();
+    const segments = service.segments ?? [];
+    if (segments.length === 0) {
+      // No finer breakdown — show the whole service as one band.
+      bands.push(band(serviceStart, new Date(service.endsAt).getTime(), false, service.name, serviceIndex > 0));
+      return;
+    }
+    let cursorMs = serviceStart;
+    segments.forEach((segment, segmentIndex) => {
+      const startMs = cursorMs;
+      const endMs = startMs + segment.durationMinutes * 60_000;
+      cursorMs = endMs;
+      bands.push(band(startMs, endMs, segment.isStylistFree, segment.name, serviceIndex > 0 && segmentIndex === 0));
+    });
+  });
+  // Nothing to show if the appointment is a single undivided service.
+  return bands.length > 1 || bands.some((b) => b.isStylistFree) ? bands : [];
 }
 
 function buildColumns(input: {

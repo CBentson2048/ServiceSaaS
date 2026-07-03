@@ -9,7 +9,7 @@ describe('SmsService (fail-soft)', () => {
   it('is disabled and skips when credentials/sender are absent', async () => {
     const svc = new SmsService(configWith({}));
     expect(svc.isEnabled).toBe(false);
-    expect(await svc.send({ to: '+447700900123', body: 'hi' })).toEqual({ accepted: false, skipped: true });
+    expect(await svc.send({ to: '+447725485160', body: 'hi' })).toEqual({ accepted: false, skipped: true });
   });
 
   it('is enabled with a From number or a Messaging Service', () => {
@@ -33,14 +33,14 @@ describe('SmsService (fail-soft)', () => {
       .mockResolvedValue(new Response(JSON.stringify({ sid: 'SM1', status: 'queued' }), { status: 201 }));
 
     const result = await svc.send({
-      to: '+447700900123',
+      to: '+447725485160',
       body: 'Your appointment is confirmed',
       statusCallback: 'https://api.example.com/api/twilio/messaging/status',
     });
 
     expect(result).toEqual({ accepted: true, providerMessageId: 'SM1', providerStatus: 'queued' });
     const body = new URLSearchParams(fetchMock.mock.calls[0][1]!.body as string);
-    expect(body.get('To')).toBe('+447700900123'); // plain E.164, NOT whatsapp:
+    expect(body.get('To')).toBe('+447725485160'); // plain E.164, NOT whatsapp:
     expect(body.get('From')).toBe('+441234567890');
     expect(body.get('Body')).toBe('Your appointment is confirmed');
     expect(body.get('StatusCallback')).toBe('https://api.example.com/api/twilio/messaging/status');

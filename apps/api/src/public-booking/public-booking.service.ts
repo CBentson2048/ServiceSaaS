@@ -9,6 +9,15 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import {
+  type OccupancyService,
+  type OffsetInterval,
+  type TimeInterval,
+  occupiedOffsets,
+  occupiedIntervalsFrom,
+  parseMultirange,
+  toMultirangeLiteral,
+} from '../common/occupied-ranges';
 import type {
   AppointmentStatus,
   AuthUser,
@@ -85,6 +94,13 @@ interface ServiceCategoryEmbed {
   sort_order: number;
 }
 
+interface ServiceSegmentEmbed {
+  name: string;
+  duration_minutes: number;
+  is_stylist_free: boolean;
+  sort_order: number;
+}
+
 interface ServiceRow {
   id: string;
   business_id: string;
@@ -94,6 +110,8 @@ interface ServiceRow {
   service_category_id: string | null;
   // Managed category embedded via the service_category_id FK (booking schema).
   service_categories: ServiceCategoryEmbed | ServiceCategoryEmbed[] | null;
+  // Ordered segment breakdown embedded via the service_id FK (booking schema).
+  service_segments: ServiceSegmentEmbed | ServiceSegmentEmbed[] | null;
   estimated_duration_minutes: number;
   base_price: number | string;
   deposit_type: 'none' | 'fixed_amount' | 'percentage';
@@ -146,6 +164,8 @@ interface AppointmentRow {
   assigned_staff_profile_id: string | null;
   scheduled_start_at: string;
   scheduled_end_at: string;
+  // tstzmultirange of the stylist-occupied sub-windows (PostgREST returns it as text).
+  occupied_ranges: string | null;
 }
 
 interface BookingAttemptBusyRow {
@@ -153,6 +173,7 @@ interface BookingAttemptBusyRow {
   stylist_profile_id: string;
   selected_start_at: string;
   selected_end_at: string;
+  occupied_ranges: string | null;
 }
 
 interface LeaveRow {
@@ -225,15 +246,15 @@ const LOCATION_COLUMNS =
 // service_category_id FK so the booking flow can group + colour by category.
 // Same-schema embed (booking → booking), so PostgREST resolves it inline.
 const SERVICE_FIELDS =
-  'id,business_id,location_id,name,description,service_category_id,estimated_duration_minutes,base_price,deposit_type,deposit_value,is_active,sort_order,service_categories(id,name,color_hex,sort_order)';
+  'id,business_id,location_id,name,description,service_category_id,estimated_duration_minutes,base_price,deposit_type,deposit_value,is_active,sort_order,service_categories(id,name,color_hex,sort_order),service_segments(name,duration_minutes,is_stylist_free,sort_order)';
 const SERVICE_COLUMNS = SERVICE_FIELDS;
 const STAFF_COLUMNS = 'id,display_name,color_hex,bio';
 const REQUIREMENT_RULE_COLUMNS = `id,trigger_service_id,title,description,service_requirement_options(service_id,services(${SERVICE_FIELDS}))`;
 const UPGRADE_SUGGESTION_COLUMNS = `id,trigger_service_id,suggested_service_id,title,description,suggested_service:services!service_upgrade_suggestions_suggested_service_id_fkey(${SERVICE_FIELDS})`;
 const SHIFT_COLUMNS = 'id,staff_profile_id,scheduled_start_at,scheduled_end_at';
 const BREAK_COLUMNS = 'shift_id,started_at,ended_at';
-const APPOINTMENT_COLUMNS = 'assigned_staff_profile_id,scheduled_start_at,scheduled_end_at';
-const BOOKING_ATTEMPT_BUSY_COLUMNS = 'id,stylist_profile_id,selected_start_at,selected_end_at';
+const APPOINTMENT_COLUMNS = 'assigned_staff_profile_id,scheduled_start_at,scheduled_end_at,occupied_ranges';
+const BOOKING_ATTEMPT_BUSY_COLUMNS = 'id,stylist_profile_id,selected_start_at,selected_end_at,occupied_ranges';
 const BOOKING_ATTEMPT_COLUMNS =
   'id,business_id,location_id,service_id,stylist_profile_id,client_profile_id,user_profile_id,appointment_id,staff_request_mode,selected_start_at,selected_end_at,communication_preference,client_note,deposit_amount,currency_code,stripe_payment_intent_id,status,expires_at,metadata';
 const BOOKING_ATTEMPT_SERVICE_COLUMNS =
@@ -320,7 +341,7 @@ export class PublicBookingService {
       staff.map((row) => row.id),
       totalDurationMinutes,
       location.appointmentSlotMinutes,
-      { firstOnly: true },
+      { firstOnly: true, candidateOccupied: occupiedOffsets(toOccupancyServices(services)) },
     );
 
     const pricesByStaff = await this.fetchStylistServicePrices(
@@ -403,7 +424,12 @@ export class PublicBookingService {
       requestedStaffIds,
       totalDurationMinutes,
       location.appointmentSlotMinutes,
-      { dateFrom, dateTo, firstOnly: query.nextAvailable === 'true' },
+      {
+        dateFrom,
+        dateTo,
+        firstOnly: query.nextAvailable === 'true',
+        candidateOccupied: occupiedOffsets(toOccupancyServices(services)),
+      },
     );
 
     const staffById = new Map(staff.map((row) => [row.id, row]));
@@ -1021,9 +1047,18 @@ export class PublicBookingService {
       dateTo?: Date;
       firstOnly?: boolean;
       excludeBookingAttemptId?: string;
+      // The candidate booking's occupied sub-windows (offsets from its start).
+      // Defaults to a single window spanning the whole duration (a plain,
+      // segment-less service fully occupies the stylist — unchanged behaviour).
+      candidateOccupied?: OffsetInterval[];
     } = {},
   ): Promise<Map<string, string[]>> {
     if (staffIds.length === 0) return new Map();
+    // An explicit (possibly empty = all-free) candidate window set wins; otherwise
+    // a plain service fully occupies the stylist for its whole duration.
+    const candidateOccupied = options.candidateOccupied ?? [
+      { startMs: 0, endMs: durationMinutes * 60_000 },
+    ];
     const now = new Date();
     const searchStart = options.dateFrom
       ? new Date(Math.max(options.dateFrom.getTime(), now.getTime()))
@@ -1130,22 +1165,24 @@ export class PublicBookingService {
       throw new InternalServerErrorException('Unable to load stylist availability');
     }
 
-    const appointmentsByStaff = new Map<string, AppointmentRow[]>();
+    // The stylist's busy time is only their OCCUPIED sub-windows (parsed from each
+    // appointment's/attempt's occupied_ranges multirange), NOT the whole span — so
+    // another booking can slot into a booking's stylist-free development time.
+    const occupiedByStaff = new Map<string, TimeInterval[]>();
+    const addOccupied = (staffId: string, ranges: string | null) => {
+      const intervals = parseMultirange(ranges);
+      if (intervals.length === 0) return;
+      const list = occupiedByStaff.get(staffId) ?? [];
+      list.push(...intervals);
+      occupiedByStaff.set(staffId, list);
+    };
     for (const appointment of appointments ?? []) {
       if (!appointment.assigned_staff_profile_id) continue;
-      const rows = appointmentsByStaff.get(appointment.assigned_staff_profile_id) ?? [];
-      rows.push(appointment);
-      appointmentsByStaff.set(appointment.assigned_staff_profile_id, rows);
+      addOccupied(appointment.assigned_staff_profile_id, appointment.occupied_ranges);
     }
     for (const attempt of attempts ?? []) {
       if (attempt.id === options.excludeBookingAttemptId) continue;
-      const rows = appointmentsByStaff.get(attempt.stylist_profile_id) ?? [];
-      rows.push({
-        assigned_staff_profile_id: attempt.stylist_profile_id,
-        scheduled_start_at: attempt.selected_start_at,
-        scheduled_end_at: attempt.selected_end_at,
-      });
-      appointmentsByStaff.set(attempt.stylist_profile_id, rows);
+      addOccupied(attempt.stylist_profile_id, attempt.occupied_ranges);
     }
     const breaksByShift = new Map<string, BreakRow[]>();
     for (const breakRow of breaks ?? []) {
@@ -1174,10 +1211,11 @@ export class PublicBookingService {
         new Date(Math.min(new Date(shift.scheduled_end_at).getTime(), searchEnd.getTime())),
         shift,
         breaksByShift.get(shift.id) ?? [],
-        appointmentsByStaff.get(shift.staff_profile_id) ?? [],
+        occupiedByStaff.get(shift.staff_profile_id) ?? [],
         leaveByStaff.get(shift.staff_profile_id) ?? [],
         absencesByStaff.get(shift.staff_profile_id) ?? [],
         durationMinutes,
+        candidateOccupied,
         slotMinutes,
         Boolean(options.firstOnly),
       );
@@ -1332,6 +1370,7 @@ export class PublicBookingService {
         dateTo: new Date(selectedEnd.getTime() + location.appointmentSlotMinutes * 60_000),
         firstOnly: false,
         excludeBookingAttemptId,
+        candidateOccupied: occupiedOffsets(toOccupancyServices(services)),
       },
     );
     const selectedStillAvailable = (availability.get(input.staffProfileId) ?? []).some(
@@ -1387,6 +1426,7 @@ export class PublicBookingService {
         staff_request_mode: input.input.staffRequestMode,
         selected_start_at: input.selectedStart.toISOString(),
         selected_end_at: input.selectedEnd.toISOString(),
+        occupied_ranges: occupiedRangesLiteral(input.services, input.selectedStart),
         communication_preference: input.input.communicationPreference,
         client_note: input.input.clientNote?.trim() || null,
         deposit_amount: input.depositAmount,
@@ -1451,6 +1491,7 @@ export class PublicBookingService {
       status: 'pending',
       scheduledStart: context.selectedStart,
       scheduledEnd: context.selectedEnd,
+      occupiedRanges: occupiedRangesLiteral(context.services, context.selectedStart),
       communicationPreference: input.communicationPreference,
       clientNote: input.clientNote?.trim() || null,
       internalNote: null,
@@ -1486,6 +1527,8 @@ export class PublicBookingService {
     status?: AppointmentStatus;
     scheduledStart: Date;
     scheduledEnd: Date;
+    /** tstzmultirange literal of the stylist-occupied windows (keys the no-overlap guard). */
+    occupiedRanges: string;
     communicationPreference: string;
     clientNote: string | null;
     internalNote: string | null;
@@ -1506,6 +1549,7 @@ export class PublicBookingService {
         booking_channel: params.bookingChannel,
         scheduled_start_at: params.scheduledStart.toISOString(),
         scheduled_end_at: params.scheduledEnd.toISOString(),
+        occupied_ranges: params.occupiedRanges,
         communication_preference: params.communicationPreference,
         client_note: params.clientNote,
         internal_note: params.internalNote,
@@ -1584,6 +1628,7 @@ export class PublicBookingService {
       bookingChannel,
       scheduledStart: context.selectedStart,
       scheduledEnd: context.selectedEnd,
+      occupiedRanges: occupiedRangesLiteral(context.services, context.selectedStart),
       communicationPreference: request.communicationPreference,
       clientNote: request.clientNote?.trim() || null,
       internalNote: request.internalNote?.trim() || null,
@@ -1669,6 +1714,7 @@ export class PublicBookingService {
         status: 'scheduled',
         scheduled_start_at: start.toISOString(),
         scheduled_end_at: end.toISOString(),
+        segments: service.segments ?? [],
       };
     });
     const { error } = await this.admin.schema('booking').from('appointment_services').insert(rows);
@@ -1735,6 +1781,7 @@ export class PublicBookingService {
         deposit_required_amount: service.depositRequiredAmount,
         scheduled_start_at: start.toISOString(),
         scheduled_end_at: end.toISOString(),
+        segments: service.segments ?? [],
       };
     });
 
@@ -1913,6 +1960,7 @@ export class PublicBookingService {
         booking_channel: 'api',
         scheduled_start_at: context.selectedStart.toISOString(),
         scheduled_end_at: context.selectedEnd.toISOString(),
+        occupied_ranges: occupiedRangesLiteral(context.services, context.selectedStart),
         communication_preference: attempt.communication_preference,
         client_note: attempt.client_note,
         metadata: {
@@ -1963,6 +2011,7 @@ export class PublicBookingService {
         status: 'scheduled',
         scheduled_start_at: start.toISOString(),
         scheduled_end_at: end.toISOString(),
+        segments: service.segments ?? [],
       };
     });
     const { error } = await this.admin.schema('booking').from('appointment_services').insert(rows);
@@ -2242,7 +2291,42 @@ function toServiceSummary(row: ServiceRow, currencyCode: string): PublicBookingS
     depositType: row.deposit_type,
     depositValue: Number(row.deposit_value),
     currencyCode,
+    segments: toSegmentSummaries(row.service_segments),
   };
+}
+
+/** Adapts booking services to the minimal shape the occupancy maths needs. */
+function toOccupancyServices(services: PublicBookingServiceSummary[]): OccupancyService[] {
+  return services.map((service) => ({
+    durationMinutes: service.estimatedDurationMinutes,
+    segments: (service.segments ?? []).map((segment) => ({
+      durationMinutes: segment.durationMinutes,
+      isStylistFree: segment.isStylistFree,
+    })),
+  }));
+}
+
+/**
+ * The tstzmultirange literal of a booking's stylist-occupied windows, for the
+ * appointment/attempt header. Snapshots the occupied time at write-time so a
+ * later catalogue edit never moves an existing booking's windows.
+ */
+function occupiedRangesLiteral(services: PublicBookingServiceSummary[], start: Date): string {
+  return toMultirangeLiteral(occupiedIntervalsFrom(toOccupancyServices(services), start));
+}
+
+/** Orders the embedded segments and maps to the client-facing summary shape. */
+function toSegmentSummaries(
+  embed: ServiceSegmentEmbed | ServiceSegmentEmbed[] | null,
+): { name: string; durationMinutes: number; isStylistFree: boolean }[] {
+  return arrayOf(embed)
+    .slice()
+    .sort((a, b) => a.sort_order - b.sort_order)
+    .map((segment) => ({
+      name: segment.name,
+      durationMinutes: segment.duration_minutes,
+      isStylistFree: segment.is_stylist_free ?? false,
+    }));
 }
 
 function toLocationSummary(row: LocationRow): PublicBookingLocationSummary {
@@ -2273,10 +2357,14 @@ function availableSlotsInShift(
   end: Date,
   shift: ShiftRow,
   breaks: BreakRow[],
-  appointments: AppointmentRow[],
+  // Stylist-occupied windows of OTHER bookings/attempts (not their whole spans),
+  // so a candidate may overlap another booking's stylist-free development time.
+  occupiedIntervals: TimeInterval[],
   leave: LeaveRow[],
   absences: AbsenceRow[],
   durationMinutes: number,
+  // The candidate booking's OWN occupied sub-windows, as offsets from its start.
+  candidateOccupied: OffsetInterval[],
   slotMinutes: number,
   firstOnly: boolean,
 ): Date[] {
@@ -2285,10 +2373,7 @@ function availableSlotsInShift(
   let cursor = roundUpToIncrement(start, slotMs);
   const busy = [
     ...breaks.map((row) => ({ start: new Date(row.started_at), end: new Date(row.ended_at) })),
-    ...appointments.map((appointment) => ({
-      start: new Date(appointment.scheduled_start_at),
-      end: new Date(appointment.scheduled_end_at),
-    })),
+    ...occupiedIntervals,
     ...leave.map((row) => dateRangeToBusy(row.start_date, row.end_date)),
     ...absences.map((row) => ({
       start: new Date(row.starts_at),
@@ -2302,16 +2387,25 @@ function availableSlotsInShift(
   if (leave.some((row) => dateRangeContains(row, start))) return slots;
   if (shift.staff_profile_id.length === 0) return slots;
 
+  // The client occupies the chair for the WHOLE appointment, so the full span
+  // must fit inside the shift. But only the booking's OCCUPIED sub-windows have
+  // to avoid other bookings' occupied time — its stylist-free (development)
+  // windows may overlap anything, which is what lets bookings interleave.
   while (cursor.getTime() + durationMs <= end.getTime()) {
-    const slotEnd = new Date(cursor.getTime() + durationMs);
-    const conflict = busy.find((range) => cursor < range.end && slotEnd > range.start);
+    const cursorMs = cursor.getTime();
+    const conflict = candidateOccupied.some((occ) => {
+      const occStart = cursorMs + occ.startMs;
+      const occEnd = cursorMs + occ.endMs;
+      return busy.some((range) => occStart < range.end.getTime() && occEnd > range.start.getTime());
+    });
     if (!conflict) {
       slots.push(cursor);
       if (firstOnly) return slots;
-      cursor = new Date(cursor.getTime() + slotMs);
-      continue;
     }
-    cursor = roundUpToIncrement(conflict.end, slotMs);
+    // Single-slot step: with interleaving the booking is no longer one solid
+    // block, so jumping past a conflict's end could skip a valid start where the
+    // clash falls inside one of the booking's free windows.
+    cursor = new Date(cursor.getTime() + slotMs);
   }
   return slots;
 }

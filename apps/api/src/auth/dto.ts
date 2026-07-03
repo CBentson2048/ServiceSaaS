@@ -1,5 +1,6 @@
 import { IsEmail, IsIn, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
 import type { AppSurface } from '@sheer/domain';
+import { IsPhoneField } from '../communications/phone-field.decorator';
 
 export class CreateAccountDto {
   @IsEmail()
@@ -95,6 +96,7 @@ export class ClientBookingAccountDto {
   @IsOptional()
   @IsString()
   @MaxLength(40)
+  @IsPhoneField()
   phone?: string;
 
   @IsIn(['whatsapp', 'sms', 'email'])
@@ -115,5 +117,6 @@ export class ClientBookingLoginDto {
   @IsOptional()
   @IsString()
   @MaxLength(40)
+  @IsPhoneField()
   phone?: string;
 }

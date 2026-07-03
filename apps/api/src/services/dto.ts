@@ -128,6 +128,12 @@ export class ServiceSegmentInputDto {
   @IsInt()
   @Min(1)
   durationMinutes!: number;
+
+  // Marks this segment as stylist-free ("development time"): the stylist is
+  // available for another client during it. Defaults to false when omitted.
+  @IsOptional()
+  @IsBoolean()
+  isStylistFree?: boolean;
 }
 
 export class UpsertServiceDto {

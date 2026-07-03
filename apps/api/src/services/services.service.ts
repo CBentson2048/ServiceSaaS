@@ -67,6 +67,7 @@ interface SegmentRow {
   service_id: string;
   name: string;
   duration_minutes: number;
+  is_stylist_free: boolean;
   sort_order: number;
   created_at: string;
   updated_at: string;
@@ -75,7 +76,7 @@ interface SegmentRow {
 const CATEGORY_COLUMNS = 'id,business_id,name,description,color_hex,is_active,sort_order,created_at,updated_at';
 const SERVICE_COLUMNS =
   'id,business_id,location_id,name,description,service_category_id,estimated_duration_minutes,processing_time_minutes,base_price,deposit_type,deposit_value,requires_patch_test,is_active,sort_order,created_at,updated_at';
-const SEGMENT_COLUMNS = 'id,business_id,service_id,name,duration_minutes,sort_order,created_at,updated_at';
+const SEGMENT_COLUMNS = 'id,business_id,service_id,name,duration_minutes,is_stylist_free,sort_order,created_at,updated_at';
 
 @Injectable()
 export class ServicesService {
@@ -526,6 +527,7 @@ export class ServicesService {
     const payload = segments.map((segment) => ({
       name: segment.name.trim(),
       durationMinutes: segment.durationMinutes,
+      isStylistFree: segment.isStylistFree ?? false,
     }));
     const { error } = await this.admin.schema('booking').rpc('set_service_segments', {
       p_business_id: businessId,
@@ -718,6 +720,7 @@ function toSegment(row: SegmentRow): ServiceSegment {
     serviceId: row.service_id,
     name: row.name,
     durationMinutes: row.duration_minutes,
+    isStylistFree: row.is_stylist_free ?? false,
     sortOrder: row.sort_order,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

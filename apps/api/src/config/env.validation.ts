@@ -80,9 +80,17 @@ export class EnvConfig {
   RESEND_WEBHOOK_SECRET?: string;
 
   /**
-   * Default country calling code (digits only, e.g. `44` for the UK) used to promote national-format
-   * phone numbers (leading `0`, no `+`) to E.164 for WhatsApp/SMS eligibility + delivery. When unset,
-   * national numbers without a country code are treated as invalid rather than silently mis-sent.
+   * Default region (ISO-3166 alpha-2, e.g. `GB`) used to parse national-format phone numbers
+   * (leading `0`, or bare, no `+`) into E.164 for WhatsApp/SMS eligibility + delivery. Preferred over
+   * DEFAULT_PHONE_COUNTRY_CALLING_CODE. When neither is set the platform default region (GB) is used.
+   */
+  @IsOptional()
+  @IsString()
+  DEFAULT_PHONE_COUNTRY?: string;
+
+  /**
+   * Legacy: default country calling code (digits only, e.g. `44` for the UK). Still honoured (mapped to
+   * a region) for backward compatibility; prefer DEFAULT_PHONE_COUNTRY.
    */
   @IsOptional()
   @IsString()

@@ -12,6 +12,7 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
+import { IsPhoneField } from '../communications/phone-field.decorator';
 
 export class PublicBookingSelectionQueryDto {
   @IsOptional()
@@ -71,6 +72,7 @@ export class PublicBookingClientDto {
   @IsOptional()
   @IsString()
   @MaxLength(40)
+  @IsPhoneField()
   phone?: string;
 }
 
