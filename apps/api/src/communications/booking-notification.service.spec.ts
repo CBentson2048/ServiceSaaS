@@ -88,7 +88,7 @@ function baseState(overrides: Partial<FakeState> = {}): FakeState {
       metadata: { service_names: ['Cut'], stylist_name: 'Alex' },
     },
     location: { name: 'Sheer Soho', timezone: 'Europe/London' },
-    client: { first_name: 'Sam', phone: '+447700900123', email: 'sam@example.com', communication_preference: 'whatsapp' },
+    client: { first_name: 'Sam', phone: '+447725485160', email: 'sam@example.com', communication_preference: 'whatsapp' },
     existingEvents: [],
     inserts: [],
     updates: [],
@@ -165,7 +165,7 @@ describe('BookingNotificationService.syncBookingNotifications', () => {
   it('cancels pending events when an email-preferring client has no email address', async () => {
     const state = baseState({
       appointment: { ...baseState().appointment!, communication_preference: 'email' },
-      client: { first_name: 'Sam', phone: '+447700900123', email: null, communication_preference: 'email' },
+      client: { first_name: 'Sam', phone: '+447725485160', email: null, communication_preference: 'email' },
       existingEvents: [
         { id: 'e1', event_key: 'appointment_reminder_24h', channel: 'whatsapp', status: 'queued', scheduled_for: NOW.toISOString() },
       ],
@@ -181,7 +181,7 @@ describe('BookingNotificationService.syncBookingNotifications', () => {
   it('schedules on the EMAIL channel when the client prefers email and has an address', async () => {
     const state = baseState({
       appointment: { ...baseState().appointment!, communication_preference: 'email' },
-      client: { first_name: 'Sam', phone: '+447700900123', email: 'sam@example.com', communication_preference: 'email' },
+      client: { first_name: 'Sam', phone: '+447725485160', email: 'sam@example.com', communication_preference: 'email' },
     });
     // emailFallbackEnabled is OFF — an explicit email preference still schedules on email.
     const service = makeService(state, settings({ sendBookingConfirmation: true, reminder24hEnabled: true }));
@@ -195,7 +195,7 @@ describe('BookingNotificationService.syncBookingNotifications', () => {
   it('cancels a stale WhatsApp event and reschedules on email when preference switches to email', async () => {
     const state = baseState({
       appointment: { ...baseState().appointment!, communication_preference: 'email' },
-      client: { first_name: 'Sam', phone: '+447700900123', email: 'sam@example.com', communication_preference: 'email' },
+      client: { first_name: 'Sam', phone: '+447725485160', email: 'sam@example.com', communication_preference: 'email' },
       existingEvents: [
         {
           id: 'e1',
@@ -228,7 +228,7 @@ describe('BookingNotificationService.syncBookingNotifications', () => {
   it('schedules on the SMS channel when the client prefers SMS and SMS is enabled', async () => {
     const state = baseState({
       appointment: { ...baseState().appointment!, communication_preference: 'sms' },
-      client: { first_name: 'Sam', phone: '+447700900123', communication_preference: 'sms' },
+      client: { first_name: 'Sam', phone: '+447725485160', communication_preference: 'sms' },
     });
     const service = makeService(state, settings({ sendBookingConfirmation: true, smsFallbackEnabled: true }));
 

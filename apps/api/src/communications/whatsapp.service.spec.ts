@@ -3,15 +3,15 @@ import { normalizeWhatsAppAddress, WhatsAppService } from './whatsapp.service';
 
 describe('normalizeWhatsAppAddress', () => {
   it('prefixes a bare E.164 number with whatsapp:', () => {
-    expect(normalizeWhatsAppAddress('+447700900123')).toBe('whatsapp:+447700900123');
+    expect(normalizeWhatsAppAddress('+447725485160')).toBe('whatsapp:+447725485160');
   });
 
   it('strips spacing/punctuation and adds a leading +', () => {
-    expect(normalizeWhatsAppAddress('44 (770) 090-0123')).toBe('whatsapp:+447700900123');
+    expect(normalizeWhatsAppAddress('44 (772) 548-5160')).toBe('whatsapp:+447725485160');
   });
 
   it('keeps an already-prefixed address idempotent', () => {
-    expect(normalizeWhatsAppAddress('whatsapp:+447700900123')).toBe('whatsapp:+447700900123');
+    expect(normalizeWhatsAppAddress('whatsapp:+447725485160')).toBe('whatsapp:+447725485160');
   });
 
   it('rejects empty or junk input', () => {
@@ -29,7 +29,7 @@ describe('WhatsAppService (fail-soft)', () => {
   it('is disabled and skips sending when credentials are absent', async () => {
     const svc = new WhatsAppService(configWith({}));
     expect(svc.isEnabled).toBe(false);
-    const result = await svc.send({ to: '+447700900123', body: 'hi' });
+    const result = await svc.send({ to: '+447725485160', body: 'hi' });
     expect(result).toEqual({ accepted: false, skipped: true });
   });
 
@@ -54,7 +54,7 @@ describe('WhatsAppService (fail-soft)', () => {
     const svc = new WhatsAppService(
       configWith({ TWILIO_ACCOUNT_SID: 'AC1', TWILIO_AUTH_TOKEN: 'tok', TWILIO_WHATSAPP_FROM: '+14155238886' }),
     );
-    const result = await svc.send({ to: '+447700900123' });
+    const result = await svc.send({ to: '+447725485160' });
     expect(result.accepted).toBe(false);
     expect(result.error).toMatch(/content template/i);
   });
@@ -70,7 +70,7 @@ describe('WhatsAppService (fail-soft)', () => {
       );
 
     const result = await svc.send({
-      to: '+447700900123',
+      to: '+447725485160',
       contentSid: 'HX123',
       contentVariables: { '1': 'Sam', '2': 'Sheer Soho' },
       body: 'fallback ignored',
@@ -79,7 +79,7 @@ describe('WhatsAppService (fail-soft)', () => {
 
     expect(result).toEqual({ accepted: true, providerMessageId: 'SM123', providerStatus: 'queued' });
     const sentBody = new URLSearchParams(fetchMock.mock.calls[0][1]!.body as string);
-    expect(sentBody.get('To')).toBe('whatsapp:+447700900123');
+    expect(sentBody.get('To')).toBe('whatsapp:+447725485160');
     expect(sentBody.get('MessagingServiceSid')).toBe('MG1');
     expect(sentBody.get('ContentSid')).toBe('HX123');
     expect(sentBody.get('ContentVariables')).toBe(JSON.stringify({ '1': 'Sam', '2': 'Sheer Soho' }));
@@ -97,7 +97,7 @@ describe('WhatsAppService (fail-soft)', () => {
       .spyOn(global, 'fetch')
       .mockResolvedValue(new Response(JSON.stringify({ sid: 'SM9', status: 'queued' }), { status: 201 }));
 
-    await svc.send({ to: '+447700900123', body: 'hello there' });
+    await svc.send({ to: '+447725485160', body: 'hello there' });
 
     const sentBody = new URLSearchParams(fetchMock.mock.calls[0][1]!.body as string);
     expect(sentBody.get('From')).toBe('whatsapp:+14155238886');

@@ -952,6 +952,23 @@ export interface UpdateProfileResponse {
   profile: UserProfileResponse;
 }
 
+/**
+ * One service line on a booked appointment, with its scheduled window and ordered
+ * segments. Lets the appointment-book calendar draw segment sub-bands within the
+ * appointment tile and shade stylist-free ("development") time differently.
+ */
+export interface StaffBookingServiceLine {
+  serviceId?: string;
+  name: string;
+  /** ISO start of this service within the appointment. */
+  startsAt: string;
+  /** ISO end of this service within the appointment. */
+  endsAt: string;
+  durationMinutes: number;
+  /** Ordered segment breakdown; empty when the service had no segments. */
+  segments: BookingSegmentSummary[];
+}
+
 export interface StaffBookingSummary {
   id: string;
   businessId: string;
@@ -971,6 +988,14 @@ export interface StaffBookingSummary {
    * populates it.
    */
   serviceIds?: string[];
+  /**
+   * Per-service breakdown with each service's scheduled window and its ordered
+   * segments, so the appointment-book calendar can split a tile into segment
+   * sub-bands (occupied vs stylist-free "development" time). Ordered by booking
+   * sequence. Optional — not every summary builder populates it; when absent the
+   * calendar falls back to a single block from startsAt/endsAt.
+   */
+  services?: StaffBookingServiceLine[];
   durationMinutes?: number;
   depositRequiredAmount?: number;
   depositStatus?: string;
@@ -2114,6 +2139,12 @@ export interface ServiceSegment {
   name: string;
   /** Time to complete this segment, in minutes (always ≥ 1). */
   durationMinutes: number;
+  /**
+   * When true the stylist is free during this segment (e.g. colour development),
+   * so the window is bookable for another client even though the appointment
+   * still spans it. The segment still counts toward the service's total duration.
+   */
+  isStylistFree: boolean;
   /** Position within the service, 0-based; the display order. */
   sortOrder: number;
   createdAt: string;
@@ -2127,6 +2158,19 @@ export interface ServiceSegment {
 export interface ServiceSegmentInput {
   name: string;
   durationMinutes: number;
+  /** Marks this segment as stylist-free ("development time"). Defaults to false. */
+  isStylistFree?: boolean;
+}
+
+/**
+ * A segment as it appears on a booked appointment or a bookable service — the
+ * minimal shape the booking engine and the appointment-book calendar need to
+ * split a service into occupied vs stylist-free (development) windows.
+ */
+export interface BookingSegmentSummary {
+  name: string;
+  durationMinutes: number;
+  isStylistFree: boolean;
 }
 
 /** A bookable service in the managed catalogue. */
@@ -2258,6 +2302,12 @@ export interface PublicBookingServiceSummary {
   /** Deposit value: a fixed amount for `fixed_amount`, a percent for `percentage`. */
   depositValue?: number;
   currencyCode: string;
+  /**
+   * Ordered segment breakdown (empty when the service has no segments). The
+   * booking engine uses this to work out which sub-windows actually occupy the
+   * stylist so bookings can interleave during stylist-free (development) time.
+   */
+  segments: BookingSegmentSummary[];
 }
 
 export interface PublicBookingUpgradeSuggestion {

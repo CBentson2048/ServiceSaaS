@@ -20,6 +20,9 @@ interface SegmentDraft {
   key: string;
   name: string;
   durationMinutes: string;
+  // When true the stylist is free during this segment ("development time"): the
+  // window is bookable for another client even though the appointment spans it.
+  isStylistFree: boolean;
 }
 
 interface ServiceForm {
@@ -172,6 +175,7 @@ export function ServicesPage() {
         key: segment.id,
         name: segment.name,
         durationMinutes: String(segment.durationMinutes),
+        isStylistFree: segment.isStylistFree ?? false,
       })),
     });
     setShowForm(true);
@@ -181,11 +185,14 @@ export function ServicesPage() {
   function addSegment() {
     setForm((current) => ({
       ...current,
-      segments: [...current.segments, { key: nextSegmentKey(), name: '', durationMinutes: '' }],
+      segments: [...current.segments, { key: nextSegmentKey(), name: '', durationMinutes: '', isStylistFree: false }],
     }));
   }
 
-  function updateSegment(key: string, patch: Partial<Pick<SegmentDraft, 'name' | 'durationMinutes'>>) {
+  function updateSegment(
+    key: string,
+    patch: Partial<Pick<SegmentDraft, 'name' | 'durationMinutes' | 'isStylistFree'>>,
+  ) {
     setForm((current) => ({
       ...current,
       segments: current.segments.map((segment) => (segment.key === key ? { ...segment, ...patch } : segment)),
@@ -222,11 +229,12 @@ export function ServicesPage() {
     // the manual Duration field governs (validated exactly as before).
     const hasSegments = form.segments.length > 0;
     let durationMinutes: number;
-    let segmentsPayload: { name: string; durationMinutes: number }[] = [];
+    let segmentsPayload: { name: string; durationMinutes: number; isStylistFree: boolean }[] = [];
     if (hasSegments) {
       const parsed = form.segments.map((segment) => ({
         name: segment.name.trim(),
         durationMinutes: Number(segment.durationMinutes),
+        isStylistFree: segment.isStylistFree,
       }));
       if (parsed.some((segment) => !segment.name)) {
         setError('Every segment needs a name.');
@@ -551,6 +559,18 @@ export function ServicesPage() {
                       />
                       <span className="text-[12px] text-text-muted">min</span>
                     </div>
+                    <label
+                      className="flex shrink-0 cursor-pointer select-none items-center gap-1.5 text-[12px] text-text-secondary"
+                      title="Development time: the stylist is free during this step, so another client can be booked into this window. The appointment still spans the full time."
+                    >
+                      <input
+                        type="checkbox"
+                        checked={segment.isStylistFree}
+                        onChange={(event) => updateSegment(segment.key, { isStylistFree: event.target.checked })}
+                        className="h-4 w-4 rounded border-border-strong text-primary focus:ring-2 focus:ring-primary/20"
+                      />
+                      Stylist free
+                    </label>
                     <button
                       type="button"
                       onClick={() => removeSegment(segment.key)}

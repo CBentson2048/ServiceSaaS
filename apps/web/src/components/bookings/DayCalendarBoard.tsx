@@ -428,7 +428,42 @@ export function DayCalendarBoard({
                     } ${tileColor ? '' : selected ? 'bg-primary/5' : 'bg-surface'} ${muted ? 'opacity-60' : ''}`}
                   >
                     <span className={`absolute inset-y-0 left-0 w-[3px] rounded-l-lg ${accent.bar}`} aria-hidden />
-                    <span className="block py-1.5 pl-3 pr-1.5">
+                    {/* Per-segment split: shade stylist-free "development" time with a
+                        hatch so staff can see the bookable gap; dashed dividers mark
+                        each step. Sits behind the label (which is lifted to z-[1]). */}
+                    {(() => {
+                      const bands = segmentBands(booking, height);
+                      if (bands.length === 0) return null;
+                      return (
+                        <span aria-hidden className="pointer-events-none absolute inset-y-0 left-[3px] right-0 z-0">
+                          {bands.map((band, i) => (
+                            <span
+                              key={i}
+                              className="absolute left-0 right-0 overflow-hidden"
+                              style={{
+                                top: band.topPx,
+                                height: Math.max(0, band.heightPx),
+                                ...(band.isStylistFree
+                                  ? {
+                                      backgroundColor: 'rgba(255,255,255,0.42)',
+                                      backgroundImage:
+                                        'repeating-linear-gradient(45deg, rgba(71,84,103,0.30) 0, rgba(71,84,103,0.30) 5px, transparent 5px, transparent 10px)',
+                                    }
+                                  : {}),
+                                ...(i > 0 ? { borderTop: '1px dashed rgba(16,24,40,0.20)' } : {}),
+                              }}
+                            >
+                              {band.isStylistFree && band.heightPx >= 16 ? (
+                                <span className="absolute inset-x-0 top-1/2 -translate-y-1/2 truncate px-1 text-center text-[9px] font-semibold uppercase tracking-[0.04em] text-text-secondary">
+                                  {band.name || 'Free'}
+                                </span>
+                              ) : null}
+                            </span>
+                          ))}
+                        </span>
+                      );
+                    })()}
+                    <span className="relative z-[1] block py-1.5 pl-3 pr-1.5">
                       <span
                         className="flex items-center gap-1 truncate text-[11px] font-semibold text-text-primary"
                         style={primaryText ? { color: primaryText } : undefined}
@@ -884,6 +919,45 @@ function layoutBlocks(bookings: StaffBookingSummary[], startHour: number, totalH
     lane: item.lane,
     laneCount,
   }));
+}
+
+interface SegmentBand {
+  topPx: number;
+  heightPx: number;
+  isStylistFree: boolean;
+  name: string;
+}
+
+// Splits an appointment's tile into per-segment bands (e.g. Application →
+// Development → Toner). Positions are proportional to the appointment's span so
+// they line up within whatever height the tile was given. Returns [] when there
+// is no per-service segment breakdown (older summaries) — the tile then renders
+// as a single solid block, unchanged.
+function segmentBands(booking: StaffBookingSummary, tileHeight: number): SegmentBand[] {
+  const services = booking.services ?? [];
+  if (services.length === 0) return [];
+  const bookingStart = new Date(booking.startsAt).getTime();
+  const totalMs = new Date(booking.endsAt).getTime() - bookingStart;
+  if (!(totalMs > 0)) return [];
+  const bands: SegmentBand[] = [];
+  for (const service of services) {
+    const segments = service.segments ?? [];
+    if (segments.length === 0) continue;
+    let cursorMs = new Date(service.startsAt).getTime();
+    for (const segment of segments) {
+      const startMs = cursorMs;
+      const endMs = startMs + segment.durationMinutes * 60_000;
+      cursorMs = endMs;
+      bands.push({
+        topPx: ((startMs - bookingStart) / totalMs) * tileHeight,
+        heightPx: ((endMs - startMs) / totalMs) * tileHeight,
+        isStylistFree: segment.isStylistFree,
+        name: segment.name,
+      });
+    }
+  }
+  // Only worth overlaying when a service actually has more than one segment.
+  return bands.length > 1 ? bands : [];
 }
 
 function buildColumns(input: {

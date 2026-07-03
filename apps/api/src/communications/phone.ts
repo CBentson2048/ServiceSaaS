@@ -2,62 +2,71 @@
  * Phone-number normalisation shared by the WhatsApp and SMS senders AND the channel-eligibility
  * check, so a number deemed "valid" is exactly the number we will send to. Both Twilio channels need
  * a valid E.164 number; WhatsApp additionally requires the `whatsapp:` address prefix.
+ *
+ * Backed by `libphonenumber-js` for real per-region parsing + validity checks: national-format
+ * numbers (a leading trunk `0`, or bare like `7725485160`) are promoted using a default region, and
+ * numbers that are the right *length* but not real (e.g. `99999999999`) are rejected instead of being
+ * handed to Twilio to fail at send time.
  */
-
-/** A fully-qualified E.164 number: `+`, a non-zero country digit, then 7–14 more digits (8–15 total). */
-const E164 = /^\+[1-9]\d{7,14}$/;
+import parsePhoneNumberFromString, { isSupportedCountry, type CountryCode } from 'libphonenumber-js';
 
 /**
- * Default country calling code (digits only, e.g. `44` for the UK) used to promote national-format
- * numbers (a leading trunk `0`, no `+`) to E.164. Sourced from `DEFAULT_PHONE_COUNTRY_CALLING_CODE`
- * so one platform-wide default applies identically to eligibility checks and the send paths. When
- * unset, a national number with no country code is treated as invalid rather than silently mis-sent
- * (the previous behaviour turned `07700900123` into the bogus `+07700900123`).
+ * The region used to parse national-format numbers (no `+`). Resolved once per call from, in order:
+ *  1. an explicit `defaultRegion` argument (ISO-3166 alpha-2, e.g. `GB`),
+ *  2. `DEFAULT_PHONE_COUNTRY` (ISO-3166 alpha-2),
+ *  3. `DEFAULT_PHONE_COUNTRY_CALLING_CODE` (digits, e.g. `44`) mapped to a region,
+ *  4. the platform default {@link PLATFORM_DEFAULT_REGION}.
+ * Fully-qualified `+…` numbers ignore the region entirely, so this only affects national input.
  */
-function resolveCallingCode(explicit?: string): string | undefined {
-  const cc = (explicit ?? process.env.DEFAULT_PHONE_COUNTRY_CALLING_CODE)?.trim();
-  return cc && /^[1-9]\d{0,3}$/.test(cc) ? cc : undefined;
+const PLATFORM_DEFAULT_REGION: CountryCode = 'GB';
+
+/** Minimal calling-code → region map so a legacy `DEFAULT_PHONE_COUNTRY_CALLING_CODE` keeps working. */
+const CALLING_CODE_TO_REGION: Record<string, CountryCode> = {
+  '44': 'GB',
+  '353': 'IE',
+  '1': 'US',
+  '33': 'FR',
+  '49': 'DE',
+  '34': 'ES',
+  '39': 'IT',
+  '31': 'NL',
+  '351': 'PT',
+  '61': 'AU',
+};
+
+function resolveDefaultRegion(explicit?: string): CountryCode {
+  const iso = (explicit ?? process.env.DEFAULT_PHONE_COUNTRY)?.trim().toUpperCase();
+  if (iso && isSupportedCountry(iso)) return iso as CountryCode;
+
+  const callingCode = process.env.DEFAULT_PHONE_COUNTRY_CALLING_CODE?.trim();
+  if (callingCode && CALLING_CODE_TO_REGION[callingCode]) return CALLING_CODE_TO_REGION[callingCode];
+
+  return PLATFORM_DEFAULT_REGION;
 }
 
 /**
- * Normalise a raw phone string to strict E.164 (`+447700900123`). Returns undefined when the number
- * cannot be made into a valid E.164 number.
- *
- *  - `+44…` / `447…` (already international) are kept / `+`-prefixed.
- *  - `0044…` (international access prefix) becomes `+44…`.
- *  - `07…` (national trunk prefix) is promoted with `callingCode` (or DEFAULT_PHONE_COUNTRY_CALLING_CODE);
- *    without a known calling code it is rejected.
- *
- * The result is validated against {@link E164}, so non-numeric junk or an impossible length yields
- * undefined instead of a value Twilio would reject at send time.
+ * Normalise a raw phone string to strict E.164 (`+447700900123`), or `undefined` when the value is
+ * not a valid, dialable phone number. National-format numbers are interpreted in `defaultRegion`
+ * (see {@link resolveDefaultRegion}); international `+…` numbers are region-independent. Validity is
+ * `libphonenumber-js`'s `isValid()`, so wrong-length or impossible numbers are rejected.
  */
-export function normalizeE164(raw: string | undefined | null, callingCode?: string): string | undefined {
+export function normalizeE164(raw: string | undefined | null, defaultRegion?: string): string | undefined {
   const trimmed = raw?.trim();
   if (!trimmed) return undefined;
 
-  let value = trimmed
-    .replace(/^whatsapp:/i, '')
-    .trim()
-    .replace(/[\s()\-.]/g, '');
+  const cleaned = trimmed.replace(/^whatsapp:/i, '').trim();
 
-  if (value.startsWith('+')) {
-    // already international — validated below.
-  } else if (value.startsWith('00')) {
-    value = `+${value.slice(2)}`;
-  } else if (value.startsWith('0')) {
-    const cc = resolveCallingCode(callingCode);
-    if (!cc) return undefined;
-    value = `+${cc}${value.slice(1)}`;
-  } else {
-    value = `+${value}`;
+  try {
+    const parsed = parsePhoneNumberFromString(cleaned, resolveDefaultRegion(defaultRegion));
+    return parsed?.isValid() ? parsed.number : undefined;
+  } catch {
+    return undefined;
   }
-
-  return E164.test(value) ? value : undefined;
 }
 
 /** Normalise into Twilio's `whatsapp:+E164` form. Returns undefined when unusable. */
-export function toWhatsAppAddress(raw: string | undefined | null, callingCode?: string): string | undefined {
-  const e164 = normalizeE164(raw, callingCode);
+export function toWhatsAppAddress(raw: string | undefined | null, defaultRegion?: string): string | undefined {
+  const e164 = normalizeE164(raw, defaultRegion);
   return e164 ? `whatsapp:${e164}` : undefined;
 }
 

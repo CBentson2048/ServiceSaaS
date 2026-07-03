@@ -29,7 +29,9 @@ import type {
   SheerLabAnalyticsRange,
   StaffBookingPatchTestSummary,
   StaffBookingDetail,
+  StaffBookingServiceLine,
   StaffBookingSummary,
+  BookingSegmentSummary,
 } from '@sheer/domain';
 import {
   calculateAppointmentBillingTax,
@@ -40,6 +42,13 @@ import {
   type TaxableCategory,
 } from '@sheer/domain';
 import { buildProductBillingSnapshot } from '../common/product-billing.helper';
+import {
+  type OccupancyService,
+  type TimeInterval,
+  occupiedIntervalsFrom,
+  parseMultirange,
+  toMultirangeLiteral,
+} from '../common/occupied-ranges';
 import { BookingNotificationService } from '../communications/booking-notification.service';
 import type { LabRuntimeSession } from '../lab-session/lab-session.service';
 import { OwnerTaxSettingsService } from '../owner-tax-settings/owner-tax-settings.service';
@@ -53,6 +62,11 @@ interface AppointmentServiceRow {
   duration_minutes: number;
   deposit_required_amount: number | string;
   price_amount?: number | string | null;
+  sequence_no?: number | null;
+  scheduled_start_at?: string | null;
+  scheduled_end_at?: string | null;
+  // Per-service segment snapshot [{name,durationMinutes,isStylistFree}] (jsonb).
+  segments?: BookingSegmentSummary[] | null;
 }
 
 interface DepositRow {
@@ -63,6 +77,13 @@ interface DepositRow {
 
 // A row from the booking.services catalogue, used when editing an appointment's
 // services. Mirrors the columns the booking flow reads to snapshot price/duration.
+interface ServiceSegmentEmbedRow {
+  name: string;
+  duration_minutes: number;
+  is_stylist_free: boolean;
+  sort_order: number;
+}
+
 interface ServiceCatalogRow {
   id: string;
   name: string;
@@ -72,6 +93,7 @@ interface ServiceCatalogRow {
   deposit_value: number | string;
   is_active?: boolean | null;
   location_id?: string | null;
+  service_segments?: ServiceSegmentEmbedRow[] | ServiceSegmentEmbedRow | null;
 }
 
 // A catalogue service resolved into the figures we snapshot onto appointment_services.
@@ -81,6 +103,7 @@ interface ResolvedCatalogService {
   durationMinutes: number;
   priceAmount: number;
   depositAmount: number;
+  segments: BookingSegmentSummary[];
 }
 
 interface StaffProfileRow {
@@ -257,10 +280,10 @@ const CLIENT_RESCHEDULABLE_STATUSES: AppointmentStatus[] = ['pending', 'accepted
 const DEFAULT_CANCELLATION_NOTICE_HOURS = 24;
 
 const LIST_COLUMNS =
-  'id,business_id,location_id,client_profile_id,assigned_staff_profile_id,requested_staff_profile_id,status,scheduled_start_at,scheduled_end_at,check_in_at,client_note,completed_at,completed_by_user_profile_id,completed_by_staff_profile_id,appointment_services(service_id,service_name_snapshot,duration_minutes,deposit_required_amount,price_amount),deposits(status,amount,currency_code)';
+  'id,business_id,location_id,client_profile_id,assigned_staff_profile_id,requested_staff_profile_id,status,scheduled_start_at,scheduled_end_at,check_in_at,client_note,completed_at,completed_by_user_profile_id,completed_by_staff_profile_id,appointment_services(service_id,service_name_snapshot,duration_minutes,deposit_required_amount,price_amount,sequence_no,scheduled_start_at,scheduled_end_at,segments),deposits(status,amount,currency_code)';
 
 const DETAIL_COLUMNS =
-  'id,business_id,location_id,client_profile_id,assigned_staff_profile_id,requested_staff_profile_id,status,scheduled_start_at,scheduled_end_at,check_in_at,communication_preference,client_note,internal_note,completed_at,completed_by_user_profile_id,completed_by_staff_profile_id,appointment_services(id,service_id,service_name_snapshot,duration_minutes,deposit_required_amount,price_amount),deposits(status,amount,currency_code)';
+  'id,business_id,location_id,client_profile_id,assigned_staff_profile_id,requested_staff_profile_id,status,scheduled_start_at,scheduled_end_at,check_in_at,communication_preference,client_note,internal_note,completed_at,completed_by_user_profile_id,completed_by_staff_profile_id,appointment_services(id,service_id,service_name_snapshot,duration_minutes,deposit_required_amount,price_amount,sequence_no,scheduled_start_at,scheduled_end_at,segments),deposits(status,amount,currency_code)';
 const VISIT_COLUMNS =
   'id,business_id,location_id,appointment_id,client_profile_id,primary_staff_profile_id,status,checked_in_at,started_at,completed_at,completed_by_user_profile_id,completed_by_staff_profile_id,checkout_status,checkout_ready_at,paid_at,paid_by_user_profile_id,paid_by_staff_profile_id,service_summary,client_visible_summary,created_at';
 const REBOOKING_VISIT_COLUMNS = `${VISIT_COLUMNS},rebooking_outcomes(id,rebooked_appointment_id,rebook_source,rebooked_at)`;
@@ -982,12 +1005,17 @@ export class LabAppointmentsService {
     const newEnd = new Date(newStart.getTime() + durationMinutes * 60_000);
 
     if (staffProfileId) {
+      const candidateOccupied = occupiedIntervalsFrom(
+        resolvedServices ? occupancyFromResolved(resolvedServices) : occupancyFromServiceRows(currentServices),
+        newStart,
+      );
       await this.assertStaffAvailableForRebooking({
         businessId: actor.businessId,
         locationId: appointment.location_id,
         staffProfileId,
         selectedStart: newStart,
         selectedEnd: newEnd,
+        candidateOccupied,
         excludeAppointmentId: appointment.id,
       });
     }
@@ -999,6 +1027,11 @@ export class LabAppointmentsService {
         scheduled_start_at: newStart.toISOString(),
         scheduled_end_at: newEnd.toISOString(),
         assigned_staff_profile_id: staffProfileId ?? appointment.assigned_staff_profile_id,
+        // Refresh the stylist-occupied windows for the new time/services so the
+        // no-overlap guard validates against the NEW position, not the old one.
+        occupied_ranges: resolvedServices
+          ? occupiedRangesLiteralForResolved(resolvedServices, newStart)
+          : occupiedRangesLiteralForRows(currentServices, newStart),
       })
       .eq('id', appointment.id)
       .eq('business_id', appointment.business_id)
@@ -1066,6 +1099,10 @@ export class LabAppointmentsService {
         scheduled_start_at: prior.scheduled_start_at,
         scheduled_end_at: prior.scheduled_end_at,
         assigned_staff_profile_id: prior.assigned_staff_profile_id,
+        occupied_ranges: occupiedRangesLiteralForRows(
+          arrayOf(prior.appointment_services),
+          new Date(prior.scheduled_start_at),
+        ),
       })
       .eq('id', prior.id)
       .eq('business_id', prior.business_id);
@@ -1141,7 +1178,9 @@ export class LabAppointmentsService {
     const { data, error } = await this.admin
       .schema('booking')
       .from('services')
-      .select('id,name,estimated_duration_minutes,base_price,deposit_type,deposit_value,is_active,location_id')
+      .select(
+        'id,name,estimated_duration_minutes,base_price,deposit_type,deposit_value,is_active,location_id,service_segments(name,duration_minutes,is_stylist_free,sort_order)',
+      )
       .eq('business_id', businessId)
       .eq('is_active', true)
       .or(`location_id.is.null,location_id.eq.${locationId}`)
@@ -1232,6 +1271,7 @@ export class LabAppointmentsService {
         status: 'scheduled',
         scheduled_start_at: start.toISOString(),
         scheduled_end_at: end.toISOString(),
+        segments: service.segments ?? [],
       };
     });
 
@@ -1464,6 +1504,7 @@ export class LabAppointmentsService {
       staffProfileId,
       selectedStart,
       selectedEnd,
+      candidateOccupied: occupiedIntervalsFrom(occupancyFromServiceRows(services), selectedStart),
     });
 
     const followUp = await this.insertStylistRebookingAppointment({
@@ -1620,30 +1661,42 @@ export class LabAppointmentsService {
     staffProfileId: string;
     selectedStart: Date;
     selectedEnd: Date;
+    /** The new booking's stylist-OCCUPIED windows (absolute times). Free/development
+     * windows are omitted so the move may overlap another booking's free time. */
+    candidateOccupied: TimeInterval[];
     /** When set (a reschedule), this appointment is excluded so it can't clash with itself. */
     excludeAppointmentId?: string;
   }): Promise<void> {
+    // Nothing occupies the stylist (all-free service) → it can never clash.
+    if (input.candidateOccupied.length === 0) return;
+
+    // Pre-filter to appointments whose header span overlaps the candidate window
+    // (an appointment's occupied time is always within its span, so anything that
+    // could clash overlaps here); then refine on the occupied windows themselves.
     let query = this.admin
       .schema('booking')
       .from('appointments')
-      .select('id')
+      .select('id,occupied_ranges')
       .eq('business_id', input.businessId)
       .eq('location_id', input.locationId)
       .eq('assigned_staff_profile_id', input.staffProfileId)
       .in('status', ACTIVE_BOOKING_STATUSES)
       .lt('scheduled_start_at', input.selectedEnd.toISOString())
-      .gt('scheduled_end_at', input.selectedStart.toISOString())
-      .limit(1);
+      .gt('scheduled_end_at', input.selectedStart.toISOString());
     if (input.excludeAppointmentId) {
       query = query.neq('id', input.excludeAppointmentId);
     }
-    const { data, error } = await query.returns<Array<{ id: string }>>();
+    const { data, error } = await query.returns<Array<{ id: string; occupied_ranges: string | null }>>();
 
     if (error) {
       this.logger.error(`assertStaffAvailableForRebooking failed: ${error.message}`);
       throw new InternalServerErrorException('Unable to validate rebooking slot');
     }
-    if ((data ?? []).length > 0) {
+    const busy = (data ?? []).flatMap((row) => parseMultirange(row.occupied_ranges));
+    const clashes = input.candidateOccupied.some((occ) =>
+      busy.some((range) => occ.start.getTime() < range.end.getTime() && occ.end.getTime() > range.start.getTime()),
+    );
+    if (clashes) {
       throw new ConflictException('Selected time overlaps an existing appointment');
     }
   }
@@ -1672,6 +1725,10 @@ export class LabAppointmentsService {
         booking_channel: 'staff_app',
         scheduled_start_at: input.selectedStart.toISOString(),
         scheduled_end_at: input.selectedEnd.toISOString(),
+        occupied_ranges: occupiedRangesLiteralForRows(
+          arrayOf(input.appointment.appointment_services),
+          input.selectedStart,
+        ),
         communication_preference: input.appointment.communication_preference ?? null,
         client_note: input.clientNote?.trim() || null,
         metadata: {
@@ -1724,6 +1781,7 @@ export class LabAppointmentsService {
         status: 'scheduled',
         scheduled_start_at: start.toISOString(),
         scheduled_end_at: end.toISOString(),
+        segments: normalizeSegments(service.segments),
       };
     });
 
@@ -2302,7 +2360,76 @@ function resolveCatalogService(row: ServiceCatalogRow): ResolvedCatalogService {
     durationMinutes: Number(row.estimated_duration_minutes ?? 0),
     priceAmount: Number(row.base_price ?? 0),
     depositAmount: calculateServiceDeposit(row),
+    segments: arrayOf(row.service_segments)
+      .slice()
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map((segment) => ({
+        name: segment.name,
+        durationMinutes: segment.duration_minutes,
+        isStylistFree: segment.is_stylist_free ?? false,
+      })),
   };
+}
+
+/** Normalises a per-service segment jsonb snapshot for output/occupancy. */
+function normalizeSegments(segments: BookingSegmentSummary[] | null | undefined): BookingSegmentSummary[] {
+  return (segments ?? []).map((segment) => ({
+    name: segment.name,
+    durationMinutes: segment.durationMinutes,
+    isStylistFree: Boolean(segment.isStylistFree),
+  }));
+}
+
+/** Orders appointment service rows by their booking sequence. */
+function sortServiceRows(rows: AppointmentServiceRow[]): AppointmentServiceRow[] {
+  return rows.slice().sort((a, b) => (a.sequence_no ?? 0) - (b.sequence_no ?? 0));
+}
+
+/** Occupancy inputs (duration + segments) from resolved catalogue services. */
+function occupancyFromResolved(services: ResolvedCatalogService[]): OccupancyService[] {
+  return services.map((service) => ({
+    durationMinutes: service.durationMinutes,
+    segments: service.segments,
+  }));
+}
+
+/** Occupancy inputs from booked service rows (ordered by sequence). */
+function occupancyFromServiceRows(rows: AppointmentServiceRow[]): OccupancyService[] {
+  return sortServiceRows(rows).map((row) => ({
+    durationMinutes: Number(row.duration_minutes ?? 0),
+    segments: normalizeSegments(row.segments),
+  }));
+}
+
+/** The occupied-windows tstzmultirange literal for a set of services starting at `start`. */
+function occupiedRangesLiteralForRows(rows: AppointmentServiceRow[], start: Date): string {
+  return toMultirangeLiteral(occupiedIntervalsFrom(occupancyFromServiceRows(rows), start));
+}
+
+function occupiedRangesLiteralForResolved(services: ResolvedCatalogService[], start: Date): string {
+  return toMultirangeLiteral(occupiedIntervalsFrom(occupancyFromResolved(services), start));
+}
+
+/** Per-service breakdown with each service's window + segments for the calendar tile split. */
+function toServiceLines(row: AppointmentRow): StaffBookingServiceLine[] {
+  const rows = sortServiceRows(arrayOf(row.appointment_services));
+  let cursorMs = new Date(row.scheduled_start_at).getTime();
+  return rows.map((service) => {
+    const durationMinutes = Number(service.duration_minutes ?? 0);
+    const startMs = service.scheduled_start_at ? new Date(service.scheduled_start_at).getTime() : cursorMs;
+    const endMs = service.scheduled_end_at
+      ? new Date(service.scheduled_end_at).getTime()
+      : startMs + durationMinutes * 60_000;
+    cursorMs = endMs;
+    return {
+      serviceId: service.service_id ?? undefined,
+      name: service.service_name_snapshot,
+      startsAt: new Date(startMs).toISOString(),
+      endsAt: new Date(endMs).toISOString(),
+      durationMinutes,
+      segments: normalizeSegments(service.segments),
+    };
+  });
 }
 
 // Deposit due for a service, derived the same way as the booking flow:
@@ -2346,6 +2473,7 @@ function toBookingSummary(
     serviceIds: services
       .map((service) => service.service_id)
       .filter((id): id is string => Boolean(id)),
+    services: toServiceLines(row),
     durationMinutes: durationMinutes || minutesBetween(row.scheduled_start_at, row.scheduled_end_at),
     depositRequiredAmount: depositRequiredAmount || undefined,
     depositStatus: deposits[0]?.status,
