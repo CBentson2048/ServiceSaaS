@@ -155,7 +155,10 @@ export function InventoryPage() {
     [movements],
   );
 
-  if (auth.status === 'authenticated' && userHasRole(auth.user, 'stylist')) {
+  // Gate on the capability, not a single role: an owner who also holds the
+  // stylist role (a common salon-owner setup) must still get full access. Block
+  // only users who lack any management role — pure stylists and clients.
+  if (auth.status === 'authenticated' && !userHasAnyRole(auth.user, ['owner', 'manager'])) {
     return <Navigate to="/unauthorized" replace />;
   }
 

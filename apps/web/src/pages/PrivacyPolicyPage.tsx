@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { BrandLogo } from '../components/BrandLogo';
 import { AppCard, AppText } from '../design';
 
 /**
@@ -23,9 +24,7 @@ export function PrivacyPolicyPage() {
     <main className="min-h-screen bg-bg px-4 py-10 text-text-primary sm:py-14">
       <AppCard elevation="hero" padding="lg" className="mx-auto w-full max-w-3xl">
         <header className="mb-8 text-center">
-          <div className="mb-4 text-xs font-semibold tracking-[0.38em] text-text-secondary">
-            SH<span className="text-primary">EE</span>R
-          </div>
+          <BrandLogo variant="color" className="mx-auto mb-4 h-6" />
           <AppText as="h1" variant="heading" weight="medium">
             Privacy Policy
           </AppText>

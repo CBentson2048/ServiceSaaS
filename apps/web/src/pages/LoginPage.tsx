@@ -4,6 +4,7 @@ import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react
 import type { LoginResponse } from '@sheer/domain';
 import { useAuth } from '../auth/AuthProvider';
 import { loginClientBookingAccount } from '../auth/api';
+import { BrandLogo } from '../components/BrandLogo';
 import {
   readClientBookingSelection,
   updateClientBookingSelection,
@@ -74,9 +75,7 @@ export function LoginPage() {
     <main className="grid min-h-screen place-items-center bg-[#F7F2EA] px-4 text-text-primary">
       <section className="w-full max-w-md overflow-hidden rounded-[28px] border border-[#E7DCCF] bg-white shadow-[0_24px_80px_rgba(38,28,52,0.12)]">
         <div className="border-b border-[#EFE6DC] bg-[#FBF7F1] px-8 py-7 text-center">
-          <div className="mb-6 text-sm font-semibold tracking-[0.38em] text-[#2F2540]">
-            SH<span className="text-primary">EE</span>R
-          </div>
+          <BrandLogo variant="color" className="mx-auto mb-6 h-7" />
           <div className="mx-auto mb-5 grid h-16 w-16 place-items-center rounded-full border border-primary/30 bg-primary/10 text-primary">
             <span aria-hidden>◇</span>
           </div>

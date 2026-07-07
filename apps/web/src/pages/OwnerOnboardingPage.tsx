@@ -1,6 +1,7 @@
 import type { FormEvent} from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
+import { BrandLogo } from '../components/BrandLogo';
 import type {
   BusinessSlugAvailabilityResponse,
   OwnerOnboardingBootstrap,
@@ -386,9 +387,7 @@ export function OwnerOnboardingPage() {
       <section className="mx-auto w-full max-w-2xl overflow-hidden rounded-card-lg border border-border-strong bg-surface shadow-hero">
         <header className="border-b border-border bg-surface-alt px-6 py-6 sm:px-10">
           <div className="mb-5 flex items-center justify-between">
-            <span className="text-xs font-semibold tracking-[0.38em] text-text-secondary">
-              SH<span className="text-primary">EE</span>R
-            </span>
+            <BrandLogo variant="color" className="h-6" />
             <Link to="/login" className="text-[12px] font-medium text-primary-deep hover:underline">
               Already have an account? Sign in
             </Link>

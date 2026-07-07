@@ -6,7 +6,7 @@ import { LabScreen } from '../shared/LabScreen';
 
 export function DeviceResolvingScreen(): React.JSX.Element {
   return (
-    <LabScreen title="Checking this iPad" eyebrow="Sheer Lab device">
+    <LabScreen title="Checking this iPad" eyebrow="Qlooqo Lab device">
       <ActivityIndicator color={labTheme.colors.primary} size="large" />
       <Text style={styles.copy}>Resolving the registered device and assigned location.</Text>
     </LabScreen>

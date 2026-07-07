@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   InternalServerErrorException,
@@ -320,7 +321,44 @@ export class CrmService {
     input: CreateCrmClientRequest,
   ): Promise<{ client: CrmClientSummary }> {
     const locationId = this.resolveWriteLocation(actor, input.primaryLocationId);
+    // A scoped (non-owner) actor whose location can't be resolved would otherwise
+    // be written with primary_location_id = NULL. listClients filters non-owners
+    // by `primary_location_id IN (allowedLocationIds)` (NULL never matches) and
+    // fetchClientForActor rejects a NULL-location row, so the creator would never
+    // see or open the client they just made. Fail loudly instead of orphaning it.
+    // resolveWriteLocation auto-assigns the sole location for single-location
+    // actors, so this only triggers for multi-location managers/stylists who did
+    // not choose one. Owners intentionally may create unscoped clients.
+    if (!locationId && !userHasRole(actor, 'owner')) {
+      throw new BadRequestException('primaryLocationId is required');
+    }
     if (locationId) this.assertLocationScope(actor, locationId);
+
+    const email = cleanOptional(input.email, { lowercase: true });
+    const phone = cleanOptional(input.phone);
+
+    // A stored preference that names a channel the client can't be reached on
+    // makes booking notifications silently undeliverable. Reject it up front.
+    assertPreferenceReachable(input.communicationPreference ?? null, email, phone);
+
+    // Guard against silently creating a second profile for the same person.
+    // client_profile_id is the join key for the whole footprint (visits, notes,
+    // allergies, patch tests, messages), so a duplicate splits history and,
+    // worse, hides allergy/patch-test alerts. Staff can override for a genuine
+    // shared-inbox case via allowDuplicate.
+    if (email && !input.allowDuplicate) {
+      const existing = await this.findClientByEmail(actor.businessId, email);
+      if (existing) {
+        throw new ConflictException({
+          message: `A client with this email already exists: ${existing.first_name} ${existing.last_name} (${existing.client_code}). Open the existing record or create anyway.`,
+          existingClient: {
+            id: existing.id,
+            displayName: `${existing.first_name} ${existing.last_name}`.trim(),
+            clientCode: existing.client_code,
+          },
+        });
+      }
+    }
 
     const { data, error } = await this.admin
       .schema('core')
@@ -330,8 +368,8 @@ export class CrmService {
         primary_location_id: locationId ?? null,
         first_name: cleanRequired(input.firstName, 'firstName'),
         last_name: cleanRequired(input.lastName, 'lastName'),
-        email: cleanOptional(input.email, { lowercase: true }),
-        phone: cleanOptional(input.phone),
+        email,
+        phone,
         communication_preference: input.communicationPreference ?? null,
         marketing_opt_in: input.marketingOptIn ?? false,
         source: cleanOptional(input.source) ?? 'crm_manual',
@@ -419,6 +457,18 @@ export class CrmService {
       if (input.primaryLocationId) this.assertLocationScope(actor, input.primaryLocationId);
       patch.primary_location_id = input.primaryLocationId;
     }
+
+    // Validate the preference against the resulting contact details (the patch
+    // where present, otherwise the stored values), so an edit can't leave the
+    // client preferring a channel they can't be reached on.
+    const nextEmail =
+      input.email !== undefined ? cleanOptional(input.email, { lowercase: true }) : existing.email;
+    const nextPhone = input.phone !== undefined ? cleanOptional(input.phone) : existing.phone;
+    const nextPreference =
+      input.communicationPreference !== undefined
+        ? input.communicationPreference
+        : existing.communication_preference;
+    assertPreferenceReachable(nextPreference, nextEmail, nextPhone);
 
     const { data, error } = await this.admin
       .schema('core')
@@ -973,6 +1023,26 @@ export class CrmService {
     return requested ? [requested] : actor.allowedLocationIds;
   }
 
+  private async findClientByEmail(
+    businessId: string,
+    email: string,
+  ): Promise<ClientProfileRow | null> {
+    // email is stored as citext, so this match is case-insensitive.
+    const { data, error } = await this.admin
+      .schema('core')
+      .from('client_profiles')
+      .select('id,client_code,first_name,last_name')
+      .eq('business_id', businessId)
+      .eq('email', email)
+      .limit(1)
+      .maybeSingle<ClientProfileRow>();
+    if (error) {
+      this.logger.error(`findClientByEmail failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to check for existing client');
+    }
+    return data ?? null;
+  }
+
   private resolveWriteLocation(actor: AuthUser, requested?: string | null): string | undefined {
     if (requested) return requested;
     if (!userHasRole(actor, 'owner') && actor.allowedLocationIds.length === 1) return actor.allowedLocationIds[0];
@@ -1217,6 +1287,23 @@ function toPhoto(row: PhotoRow): CrmVisitPhoto {
     uploadedByUserId: row.uploaded_by_user_id ?? undefined,
     createdAt: row.created_at,
   };
+}
+
+// A communication preference is the starting point of the notification chain.
+// Storing one that names a channel the client has no contact detail for makes
+// booking notifications silently undeliverable, so reject the mismatch on write.
+function assertPreferenceReachable(
+  preference: string | null | undefined,
+  email: string | null | undefined,
+  phone: string | null | undefined,
+): void {
+  if (!preference) return;
+  if ((preference === 'sms' || preference === 'whatsapp') && !phone) {
+    throw new BadRequestException(`communicationPreference ${preference} requires a phone number`);
+  }
+  if (preference === 'email' && !email) {
+    throw new BadRequestException('communicationPreference email requires an email address');
+  }
 }
 
 function cleanRequired(value: string, field: string): string {

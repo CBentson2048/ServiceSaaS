@@ -3,6 +3,7 @@ import { userHasRole } from '@sheer/domain';
 import { formatDate, cn } from '@sheer/utils';
 import { useNavigate } from 'react-router-dom';
 import { AppText } from '../design';
+import { BrandLogo } from './BrandLogo';
 import { useAuth } from '../auth/AuthProvider';
 import { resolveTimezone } from '../config/timezones';
 
@@ -47,15 +48,7 @@ export function TopBar() {
 
   return (
     <header className="flex h-14 shrink-0 items-center justify-between bg-surface-ink px-6 text-text-on-primary">
-      <AppText
-        as="div"
-        variant="body"
-        weight="medium"
-        tone="onPrimary"
-        className="tracking-[0.25em] !text-white md:hidden"
-      >
-        SH<span className="text-primary">EE</span>R
-      </AppText>
+      <BrandLogo variant="white" className="h-5 md:hidden" />
 
       <NavClock timezone={timezone} variant="desktop" />
 

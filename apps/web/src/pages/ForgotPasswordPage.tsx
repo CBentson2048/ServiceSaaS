@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { ApiRequestError, requestPasswordReset } from '../auth/api';
 import { TextField } from '../components/onboarding/FormField';
+import { BrandLogo } from '../components/BrandLogo';
 import { AppButton, AppCard, AppText } from '../design';
 
 /**
@@ -53,9 +54,7 @@ export function ForgotPasswordPage() {
     <main className="grid min-h-screen place-items-center bg-bg px-4 py-10 text-text-primary">
       <AppCard elevation="hero" padding="lg" className="w-full max-w-md">
         <header className="mb-5 text-center">
-          <div className="mb-4 text-xs font-semibold tracking-[0.38em] text-text-secondary">
-            SH<span className="text-primary">EE</span>R
-          </div>
+          <BrandLogo variant="color" className="mx-auto mb-4 h-6" />
           <AppText as="h1" variant="heading" weight="medium">
             Reset your password
           </AppText>

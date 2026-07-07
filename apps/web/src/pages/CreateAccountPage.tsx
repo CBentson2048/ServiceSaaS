@@ -4,6 +4,7 @@ import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import type { LoginResponse } from '@sheer/domain';
 import { useAuth } from '../auth/AuthProvider';
 import { createClientBookingAccount } from '../auth/api';
+import { BrandLogo } from '../components/BrandLogo';
 import {
   readClientBookingSelection,
   updateClientBookingSelection,
@@ -93,9 +94,7 @@ export function CreateAccountPage() {
     <main className="grid min-h-screen place-items-center bg-[#F7F2EA] px-4 py-8 text-text-primary">
       <section className="w-full max-w-md overflow-hidden rounded-[28px] border border-[#E7DCCF] bg-white shadow-[0_24px_80px_rgba(38,28,52,0.12)]">
         <div className="border-b border-[#EFE6DC] bg-[#FBF7F1] px-8 py-7 text-center">
-          <div className="mb-6 text-sm font-semibold tracking-[0.38em] text-[#2F2540]">
-            SH<span className="text-primary">EE</span>R
-          </div>
+          <BrandLogo variant="color" className="mx-auto mb-6 h-7" />
           <h1 className="text-2xl font-semibold text-[#241E30]">Create your account</h1>
           <p className="mt-1 text-sm text-[#776A82]">
             {bookingMode

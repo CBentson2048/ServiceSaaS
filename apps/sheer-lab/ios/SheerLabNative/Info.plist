@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>Sheer Lab</string>
+	<string>QLOOQO LAB</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIconName</key>
@@ -38,9 +38,9 @@
 		<true/>
 	</dict>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>Sheer Lab uses Bluetooth to connect to salon scales for formula weight capture.</string>
+	<string>Qlooqo Lab uses Bluetooth to connect to salon scales for formula weight capture.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
-	<string>Sheer Lab uses Bluetooth to connect to salon scales for formula weight capture.</string>
+	<string>Qlooqo Lab uses Bluetooth to connect to salon scales for formula weight capture.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Bluetooth scale discovery may use nearby device signals on some iOS versions.</string>
 	<key>RCTNewArchEnabled</key>

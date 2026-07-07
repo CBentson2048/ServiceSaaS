@@ -700,13 +700,19 @@ export class LabAppointmentsService {
 
   /**
    * Cancel a confirmed/checked-in appointment straight from the book. Like reject,
-   * this is an owner/manager decision because it refunds the client's paid deposit
-   * via Stripe. It claims the 'cancelled' transition FIRST (a conditional update),
-   * and only the request that wins that claim performs the refund + notification
-   * re-sync — so concurrent front-desk cancels can never double-refund. 'reject'
-   * stays the path for client requests still awaiting acceptance.
+   * this is an owner/manager decision. The actor chooses at cancel time whether a
+   * paid deposit is refunded (`refundDeposit`, default true) — refunding via Stripe
+   * or keeping it (forfeited). It claims the 'cancelled' transition FIRST (a
+   * conditional update), and only the request that wins that claim performs the
+   * refund + notification re-sync — so concurrent front-desk cancels can never
+   * double-refund. 'reject' stays the path for client requests still awaiting acceptance.
    */
-  async cancel(actor: AuthUser, id: string, reason?: string): Promise<CancelAppointmentResponse> {
+  async cancel(
+    actor: AuthUser,
+    id: string,
+    reason?: string,
+    refundDeposit?: boolean,
+  ): Promise<CancelAppointmentResponse> {
     this.assertOwnerOrManager(actor);
     const appointment = await this.fetchAppointmentForActor(actor, id);
 
@@ -754,17 +760,30 @@ export class LabAppointmentsService {
       };
     }
 
-    // We own the cancellation → refund the paid deposit (best-effort; a failure
-    // leaves the deposit 'paid' so it can be refunded manually) and stop the
-    // client's pending confirmations/reminders. Fail-soft on the notification sync.
-    const refund = await this.refundPaidDeposit(data);
+    // We own the cancellation. The actor decides whether the deposit is refunded:
+    // refund (best-effort; a failure leaves the deposit 'paid' so it can be refunded
+    // manually) or keep it — flagged forfeited so the book can tell the user the
+    // deposit was retained. Either way, stop the client's pending confirmations/
+    // reminders. Fail-soft on the notification sync.
+    const shouldRefund = refundDeposit !== false;
+    let depositRefunded = false;
+    let depositForfeited = false;
+    let refundError: string | undefined;
+    if (shouldRefund) {
+      const refund = await this.refundPaidDeposit(data);
+      depositRefunded = refund.refunded;
+      refundError = refund.error;
+    } else {
+      depositForfeited = arrayOf(data.deposits).some((deposit) => deposit.status === 'paid');
+    }
     await this.bookingNotifications.syncBookingNotificationsSafe(data.id);
 
     const clientsById = await this.fetchClientProfiles(actor.businessId, [data.client_profile_id]);
     return {
       appointment: toBookingDetail(data, clientsById.get(data.client_profile_id)),
-      depositRefunded: refund.refunded,
-      refundError: refund.error,
+      depositRefunded,
+      refundError,
+      depositForfeited: depositForfeited || undefined,
     };
   }
 
@@ -1002,16 +1021,28 @@ export class LabAppointmentsService {
       }
     }
 
+    // Resize: an explicit new total duration (with the services unchanged) grows or
+    // shrinks the LAST service line — and its last stylist-occupied segment — to hit
+    // the requested length. Everything downstream (total duration, occupied windows,
+    // per-service rows) then derives from these resized rows, so the header, the
+    // double-booking guard and the calendar stay consistent. A no-op or invalid
+    // resize returns null and the move behaves exactly as before.
+    const resize =
+      !resolvedServices && input.durationMinutes != null
+        ? buildResizedServiceRows(currentServices, input.durationMinutes)
+        : null;
+    const effectiveServiceRows = resize?.rows ?? currentServices;
+
     const durationMinutes = resolvedServices
       ? resolvedServices.reduce((sum, service) => sum + service.durationMinutes, 0) || 30
-      : currentServices.reduce((sum, service) => sum + Number(service.duration_minutes ?? 0), 0) ||
+      : effectiveServiceRows.reduce((sum, service) => sum + Number(service.duration_minutes ?? 0), 0) ||
         minutesBetween(appointment.scheduled_start_at, appointment.scheduled_end_at) ||
         30;
     const newEnd = new Date(newStart.getTime() + durationMinutes * 60_000);
 
     if (staffProfileId) {
       const candidateOccupied = occupiedIntervalsFrom(
-        resolvedServices ? occupancyFromResolved(resolvedServices) : occupancyFromServiceRows(currentServices),
+        resolvedServices ? occupancyFromResolved(resolvedServices) : occupancyFromServiceRows(effectiveServiceRows),
         newStart,
       );
       await this.assertStaffAvailableForRebooking({
@@ -1036,7 +1067,7 @@ export class LabAppointmentsService {
         // no-overlap guard validates against the NEW position, not the old one.
         occupied_ranges: resolvedServices
           ? occupiedRangesLiteralForResolved(resolvedServices, newStart)
-          : occupiedRangesLiteralForRows(currentServices, newStart),
+          : occupiedRangesLiteralForRows(effectiveServiceRows, newStart),
       })
       .eq('id', appointment.id)
       .eq('business_id', appointment.business_id)
@@ -1065,6 +1096,15 @@ export class LabAppointmentsService {
           newStart,
           staffProfileId ?? rescheduled.assigned_staff_profile_id,
         );
+      } else if (resize) {
+        // Persist the resized service rows (new duration + segments on the last
+        // line) and re-sequence every row's window from the new start.
+        await this.applyResizedServiceRows(
+          rescheduled,
+          resize.rows,
+          newStart,
+          staffProfileId ?? rescheduled.assigned_staff_profile_id,
+        );
       } else {
         await this.rescheduleAppointmentServices(
           rescheduled,
@@ -1080,12 +1120,12 @@ export class LabAppointmentsService {
     // The reminder schedule must follow the new time. Fail-soft.
     await this.bookingNotifications.syncBookingNotificationsSafe(rescheduled.id);
 
-    // The header-update projection was captured before the services were replaced,
-    // so it still carries the OLD nested service rows. Re-fetch when the services
-    // changed so the response reflects the new services/price/duration.
-    const finalRow = resolvedServices
-      ? await this.fetchAppointmentById(id, actor.businessId)
-      : rescheduled;
+    // The header-update projection was captured before the per-service rows were
+    // rewritten, so it still carries the OLD nested service rows. Re-fetch when the
+    // services changed OR were resized so the response reflects the new
+    // durations/segments/windows (a plain move only re-sequences and keeps them).
+    const finalRow =
+      resolvedServices || resize ? await this.fetchAppointmentById(id, actor.businessId) : rescheduled;
 
     const clientsById = await this.fetchClientProfiles(actor.businessId, [finalRow.client_profile_id]);
     return { appointment: toBookingDetail(finalRow, clientsById.get(finalRow.client_profile_id)) };
@@ -1163,6 +1203,41 @@ export class LabAppointmentsService {
       if (updateError) {
         this.logger.error(`rescheduleAppointmentServices update failed: ${updateError.message}`);
         throw new InternalServerErrorException('Unable to reschedule appointment services');
+      }
+    }
+  }
+
+  // Persist a resize: write each row's (possibly adjusted) duration + segments and
+  // re-sequence its window from the new start. Rows are the resized copy built by
+  // buildResizedServiceRows — only the last line's duration/segments differ, but we
+  // rewrite every row's window so the whole appointment stays contiguous.
+  private async applyResizedServiceRows(
+    appointment: AppointmentRow,
+    rows: AppointmentServiceRow[],
+    newStart: Date,
+    staffProfileId: string | null,
+  ): Promise<void> {
+    let cursor = newStart;
+    for (const row of sortServiceRows(rows)) {
+      if (!row.id) continue;
+      const start = cursor;
+      const end = new Date(start.getTime() + Number(row.duration_minutes ?? 0) * 60_000);
+      cursor = end;
+      const { error: updateError } = await this.admin
+        .schema('booking')
+        .from('appointment_services')
+        .update({
+          duration_minutes: Number(row.duration_minutes ?? 0),
+          segments: normalizeSegments(row.segments),
+          scheduled_start_at: start.toISOString(),
+          scheduled_end_at: end.toISOString(),
+          assigned_staff_profile_id: staffProfileId,
+        })
+        .eq('id', row.id)
+        .eq('business_id', appointment.business_id);
+      if (updateError) {
+        this.logger.error(`applyResizedServiceRows update failed: ${updateError.message}`);
+        throw new InternalServerErrorException('Unable to resize appointment services');
       }
     }
   }
@@ -2391,6 +2466,63 @@ function normalizeSegments(segments: BookingSegmentSummary[] | null | undefined)
 /** Orders appointment service rows by their booking sequence. */
 function sortServiceRows(rows: AppointmentServiceRow[]): AppointmentServiceRow[] {
   return rows.slice().sort((a, b) => (a.sequence_no ?? 0) - (b.sequence_no ?? 0));
+}
+
+// Builds a resized copy of an appointment's service rows so its total matches the
+// requested duration. The delta versus the current total is applied to the LAST
+// service line — specifically its last stylist-OCCUPIED segment (or the whole line
+// when it has no segments) — floored so nothing collapses to zero. Free
+// "development" segments keep their length, so a drag only changes working time.
+// Returns null for a no-op or when there is nothing to resize, so the caller falls
+// back to a plain move.
+function buildResizedServiceRows(
+  currentServices: AppointmentServiceRow[],
+  requestedTotalMinutes: number,
+): { rows: AppointmentServiceRow[] } | null {
+  const rows = sortServiceRows(currentServices);
+  if (rows.length === 0) return null;
+  const MIN_UNIT = 5;
+  const requested = Math.max(MIN_UNIT, Math.round(requestedTotalMinutes));
+  const currentTotal = rows.reduce((sum, row) => sum + Number(row.duration_minutes ?? 0), 0);
+  if (currentTotal <= 0) return null;
+  const delta = requested - currentTotal;
+  if (delta === 0) return null;
+
+  const resized: AppointmentServiceRow[] = rows.map((row) => ({ ...row }));
+
+  // Apply the delta to the last stylist-OCCUPIED time, scanning rows from the end:
+  // a segment-less line is wholly occupied; otherwise its last non-free segment.
+  // This keeps stylist-free "development" time fixed so a drag only changes working
+  // time — even when the final line is a standalone free/processing service.
+  for (let rowIndex = resized.length - 1; rowIndex >= 0; rowIndex -= 1) {
+    const row = resized[rowIndex];
+    const segments = normalizeSegments(row.segments);
+    if (segments.length === 0) {
+      row.duration_minutes = Math.max(MIN_UNIT, Number(row.duration_minutes ?? 0) + delta);
+      return { rows: resized };
+    }
+    let targetIndex = -1;
+    for (let i = segments.length - 1; i >= 0; i -= 1) {
+      if (!segments[i].isStylistFree) {
+        targetIndex = i;
+        break;
+      }
+    }
+    if (targetIndex !== -1) {
+      const nextSegments = segments.map((segment, index) =>
+        index === targetIndex
+          ? { ...segment, durationMinutes: Math.max(MIN_UNIT, segment.durationMinutes + delta) }
+          : segment,
+      );
+      row.segments = nextSegments;
+      row.duration_minutes = nextSegments.reduce((sum, segment) => sum + segment.durationMinutes, 0);
+      return { rows: resized };
+    }
+    // This line is entirely stylist-free — keep looking at earlier lines.
+  }
+
+  // The whole appointment is stylist-free — nothing to resize; fall back to a move.
+  return null;
 }
 
 /** Occupancy inputs (duration + segments) from resolved catalogue services. */

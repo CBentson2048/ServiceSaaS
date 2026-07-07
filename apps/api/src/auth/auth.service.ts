@@ -852,16 +852,41 @@ export class AuthService {
       communicationPreference?: 'whatsapp' | 'sms' | 'email';
     },
   ): Promise<void> {
-    const { data: existing, error: lookupError } = await this.admin
+    const clientProfileColumns =
+      'id,client_code,first_name,last_name,email,phone,communication_preference';
+    const { data: linked, error: lookupError } = await this.admin
       .schema('core')
       .from('client_profiles')
-      .select('id,client_code,first_name,last_name,email,phone,communication_preference')
+      .select(clientProfileColumns)
       .eq('business_id', businessId)
       .eq('user_profile_id', userId)
       .maybeSingle<ClientProfileRow>();
 
     if (lookupError) {
       throw new InternalServerErrorException('Unable to load client profile');
+    }
+
+    // When no profile is linked to this account yet, adopt a pre-existing
+    // UNLINKED profile with the same email (e.g. one a manager created manually
+    // in the CRM before the client signed up) by linking it to this account,
+    // instead of inserting a second profile. This keeps the manager's notes,
+    // allergies and patch tests attached to the same client_profile_id.
+    let existing = linked;
+    if (!existing && input.email) {
+      const { data: unlinked, error: adoptError } = await this.admin
+        .schema('core')
+        .from('client_profiles')
+        .select(clientProfileColumns)
+        .eq('business_id', businessId)
+        .is('user_profile_id', null)
+        .eq('email', input.email)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle<ClientProfileRow>();
+      if (adoptError) {
+        throw new InternalServerErrorException('Unable to load client profile');
+      }
+      if (unlinked) existing = unlinked;
     }
 
     const payload = {

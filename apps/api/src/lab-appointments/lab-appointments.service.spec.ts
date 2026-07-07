@@ -669,6 +669,167 @@ describe('LabAppointmentsService — edit appointment services', () => {
     );
     expect(touchedCatalog).toBe(false);
   });
+
+  it('resizes to a new total duration (no service change) and re-fetches the fresh rows', async () => {
+    const client = createMockSupabaseClient([
+      { data: appointmentWithService('svc_old'), error: null }, // fetchAppointmentForActor (30 min)
+      { data: [], error: null }, // availability
+      { data: appointmentWithService('svc_old'), error: null }, // header update (STALE 30-min projection)
+      { data: null, error: null }, // applyResizedServiceRows update (1 row)
+      {
+        data: appointmentRow({
+          scheduled_end_at: '2026-05-13T09:45:00.000Z',
+          appointment_services: [
+            {
+              id: 'as_1',
+              service_id: 'svc_old',
+              service_name_snapshot: 'Old service',
+              duration_minutes: 45,
+              deposit_required_amount: 0,
+              price_amount: 40,
+            },
+          ],
+        }),
+        error: null,
+      }, // finalRow re-fetch — the resize path must re-fetch, not return the stale header row
+      { data: [clientProfileRow()], error: null }, // fetchClientProfiles
+    ]);
+    const service = createService(client);
+
+    const result = await service.reschedule(ownerActor(), 'appointment_1', {
+      scheduledStartAt: '2026-05-13T09:00:00.000Z',
+      durationMinutes: 45,
+    });
+
+    // The response reflects the RE-FETCHED rows (45), not the stale header projection (30).
+    expect(result.appointment.durationMinutes).toBe(45);
+
+    // A resize keeps the same services — no catalogue lookup or row replacement.
+    const touchedCatalog = client.queries.some((query) =>
+      query.calls.some((call) => call.method === 'from' && call.args[0] === 'services'),
+    );
+    const deleted = client.queries.some((query) => query.calls.some((call) => call.method === 'delete'));
+    expect(touchedCatalog).toBe(false);
+    expect(deleted).toBe(false);
+
+    // The service row was updated to the new duration.
+    const updateQuery = client.queries.find(
+      (query) =>
+        query.calls.some((call) => call.method === 'from' && call.args[0] === 'appointment_services') &&
+        query.calls.some((call) => call.method === 'update'),
+    );
+    const payload = updateQuery?.calls.find((call) => call.method === 'update')?.args[0] as Record<string, unknown>;
+    expect(payload).toMatchObject({ duration_minutes: 45 });
+  });
+
+  it('resizes into the last stylist-occupied segment, keeping development time fixed', async () => {
+    const segmented = appointmentRow({
+      appointment_services: [
+        {
+          id: 'as_1',
+          service_id: 'svc_colour',
+          service_name_snapshot: 'Colour',
+          duration_minutes: 60,
+          deposit_required_amount: 0,
+          price_amount: 80,
+          segments: [
+            { name: 'Apply', durationMinutes: 20, isStylistFree: false },
+            { name: 'Develop', durationMinutes: 30, isStylistFree: true },
+            { name: 'Rinse', durationMinutes: 10, isStylistFree: false },
+          ],
+        },
+      ],
+    });
+    const client = createMockSupabaseClient([
+      { data: segmented, error: null }, // fetchAppointmentForActor
+      { data: [], error: null }, // availability
+      { data: segmented, error: null }, // header update
+      { data: null, error: null }, // applyResizedServiceRows update
+      { data: segmented, error: null }, // finalRow re-fetch
+      { data: [clientProfileRow()], error: null }, // fetchClientProfiles
+    ]);
+    const service = createService(client);
+
+    await service.reschedule(ownerActor(), 'appointment_1', {
+      scheduledStartAt: '2026-05-13T09:00:00.000Z',
+      durationMinutes: 75, // +15 vs the current 60
+    });
+
+    const updateQuery = client.queries.find(
+      (query) =>
+        query.calls.some((call) => call.method === 'from' && call.args[0] === 'appointment_services') &&
+        query.calls.some((call) => call.method === 'update'),
+    );
+    const payload = updateQuery?.calls.find((call) => call.method === 'update')?.args[0] as {
+      duration_minutes: number;
+      segments: Array<{ name: string; durationMinutes: number; isStylistFree: boolean }>;
+    };
+    // The +15 lands on the last OCCUPIED segment (Rinse); the free Develop time is untouched.
+    expect(payload.duration_minutes).toBe(75);
+    expect(payload.segments).toEqual([
+      { name: 'Apply', durationMinutes: 20, isStylistFree: false },
+      { name: 'Develop', durationMinutes: 30, isStylistFree: true },
+      { name: 'Rinse', durationMinutes: 25, isStylistFree: false },
+    ]);
+  });
+});
+
+describe('LabAppointmentsService — cancel appointment', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  function ownerActor(): AuthUser {
+    return {
+      ...stylistActor(),
+      roles: ['owner'],
+      primaryRole: 'owner',
+      staffProfileId: undefined,
+      locationScope: { kind: 'all', locationIds: ['location_1', 'location_2'] },
+    };
+  }
+
+  const paidDeposit = { status: 'paid', amount: 20, currency_code: 'GBP' };
+
+  it('keeps (forfeits) a paid deposit when the manager chooses not to refund', async () => {
+    const client = createMockSupabaseClient([
+      { data: appointmentRow({ deposits: [paidDeposit] }), error: null }, // fetchAppointmentForActor
+      { data: appointmentRow({ status: 'cancelled', deposits: [paidDeposit] }), error: null }, // atomic cancel
+      { data: [clientProfileRow()], error: null }, // fetchClientProfiles
+    ]);
+    const stripe = { refundPaymentIntent: jest.fn().mockResolvedValue({ id: 're_test', status: 'succeeded' }) };
+    const service = createService(client, undefined, stripe);
+
+    const result = await service.cancel(ownerActor(), 'appointment_1', 'No longer needed', false);
+
+    expect(result.depositRefunded).toBe(false);
+    expect(result.depositForfeited).toBe(true);
+    expect(stripe.refundPaymentIntent).not.toHaveBeenCalled();
+    // The deposit table is never read or written when the deposit is kept.
+    expect(
+      client.queries.some((query) =>
+        query.calls.some((call) => call.method === 'from' && call.args[0] === 'deposits'),
+      ),
+    ).toBe(false);
+  });
+
+  it('refunds the paid deposit by default when no choice is supplied', async () => {
+    const client = createMockSupabaseClient([
+      { data: appointmentRow({ deposits: [paidDeposit] }), error: null }, // fetchAppointmentForActor
+      { data: appointmentRow({ status: 'cancelled', deposits: [paidDeposit] }), error: null }, // atomic cancel
+      { data: { id: 'dep_1', provider_payment_intent_id: 'pi_1', status: 'paid' }, error: null }, // refund lookup
+      { data: null, error: null }, // mark deposit refunded
+      { data: [clientProfileRow()], error: null }, // fetchClientProfiles
+    ]);
+    const stripe = { refundPaymentIntent: jest.fn().mockResolvedValue({ id: 're_test', status: 'succeeded' }) };
+    const service = createService(client, undefined, stripe);
+
+    const result = await service.cancel(ownerActor(), 'appointment_1');
+
+    expect(result.depositRefunded).toBe(true);
+    expect(result.depositForfeited).toBeUndefined();
+    expect(stripe.refundPaymentIntent).toHaveBeenCalledWith('pi_1');
+  });
 });
 
 function createService(
@@ -680,6 +841,9 @@ function createService(
     taxRatePercent: 0,
     appliesTo: 'both',
     displayMode: 'ex_tax',
+  },
+  stripe: { refundPaymentIntent: jest.Mock } = {
+    refundPaymentIntent: jest.fn().mockResolvedValue({ id: 're_test', status: 'succeeded' }),
   },
 ): LabAppointmentsService {
   mockedCreateClient.mockReturnValue(client as never);
@@ -696,9 +860,7 @@ function createService(
     {
       syncBookingNotificationsSafe: jest.fn().mockResolvedValue(undefined),
     } as never,
-    {
-      refundPaymentIntent: jest.fn().mockResolvedValue({ id: 're_test', status: 'succeeded' }),
-    } as never,
+    stripe as never,
   );
 }
 

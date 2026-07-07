@@ -49,7 +49,7 @@ export async function resolveStoredDeviceSession(): Promise<DeviceResolutionStat
     }
     if (context.device.status === 'inactive' || context.device.status === 'revoked') {
       logDeviceResolution('blocked_device');
-      return { status: 'disabled', reason: `This Sheer Lab device is ${context.device.status}.` };
+      return { status: 'disabled', reason: `This Qlooqo Lab device is ${context.device.status}.` };
     }
     logDeviceResolution('resolved');
     return { status: 'ready', context };

@@ -11,10 +11,10 @@ export function DeviceBlockedScreen(): React.JSX.Element {
   const reason =
     resolution.status === 'disabled' || resolution.status === 'registration_required'
       ? resolution.reason
-      : 'This device is not ready for Sheer Lab access.';
+      : 'This device is not ready for Qlooqo Lab access.';
 
   return (
-    <LabScreen title="Device needs attention" eyebrow="Sheer Lab device blocked">
+    <LabScreen title="Device needs attention" eyebrow="Qlooqo Lab device blocked">
       <Text style={styles.copy}>{reason}</Text>
       <LabButton label="Try again" onPress={() => void refreshDeviceSession()} />
       <LabButton label="Reset local registration" onPress={() => void resetDeviceSession()} variant="secondary" />

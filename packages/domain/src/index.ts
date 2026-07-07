@@ -1129,6 +1129,14 @@ export interface CheckInAppointmentResponse {
 
 export interface CancelAppointmentRequest {
   reason?: string;
+  /**
+   * Whether a paid deposit should be refunded as part of the cancellation. The
+   * owner/manager decides this at cancel time from the book. Defaults to `true`
+   * (refund) when omitted, preserving the previous auto-refund behaviour. When
+   * `false` and a deposit was paid, the deposit is kept and the response returns
+   * `depositForfeited: true`.
+   */
+  refundDeposit?: boolean;
 }
 
 export interface CancelAppointmentResponse {
@@ -1138,9 +1146,9 @@ export interface CancelAppointmentResponse {
   /** Set when a refund was attempted but failed — the appointment is still cancelled. */
   refundError?: string;
   /**
-   * True when a paid deposit was deliberately NOT refunded because the customer
-   * cancelled inside the salon's cancellation window (deposit forfeited). Only set
-   * on customer-initiated cancellations.
+   * True when a paid deposit was deliberately NOT refunded — either the customer
+   * cancelled inside the salon's cancellation window, or an owner/manager chose to
+   * keep the deposit when cancelling from the book (deposit forfeited).
    */
   depositForfeited?: boolean;
 }
@@ -1149,11 +1157,19 @@ export interface RescheduleAppointmentRequest {
   /**
    * New ISO start time for the appointment. Duration is preserved unless
    * `serviceIds` changes the service list (then it's recomputed from the new
-   * services).
+   * services) or `durationMinutes` resizes it.
    */
   scheduledStartAt: string;
   /** Optional new assigned stylist. Omit to keep the current stylist. */
   staffProfileId?: string;
+  /**
+   * Optional new total duration in minutes — resizes the appointment (e.g. a
+   * drag on the calendar to give a client a little more or less time). The delta
+   * versus the current total is applied to the last service (and its last
+   * stylist-occupied segment); ignored when `serviceIds` also changes, since the
+   * duration is then recomputed from the new services. Omit to keep the length.
+   */
+  durationMinutes?: number;
   /**
    * Optional replacement service list (catalogue service IDs). When provided, the
    * appointment's services — and therefore its price, deposit and total duration —
@@ -2852,6 +2868,12 @@ export interface CreateCrmClientRequest {
   communicationPreference?: 'whatsapp' | 'sms' | 'email';
   marketingOptIn?: boolean;
   source?: string;
+  /**
+   * When true, skip the "a client with this email already exists" guard and
+   * create the record anyway (staff explicitly confirmed a legitimate duplicate,
+   * e.g. two people sharing an inbox). Defaults to false.
+   */
+  allowDuplicate?: boolean;
 }
 
 export interface UpdateCrmClientRequest {

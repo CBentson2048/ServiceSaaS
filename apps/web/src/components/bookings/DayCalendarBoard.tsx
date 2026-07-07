@@ -78,10 +78,16 @@ interface DayCalendarBoardProps {
   /** Appointments already scoped to this day + location. */
   bookings: StaffBookingSummary[];
   /**
-   * serviceId → category colour (#RRGGBB). A tile is tinted by its first
-   * service's category colour; the thin left bar keeps showing status.
+   * serviceId → category colour (#RRGGBB). A tile is tinted by the first of its
+   * services that resolves a colour; the thin left bar keeps showing status.
    */
   serviceColors?: Map<string, string>;
+  /**
+   * Lower-cased service name → category colour. Fallback for when an
+   * appointment's service rows carry only a name snapshot (no `service_id`), so
+   * the id map can't resolve — the tile still tints by the catalogue colour.
+   */
+  serviceColorsByName?: Map<string, string>;
   selectedBookingId?: string | null;
   onSelectBooking: (booking: StaffBookingSummary) => void;
   /** Tile action menu: mark the client arrived (confirmed → checked in). */
@@ -100,6 +106,39 @@ interface DayCalendarBoardProps {
   onAddAppointment?: (input: AddAppointmentInput) => void;
   /** Clicking an empty slot → "Add bookout" (blocks the stylist's time). */
   onAddBookout?: (input: AddBookoutInput) => void;
+  /**
+   * Drag an appointment tile to a new time and/or another stylist column. Fired on
+   * drop with a 15-minute-snapped start; `staffProfileId` is set only when the drop
+   * lands on a different stylist. Enables drag-to-move / drag-to-reassign.
+   */
+  onMoveBooking?: (booking: StaffBookingSummary, input: MoveBookingInput) => void;
+  /**
+   * Drag the bottom edge of a tile to lengthen/shorten it. Fired on drop with the
+   * new total duration in minutes (15-minute-snapped). Enables drag-to-resize.
+   */
+  onResizeBooking?: (booking: StaffBookingSummary, input: ResizeBookingInput) => void;
+  /**
+   * Called when a drop is refused because it would fall outside the target stylist's
+   * rostered working hours (they're not scheduled then, or the appointment can't fit).
+   */
+  onDragBlocked?: (staffName: string) => void;
+}
+
+export interface MoveBookingInput {
+  /** ISO start of the drop position (snapped to 15 minutes). */
+  startAt: string;
+  /** Target stylist when the tile is dropped on a different column; omit to keep. */
+  staffProfileId?: string;
+  staffName?: string;
+}
+
+export interface ResizeBookingInput {
+  /**
+   * New total appointment duration in minutes. The tile's END is snapped to the
+   * 15-minute grid while the (possibly off-grid) start is preserved, so the
+   * duration is a multiple of 15 only when the start already sits on the grid.
+   */
+  durationMinutes: number;
 }
 
 interface BookingMenuState {
@@ -110,6 +149,37 @@ interface BookingMenuState {
   boardWidth: number;
   boardHeight: number;
 }
+
+// Live state while an appointment tile is being dragged. All time values are in
+// minutes from the visible window start; the preview reads from here each frame.
+interface DragState {
+  booking: StaffBookingSummary;
+  mode: 'move' | 'resize';
+  /** Minutes between the booking start and where inside the tile it was grabbed. */
+  grabOffsetMin: number;
+  originStartMin: number;
+  originDurationMin: number;
+  /** Start (minutes from window) of the last stylist-occupied slice — the resize
+   *  handle grabs this slice, so a resize can't shrink the total below it. */
+  lastRunStartMin: number;
+  previewStartMin: number;
+  previewDurationMin: number;
+  /** Column the pointer is currently over (drop target). */
+  targetColKey: string;
+  targetStaffProfileId?: string;
+  targetStaffName: string;
+  originStaffProfileId?: string;
+  /** Working intervals (minutes from window) of the ORIGIN stylist — resize clamps
+   *  the end to the shift that contains the start. */
+  originWorking: MinuteInterval[];
+  /** False when the current preview can't sit inside the target stylist's working
+   *  hours (drop is blocked). Move clamps to stay valid where it can. */
+  valid: boolean;
+  /** True once the pointer has moved past the click/drag threshold. */
+  moved: boolean;
+}
+
+const DRAG_THRESHOLD_PX = 4;
 
 /**
  * Manager/owner-facing day calendar board.
@@ -133,6 +203,7 @@ export function DayCalendarBoard({
   absences,
   bookings,
   serviceColors,
+  serviceColorsByName,
   selectedBookingId,
   onSelectBooking,
   onCheckIn,
@@ -143,6 +214,9 @@ export function DayCalendarBoard({
   showTimeline = true,
   onAddAppointment,
   onAddBookout,
+  onMoveBooking,
+  onResizeBooking,
+  onDragBlocked,
 }: DayCalendarBoardProps) {
   // A live clock so the "now" line tracks the current time. Updates once a
   // minute — fine for a calendar ruled in 15-minute gridlines.
@@ -161,8 +235,17 @@ export function DayCalendarBoard({
   const [bookingMenu, setBookingMenu] = useState<BookingMenuState | null>(null);
   const createEnabled = Boolean(onAddAppointment || onAddBookout);
   const bookingActionsEnabled = Boolean(onCheckIn || onCheckOut || onEditBooking || onCancelBooking);
+  const dragEnabled = Boolean(onMoveBooking || onResizeBooking);
 
-  function openBookingMenu(event: React.MouseEvent<HTMLButtonElement>, booking: StaffBookingSummary) {
+  // Live drag state (null when idle). A ref mirrors it so the window pointer
+  // listeners always read the latest without being re-bound each frame.
+  const [drag, setDrag] = useState<DragState | null>(null);
+  const dragRef = useRef<DragState | null>(null);
+  // Set right after a drag so the synthetic click that follows pointerup does not
+  // also open the tile's action menu.
+  const suppressClickRef = useRef(false);
+
+  function openBookingMenuAt(clientX: number, clientY: number, booking: StaffBookingSummary) {
     onSelectBooking(booking);
     const board = boardRef.current;
     if (!board || !bookingActionsEnabled) return;
@@ -170,8 +253,8 @@ export function DayCalendarBoard({
     setSlotMenu(null);
     setBookingMenu({
       booking,
-      x: event.clientX - boardRect.left,
-      y: event.clientY - boardRect.top,
+      x: clientX - boardRect.left,
+      y: clientY - boardRect.top,
       boardWidth: boardRect.width,
       boardHeight: boardRect.height,
     });
@@ -213,6 +296,8 @@ export function DayCalendarBoard({
   const quarterTicks = range(1, (endHour - startHour) * 4);
 
   function openSlotMenu(event: React.MouseEvent<HTMLDivElement>, column: ColumnModel) {
+    // A drag just ended over this column — swallow the trailing click.
+    if (suppressClickRef.current) return;
     if (!createEnabled || !column.staffProfileId) return;
     const board = boardRef.current;
     if (!board) return;
@@ -240,6 +325,208 @@ export function DayCalendarBoard({
       y: event.clientY - boardRect.top,
       boardWidth: boardRect.width,
     });
+  }
+
+  const windowMinutes = (endHour - startHour) * 60;
+
+  // Pointer Y (viewport) → minutes from the window start. The grid begins one
+  // header height below the board's top; the board itself may be scrolled, which
+  // getBoundingClientRect already accounts for.
+  function pointerToMinutes(clientY: number): number {
+    const board = boardRef.current;
+    if (!board) return 0;
+    const rect = board.getBoundingClientRect();
+    return ((clientY - rect.top - HEADER_HEIGHT_PX) / HOUR_PX) * 60;
+  }
+
+  const snap = (minutes: number) => Math.round(minutes / SLOT_SNAP_MINUTES) * SLOT_SNAP_MINUTES;
+
+  // Minutes-from-window-start → an ISO timestamp on the shown day.
+  function minutesToIso(minutesFromWindow: number): string {
+    const absolute = startHour * 60 + minutesFromWindow;
+    const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0, 0);
+    start.setMinutes(absolute);
+    return start.toISOString();
+  }
+
+  // The stylist column under the pointer, found via the DOM (the drag preview is
+  // pointer-events-none, so it never shadows the column beneath).
+  function columnAtPoint(clientX: number, clientY: number): ColumnModel | null {
+    const el = (document.elementFromPoint(clientX, clientY) as HTMLElement | null)?.closest('[data-col-key]');
+    if (!el) return null;
+    const key = (el as HTMLElement).dataset.colKey;
+    return columns.find((column) => column.key === key) ?? null;
+  }
+
+  function beginBookingDrag(
+    event: React.PointerEvent<HTMLElement>,
+    booking: StaffBookingSummary,
+    column: ColumnModel,
+    mode: DragState['mode'],
+  ) {
+    if (!dragEnabled) return;
+    if (mode === 'move' && !onMoveBooking) return;
+    if (mode === 'resize' && !onResizeBooking) return;
+    // Only primary-button / touch / pen drags.
+    if (event.button !== 0 && event.pointerType === 'mouse') return;
+
+    const originStartMin = clamp(minutesFromWindowStart(booking.startsAt, startHour), 0, windowMinutes);
+    let originEndMin = minutesFromWindowStart(booking.endsAt, startHour);
+    if (originEndMin <= originStartMin) originEndMin = originStartMin + (booking.durationMinutes ?? 30);
+    const originDurationMin = Math.max(SLOT_SNAP_MINUTES, originEndMin - originStartMin);
+    const grabOffsetMin = pointerToMinutes(event.clientY) - originStartMin;
+    // The resize handle grabs the LAST occupied slice, so a resize can't drag its
+    // bottom above its own top — the total can't shrink below that slice's start.
+    const runs = serviceOccupiedRuns(booking, startHour, windowMinutes);
+    const lastRunStartMin = runs.length ? runs[runs.length - 1].startMin : originStartMin;
+    const originWorking = workingIntervalsFor(column, startHour, windowMinutes);
+
+    const initial: DragState = {
+      booking,
+      mode,
+      grabOffsetMin,
+      originStartMin,
+      originDurationMin,
+      lastRunStartMin,
+      previewStartMin: originStartMin,
+      previewDurationMin: originDurationMin,
+      targetColKey: column.key,
+      targetStaffProfileId: column.staffProfileId,
+      targetStaffName: column.name,
+      originStaffProfileId: booking.assignedStaffProfileId,
+      originWorking,
+      valid: true,
+      moved: false,
+    };
+    dragRef.current = initial;
+
+    const startClientX = event.clientX;
+    const startClientY = event.clientY;
+
+    const handleMove = (moveEvent: PointerEvent) => {
+      const current = dragRef.current;
+      if (!current) return;
+      if (!current.moved) {
+        const dx = moveEvent.clientX - startClientX;
+        const dy = moveEvent.clientY - startClientY;
+        if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
+        current.moved = true;
+      }
+      moveEvent.preventDefault();
+      if (current.mode === 'move') {
+        // Snap the DELTA relative to the (possibly off-grid) original start so a
+        // purely sideways drag (reassign only) leaves the start untouched, and an
+        // off-grid booking keeps its offset when moved.
+        const deltaMin = pointerToMinutes(moveEvent.clientY) - current.grabOffsetMin - current.originStartMin;
+        const maxStart = Math.max(0, windowMinutes - current.originDurationMin);
+        const desiredStart = clamp(current.originStartMin + snap(deltaMin), 0, maxStart);
+        // The effective drop target is the hovered stylist column (or the last one
+        // hovered). The appointment is CLAMPED into that stylist's working hours, so
+        // the tile can't leave the roster; if it can't fit at all, the drop is invalid.
+        const hovered = columnAtPoint(moveEvent.clientX, moveEvent.clientY);
+        const targetColumn =
+          hovered && hovered.staffProfileId
+            ? hovered
+            : columns.find((column) => column.key === current.targetColKey) ?? null;
+        const working = workingIntervalsFor(targetColumn, startHour, windowMinutes);
+        const fit = fitToWorking(desiredStart, current.originDurationMin, working);
+        const next: DragState = {
+          ...current,
+          previewStartMin: fit.start,
+          valid: fit.valid,
+          ...(targetColumn && targetColumn.staffProfileId
+            ? {
+                targetColKey: targetColumn.key,
+                targetStaffProfileId: targetColumn.staffProfileId,
+                targetStaffName: targetColumn.name,
+              }
+            : {}),
+        };
+        dragRef.current = next;
+        setDrag(next);
+      } else {
+        const rawEnd = pointerToMinutes(moveEvent.clientY);
+        // The end can't be dragged past the end of the working shift that contains
+        // the start, so a resize can never push the appointment beyond the roster.
+        // An appointment that ALREADY overruns its shift keeps its current end
+        // (isn't force-shrunk on the first nudge).
+        const shift = current.originWorking.find(
+          (iv) => current.originStartMin >= iv.startMin && current.originStartMin < iv.endMin,
+        );
+        const originEndMin = current.originStartMin + current.originDurationMin;
+        const maxEnd = shift ? Math.max(shift.endMin, originEndMin) : windowMinutes;
+        // Nor above the last slice's top (+ one slot) — that slice is what grows/
+        // shrinks. Capped at maxEnd so the clamp window can never invert past the roster.
+        const minEnd = Math.min(current.lastRunStartMin + SLOT_SNAP_MINUTES, maxEnd);
+        const snappedEnd = clamp(snap(rawEnd), minEnd, maxEnd);
+        const next: DragState = { ...current, previewDurationMin: snappedEnd - current.originStartMin };
+        dragRef.current = next;
+        setDrag(next);
+      }
+    };
+
+    const detachListeners = () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+      window.removeEventListener('pointercancel', handleCancel);
+    };
+
+    const handleUp = (upEvent: PointerEvent) => {
+      detachListeners();
+      const current = dragRef.current;
+      dragRef.current = null;
+      setDrag(null);
+      if (!current || !current.moved) return; // treat as a click — let onClick handle it
+      // Suppress the trailing click ONLY when the drag actually commits a change; a
+      // tiny drag that snaps back to the same slot/stylist is a no-op and should
+      // still open the tile's action menu like a plain click.
+      const suppressClick = () => {
+        suppressClickRef.current = true;
+        window.setTimeout(() => {
+          suppressClickRef.current = false;
+        }, 0);
+      };
+
+      if (current.mode === 'move') {
+        // Refuse a drop that can't sit inside the target stylist's working hours.
+        if (!current.valid) {
+          suppressClick();
+          onDragBlocked?.(current.targetStaffName);
+          return;
+        }
+        const staffChanged =
+          current.targetStaffProfileId != null && current.targetStaffProfileId !== current.originStaffProfileId;
+        const timeChanged = current.previewStartMin !== current.originStartMin;
+        if (!staffChanged && !timeChanged) return;
+        suppressClick();
+        onMoveBooking?.(current.booking, {
+          startAt: minutesToIso(current.previewStartMin),
+          staffProfileId: staffChanged ? current.targetStaffProfileId : undefined,
+          staffName: staffChanged ? current.targetStaffName : undefined,
+        });
+      } else {
+        const durationMinutes = current.previewDurationMin;
+        if (durationMinutes === current.originDurationMin) return;
+        suppressClick();
+        onResizeBooking?.(current.booking, { durationMinutes });
+      }
+      void upEvent;
+    };
+
+    // The browser fires pointercancel INSTEAD of pointerup when it takes over the
+    // pointer (multi-touch, an OS gesture, or the tile unmounting mid-drag). Tear
+    // down and drop the drag WITHOUT committing, so listeners never leak and the
+    // tile is never left stuck dimmed.
+    const handleCancel = () => {
+      detachListeners();
+      dragRef.current = null;
+      setDrag(null);
+    };
+
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp);
+    window.addEventListener('pointercancel', handleCancel);
+    setDrag(initial);
   }
 
   // Position of the current-time line within the visible window.
@@ -310,7 +597,13 @@ export function DayCalendarBoard({
             </div>
 
             <div
-              className={`relative ${createEnabled && column.staffProfileId ? 'cursor-pointer' : ''}`}
+              data-col-key={column.key}
+              data-staff-id={column.staffProfileId ?? ''}
+              className={`relative ${createEnabled && column.staffProfileId ? 'cursor-pointer' : ''} ${
+                drag && drag.mode === 'move' && column.staffProfileId && drag.targetColKey === column.key
+                  ? 'bg-primary/[0.04] ring-2 ring-inset ring-primary/30'
+                  : ''
+              }`}
               style={{ height: totalHeight }}
               onClick={(event) => openSlotMenu(event, column)}
             >
@@ -376,130 +669,229 @@ export function DayCalendarBoard({
                 );
               })}
 
-              {/* Appointment blocks. */}
-              {layoutBlocks(column.bookings, startHour, totalHeight).map(({ booking, top, height, lane, laneCount }) => {
+              {/* Appointment blocks. An appointment is split into ONE slice PER
+                  SERVICE, each tinted by that service's category colour; a
+                  stylist-free "development" segment is left as a clear, bookable gap
+                  (never a tile) and can split a service into two slices. The slices of
+                  one appointment are linked by a thin neutral rail through any gap. */}
+              {layoutBookings(column.bookings, startHour, totalHeight).map((positioned) => {
+                const { booking, lane, laneCount, blocks, topPx: railTop, heightPx: railHeight } = positioned;
                 const tone = statusTone(booking.status);
                 const accent = statusAccent(tone);
                 const muted = booking.status === 'cancelled' || booking.status === 'no_show';
                 const selected = selectedBookingId === booking.id;
                 const arrived = booking.status === 'checked_in';
                 const widthPct = 100 / laneCount;
-                // Tint the tile body by the first service's category colour. The
-                // thin status bar still shows on the left, filling the rest.
-                const tileColor = booking.serviceIds?.length
-                  ? serviceColors?.get(booking.serviceIds[0])
-                  : undefined;
-                const onDark = tileColor ? hexLuminance(tileColor) < 0.55 : false;
-                const primaryText = tileColor ? (onDark ? '#FFFFFF' : '#101828') : undefined;
-                const mutedText = tileColor
-                  ? onDark
-                    ? 'rgba(255,255,255,0.82)'
-                    : 'rgba(16,24,40,0.66)'
-                  : undefined;
+                const split = blocks.length > 1;
+                // Only live, un-settled appointments can be dragged/resized.
+                const canDrag = dragEnabled && ['pending', 'accepted', 'checked_in'].includes(booking.status);
+                const isDragging = drag?.booking.id === booking.id && drag.moved;
+                const dimClass = isDragging ? 'opacity-40' : muted ? 'opacity-60' : '';
                 return (
                   <Fragment key={booking.id}>
-                  {/* Opaque backing over the appointment's slot so the 15-minute
-                      gridlines never show on a booked block (covers the tile's
-                      body and its side gutter, and shows through translucent
-                      cancelled/no-show tiles too). */}
-                  <div
-                    className="absolute bg-surface"
-                    style={{ top, height, left: `${lane * widthPct}%`, width: `${widthPct}%` }}
-                    aria-hidden
-                  />
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      // Don't let a block click also open the empty-slot create menu.
-                      event.stopPropagation();
-                      openBookingMenu(event, booking);
-                    }}
-                    style={{
-                      top,
-                      height,
-                      left: `calc(${lane * widthPct}% + 3px)`,
-                      width: `calc(${widthPct}% - 6px)`,
-                      ...(tileColor ? { backgroundColor: tileColor } : {}),
-                    }}
-                    className={`absolute overflow-hidden rounded-lg border text-left shadow-sm transition-all ${
-                      selected
-                        ? `z-20 border-primary shadow-md ring-2 ring-primary/40`
-                        : `z-10 border-border/70 hover:border-border hover:shadow-md`
-                    } ${tileColor ? '' : selected ? 'bg-primary/5' : 'bg-surface'} ${muted ? 'opacity-60' : ''}`}
-                  >
-                    <span className={`absolute inset-y-0 left-0 w-[3px] rounded-l-lg ${accent.bar}`} aria-hidden />
-                    {/* Segment split: every service is broken into its segments (and
-                        each service is divided from the next). Stylist-free
-                        "development" time is hatched so the bookable gap is visible.
-                        Sits behind the header label (which is lifted to z-[1]); band
-                        names are right-aligned to clear the left-aligned header. */}
-                    {(() => {
-                      const bands = segmentBands(booking, height);
-                      if (bands.length === 0) return null;
-                      return (
-                        <span aria-hidden className="pointer-events-none absolute inset-y-0 left-[3px] right-0 z-0">
-                          {bands.map((band, i) => (
-                            <span
-                              key={i}
-                              className="absolute left-0 right-0 overflow-hidden"
-                              style={{
-                                top: band.topPx,
-                                height: Math.max(0, band.heightPx),
-                                ...(band.isStylistFree
-                                  ? {
-                                      backgroundColor: 'rgba(255,255,255,0.42)',
-                                      backgroundImage:
-                                        'repeating-linear-gradient(45deg, rgba(71,84,103,0.30) 0, rgba(71,84,103,0.30) 5px, transparent 5px, transparent 10px)',
-                                    }
-                                  : {}),
-                                // Firmer divider between services, dashed between segments.
-                                ...(i > 0
-                                  ? band.isServiceStart
-                                    ? { borderTop: '1px solid rgba(16,24,40,0.35)' }
-                                    : { borderTop: '1px dashed rgba(16,24,40,0.20)' }
-                                  : {}),
-                              }}
-                            >
-                              {band.heightPx >= 13 ? (
-                                <span
-                                  className="absolute right-1 top-1/2 max-w-[85%] -translate-y-1/2 truncate rounded-sm bg-surface/70 px-1 text-[9px] font-semibold uppercase tracking-[0.03em] text-text-secondary"
-                                >
-                                  {band.isStylistFree ? `${band.name || 'Development'} · free` : band.name}
-                                </span>
-                              ) : null}
-                            </span>
-                          ))}
-                        </span>
+                    {/* Neutral rail spanning the whole appointment, including any
+                        development gap, so the per-service slices read as one booking.
+                        pointer-events-none → the clear gap stays clickable to book
+                        another client into the stylist's free time. */}
+                    {split ? (
+                      <span
+                        aria-hidden
+                        className="pointer-events-none absolute z-0 rounded-full"
+                        style={{
+                          top: railTop,
+                          height: railHeight,
+                          left: `${lane * widthPct}%`,
+                          width: 3,
+                          backgroundColor: 'rgba(16,24,40,0.22)',
+                          opacity: muted ? 0.3 : 0.55,
+                        }}
+                      />
+                    ) : null}
+                    {blocks.map((block, blockIndex) => {
+                      const rounding = !split
+                        ? 'rounded-lg'
+                        : block.isFirst
+                          ? 'rounded-t-lg'
+                          : block.isLast
+                            ? 'rounded-b-lg'
+                            : '';
+                      const barRounding = !split
+                        ? 'rounded-l-lg'
+                        : `${block.isFirst ? 'rounded-tl-lg' : ''} ${block.isLast ? 'rounded-bl-lg' : ''}`;
+                      // Tint THIS slice by its own service's category colour, with
+                      // readable text picked from the colour's luminance.
+                      const blockColor = serviceCategoryColor(
+                        block.serviceId,
+                        block.serviceName,
+                        serviceColors,
+                        serviceColorsByName,
                       );
-                    })()}
-                    <span className="relative z-[1] block py-1.5 pl-3 pr-1.5">
-                      <span
-                        className="flex items-center gap-1 truncate text-[11px] font-semibold text-text-primary"
-                        style={primaryText ? { color: primaryText } : undefined}
-                      >
-                        {arrived ? (
-                          <span
-                            className="inline-flex shrink-0 items-center rounded-pill bg-success-soft px-1.5 text-[9px] font-bold uppercase tracking-[0.05em] text-success"
-                            title="Client has arrived"
+                      const onDark = blockColor ? hexLuminance(blockColor) < 0.55 : false;
+                      const primaryText = blockColor ? (onDark ? '#FFFFFF' : '#101828') : undefined;
+                      const mutedText = blockColor
+                        ? onDark
+                          ? 'rgba(255,255,255,0.82)'
+                          : 'rgba(16,24,40,0.66)'
+                        : undefined;
+                      return (
+                        <Fragment key={blockIndex}>
+                          {/* Opaque backing so the 15-minute gridlines never show
+                              through a booked block (covers translucent tiles too). */}
+                          <div
+                            className="absolute bg-surface"
+                            style={{ top: block.topPx, height: block.heightPx, left: `${lane * widthPct}%`, width: `${widthPct}%` }}
+                            aria-hidden
+                          />
+                          <button
+                            type="button"
+                            onPointerDown={
+                              canDrag && onMoveBooking
+                                ? (event) => beginBookingDrag(event, booking, column, 'move')
+                                : undefined
+                            }
+                            onClick={(event) => {
+                              // Don't let a block click also open the empty-slot create menu.
+                              event.stopPropagation();
+                              // A drag just ended — swallow the trailing click.
+                              if (suppressClickRef.current) return;
+                              openBookingMenuAt(event.clientX, event.clientY, booking);
+                            }}
+                            style={{
+                              top: block.topPx,
+                              height: block.heightPx,
+                              left: `calc(${lane * widthPct}% + 3px)`,
+                              width: `calc(${widthPct}% - 6px)`,
+                              ...(blockColor ? { backgroundColor: blockColor } : {}),
+                            }}
+                            className={`absolute overflow-hidden border text-left shadow-sm transition-all ${rounding} ${
+                              canDrag ? 'cursor-grab touch-none active:cursor-grabbing' : ''
+                            } ${
+                              selected
+                                ? `z-20 border-primary shadow-md ring-2 ring-primary/40`
+                                : `z-10 border-border/70 hover:border-border hover:shadow-md`
+                            } ${blockColor ? '' : selected ? 'bg-primary/5' : 'bg-surface'} ${dimClass}`}
+                            title={`${booking.clientDisplayName} · ${block.serviceName}`}
                           >
-                            Arrived
-                          </span>
-                        ) : null}
-                        <span className="truncate">
-                          {formatTime(booking.startsAt)} · {booking.clientDisplayName}
-                        </span>
-                      </span>
-                      <span
-                        className="block truncate text-[10px] text-text-muted"
-                        style={mutedText ? { color: mutedText } : undefined}
-                      >
-                        {booking.serviceNames.join(', ') || 'Service'}
-                      </span>
-                    </span>
-                  </button>
+                            <span className={`absolute inset-y-0 left-0 w-[3px] ${barRounding} ${accent.bar}`} aria-hidden />
+                            {block.isFirst ? (
+                              <span className="relative z-[1] block py-1.5 pl-3 pr-1.5">
+                                <span
+                                  className="flex items-center gap-1 truncate text-[11px] font-semibold text-text-primary"
+                                  style={primaryText ? { color: primaryText } : undefined}
+                                >
+                                  {arrived ? (
+                                    <span
+                                      className="inline-flex shrink-0 items-center rounded-pill bg-success-soft px-1.5 text-[9px] font-bold uppercase tracking-[0.05em] text-success"
+                                      title="Client has arrived"
+                                    >
+                                      Arrived
+                                    </span>
+                                  ) : null}
+                                  <span className="truncate">
+                                    {formatTime(booking.startsAt)} · {booking.clientDisplayName}
+                                  </span>
+                                </span>
+                                {/* This slice's own service (the first one). */}
+                                <span
+                                  className="block truncate text-[10px] text-text-muted"
+                                  style={mutedText ? { color: mutedText } : undefined}
+                                >
+                                  {block.serviceName || 'Service'}
+                                </span>
+                              </span>
+                            ) : (
+                              // A later service (or the same service resumed after
+                              // development time), labelled by its own name.
+                              <span className="relative z-[1] block py-1 pl-3 pr-1.5">
+                                <span
+                                  className="truncate text-[10px] font-semibold text-text-primary"
+                                  style={primaryText ? { color: primaryText } : undefined}
+                                >
+                                  {block.serviceName || 'Service'}
+                                  {block.continued ? ' · resumes' : ''}
+                                </span>
+                              </span>
+                            )}
+                            {/* Drag the bottom edge to lengthen/shorten (resize) the
+                                appointment. Only on the last block; its own pointerdown
+                                stops the move-drag from also firing. */}
+                            {block.isLast && canDrag && onResizeBooking ? (
+                              <span
+                                role="separator"
+                                aria-label="Drag to change duration"
+                                onPointerDown={(event) => {
+                                  event.stopPropagation();
+                                  beginBookingDrag(event, booking, column, 'resize');
+                                }}
+                                onClick={(event) => event.stopPropagation()}
+                                className="absolute inset-x-0 bottom-0 z-[2] flex h-2.5 cursor-ns-resize touch-none items-end justify-center opacity-0 transition-opacity hover:opacity-100"
+                              >
+                                <span className="mb-0.5 h-1 w-6 rounded-full bg-black/30" aria-hidden />
+                              </span>
+                            ) : null}
+                          </button>
+                        </Fragment>
+                      );
+                    })}
                   </Fragment>
                 );
               })}
+
+              {/* Drag preview — a dashed ghost showing where the appointment will
+                  land (move: target column + new start; resize: same column + new
+                  end). Rendered inside the target column's grid so it reuses the
+                  exact vertical coordinate system as the real tiles. */}
+              {drag && drag.moved && drag.targetColKey === column.key
+                ? (() => {
+                    let ghostStartMin: number;
+                    let ghostEndMin: number;
+                    if (drag.mode === 'move') {
+                      // Whole appointment slides to the new start (its span is unchanged).
+                      ghostStartMin = drag.previewStartMin;
+                      ghostEndMin = drag.previewStartMin + drag.originDurationMin;
+                    } else {
+                      // Resize anchors on the LAST occupied slice so the ghost never
+                      // covers the clear development gap of a split appointment. The
+                      // end is clamped (in handleMove) to stay below the slice's top,
+                      // so start < end always holds.
+                      ghostStartMin = drag.lastRunStartMin;
+                      ghostEndMin = drag.originStartMin + drag.previewDurationMin;
+                    }
+                    const ghostTop = (ghostStartMin / 60) * HOUR_PX;
+                    const ghostHeight = Math.max(SPLIT_BLOCK_MIN_PX, ((ghostEndMin - ghostStartMin) / 60) * HOUR_PX);
+                    const reassigning =
+                      drag.mode === 'move' && drag.targetStaffProfileId !== drag.originStaffProfileId;
+                    // Outside the target stylist's working hours → red "can't drop here".
+                    const invalid = drag.mode === 'move' && !drag.valid;
+                    return (
+                      <div
+                        className="pointer-events-none absolute inset-x-0 z-30 px-[3px]"
+                        style={{ top: ghostTop, height: ghostHeight }}
+                        aria-hidden
+                      >
+                        <div
+                          className={`flex h-full w-full flex-col overflow-hidden rounded-lg border-2 border-dashed px-2 py-1 shadow-lg ${
+                            invalid ? 'border-danger bg-danger-soft' : 'border-primary bg-primary/10'
+                          }`}
+                        >
+                          <span
+                            className={`truncate text-[11px] font-semibold ${invalid ? 'text-danger' : 'text-primary'}`}
+                          >
+                            {formatTime(minutesToIso(ghostStartMin))}
+                            {drag.mode === 'resize' ? `–${formatTime(minutesToIso(ghostEndMin))}` : ''}
+                          </span>
+                          <span className={`truncate text-[10px] ${invalid ? 'text-danger' : 'text-primary/80'}`}>
+                            {invalid
+                              ? 'Outside working hours'
+                              : reassigning
+                                ? `→ ${drag.targetStaffName}`
+                                : drag.booking.clientDisplayName}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })()
+                : null}
             </div>
           </div>
         ))}
@@ -888,96 +1280,266 @@ function BanIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-interface PositionedBlock {
-  booking: StaffBookingSummary;
-  top: number;
-  height: number;
-  lane: number;
-  laneCount: number;
+// One drawn slice of an appointment: a contiguous stylist-OCCUPIED run WITHIN a
+// single service. Each service is its own slice (coloured by its category), and a
+// service with a stylist-free development segment splits into two slices with a
+// clear gap between them.
+interface PositionedBlockPart {
+  topPx: number;
+  heightPx: number;
+  isFirst: boolean;
+  isLast: boolean;
+  /** Index into booking.services this slice belongs to (for its category colour). */
+  serviceIndex: number;
+  serviceId?: string;
+  serviceName: string;
+  /** True when this is a later run of the SAME service, resumed after free time. */
+  continued: boolean;
 }
 
-function layoutBlocks(bookings: StaffBookingSummary[], startHour: number, totalHeight: number): PositionedBlock[] {
-  const total = (totalHeight / HOUR_PX) * 60;
-  const items = bookings
-    .map((booking) => {
-      const startMin = clamp(minutesFromWindowStart(booking.startsAt, startHour), 0, total);
-      let endMin = minutesFromWindowStart(booking.endsAt, startHour);
-      if (endMin <= startMin) endMin = startMin + (booking.durationMinutes ?? 30);
-      endMin = clamp(endMin, startMin, total);
-      return { booking, startMin, endMin };
-    })
-    .sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin);
+interface PositionedBooking {
+  booking: StaffBookingSummary;
+  lane: number;
+  laneCount: number;
+  /** Top / height of the whole appointment span (first block top → last block bottom). */
+  topPx: number;
+  heightPx: number;
+  blocks: PositionedBlockPart[];
+}
 
-  const laneEnds: number[] = [];
-  const withLanes = items.map((item) => {
-    let lane = laneEnds.findIndex((end) => end <= item.startMin);
-    if (lane === -1) {
-      lane = laneEnds.length;
-      laneEnds.push(item.endMin);
+interface MinuteInterval {
+  startMin: number;
+  endMin: number;
+}
+
+// A stylist-occupied run tagged with the service it belongs to, so the calendar can
+// draw one coloured slice per service (and per resumed run after development time).
+interface ServiceRun extends MinuteInterval {
+  serviceIndex: number;
+  serviceId?: string;
+  serviceName: string;
+  continued: boolean;
+}
+
+// Minimum drawn height for a single-block appointment (unchanged legibility floor)
+// and for each slice of a split one (small — just enough to stay readable/clickable
+// without inflating over the clear development gap).
+const SPLIT_BLOCK_MIN_PX = 14;
+
+// One stylist-OCCUPIED run PER SERVICE (in minutes from the window start), so each
+// service draws as its own category-coloured slice. Within a service the non-free
+// segments are kept and merged where contiguous; a stylist-free "development"
+// segment splits the service into two runs with a clear gap. Runs are NOT merged
+// across services (their colours differ). Falls back to a single full-span run when
+// there is no per-service data, so every appointment always draws something.
+function serviceOccupiedRuns(booking: StaffBookingSummary, startHour: number, totalMin: number): ServiceRun[] {
+  const clampMin = (value: number) => clamp(value, 0, totalMin);
+  const services = booking.services ?? [];
+  const runs: ServiceRun[] = [];
+
+  services.forEach((service, serviceIndex) => {
+    const raw: MinuteInterval[] = [];
+    let cursor = minutesFromWindowStart(service.startsAt, startHour);
+    const segments = service.segments ?? [];
+    if (segments.length === 0) {
+      raw.push({ startMin: cursor, endMin: cursor + service.durationMinutes });
     } else {
-      laneEnds[lane] = item.endMin;
+      for (const segment of segments) {
+        const end = cursor + segment.durationMinutes;
+        if (!segment.isStylistFree) raw.push({ startMin: cursor, endMin: end });
+        cursor = end;
+      }
+    }
+    const clamped = raw
+      .map((interval) => ({ startMin: clampMin(interval.startMin), endMin: clampMin(interval.endMin) }))
+      .filter((interval) => interval.endMin > interval.startMin)
+      .sort((a, b) => a.startMin - b.startMin);
+    // Merge contiguous occupied windows WITHIN this service (same colour).
+    const merged: MinuteInterval[] = [];
+    for (const interval of clamped) {
+      const last = merged[merged.length - 1];
+      if (last && interval.startMin <= last.endMin) last.endMin = Math.max(last.endMin, interval.endMin);
+      else merged.push({ ...interval });
+    }
+    merged.forEach((interval, runIndex) =>
+      runs.push({
+        ...interval,
+        serviceIndex,
+        serviceId: service.serviceId,
+        serviceName: service.name,
+        continued: runIndex > 0,
+      }),
+    );
+  });
+
+  if (runs.length === 0) {
+    const startMin = clampMin(minutesFromWindowStart(booking.startsAt, startHour));
+    let endMin = minutesFromWindowStart(booking.endsAt, startHour);
+    if (endMin <= startMin) endMin = startMin + (booking.durationMinutes ?? 30);
+    endMin = clampMin(endMin);
+    if (endMin > startMin) {
+      runs.push({
+        startMin,
+        endMin,
+        serviceIndex: 0,
+        serviceId: booking.serviceIds?.[0],
+        serviceName: booking.serviceNames?.[0] ?? 'Service',
+        continued: false,
+      });
+    }
+  }
+
+  runs.sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin);
+  return runs;
+}
+
+// Two appointments conflict only when their OCCUPIED windows overlap — a booking
+// slotted into another's development gap does not, so it shares the lane.
+function intervalsOverlap(a: MinuteInterval[], b: MinuteInterval[]): boolean {
+  return a.some((x) => b.some((y) => x.startMin < y.endMin && y.startMin < x.endMin));
+}
+
+// The part(s) of interval `iv` left after removing `cut` (0, 1 or 2 pieces).
+function subtractInterval(iv: MinuteInterval, cut: MinuteInterval): MinuteInterval[] {
+  if (cut.endMin <= iv.startMin || cut.startMin >= iv.endMin) return [iv]; // no overlap
+  const out: MinuteInterval[] = [];
+  if (cut.startMin > iv.startMin) out.push({ startMin: iv.startMin, endMin: cut.startMin });
+  if (cut.endMin < iv.endMin) out.push({ startMin: cut.endMin, endMin: iv.endMin });
+  return out;
+}
+
+// A stylist's BOOKABLE working windows for the day: their shift hours with lunch/
+// breaks cut out, in minutes from the window start. Drag/resize keep an appointment
+// inside these, so a tile can never land on a break or outside the roster.
+function workingIntervalsFor(
+  column: ColumnModel | null,
+  startHour: number,
+  totalMin: number,
+): MinuteInterval[] {
+  if (!column) return [];
+  let intervals: MinuteInterval[] = [];
+  for (const shift of column.shifts) {
+    const startMin = clamp(minutesFromWindowStart(shift.scheduledStartAt, startHour), 0, totalMin);
+    const endMin = clamp(minutesFromWindowStart(shift.scheduledEndAt, startHour), 0, totalMin);
+    if (endMin > startMin) intervals.push({ startMin, endMin });
+  }
+  const breaks = column.shifts
+    .flatMap((shift) => shift.breaks)
+    .map((brk) => ({
+      startMin: clamp(minutesFromWindowStart(brk.startedAt, startHour), 0, totalMin),
+      endMin: clamp(minutesFromWindowStart(brk.endedAt, startHour), 0, totalMin),
+    }))
+    .filter((brk) => brk.endMin > brk.startMin);
+  for (const brk of breaks) {
+    intervals = intervals.flatMap((iv) => subtractInterval(iv, brk));
+  }
+  return intervals.sort((a, b) => a.startMin - b.startMin);
+}
+
+// Fit an appointment of `durationMin` starting near `desiredStart` into the nearest
+// working interval that can hold it, returning the clamped start. `valid` is false
+// when there are no working hours, or none long enough — the drop is then refused.
+function fitToWorking(
+  desiredStart: number,
+  durationMin: number,
+  intervals: MinuteInterval[],
+): { start: number; valid: boolean } {
+  if (intervals.length === 0) return { start: desiredStart, valid: false };
+  const fitting = intervals.filter((interval) => interval.endMin - interval.startMin >= durationMin);
+  if (fitting.length === 0) return { start: desiredStart, valid: false };
+  let bestStart = desiredStart;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const interval of fitting) {
+    const lo = interval.startMin;
+    const hi = interval.endMin - durationMin;
+    const clamped = Math.min(Math.max(desiredStart, lo), hi);
+    const distance = Math.abs(clamped - desiredStart);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestStart = clamped;
+    }
+  }
+  return { start: bestStart, valid: true };
+}
+
+// Positions every appointment in a column into overlap lanes and splits each into
+// its per-service occupied slices. Lane assignment keys on occupied windows (not the
+// full span), so a client booked during another's development time sits inline.
+function layoutBookings(
+  bookings: StaffBookingSummary[],
+  startHour: number,
+  totalHeight: number,
+): PositionedBooking[] {
+  const totalMin = (totalHeight / HOUR_PX) * 60;
+  const items = bookings
+    .map((booking) => ({ booking, runs: serviceOccupiedRuns(booking, startHour, totalMin) }))
+    .filter((item) => item.runs.length > 0)
+    .sort(
+      (a, b) =>
+        a.runs[0].startMin - b.runs[0].startMin ||
+        a.runs[a.runs.length - 1].endMin - b.runs[b.runs.length - 1].endMin,
+    );
+
+  const lanes: MinuteInterval[][] = [];
+  const withLanes = items.map((item) => {
+    let lane = lanes.findIndex((laneIntervals) => !intervalsOverlap(laneIntervals, item.runs));
+    if (lane === -1) {
+      lane = lanes.length;
+      lanes.push(item.runs.map((run) => ({ startMin: run.startMin, endMin: run.endMin })));
+    } else {
+      lanes[lane].push(...item.runs.map((run) => ({ startMin: run.startMin, endMin: run.endMin })));
     }
     return { ...item, lane };
   });
-  const laneCount = Math.max(1, laneEnds.length);
+  const laneCount = Math.max(1, lanes.length);
 
-  return withLanes.map((item) => ({
-    booking: item.booking,
-    top: (item.startMin / 60) * HOUR_PX,
-    height: Math.max(MIN_BLOCK_PX, ((item.endMin - item.startMin) / 60) * HOUR_PX),
-    lane: item.lane,
-    laneCount,
-  }));
-}
+  // The sorted start of every occupied slice PER LANE (across all bookings sharing
+  // that lane). A slice's min-height floor is clamped to the next slice's start in
+  // the SAME lane so a short/floored slice can never overlap the tile beneath it —
+  // including a booking slotted into another's development gap (same lane).
+  const laneStarts = new Map<number, number[]>();
+  for (const item of withLanes) {
+    const starts = laneStarts.get(item.lane) ?? [];
+    for (const run of item.runs) starts.push(run.startMin);
+    laneStarts.set(item.lane, starts);
+  }
+  for (const starts of laneStarts.values()) starts.sort((a, b) => a - b);
 
-interface SegmentBand {
-  topPx: number;
-  heightPx: number;
-  isStylistFree: boolean;
-  name: string;
-  /** True for the first band of a service after the first — draws a firmer divider. */
-  isServiceStart: boolean;
-}
-
-// Splits an appointment's tile into labelled sub-bands so the whole timeline is
-// visible: one band per service SEGMENT (e.g. Application → Development → Toner),
-// and a single service-level band for any service that has no segment breakdown.
-// Positions are proportional to the appointment's span so bands line up within
-// whatever height the tile was given. Returns [] only when there is nothing to
-// split (a single segment-less service, or no per-service data) — the tile then
-// renders as one solid block, unchanged.
-function segmentBands(booking: StaffBookingSummary, tileHeight: number): SegmentBand[] {
-  const services = booking.services ?? [];
-  if (services.length === 0) return [];
-  const bookingStart = new Date(booking.startsAt).getTime();
-  const totalMs = new Date(booking.endsAt).getTime() - bookingStart;
-  if (!(totalMs > 0)) return [];
-  const band = (startMs: number, endMs: number, isStylistFree: boolean, name: string, isServiceStart: boolean) => ({
-    topPx: ((startMs - bookingStart) / totalMs) * tileHeight,
-    heightPx: ((endMs - startMs) / totalMs) * tileHeight,
-    isStylistFree,
-    name,
-    isServiceStart,
-  });
-  const bands: SegmentBand[] = [];
-  services.forEach((service, serviceIndex) => {
-    const serviceStart = new Date(service.startsAt).getTime();
-    const segments = service.segments ?? [];
-    if (segments.length === 0) {
-      // No finer breakdown — show the whole service as one band.
-      bands.push(band(serviceStart, new Date(service.endsAt).getTime(), false, service.name, serviceIndex > 0));
-      return;
-    }
-    let cursorMs = serviceStart;
-    segments.forEach((segment, segmentIndex) => {
-      const startMs = cursorMs;
-      const endMs = startMs + segment.durationMinutes * 60_000;
-      cursorMs = endMs;
-      bands.push(band(startMs, endMs, segment.isStylistFree, segment.name, serviceIndex > 0 && segmentIndex === 0));
+  return withLanes.map((item) => {
+    const single = item.runs.length === 1;
+    const laneSorted = laneStarts.get(item.lane) ?? [];
+    const blocks: PositionedBlockPart[] = item.runs.map((run, index) => {
+      const topPx = (run.startMin / 60) * HOUR_PX;
+      const rawHeight = ((run.endMin - run.startMin) / 60) * HOUR_PX;
+      // Single blocks keep the legible 30px floor; split slices use a small floor.
+      const floored = single ? Math.max(MIN_BLOCK_PX, rawHeight) : Math.max(SPLIT_BLOCK_MIN_PX, rawHeight);
+      // Never draw past the start of the NEXT occupied slice in this lane (any
+      // booking) — that would (a) cover the clear development gap after it, and (b)
+      // visually overlap the tile beneath it. When nothing follows, keep the floor.
+      const nextStart = laneSorted.find((start) => start > run.startMin);
+      const maxHeight = nextStart !== undefined ? (nextStart / 60) * HOUR_PX - topPx : Number.POSITIVE_INFINITY;
+      return {
+        topPx,
+        heightPx: Math.min(floored, maxHeight),
+        isFirst: index === 0,
+        isLast: index === item.runs.length - 1,
+        serviceIndex: run.serviceIndex,
+        serviceId: run.serviceId,
+        serviceName: run.serviceName,
+        continued: run.continued,
+      };
     });
+    const first = blocks[0];
+    const last = blocks[blocks.length - 1];
+    return {
+      booking: item.booking,
+      lane: item.lane,
+      laneCount,
+      topPx: first.topPx,
+      heightPx: last.topPx + last.heightPx - first.topPx,
+      blocks,
+    };
   });
-  // Nothing to show if the appointment is a single undivided service.
-  return bands.length > 1 || bands.some((b) => b.isStylistFree) ? bands : [];
 }
 
 function buildColumns(input: {
@@ -1124,6 +1686,21 @@ function statusAccent(tone: StatusTone): { bar: string } {
     default:
       return { bar: 'bg-border-strong' };
   }
+}
+
+// The category colour for a single service, used to tint that service's slice.
+// Prefers the id map (exact catalogue match) and falls back to the name map, so a
+// service row that only snapshotted a name (no `service_id`) still tints. Returns
+// undefined → the slice stays neutral.
+function serviceCategoryColor(
+  serviceId: string | undefined,
+  serviceName: string,
+  byId?: Map<string, string>,
+  byName?: Map<string, string>,
+): string | undefined {
+  const idColor = serviceId ? byId?.get(serviceId) : undefined;
+  if (idColor) return idColor;
+  return byName?.get(serviceName.trim().toLowerCase());
 }
 
 // Relative luminance of a #RRGGBB colour (WCAG), used to pick readable tile

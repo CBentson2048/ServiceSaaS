@@ -8,7 +8,7 @@ export interface StoredDeviceSession {
 
 export class SecureDeviceStorageUnavailableError extends Error {
   constructor() {
-    super('Secure device storage is unavailable. Rebuild the Sheer Lab app so native Keychain/Keystore support is linked.');
+    super('Secure device storage is unavailable. Rebuild the Qlooqo Lab app so native Keychain/Keystore support is linked.');
     this.name = 'SecureDeviceStorageUnavailableError';
   }
 }

@@ -63,12 +63,24 @@ export function DeviceRegistrationScreen(): React.JSX.Element {
 
   return (
     <LabScreen
-      eyebrow="Sheer Lab device setup"
+      eyebrow="Qlooqo Lab device setup"
       title="Register this iPad"
       subtitle="Ask an owner or manager to register this iPad from the web app, then paste the one-time token below."
       maxContentWidth={CONTENT_WIDTH}
       align="center"
     >
+      {/* REVIEW MODE — delete with the feature (see src/config/reviewMode.ts). */}
+      {REVIEW_MODE_ENABLED ? (
+        <View style={styles.reviewMode}>
+          <Text style={styles.reviewModeLabel}>App Store review — start here</Text>
+          <Text style={styles.reviewModeCopy}>
+            No device token is needed to review the app. Tap the button below to open the Kensington demo, then enter
+            demo PIN 2222 on the next screen.
+          </Text>
+          <LabButton label="Enter demo (Kensington)" onPress={enterReviewMode} disabled={busy} />
+        </View>
+      ) : null}
+
       <View style={styles.field}>
         <Text style={styles.label}>Device registration token</Text>
         <View style={[styles.inputRow, focused && styles.inputRowFocused]}>
@@ -128,15 +140,6 @@ export function DeviceRegistrationScreen(): React.JSX.Element {
       <Text style={styles.meta}>
         The token is stored only in Keychain or Keystore-backed storage. Stylist PINs are never stored on this iPad.
       </Text>
-
-      {/* REVIEW MODE — delete with the feature (see src/config/reviewMode.ts). */}
-      {REVIEW_MODE_ENABLED ? (
-        <View style={styles.reviewMode}>
-          <Text style={styles.reviewModeLabel}>App Store review</Text>
-          <LabButton label="Review mode" variant="secondary" onPress={enterReviewMode} disabled={busy} />
-          <Text style={styles.meta}>Skips device setup and opens the Kensington PIN screen. A Kensington PIN is still required.</Text>
-        </View>
-      ) : null}
     </LabScreen>
   );
 }
@@ -232,13 +235,16 @@ const styles = StyleSheet.create({
     fontSize: labTheme.typography.fontSize.caption,
     lineHeight: labTheme.typography.lineHeight.caption,
   },
-  // REVIEW MODE — delete with the feature.
+  // REVIEW MODE — delete with the feature. Prominent top callout so an App Store
+  // reviewer can't miss the way in (they have no device-registration token).
   reviewMode: {
     gap: labTheme.spacing.sm,
-    marginTop: labTheme.spacing.lg,
-    paddingTop: labTheme.spacing.lg,
-    borderTopWidth: 1,
-    borderTopColor: labTheme.colors.border,
+    marginBottom: labTheme.spacing.lg,
+    padding: labTheme.spacing.base,
+    borderWidth: 1,
+    borderColor: labTheme.colors.primary,
+    borderRadius: labTheme.radius.card,
+    backgroundColor: labTheme.colors.primarySoft,
   },
   reviewModeLabel: {
     color: labTheme.colors.textSecondary,
@@ -246,5 +252,10 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: labTheme.typography.letterSpacing.wide,
     textTransform: 'uppercase',
+  },
+  reviewModeCopy: {
+    color: labTheme.colors.textSecondary,
+    fontSize: labTheme.typography.fontSize.body,
+    lineHeight: labTheme.typography.lineHeight.body,
   },
 });

@@ -201,7 +201,7 @@ export function MixFinalizedScreen({ navigation }: MixFinalizedScreenProps): Rea
     try {
       const active = await refreshActiveLabSession();
       if (!active) {
-        setMessage('Sheer Lab session expired. Unlock Sheer Lab again, then send to desk.');
+        setMessage('Qlooqo Lab session expired. Unlock Qlooqo Lab again, then send to desk.');
         return;
       }
       const chargeCents = draft.billableChargeCents;

@@ -90,7 +90,7 @@ export class LabAppointmentsController {
     @Param('id') id: string,
     @Body() body: CancelAppointmentDto,
   ): Promise<CancelAppointmentResponse> {
-    return this.labAppointmentsService.cancel(actor, id, body.reason);
+    return this.labAppointmentsService.cancel(actor, id, body.reason, body.refundDeposit);
   }
 
   @Post(':id/reschedule')

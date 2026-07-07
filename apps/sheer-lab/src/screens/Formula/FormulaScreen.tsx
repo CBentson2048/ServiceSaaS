@@ -281,7 +281,7 @@ export function FormulaScreen({ navigation, route }: FormulaScreenProps): React.
         : await getActiveLabSession();
       if (!activeSession) {
         setProducts([]);
-        setProductsError('Unlock Sheer Lab before selecting products.');
+        setProductsError('Unlock Qlooqo Lab before selecting products.');
         return;
       }
 

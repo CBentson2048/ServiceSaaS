@@ -5,6 +5,7 @@ import { userHasAnyRole } from '@sheer/domain';
 import { cn } from '@sheer/utils';
 import { useAuth } from '../auth/AuthProvider';
 import { ALL_LOCATIONS, useLocationScope } from './LocationScopeContext';
+import { BrandLogo } from './BrandLogo';
 import { AppText } from '../design';
 
 type IconComponent = (props: SVGProps<SVGSVGElement>) => ReactElement;
@@ -115,27 +116,11 @@ export function Sidebar() {
         )}
       >
         {collapsed ? (
-          <AppText
-            as="div"
-            variant="subtitle"
-            weight="medium"
-            tone="onPrimary"
-            className="!text-white"
-          >
-            S<span className="text-primary">H</span>
-          </AppText>
+          <BrandLogo variant="mark" className="h-9 rounded-lg" />
         ) : (
           <div>
-            <AppText
-              as="div"
-              variant="subtitle"
-              weight="medium"
-              tone="onPrimary"
-              className="tracking-[0.2em] !text-white"
-            >
-              SH<span className="text-primary">EE</span>R
-            </AppText>
-            <AppText as="div" variant="micro" uppercase className="mt-1 !text-white/50">
+            <BrandLogo variant="white" className="h-6" />
+            <AppText as="div" variant="micro" uppercase className="mt-1.5 !text-white/50">
               Operations
             </AppText>
           </div>

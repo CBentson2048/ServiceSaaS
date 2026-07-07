@@ -196,7 +196,11 @@ export class LabAnalyticsService {
   }
 
   private resolveLocationScope(actor: AuthUser, requestedLocationId?: string): string[] {
-    if (userHasAnyRole(actor, ['stylist', 'client'])) {
+    // Gate by the roles the caller HAS, not the roles they lack: a single user
+    // can be owner AND stylist at once (an owner who also works a chair), so an
+    // exclusion check on ['stylist','client'] wrongly 403s a legitimate owner.
+    // Mirror the dashboard's inclusion check instead.
+    if (!userHasAnyRole(actor, ['owner', 'manager'])) {
       throw new ForbiddenException('Sheer Lab analytics are limited to owners and managers');
     }
 

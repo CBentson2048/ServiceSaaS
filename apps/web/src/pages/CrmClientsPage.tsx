@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import type { CrmClientSummary, CrmClientsPagination } from '@sheer/domain';
 import { userHasAnyRole } from '@sheer/domain';
@@ -11,6 +11,10 @@ const DEFAULT_PAGE_SIZE = 20;
 export function CrmClientsPage() {
   const auth = useAuth();
   const accessToken = auth.session?.accessToken;
+  // Locations the signed-in user can attach a client to. When they manage more
+  // than one, they must choose (a NULL-location client is invisible to every
+  // non-owner and 403s on open). A single location is assigned automatically.
+  const locations = auth.user?.locations ?? [];
   const [clients, setClients] = useState<CrmClientSummary[]>([]);
   const [pagination, setPagination] = useState<CrmClientsPagination | null>(null);
   const [page, setPage] = useState(1);
@@ -21,17 +25,31 @@ export function CrmClientsPage() {
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [creating, setCreating] = useState(false);
+  // Create-form errors are kept separate from the list `error` so they live and
+  // die with the form and never co-mingle with a list-load failure.
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [duplicateConflict, setDuplicateConflict] = useState<{
+    id: string;
+    displayName: string;
+    clientCode: string;
+  } | null>(null);
   const [form, setForm] = useState({
     firstName: '',
     lastName: '',
     email: '',
     phone: '',
-    communicationPreference: 'email' as 'email' | 'sms' | 'whatsapp',
+    primaryLocationId: '',
+    communicationPreference: '' as '' | 'email' | 'sms' | 'whatsapp',
+    marketingOptIn: false,
   });
+  // Monotonic id so only the most recently issued reload applies its result —
+  // otherwise a slow response for an earlier query can clobber a later one.
+  const reloadIdRef = useRef(0);
 
   const reload = useCallback(
     async (term: string, pageArg: number) => {
       if (!accessToken) return;
+      const requestId = ++reloadIdRef.current;
       setLoading(true);
       setError(null);
       try {
@@ -40,14 +58,16 @@ export function CrmClientsPage() {
           page: pageArg,
           pageSize,
         });
+        if (requestId !== reloadIdRef.current) return; // superseded by a newer reload
         setClients(result.clients);
         setPagination(result.pagination ?? null);
       } catch (err: unknown) {
+        if (requestId !== reloadIdRef.current) return;
         if (err instanceof ApiRequestError) setError(err.message);
         else if (err instanceof Error) setError(err.message);
         else setError('Could not load clients');
       } finally {
-        setLoading(false);
+        if (requestId === reloadIdRef.current) setLoading(false);
       }
     },
     [accessToken, pageSize],
@@ -83,36 +103,64 @@ export function CrmClientsPage() {
     return <Navigate to="/unauthorized" replace />;
   }
 
-  async function handleCreate(event: React.FormEvent<HTMLFormElement>) {
+  function handleCreate(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    void submitCreate(false);
+  }
+
+  async function submitCreate(allowDuplicate: boolean) {
     if (!accessToken) return;
+    // Trim client-side so whitespace-only names fail here with an inline message
+    // instead of round-tripping to a raw backend 400.
+    const firstName = form.firstName.trim();
+    const lastName = form.lastName.trim();
+    if (!firstName || !lastName) {
+      setCreateError('First and last name are required.');
+      return;
+    }
     setCreating(true);
-    setError(null);
-    setActionMessage(null);
+    setCreateError(null);
+    setDuplicateConflict(null);
     try {
+      // A single-location user is auto-scoped server-side; when they manage more
+      // than one, the required picker supplies the choice.
+      const resolvedLocationId =
+        form.primaryLocationId || (locations.length === 1 ? locations[0].id : '');
       const result = await createCrmClient(accessToken, {
-        firstName: form.firstName,
-        lastName: form.lastName,
-        email: form.email || undefined,
-        phone: form.phone || undefined,
-        communicationPreference: form.communicationPreference,
+        firstName,
+        lastName,
+        email: form.email.trim() || undefined,
+        phone: form.phone.trim() || undefined,
+        primaryLocationId: resolvedLocationId || undefined,
+        communicationPreference: form.communicationPreference || undefined,
+        marketingOptIn: form.marketingOptIn,
+        allowDuplicate: allowDuplicate || undefined,
       });
       setForm({
         firstName: '',
         lastName: '',
         email: '',
         phone: '',
-        communicationPreference: 'email',
+        primaryLocationId: '',
+        communicationPreference: '',
+        marketingOptIn: false,
       });
       setShowCreate(false);
       setActionMessage(`${result.client.displayName} has been added to Client Hub.`);
-      // A new client sorts to the top (most-recently-updated). Jump to page 1 so
-      // it's visible and the total/pagination stays accurate. If already on page
-      // 1 the page state won't change, so refresh explicitly.
-      if (page === 1) void reload(search.trim(), 1);
+      // A new client sorts to the top (most-recently-updated). Clear any active
+      // search and jump to page 1 so the new record is actually visible — a
+      // lingering search term would filter it out and contradict the toast.
+      setSearch('');
+      if (page === 1) void reload('', 1);
       else setPage(1);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not create client');
+      if (err instanceof ApiRequestError && err.status === 409) {
+        const existing = extractExistingClient(err.details);
+        if (existing) setDuplicateConflict(existing);
+        setCreateError(err.message);
+      } else {
+        setCreateError(err instanceof Error ? err.message : 'Could not create client');
+      }
     } finally {
       setCreating(false);
     }
@@ -131,7 +179,12 @@ export function CrmClientsPage() {
           <button
             type="button"
             className="inline-flex h-10 items-center justify-center rounded-pill bg-primary px-5 text-[13px] font-semibold text-text-on-primary transition hover:bg-primary-deep"
-            onClick={() => setShowCreate((current) => !current)}
+            onClick={() => {
+              setShowCreate((current) => !current);
+              setCreateError(null);
+              setDuplicateConflict(null);
+              setActionMessage(null);
+            }}
           >
             {showCreate ? 'Close form' : 'New client'}
           </button>
@@ -155,6 +208,29 @@ export function CrmClientsPage() {
           onSubmit={handleCreate}
           className="mb-5 grid gap-3 rounded-card-lg border border-border bg-surface p-4 sm:grid-cols-2"
         >
+          {createError ? (
+            <div className="rounded-input-lg border border-danger-border bg-danger-soft px-4 py-3 text-[13px] text-danger sm:col-span-2">
+              <p>{createError}</p>
+              {duplicateConflict ? (
+                <div className="mt-2 flex flex-wrap items-center gap-3">
+                  <Link
+                    to={`/crm/clients/${duplicateConflict.id}`}
+                    className="font-medium text-primary hover:text-primary-deep"
+                  >
+                    Open {duplicateConflict.displayName} ({duplicateConflict.clientCode})
+                  </Link>
+                  <button
+                    type="button"
+                    disabled={creating}
+                    onClick={() => void submitCreate(true)}
+                    className="rounded-pill border border-danger-border px-3 py-1 text-[12px] font-semibold text-danger transition hover:bg-danger-soft disabled:opacity-60"
+                  >
+                    {creating ? 'Saving…' : 'Create anyway'}
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           <TextInput
             label="First name"
             value={form.firstName}
@@ -178,6 +254,26 @@ export function CrmClientsPage() {
             value={form.phone}
             onChange={(value) => setForm((current) => ({ ...current, phone: value }))}
           />
+          {locations.length > 1 ? (
+            <label className="text-[12px] font-medium text-text-secondary">
+              Primary location
+              <select
+                value={form.primaryLocationId}
+                required
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, primaryLocationId: event.target.value }))
+                }
+                className="mt-1 h-10 w-full rounded-input-lg border border-border-strong bg-surface px-3 text-[13px] text-text-primary outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+              >
+                <option value="">Select a location</option>
+                {locations.map((location) => (
+                  <option key={location.id} value={location.id}>
+                    {location.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <label className="text-[12px] font-medium text-text-secondary">
             Preferred communication
             <select
@@ -185,17 +281,29 @@ export function CrmClientsPage() {
               onChange={(event) =>
                 setForm((current) => ({
                   ...current,
-                  communicationPreference: event.target.value as 'email' | 'sms' | 'whatsapp',
+                  communicationPreference: event.target.value as '' | 'email' | 'sms' | 'whatsapp',
                 }))
               }
               className="mt-1 h-10 w-full rounded-input-lg border border-border-strong bg-surface px-3 text-[13px] text-text-primary outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
             >
+              <option value="">No preference</option>
               <option value="email">Email</option>
               <option value="sms">SMS</option>
               <option value="whatsapp">WhatsApp</option>
             </select>
           </label>
-          <div className="flex items-end justify-end">
+          <label className="flex items-center gap-2 text-[12px] font-medium text-text-secondary sm:col-span-2">
+            <input
+              type="checkbox"
+              checked={form.marketingOptIn}
+              onChange={(event) =>
+                setForm((current) => ({ ...current, marketingOptIn: event.target.checked }))
+              }
+              className="h-4 w-4 rounded border-border-strong text-primary focus:ring-2 focus:ring-primary/20"
+            />
+            Client consents to marketing communications
+          </label>
+          <div className="flex items-end justify-end sm:col-span-2">
             <button
               type="submit"
               disabled={creating}
@@ -512,6 +620,22 @@ function EmptyState({ title, body }: { title: string; body: string }) {
       <div className="mt-1 text-[13px] text-text-secondary">{body}</div>
     </div>
   );
+}
+
+// Pull the existing-client payload out of a 409 Conflict body so the form can
+// offer "open existing" and "create anyway". Defensive: any shape mismatch just
+// yields null and the plain message is shown.
+function extractExistingClient(
+  details: unknown,
+): { id: string; displayName: string; clientCode: string } | null {
+  if (!details || typeof details !== 'object') return null;
+  const existing = (details as { existingClient?: unknown }).existingClient;
+  if (!existing || typeof existing !== 'object') return null;
+  const { id, displayName, clientCode } = existing as Record<string, unknown>;
+  if (typeof id === 'string' && typeof displayName === 'string' && typeof clientCode === 'string') {
+    return { id, displayName, clientCode };
+  }
+  return null;
 }
 
 function formatDate(value?: string): string {

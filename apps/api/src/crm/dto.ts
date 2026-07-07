@@ -21,6 +21,7 @@ import type {
   CrmPatchTestStatus,
   CrmVisitPhotoType,
 } from '@sheer/domain';
+import { IsPhoneField } from '../communications/phone-field.decorator';
 
 const NOTE_TYPES: CrmNoteType[] = ['general', 'consultation', 'formula_note', 'service_note', 'gdpr'];
 const ALLERGY_SEVERITIES: CrmAllergySeverity[] = ['unknown', 'mild', 'moderate', 'severe'];
@@ -72,6 +73,7 @@ export class CreateCrmClientDto {
   @IsOptional()
   @IsString()
   @MaxLength(40)
+  @IsPhoneField()
   phone?: string;
 
   @IsOptional()
@@ -90,6 +92,10 @@ export class CreateCrmClientDto {
   @IsString()
   @MaxLength(80)
   source?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  allowDuplicate?: boolean;
 }
 
 export class UpdateCrmClientDto {
@@ -113,6 +119,7 @@ export class UpdateCrmClientDto {
   @IsOptional()
   @IsString()
   @MaxLength(40)
+  @IsPhoneField()
   phone?: string | null;
 
   @IsOptional()

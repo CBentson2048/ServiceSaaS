@@ -5,7 +5,9 @@ import type {
   AppointmentCompletionResponse,
   CreateStylistRebookingRequest,
   PublicBookingServiceSummary,
+  RescheduleAppointmentRequest,
   RotaStaffSummary,
+  StaffBookingServiceLine,
   StaffBookingSummary,
   WeeklyRotaResponse,
 } from '@sheer/domain';
@@ -34,6 +36,8 @@ import {
   DayCalendarBoard,
   type AddAppointmentInput,
   type AddBookoutInput,
+  type MoveBookingInput,
+  type ResizeBookingInput,
 } from '../components/bookings/DayCalendarBoard';
 import { WeekStrip } from '../components/bookings/WeekStrip';
 import type { CalendarToolbarKey, CalendarToolbarState } from '../components/bookings/CalendarToolbar';
@@ -52,6 +56,11 @@ export function BookingsPage() {
   // serviceId → category colour, so each appointment tile can be tinted by its
   // (first) service's category on the calendar. Cosmetic — failures are ignored.
   const [serviceColors, setServiceColors] = useState<Map<string, string>>(() => new Map());
+  // Lower-cased service name → category colour. Fallback used when an
+  // appointment's service rows carry only a name snapshot (no service id).
+  const [serviceColorsByName, setServiceColorsByName] = useState<Map<string, string>>(() => new Map());
+  // Categories that carry a colour, for the calendar legend (name + swatch).
+  const [colorLegend, setColorLegend] = useState<{ id: string; name: string; colorHex: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [completionLoadingId, setCompletionLoadingId] = useState<string | null>(null);
   const [paymentLoadingId, setPaymentLoadingId] = useState<string | null>(null);
@@ -64,6 +73,8 @@ export function BookingsPage() {
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [rescheduleTarget, setRescheduleTarget] = useState<StaffBookingSummary | null>(null);
   const [rescheduleLoading, setRescheduleLoading] = useState(false);
+  const [cancelTarget, setCancelTarget] = useState<StaffBookingSummary | null>(null);
+  const [cancelLoading, setCancelLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const isReviewer = userHasAnyRole(auth.user, ['owner', 'manager']);
@@ -157,20 +168,20 @@ export function BookingsPage() {
     [accessToken, actionLoadingId],
   );
 
+  // Submits the cancellation once the owner/manager has confirmed a reason and (if
+  // a deposit was paid) whether to refund or keep it. The choice is collected in
+  // CancelModal — this only fires the request.
   const handleCancelBooking = useCallback(
-    async (booking: StaffBookingSummary) => {
-      if (!accessToken || actionLoadingId) return;
-      const reason = window.prompt(
-        `Cancel ${booking.clientDisplayName}'s appointment? Add an optional reason (the client will be notified and any deposit refunded):`,
-        '',
-      );
-      // `null` means the prompt was dismissed — abort. An empty string is a valid "no reason".
-      if (reason === null) return;
-      setActionLoadingId(booking.id);
+    async (booking: StaffBookingSummary, input: { reason?: string; refundDeposit: boolean }) => {
+      if (!accessToken || cancelLoading) return;
+      setCancelLoading(true);
       setCheckoutMessage(null);
       setError(null);
       try {
-        const result = await cancelBooking(accessToken, booking.id, { reason: reason.trim() || undefined });
+        const result = await cancelBooking(accessToken, booking.id, {
+          reason: input.reason,
+          refundDeposit: input.refundDeposit,
+        });
         setBookings((current) =>
           current.map((entry) => (entry.id === booking.id ? { ...entry, ...result.appointment } : entry)),
         );
@@ -178,17 +189,20 @@ export function BookingsPage() {
           ? ' Deposit refunded.'
           : result.refundError
             ? ` Deposit refund failed: ${result.refundError}`
-            : '';
+            : result.depositForfeited
+              ? ' Deposit kept (not refunded).'
+              : '';
         setCheckoutMessage(`Cancelled ${result.appointment.clientDisplayName}'s appointment.${refundNote}`);
+        setCancelTarget(null);
       } catch (err: unknown) {
         if (err instanceof ApiRequestError) setError(err.message);
         else if (err instanceof Error) setError(err.message);
         else setError('Could not cancel the appointment');
       } finally {
-        setActionLoadingId(null);
+        setCancelLoading(false);
       }
     },
-    [accessToken, actionLoadingId],
+    [accessToken, cancelLoading],
   );
 
   const handleReschedule = useCallback(
@@ -197,6 +211,7 @@ export function BookingsPage() {
       scheduledStartAt: string,
       staffProfileId?: string,
       serviceIds?: string[],
+      durationMinutes?: number,
     ) => {
       if (!accessToken) return;
       setRescheduleLoading(true);
@@ -206,12 +221,20 @@ export function BookingsPage() {
           scheduledStartAt,
           staffProfileId,
           serviceIds,
+          durationMinutes,
         });
         setBookings((current) =>
           current.map((entry) => (entry.id === booking.id ? { ...entry, ...result.appointment } : entry)),
         );
         setRescheduleTarget(null);
-        setCheckoutMessage(`Moved ${result.appointment.clientDisplayName}'s appointment to ${formatDateTime(result.appointment.startsAt)}.`);
+        // A pure length change (no time/stylist move) reads better as a resize.
+        const timeChanged = new Date(result.appointment.startsAt).getTime() !== new Date(booking.startsAt).getTime();
+        const staffChanged = Boolean(staffProfileId) && staffProfileId !== booking.assignedStaffProfileId;
+        setCheckoutMessage(
+          durationMinutes != null && !timeChanged && !staffChanged
+            ? `Updated ${result.appointment.clientDisplayName}'s appointment length.`
+            : `Moved ${result.appointment.clientDisplayName}'s appointment to ${formatDateTime(result.appointment.startsAt)}.`,
+        );
       } catch (err: unknown) {
         if (err instanceof ApiRequestError) setError(err.message);
         else if (err instanceof Error) setError(err.message);
@@ -221,6 +244,65 @@ export function BookingsPage() {
       }
     },
     [accessToken],
+  );
+
+  // Drag operations update the board OPTIMISTICALLY (the tile moves/resizes the
+  // instant you drop it) and reconcile with the server response, reverting to the
+  // pre-drag state on failure. This keeps the calendar smooth instead of waiting a
+  // round-trip before the tile appears in its new place.
+  const commitDrag = useCallback(
+    async (
+      booking: StaffBookingSummary,
+      optimistic: StaffBookingSummary,
+      payload: RescheduleAppointmentRequest,
+      message: (appointment: StaffBookingSummary) => string,
+    ) => {
+      if (!accessToken) return;
+      setError(null);
+      setBookings((current) => current.map((entry) => (entry.id === booking.id ? optimistic : entry)));
+      try {
+        const result = await rescheduleBooking(accessToken, booking.id, payload);
+        setBookings((current) =>
+          current.map((entry) => (entry.id === booking.id ? { ...entry, ...result.appointment } : entry)),
+        );
+        setCheckoutMessage(message(result.appointment));
+      } catch (err: unknown) {
+        // Roll the tile back to exactly where it was before the drag.
+        setBookings((current) => current.map((entry) => (entry.id === booking.id ? booking : entry)));
+        if (err instanceof ApiRequestError) setError(err.message);
+        else if (err instanceof Error) setError(err.message);
+        else setError('Could not update the appointment');
+      }
+    },
+    [accessToken],
+  );
+
+  // Drag-to-move / drag-to-reassign from the board.
+  const handleMoveBooking = useCallback(
+    (booking: StaffBookingSummary, input: MoveBookingInput) => {
+      const staffChanged = Boolean(input.staffProfileId) && input.staffProfileId !== booking.assignedStaffProfileId;
+      void commitDrag(
+        booking,
+        optimisticMove(booking, input.startAt, staffChanged ? input.staffProfileId : undefined),
+        { scheduledStartAt: input.startAt, staffProfileId: input.staffProfileId },
+        (appointment) => `Moved ${appointment.clientDisplayName}'s appointment to ${formatDateTime(appointment.startsAt)}.`,
+      );
+    },
+    [commitDrag],
+  );
+
+  // Drag-to-resize (bottom edge) → keep the start, change the total duration. The API
+  // grows/shrinks the last stylist-occupied segment to match.
+  const handleResizeBooking = useCallback(
+    (booking: StaffBookingSummary, input: ResizeBookingInput) => {
+      void commitDrag(
+        booking,
+        optimisticResize(booking, input.durationMinutes),
+        { scheduledStartAt: booking.startsAt, durationMinutes: input.durationMinutes },
+        (appointment) => `Updated ${appointment.clientDisplayName}'s appointment length.`,
+      );
+    },
+    [commitDrag],
   );
 
   const handleConfirmPayment = useCallback(
@@ -394,15 +476,35 @@ export function BookingsPage() {
       .then(([categoryResult, serviceResult]) => {
         if (cancelled) return;
         const colorByCategory = new Map<string, string>();
+        const legend: { id: string; name: string; colorHex: string }[] = [];
         for (const category of categoryResult.categories) {
-          if (category.colorHex) colorByCategory.set(category.id, category.colorHex);
+          if (category.colorHex) {
+            colorByCategory.set(category.id, category.colorHex);
+            legend.push({ id: category.id, name: category.name, colorHex: category.colorHex });
+          }
         }
-        const next = new Map<string, string>();
+        const byId = new Map<string, string>();
+        const byName = new Map<string, string>();
+        // Names can collide across categories/locations; the name fallback must not
+        // tint with an arbitrary winner, so a name that maps to two different colours
+        // is dropped (stays neutral). The id map is preferred and unaffected.
+        const nameConflicts = new Set<string>();
         for (const service of serviceResult.services) {
           const color = service.serviceCategoryId ? colorByCategory.get(service.serviceCategoryId) : undefined;
-          if (color) next.set(service.id, color);
+          if (!color) continue;
+          byId.set(service.id, color);
+          const nameKey = service.name.trim().toLowerCase();
+          if (nameConflicts.has(nameKey)) continue;
+          const existing = byName.get(nameKey);
+          if (existing === undefined) byName.set(nameKey, color);
+          else if (existing !== color) {
+            byName.delete(nameKey);
+            nameConflicts.add(nameKey);
+          }
         }
-        setServiceColors(next);
+        setServiceColors(byId);
+        setServiceColorsByName(byName);
+        setColorLegend(legend);
       })
       .catch(() => {
         // Tile colour is purely cosmetic; if the catalogue can't be loaded the
@@ -546,6 +648,20 @@ export function BookingsPage() {
         </ModalScrim>
       ) : null}
 
+      {cancelTarget ? (
+        <ModalScrim
+          onClose={cancelLoading ? undefined : () => setCancelTarget(null)}
+          label="Cancel appointment"
+        >
+          <CancelModal
+            booking={cancelTarget}
+            loading={cancelLoading}
+            onSubmit={(input) => void handleCancelBooking(cancelTarget, input)}
+            onClose={() => setCancelTarget(null)}
+          />
+        </ModalScrim>
+      ) : null}
+
       {/* Calendar + timetable claim the full page width. Appointments are acted
           on directly from the board: clicking a tile opens an action menu (check
           in / out, edit, cancel). The location picker / refresh live in the toolbar. */}
@@ -559,6 +675,8 @@ export function BookingsPage() {
             toolbarTrailing={calendarControls}
           />
         </div>
+
+        {colorLegend.length > 0 ? <CategoryLegend categories={colorLegend} /> : null}
 
         {!selectedLocationId ? (
           <AppCard padding="none" elevation="card" className="flex min-h-0 flex-1 items-center justify-center">
@@ -581,17 +699,24 @@ export function BookingsPage() {
             absences={rota?.absences ?? []}
             bookings={calendarBookings}
             serviceColors={serviceColors}
+            serviceColorsByName={serviceColorsByName}
             selectedBookingId={selectedBookingId}
             onSelectBooking={(booking) => setSelectedBookingId(booking.id)}
             onCheckIn={(booking) => void handleCheckIn(booking)}
             onCheckOut={(booking) => void handleComplete(booking)}
             onEditBooking={(booking) => setRescheduleTarget(booking)}
-            // Cancelling refunds the deposit, so it's an owner/manager action (mirrors reject).
-            onCancelBooking={isReviewer ? (booking) => void handleCancelBooking(booking) : undefined}
+            // Cancelling can refund the deposit, so it's an owner/manager action (mirrors
+            // reject). Opens a confirm modal where they add a reason and pick refund vs keep.
+            onCancelBooking={isReviewer ? (booking) => setCancelTarget(booking) : undefined}
             showAllTeamMembers={toolbar.showAllTeamMembers}
             showTimeline={toolbar.showTimeline}
             onAddAppointment={handleAddAppointment}
             onAddBookout={(input) => void handleAddBookout(input)}
+            onMoveBooking={handleMoveBooking}
+            onResizeBooking={handleResizeBooking}
+            onDragBlocked={(staffName) =>
+              setError(`Can’t place the appointment outside ${staffName}’s working hours.`)
+            }
           />
         )}
       </div>
@@ -898,6 +1023,122 @@ function RescheduleModal({
         </AppButton>
         <AppButton variant="primary" loading={loading} disabled={!canSave} onClick={submit}>
           Save changes
+        </AppButton>
+      </div>
+    </AppCard>
+  );
+}
+
+// Cancel-appointment confirmation. Owner/manager adds an optional reason and — when
+// a deposit has been paid — decides whether to refund it or keep it (forfeited).
+// When no deposit was paid there's nothing to decide, so the refund choice is hidden
+// and the request is sent with refundDeposit=true (a harmless no-op).
+function CancelModal({
+  booking,
+  loading,
+  onSubmit,
+  onClose,
+}: {
+  booking: StaffBookingSummary;
+  loading: boolean;
+  onSubmit: (input: { reason?: string; refundDeposit: boolean }) => void;
+  onClose: () => void;
+}) {
+  const hasPaidDeposit = booking.depositStatus === 'paid';
+  const [reason, setReason] = useState('');
+  const [refundDeposit, setRefundDeposit] = useState(true);
+
+  function submit() {
+    onSubmit({ reason: reason.trim() || undefined, refundDeposit: hasPaidDeposit ? refundDeposit : true });
+  }
+
+  const refundOptions = [
+    {
+      value: true,
+      title: 'Refund the deposit',
+      body: 'Return the paid deposit to the client via the original payment.',
+    },
+    {
+      value: false,
+      title: 'Keep the deposit',
+      body: 'Cancel without refunding — the deposit is forfeited by the client.',
+    },
+  ];
+
+  return (
+    <AppCard elevation="hero" padding="lg" className="rounded-card-lg">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[15px] font-semibold text-text-primary">Cancel appointment</div>
+          <div className="mt-1 truncate text-[13px] text-text-secondary">
+            {booking.clientDisplayName} · {booking.serviceNames.join(', ') || 'Service'}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-pill border border-border text-text-secondary transition hover:bg-surface-alt hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+        >
+          <CloseIcon className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="mt-4 rounded-input-lg border border-warning-border bg-warning-soft/60 px-3 py-2 text-[12px] text-warning">
+        The client will be notified that this appointment has been cancelled. This can’t be undone.
+      </div>
+
+      <label className="mt-4 block text-[12px] font-medium text-text-secondary">
+        Reason (optional — shared with the client)
+        <textarea
+          value={reason}
+          onChange={(event) => setReason(event.target.value)}
+          rows={2}
+          maxLength={500}
+          placeholder="e.g. Stylist unavailable"
+          className="mt-1 w-full rounded-input border border-border bg-surface px-3 py-2 text-[13px] text-text-primary outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+        />
+      </label>
+
+      {hasPaidDeposit ? (
+        <fieldset className="mt-4">
+          <legend className="text-[12px] font-medium text-text-secondary">Deposit</legend>
+          <div className="mt-2 grid gap-2">
+            {refundOptions.map((option) => {
+              const selected = refundDeposit === option.value;
+              return (
+                <label
+                  key={String(option.value)}
+                  className={`flex cursor-pointer items-start gap-3 rounded-input-lg border px-3 py-2.5 transition ${
+                    selected ? 'border-primary bg-primary/5' : 'border-border-strong bg-surface hover:bg-surface-alt'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="refund-deposit"
+                    checked={selected}
+                    onChange={() => setRefundDeposit(option.value)}
+                    className="mt-0.5 h-4 w-4 border-border-strong text-primary focus:ring-primary/20"
+                  />
+                  <span className="flex-1">
+                    <span className="block text-[13px] font-medium text-text-primary">{option.title}</span>
+                    <span className="block text-[12px] text-text-secondary">{option.body}</span>
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        </fieldset>
+      ) : (
+        <div className="mt-4 text-[12px] text-text-muted">No deposit was paid for this appointment.</div>
+      )}
+
+      <div className="mt-5 flex items-center justify-end gap-2">
+        <AppButton variant="secondary" onClick={onClose}>
+          Keep appointment
+        </AppButton>
+        <AppButton variant="danger" loading={loading} onClick={submit}>
+          Cancel appointment
         </AppButton>
       </div>
     </AppCard>
@@ -1223,6 +1464,27 @@ function BillRow({
   );
 }
 
+// Compact colour key for the calendar — one swatch per category that carries a
+// colour, so staff can read what each tile tint means. Wraps and scrolls rather
+// than pushing the board down on small screens.
+function CategoryLegend({ categories }: { categories: { id: string; name: string; colorHex: string }[] }) {
+  return (
+    <div className="shrink-0 flex flex-wrap items-center gap-x-3 gap-y-1.5 px-1">
+      <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-text-muted">Categories</span>
+      {categories.map((category) => (
+        <span key={category.id} className="inline-flex items-center gap-1.5 text-[11px] text-text-secondary">
+          <span
+            className="h-2.5 w-2.5 rounded-sm ring-1 ring-black/10"
+            style={{ backgroundColor: category.colorHex }}
+            aria-hidden
+          />
+          <span className="truncate">{category.name}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function EmptyState({ title, body }: { title: string; body: string }) {
   return (
     <div className="px-4 py-12 text-center">
@@ -1282,6 +1544,96 @@ function saveToolbarState(state: CalendarToolbarState): void {
   } catch {
     // Best-effort — ignore storage failures (private mode, quota, etc.).
   }
+}
+
+// Build the optimistically-updated booking for a drag MOVE / reassign: shift the
+// appointment (and every per-service window) by the drop delta, and reassign it when
+// it landed on another stylist — so the tile jumps to its new place instantly, before
+// the server confirms.
+function optimisticMove(
+  booking: StaffBookingSummary,
+  startAt: string,
+  staffProfileId: string | undefined,
+): StaffBookingSummary {
+  const deltaMs = new Date(startAt).getTime() - new Date(booking.startsAt).getTime();
+  const shift = (iso: string) => new Date(new Date(iso).getTime() + deltaMs).toISOString();
+  return {
+    ...booking,
+    startsAt: startAt,
+    endsAt: shift(booking.endsAt),
+    assignedStaffProfileId: staffProfileId ?? booking.assignedStaffProfileId,
+    services: booking.services?.map((service) => ({
+      ...service,
+      startsAt: shift(service.startsAt),
+      endsAt: shift(service.endsAt),
+    })),
+  };
+}
+
+// Minimum a service/segment can shrink to on resize — mirrors the API.
+const RESIZE_MIN_UNIT_MINUTES = 5;
+
+// Build the optimistically-resized booking, mirroring the API: the delta versus the
+// current total is applied to the LAST stylist-occupied segment (development time
+// stays fixed), then per-service windows cascade from the start. The server response
+// reconciles any difference; a wholly-free appointment is left unchanged (as the API
+// does). Falls back to just the header end when there is no per-service data.
+function optimisticResize(booking: StaffBookingSummary, durationMinutes: number): StaffBookingSummary {
+  const startMs = new Date(booking.startsAt).getTime();
+  const services = booking.services ?? [];
+  if (services.length === 0) {
+    return { ...booking, endsAt: new Date(startMs + durationMinutes * 60_000).toISOString(), durationMinutes };
+  }
+  const currentTotal = services.reduce((sum, service) => sum + service.durationMinutes, 0);
+  const delta = durationMinutes - currentTotal;
+
+  // Locate the last stylist-occupied target, scanning from the end (a segment-less
+  // service is wholly occupied; otherwise its last non-free segment).
+  let targetService = -1;
+  let targetSegment = -1;
+  for (let i = services.length - 1; i >= 0 && targetService === -1; i -= 1) {
+    const segments = services[i].segments ?? [];
+    if (segments.length === 0) {
+      targetService = i;
+    } else {
+      for (let j = segments.length - 1; j >= 0; j -= 1) {
+        if (!segments[j].isStylistFree) {
+          targetService = i;
+          targetSegment = j;
+          break;
+        }
+      }
+    }
+  }
+  if (targetService === -1) return booking; // wholly stylist-free — the API leaves it as is
+
+  const nextServices: StaffBookingServiceLine[] = services.map((service, i) => {
+    if (i !== targetService) return { ...service };
+    if (targetSegment === -1) {
+      return { ...service, durationMinutes: Math.max(RESIZE_MIN_UNIT_MINUTES, service.durationMinutes + delta) };
+    }
+    const segments = (service.segments ?? []).map((segment, j) =>
+      j === targetSegment
+        ? { ...segment, durationMinutes: Math.max(RESIZE_MIN_UNIT_MINUTES, segment.durationMinutes + delta) }
+        : segment,
+    );
+    return { ...service, segments, durationMinutes: segments.reduce((sum, seg) => sum + seg.durationMinutes, 0) };
+  });
+
+  // Cascade per-service windows contiguously from the appointment start.
+  let cursor = startMs;
+  for (const service of nextServices) {
+    service.startsAt = new Date(cursor).toISOString();
+    cursor += service.durationMinutes * 60_000;
+    service.endsAt = new Date(cursor).toISOString();
+  }
+  const newTotal = nextServices.reduce((sum, service) => sum + service.durationMinutes, 0);
+  return {
+    ...booking,
+    endsAt: new Date(startMs + newTotal * 60_000).toISOString(),
+    durationMinutes: newTotal,
+    services: nextServices,
+  };
 }
 
 function formatTime(iso: string): string {

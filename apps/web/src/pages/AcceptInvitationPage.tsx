@@ -9,6 +9,7 @@ import {
 } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
 import { TextField } from '../components/onboarding/FormField';
+import { BrandLogo } from '../components/BrandLogo';
 
 const PASSWORD_MIN = 8;
 
@@ -125,9 +126,7 @@ export function AcceptInvitationPage() {
       <section className="mx-auto w-full max-w-xl overflow-hidden rounded-card-lg border border-border-strong bg-surface shadow-hero">
         <header className="border-b border-border bg-surface-alt px-6 py-5 sm:px-8">
           <div className="mb-3 flex items-center justify-between">
-            <span className="text-xs font-semibold tracking-[0.38em] text-text-secondary">
-              SH<span className="text-primary">EE</span>R
-            </span>
+            <BrandLogo variant="color" className="h-6" />
             <Link to="/login" className="text-[12px] font-medium text-primary-deep hover:underline">
               Already accepted? Sign in
             </Link>

@@ -10,7 +10,7 @@ export function ProtectedRoute({ allowedRoles }: { allowedRoles: UserRole[] }) {
   if (auth.status === 'bootstrapping') {
     return (
       <div className="grid min-h-screen place-items-center bg-bg text-text-secondary">
-        Restoring your Sheer session...
+        Restoring your Qlooqo session...
       </div>
     );
   }
