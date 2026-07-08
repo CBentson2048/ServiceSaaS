@@ -155,7 +155,7 @@ export function LoginPage() {
           </button>
 
           <p className="text-center text-sm text-[#776A82]">
-            {bookingMode ? 'Need an account?' : 'New to Sheer?'}{' '}
+            {bookingMode ? 'Need an account?' : 'New to Qlooqo?'}{' '}
             <Link
               className="font-semibold text-primary-deep"
               to={bookingMode ? '/create-account?booking=1' : '/owner/onboarding'}

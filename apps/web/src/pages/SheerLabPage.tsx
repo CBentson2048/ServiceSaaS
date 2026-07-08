@@ -132,7 +132,11 @@ export function SheerLabPage() {
     }
   }, [deviceLocationId, locations]);
 
-  if (auth.status === 'authenticated' && userHasRole(auth.user, 'stylist')) {
+  // Access requires owner OR manager (mirrors the route's ProtectedRoute gate).
+  // Gate on the role we REQUIRE, never on 'stylist' to exclude — an owner who
+  // also holds the stylist role must keep access (same roles[] inversion bug
+  // fixed in Client Hub, the Appointment Book, and Lab analytics).
+  if (auth.status === 'authenticated' && !userHasAnyRole(auth.user, ['owner', 'manager'])) {
     return <Navigate to="/unauthorized" replace />;
   }
 
