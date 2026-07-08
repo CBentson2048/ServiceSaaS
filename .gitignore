@@ -55,6 +55,9 @@ apps/web/dist/
 # NestJS / Node
 apps/api/dist/
 
+# Cursor MCP (may contain access tokens / secrets)
+.cursor/mcp.json
+
 # Misc
 *.pid
 *.seed
