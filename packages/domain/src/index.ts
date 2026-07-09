@@ -6,6 +6,77 @@ export type UserRole = 'owner' | 'manager' | 'stylist' | 'client';
 
 export type AppSurface = 'sheer_app' | 'sheer_lab' | 'web_dashboard' | 'api';
 
+/**
+ * Account product tier. The single account-level flag that drives every
+ * downstream feature limit and upgrade prompt.
+ *
+ * - `solo`   — one independent stylist, single location, single user.
+ * - `studio` — a small team at a single location.
+ * - `salon`  — a salon with a team across a handful of locations.
+ * - `group`  — a multi-site group with unlimited locations.
+ *
+ * Tiers NEVER gate inventory or colour tracking — those are core product at
+ * every tier from day one.
+ */
+export type BusinessTier = 'solo' | 'studio' | 'salon' | 'group';
+
+/** Lowest → highest tier. Used to compare and order tiers. */
+export const BUSINESS_TIER_ORDER: readonly BusinessTier[] = ['solo', 'studio', 'salon', 'group'];
+
+export interface BusinessTierLimits {
+  tier: BusinessTier;
+  /** Max active locations, or `null` for unlimited. */
+  maxLocations: number | null;
+  /**
+   * Max team members counted as owner + manager + stylist (active memberships
+   * plus pending invitations); `null` for unlimited. Clients never count.
+   */
+  maxTeamMembers: number | null;
+}
+
+/**
+ * Feature limits per tier. The authoritative source consumed by the API when
+ * enforcing limits and by the web/mobile clients when rendering plan usage.
+ */
+export const BUSINESS_TIER_LIMITS: Record<BusinessTier, BusinessTierLimits> = {
+  solo: { tier: 'solo', maxLocations: 1, maxTeamMembers: 1 },
+  studio: { tier: 'studio', maxLocations: 1, maxTeamMembers: null },
+  salon: { tier: 'salon', maxLocations: 5, maxTeamMembers: null },
+  group: { tier: 'group', maxLocations: null, maxTeamMembers: null },
+};
+
+/** Human-friendly tier labels for UI. */
+export const BUSINESS_TIER_LABELS: Record<BusinessTier, string> = {
+  solo: 'Solo',
+  studio: 'Studio',
+  salon: 'Salon',
+  group: 'Group',
+};
+
+/** Limits for a tier, defaulting to the safest (solo) for unknown values. */
+export function getBusinessTierLimits(tier: BusinessTier | null | undefined): BusinessTierLimits {
+  return (tier && BUSINESS_TIER_LIMITS[tier]) || BUSINESS_TIER_LIMITS.solo;
+}
+
+/**
+ * The tier to recommend upgrading to when a limit is hit, or `null` if the
+ * current tier already covers the need.
+ *
+ * - `team`      — needs more people. Solo → Studio (Studio+ already unlimited).
+ * - `locations` — needs more locations. Solo/Studio → Salon, Salon → Group.
+ */
+export function suggestTierUpgrade(
+  current: BusinessTier,
+  reason: 'team' | 'locations',
+): BusinessTier | null {
+  if (reason === 'team') {
+    return current === 'solo' ? 'studio' : null;
+  }
+  if (current === 'solo' || current === 'studio') return 'salon';
+  if (current === 'salon') return 'group';
+  return null;
+}
+
 export type AllowedLocationScope =
   | { kind: 'all'; locationIds: string[] }
   | { kind: 'locations'; locationIds: string[] }
@@ -49,6 +120,8 @@ export interface AuthUser {
   businessId: string;
   businessName?: string;
   businessSlug?: string;
+  /** Account product tier of the current business. Drives feature limits. */
+  businessTier?: BusinessTier;
   allowedLocationIds: string[];
   locationScope: AllowedLocationScope;
   locations: AuthLocation[];
@@ -143,6 +216,12 @@ export interface OwnerOnboardingBusinessInput {
   defaultCurrency: string;
   defaultTimezone: string;
   countryCode: string;
+  /**
+   * Account tier chosen at the sign-up fork. The web routes the "Independent
+   * Stylist" choice to `solo` and "Salon" to `salon`. Defaults to `solo` when
+   * omitted. Upgradeable later from account settings.
+   */
+  tier?: BusinessTier;
 }
 
 export interface OwnerOnboardingLocationInput {
@@ -163,6 +242,42 @@ export interface OwnerOnboardingRequest {
   owner: OwnerOnboardingOwnerInput;
   business: OwnerOnboardingBusinessInput;
   location: OwnerOnboardingLocationInput;
+}
+
+// ---------------------------------------------------------------------------
+// Account tier management (owner)
+// ---------------------------------------------------------------------------
+
+export interface AccountTierUsage {
+  /** Active locations in the business. */
+  locationCount: number;
+  /** Team members (owner + manager + stylist, active + pending invitations). */
+  teamMemberCount: number;
+}
+
+export interface AccountTierUpgradeSuggestion {
+  toTier: BusinessTier;
+  reason: 'team' | 'locations';
+}
+
+export interface AccountTierState {
+  tier: BusinessTier;
+  limits: BusinessTierLimits;
+  usage: AccountTierUsage;
+  /** Set when current usage is at/over a limit and an upgrade is recommended. */
+  upgradeSuggestion?: AccountTierUpgradeSuggestion | null;
+}
+
+export interface GetAccountResponse {
+  account: AccountTierState;
+}
+
+export interface UpdateAccountTierRequest {
+  tier: BusinessTier;
+}
+
+export interface UpdateAccountTierResponse {
+  account: AccountTierState;
 }
 
 /**

@@ -17,6 +17,7 @@ import type {
   AppSurface,
   AuthSession,
   AuthUser,
+  BusinessTier,
   CreateAccountRequest,
   CreateAccountResponse,
   LoginResponse,
@@ -57,6 +58,7 @@ interface BusinessRow {
   id: string;
   name: string;
   slug: string;
+  tier?: BusinessTier | null;
 }
 
 interface LocationRow {
@@ -394,6 +396,7 @@ export class AuthService {
       businessId: business.id,
       businessName: business.name,
       businessSlug: business.slug,
+      businessTier: business.tier ?? 'solo',
       allowedLocationIds,
       // Scope kind follows the highest-privilege role: owner sees everything,
       // a manager (anywhere in the set) gets multi-location scope, otherwise
@@ -961,7 +964,7 @@ export class AuthService {
     const { data, error } = await this.admin
       .schema('core')
       .from('businesses')
-      .select('id,name,slug')
+      .select('id,name,slug,tier')
       .eq('id', businessId)
       .single<BusinessRow>();
 

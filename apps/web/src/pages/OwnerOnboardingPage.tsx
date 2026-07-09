@@ -4,6 +4,7 @@ import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { BrandLogo } from '../components/BrandLogo';
 import type {
   BusinessSlugAvailabilityResponse,
+  BusinessTier,
   OwnerOnboardingBootstrap,
   OwnerOnboardingRequest,
 } from '@sheer/domain';
@@ -38,7 +39,26 @@ interface BusinessForm {
   defaultCurrency: string;
   defaultTimezone: string;
   countryCode: string;
+  /** Account tier from the sign-up fork: solo (independent) or salon (team). */
+  tier: BusinessTier;
 }
+
+const ACCOUNT_TYPE_OPTIONS: {
+  tier: BusinessTier;
+  title: string;
+  description: string;
+}[] = [
+  {
+    tier: 'solo',
+    title: 'Independent stylist',
+    description: 'Just you, one chair. Upgrade to a team plan anytime.',
+  },
+  {
+    tier: 'salon',
+    title: 'Salon or team',
+    description: 'A team across one or more locations.',
+  },
+];
 
 interface LocationForm {
   name: string;
@@ -99,6 +119,7 @@ function emptyBusiness(): BusinessForm {
     defaultCurrency: 'GBP',
     defaultTimezone: 'Europe/London',
     countryCode: 'GB',
+    tier: 'solo',
   };
 }
 
@@ -294,6 +315,7 @@ export function OwnerOnboardingPage() {
         defaultCurrency: business.defaultCurrency.trim().toUpperCase(),
         defaultTimezone: business.defaultTimezone.trim(),
         countryCode: business.countryCode.trim().toUpperCase(),
+        tier: business.tier,
       },
       location: {
         name: location.name.trim(),
@@ -582,6 +604,34 @@ function BusinessStep({
 
   return (
     <div className="grid gap-4 sm:grid-cols-2">
+      <div className="sm:col-span-2">
+        <p className="mb-2 text-[13px] font-semibold text-text-primary">What are you setting up?</p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {ACCOUNT_TYPE_OPTIONS.map((option) => {
+            const selected = value.tier === option.tier;
+            return (
+              <button
+                key={option.tier}
+                type="button"
+                onClick={() => onChange({ ...value, tier: option.tier })}
+                aria-pressed={selected}
+                className={`rounded-input-lg border px-4 py-3 text-left transition ${
+                  selected
+                    ? 'border-primary bg-primary-soft'
+                    : 'border-border-strong bg-surface hover:bg-surface-alt'
+                }`}
+              >
+                <span className="block text-[13px] font-semibold text-text-primary">
+                  {option.title}
+                </span>
+                <span className="mt-1 block text-[12px] text-text-secondary">
+                  {option.description}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
       <TextField
         label="Business name"
         value={value.name}

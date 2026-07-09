@@ -9,6 +9,12 @@ import type {
 } from '@sheer/domain';
 import { userHasAnyRole, userHasRole } from '@sheer/domain';
 import {
+  RangeTabs,
+  resolveCustomWindow,
+  type CustomRange,
+  type DashboardRange,
+} from '../components/dashboard/RangeTabs';
+import {
   adjustInventoryStock,
   archiveInventoryProduct,
   createInventoryProduct,
@@ -75,6 +81,11 @@ export function InventoryPage() {
   const [actionLocationId, setActionLocationId] = useState('');
   const [search, setSearch] = useState('');
   const [lowStockOnly, setLowStockOnly] = useState(false);
+  // Date range for the stock movement log + "Restocked" KPI, mirroring the
+  // dashboard's range control. Defaults to the current month so the audit log
+  // has meaningful history on first load.
+  const [range, setRange] = useState<DashboardRange>('month');
+  const [customRange, setCustomRange] = useState<CustomRange>({ from: '', to: '' });
   const [productForm, setProductForm] = useState<ProductForm>(emptyProductForm);
   const [showProductForm, setShowProductForm] = useState(false);
   const [stockProductId, setStockProductId] = useState('');
@@ -89,6 +100,14 @@ export function InventoryPage() {
   const [error, setError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
 
+  // Resolve the selected range to an explicit ISO window. Null when a custom
+  // range isn't fully chosen yet, in which case the movement log falls back to
+  // its most-recent view (no date bounds).
+  const movementWindow = useMemo(
+    () => resolveRangeWindow(range, customRange),
+    [range, customRange],
+  );
+
   const reload = useCallback(async () => {
     if (!accessToken) return;
     setLoading(true);
@@ -99,7 +118,12 @@ export function InventoryPage() {
         listInventoryProducts(accessToken),
         listInventoryCategories(accessToken),
         listInventoryStock(accessToken, { locationId: listingLocationId, q: search.trim() || undefined, lowStockOnly }),
-        listInventoryMovements(accessToken, { locationId: listingLocationId, limit: 20 }),
+        listInventoryMovements(accessToken, {
+          locationId: listingLocationId,
+          limit: 200,
+          from: movementWindow?.from,
+          to: movementWindow?.to,
+        }),
         listInventoryLowStock(accessToken, { locationId: listingLocationId }),
       ]);
       setProducts(productResult.products);
@@ -113,7 +137,7 @@ export function InventoryPage() {
     } finally {
       setLoading(false);
     }
-  }, [accessToken, lowStockOnly, search, scopeLocationId, isAllLocations]);
+  }, [accessToken, lowStockOnly, search, scopeLocationId, isAllLocations, movementWindow]);
 
   // Debounced so typing in the SKU/name search fires one request after the
   // user pauses rather than one per keystroke.
@@ -154,6 +178,7 @@ export function InventoryPage() {
         .reduce((total, movement) => total + movement.quantityDeltaGrams, 0),
     [movements],
   );
+  const rangeLabel = rangeLabelFor(range);
 
   // Gate on the capability, not a single role: an owner who also holds the
   // stylist role (a common salon-owner setup) must still get full access. Block
@@ -289,19 +314,28 @@ export function InventoryPage() {
   return (
     <>
       <h2 className="sr-only">Products</h2>
-      <header className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-[13px] text-text-secondary">
+      <header className="mb-6 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <p className="max-w-md text-[13px] text-text-secondary">
           Manage catalogue products, location stock, low-stock thresholds, and auditable movements.
         </p>
-        <button
-          type="button"
-          className="inline-flex h-10 items-center gap-2 rounded-pill border border-border-strong bg-surface px-5 text-[13px] font-semibold text-text-primary transition hover:bg-surface-alt disabled:opacity-50"
-          onClick={() => void reload()}
-          disabled={loading}
-        >
-          <RefreshIcon className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
-          Refresh
-        </button>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-end">
+          <RangeTabs
+            value={range}
+            onChange={setRange}
+            allowCustom
+            customRange={customRange}
+            onCustomRangeChange={setCustomRange}
+          />
+          <button
+            type="button"
+            className="inline-flex h-9 items-center gap-2 rounded-pill border border-border-strong bg-surface px-5 text-[13px] font-semibold text-text-primary transition hover:bg-surface-alt disabled:opacity-50"
+            onClick={() => void reload()}
+            disabled={loading}
+          >
+            <RefreshIcon className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
+            Refresh
+          </button>
+        </div>
       </header>
 
       {actionMessage ? (
@@ -338,10 +372,10 @@ export function InventoryPage() {
           hint="records at zero on hand"
         />
         <KpiCard
-          label="Restocked (recent)"
+          label="Restocked"
           value={formatGrams(restockUnitsMonth)}
           icon={<TrendIcon className="h-4 w-4 text-success" />}
-          hint="inbound across last movements"
+          hint={`inbound ${rangeLabel}`}
         />
       </section>
 
@@ -608,7 +642,9 @@ export function InventoryPage() {
             <div className="flex items-center justify-between border-b border-border px-5 py-4">
               <div>
                 <div className="text-[15px] font-semibold text-text-primary">Recent stock movement</div>
-                <div className="mt-0.5 text-[13px] text-text-secondary">Continuous log of all inventory transactions.</div>
+                <div className="mt-0.5 text-[13px] text-text-secondary">
+                  Inventory transactions {rangeLabel === 'in selected range' ? 'in selected range' : rangeLabel}.
+                </div>
               </div>
               <button
                 type="button"
@@ -700,6 +736,50 @@ function stockHealth(item: InventoryLocationStock): StockHealth {
   if (item.quantityOnHandGrams <= 0) return 'critical';
   if (item.isLowStock) return 'low';
   return 'healthy';
+}
+
+/**
+ * Resolve a range selection to an explicit [from, to) ISO window in local time.
+ * Presets end at the start of tomorrow so "today" includes the whole current
+ * day. Returns null for an incomplete custom range so the caller can fall back
+ * to the default (unbounded) movement view.
+ */
+function resolveRangeWindow(
+  range: DashboardRange,
+  custom: CustomRange,
+): { from: string; to: string } | null {
+  if (range === 'custom') return resolveCustomWindow(custom);
+
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1); // exclusive: start of tomorrow
+
+  if (range === 'today') {
+    return { from: start.toISOString(), to: end.toISOString() };
+  }
+  if (range === 'week') {
+    const monday = new Date(start);
+    const diffToMonday = (start.getDay() + 6) % 7; // 0=Sun..6=Sat -> days since Monday
+    monday.setDate(monday.getDate() - diffToMonday);
+    return { from: monday.toISOString(), to: end.toISOString() };
+  }
+  // month
+  const firstOfMonth = new Date(start.getFullYear(), start.getMonth(), 1);
+  return { from: firstOfMonth.toISOString(), to: end.toISOString() };
+}
+
+function rangeLabelFor(range: DashboardRange): string {
+  switch (range) {
+    case 'today':
+      return 'today';
+    case 'week':
+      return 'this week';
+    case 'month':
+      return 'this month';
+    default:
+      return 'in selected range';
+  }
 }
 
 function KpiCard({

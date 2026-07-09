@@ -16,7 +16,13 @@ import type {
   ListLocationsResponse,
   UpdateLocationRequest,
 } from '@sheer/domain';
-import { userHasRole, userHasAnyRole } from '@sheer/domain';
+import {
+  BUSINESS_TIER_LABELS,
+  getBusinessTierLimits,
+  suggestTierUpgrade,
+  userHasRole,
+  userHasAnyRole,
+} from '@sheer/domain';
 
 interface BusinessRow {
   id: string;
@@ -116,6 +122,7 @@ export class LocationsService {
 
   async create(actor: AuthUser, input: CreateLocationRequest): Promise<BusinessLocation> {
     this.assertOwner(actor);
+    await this.assertLocationTierLimit(actor);
 
     const business = await this.fetchBusinessDefaults(actor.businessId);
     const slug = normalizeSlug(input.slug);
@@ -283,6 +290,37 @@ export class LocationsService {
   private assertOwner(actor: AuthUser): void {
     if (!userHasRole(actor, 'owner')) {
       throw new ForbiddenException('Only owners can perform this action');
+    }
+  }
+
+  /**
+   * Block creating a new location when the account tier's location cap is
+   * already reached. The error names the tier to upgrade to so the client can
+   * surface an upgrade prompt (Solo/Studio → Salon → Group).
+   */
+  private async assertLocationTierLimit(actor: AuthUser): Promise<void> {
+    const tier = actor.businessTier ?? 'solo';
+    const { maxLocations } = getBusinessTierLimits(tier);
+    if (maxLocations === null) return;
+
+    const { count, error } = await this.admin
+      .schema('core')
+      .from('locations')
+      .select('id', { count: 'exact', head: true })
+      .eq('business_id', actor.businessId)
+      .eq('is_active', true);
+
+    if (error) {
+      this.logger.error(`assertLocationTierLimit count failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to verify location limit');
+    }
+
+    if ((count ?? 0) >= maxLocations) {
+      const upgradeTo = suggestTierUpgrade(tier, 'locations');
+      const suffix = upgradeTo ? ` Upgrade to ${BUSINESS_TIER_LABELS[upgradeTo]} to add more.` : '';
+      throw new ForbiddenException(
+        `Your ${BUSINESS_TIER_LABELS[tier]} plan allows up to ${maxLocations} location(s).${suffix}`,
+      );
     }
   }
 

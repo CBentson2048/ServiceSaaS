@@ -30,7 +30,12 @@ import type {
   UpdateStaffMemberResponse,
   UserRole,
 } from '@sheer/domain';
-import { userHasRole } from '@sheer/domain';
+import {
+  BUSINESS_TIER_LABELS,
+  getBusinessTierLimits,
+  suggestTierUpgrade,
+  userHasRole,
+} from '@sheer/domain';
 import { AuthService } from '../auth/auth.service';
 import { EmailService } from '../email/email.service';
 import { renderStaffInvitationEmail } from '../email/templates/staff-invitation.template';
@@ -148,6 +153,7 @@ export class StaffService {
     if (input.role !== 'manager' && input.role !== 'stylist') {
       throw new BadRequestException('Invitable roles are limited to manager and stylist');
     }
+    await this.assertTeamTierLimit(actor);
     await this.assertLocationInBusiness(actor.businessId, input.locationId);
 
     const email = input.email.trim().toLowerCase();
@@ -726,6 +732,55 @@ export class StaffService {
   private assertOwner(actor: AuthUser): void {
     if (!userHasRole(actor, 'owner')) {
       throw new ForbiddenException('Only owners can manage staff');
+    }
+  }
+
+  /**
+   * Block inviting another team member when the account tier's team cap is
+   * already reached. Team size = distinct active owner/manager/stylist members
+   * plus pending invitations. On Solo (cap 1) this triggers the "invite a 2nd
+   * user → upgrade to Studio" prompt.
+   */
+  private async assertTeamTierLimit(actor: AuthUser): Promise<void> {
+    const tier = actor.businessTier ?? 'solo';
+    const { maxTeamMembers } = getBusinessTierLimits(tier);
+    if (maxTeamMembers === null) return;
+
+    const [members, invitations] = await Promise.all([
+      this.admin
+        .schema('core')
+        .from('user_memberships')
+        .select('user_profile_id')
+        .eq('business_id', actor.businessId)
+        .eq('status', 'active')
+        .in('role', ['owner', 'manager', 'stylist'])
+        .returns<{ user_profile_id: string }[]>(),
+      this.admin
+        .schema('core')
+        .from('staff_invitations')
+        .select('id', { count: 'exact', head: true })
+        .eq('business_id', actor.businessId)
+        .eq('status', 'pending'),
+    ]);
+
+    if (members.error || invitations.error) {
+      this.logger.error(
+        `assertTeamTierLimit count failed: ${members.error?.message ?? invitations.error?.message}`,
+      );
+      throw new InternalServerErrorException('Unable to verify team limit');
+    }
+
+    const distinctMembers = new Set((members.data ?? []).map((m) => m.user_profile_id)).size;
+    const teamSize = distinctMembers + (invitations.count ?? 0);
+
+    if (teamSize >= maxTeamMembers) {
+      const upgradeTo = suggestTierUpgrade(tier, 'team');
+      const suffix = upgradeTo
+        ? ` Upgrade to ${BUSINESS_TIER_LABELS[upgradeTo]} to add your team.`
+        : '';
+      throw new ForbiddenException(
+        `Your ${BUSINESS_TIER_LABELS[tier]} plan is limited to ${maxTeamMembers} team member(s).${suffix}`,
+      );
     }
   }
 
