@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import {
   IsBoolean,
   IsEnum,
+  IsISO8601,
   IsNumber,
   IsOptional,
   IsString,
@@ -167,6 +168,16 @@ export class MovementQueryDto {
   @IsNumber()
   @Min(1)
   limit?: number;
+
+  /** Inclusive lower bound (ISO datetime). Filters movements by created_at. */
+  @IsOptional()
+  @IsISO8601()
+  from?: string;
+
+  /** Exclusive upper bound (ISO datetime). Filters movements by created_at. */
+  @IsOptional()
+  @IsISO8601()
+  to?: string;
 }
 
 export class CategoryQueryDto {

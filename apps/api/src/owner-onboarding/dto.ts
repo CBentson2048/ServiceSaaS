@@ -1,6 +1,8 @@
 import { Type } from 'class-transformer';
+import type { BusinessTier } from '@sheer/domain';
 import {
   IsEmail,
+  IsIn,
   IsISO31661Alpha2,
   IsNotEmpty,
   IsOptional,
@@ -11,6 +13,8 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
+
+const BUSINESS_TIERS: BusinessTier[] = ['solo', 'studio', 'salon', 'group'];
 
 const SLUG_REGEX = /^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])?$/;
 const CURRENCY_REGEX = /^[A-Za-z]{3}$/;
@@ -65,6 +69,10 @@ export class OwnerOnboardingBusinessDto {
 
   @IsISO31661Alpha2({ message: 'Country code must be a 2 letter ISO 3166-1 alpha-2 code' })
   countryCode!: string;
+
+  @IsOptional()
+  @IsIn(BUSINESS_TIERS, { message: 'tier must be one of solo, studio, salon, group' })
+  tier?: BusinessTier;
 }
 
 export class OwnerOnboardingLocationDto {

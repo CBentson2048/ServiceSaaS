@@ -81,6 +81,9 @@ import type {
   UpdateLocationCommunicationSettingsRequest,
   OwnerOnboardingRequest,
   OwnerOnboardingResponse,
+  GetAccountResponse,
+  UpdateAccountTierRequest,
+  UpdateAccountTierResponse,
   PasswordResetCompleteResponse,
   PasswordResetInspectResponse,
   PasswordResetRequestResponse,
@@ -772,12 +775,14 @@ export async function updateInventoryStockThreshold(
 
 export async function listInventoryMovements(
   accessToken: string,
-  params: { locationId?: string; productId?: string; limit?: number } = {},
+  params: { locationId?: string; productId?: string; limit?: number; from?: string; to?: string } = {},
 ): Promise<ListInventoryMovementsResponse> {
   const search = new URLSearchParams();
   if (params.locationId) search.set('locationId', params.locationId);
   if (params.productId) search.set('productId', params.productId);
   if (params.limit) search.set('limit', String(params.limit));
+  if (params.from) search.set('from', params.from);
+  if (params.to) search.set('to', params.to);
   const query = search.toString();
   return request<ListInventoryMovementsResponse>(`/inventory/movements${query ? `?${query}` : ''}`, { accessToken });
 }
@@ -1176,6 +1181,23 @@ export async function registerOwnerOnboarding(
   return request<OwnerOnboardingResponse>('/owner/onboarding/register', {
     method: 'POST',
     body: payload,
+  });
+}
+
+// -------------------- Account tier (owner / manager) --------------------
+
+export async function getAccount(accessToken: string): Promise<GetAccountResponse> {
+  return request<GetAccountResponse>('/owner/account', { accessToken });
+}
+
+export async function updateAccountTier(
+  accessToken: string,
+  payload: UpdateAccountTierRequest,
+): Promise<UpdateAccountTierResponse> {
+  return request<UpdateAccountTierResponse>('/owner/account/tier', {
+    method: 'PATCH',
+    body: payload,
+    accessToken,
   });
 }
 

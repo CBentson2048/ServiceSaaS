@@ -360,6 +360,8 @@ export class InventoryService {
       .order('created_at', { ascending: false })
       .limit(Math.min(query.limit ?? 50, 200));
     if (query.productId) request = request.eq('product_id', query.productId);
+    if (query.from) request = request.gte('created_at', query.from);
+    if (query.to) request = request.lt('created_at', query.to);
 
     const { data, error } = await request.returns<MovementRow[]>();
     if (error) {

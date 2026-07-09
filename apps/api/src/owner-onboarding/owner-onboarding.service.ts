@@ -11,6 +11,7 @@ import type {
   AuthSession,
   AuthUser,
   BusinessSlugAvailabilityResponse,
+  BusinessTier,
   OwnerOnboardingBootstrap,
   OwnerOnboardingRequest,
   OwnerOnboardingResponse,
@@ -214,6 +215,7 @@ export class OwnerOnboardingService {
           p_location_region: location.region ?? '',
           p_location_postal_code: location.postalCode ?? '',
           p_location_country: location.countryCode,
+          p_business_tier: business.tier,
         });
 
       if (bootstrapError || !bootstrapRows) {
@@ -338,6 +340,7 @@ interface SanitizedBusiness {
   defaultCurrency: string;
   defaultTimezone: string;
   countryCode: string;
+  tier: BusinessTier;
 }
 
 interface SanitizedLocation {
@@ -368,6 +371,8 @@ function sanitizeOwner(input: OwnerOnboardingRequest['owner']): SanitizedOwner {
   };
 }
 
+const VALID_TIERS: readonly BusinessTier[] = ['solo', 'studio', 'salon', 'group'];
+
 function sanitizeBusiness(input: OwnerOnboardingRequest['business']): SanitizedBusiness {
   return {
     name: input.name.trim(),
@@ -375,6 +380,7 @@ function sanitizeBusiness(input: OwnerOnboardingRequest['business']): SanitizedB
     defaultCurrency: input.defaultCurrency.trim().toUpperCase(),
     defaultTimezone: input.defaultTimezone.trim(),
     countryCode: input.countryCode.trim().toUpperCase(),
+    tier: input.tier && VALID_TIERS.includes(input.tier) ? input.tier : 'solo',
   };
 }
 
