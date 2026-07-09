@@ -36,6 +36,7 @@ interface LocationRow {
   name: string;
   slug: string;
   code: string;
+  public_code: string;
   address_line_1: string | null;
   address_line_2: string | null;
   city: string | null;
@@ -78,7 +79,7 @@ export class LocationsService {
       .schema('core')
       .from('locations')
       .select(
-        'id,business_id,name,slug,code,address_line_1,address_line_2,city,region,postal_code,country_code,timezone,phone,email,is_active,sort_order,created_at,updated_at',
+        'id,business_id,name,slug,code,public_code,address_line_1,address_line_2,city,region,postal_code,country_code,timezone,phone,email,is_active,sort_order,created_at,updated_at',
       )
       .eq('business_id', actor.businessId)
       .order('sort_order', { ascending: true })
@@ -156,7 +157,7 @@ export class LocationsService {
       .from('locations')
       .insert(row)
       .select(
-        'id,business_id,name,slug,code,address_line_1,address_line_2,city,region,postal_code,country_code,timezone,phone,email,is_active,sort_order,created_at,updated_at',
+        'id,business_id,name,slug,code,public_code,address_line_1,address_line_2,city,region,postal_code,country_code,timezone,phone,email,is_active,sort_order,created_at,updated_at',
       )
       .single<LocationRow>();
 
@@ -230,7 +231,7 @@ export class LocationsService {
       .eq('id', locationId)
       .eq('business_id', actor.businessId)
       .select(
-        'id,business_id,name,slug,code,address_line_1,address_line_2,city,region,postal_code,country_code,timezone,phone,email,is_active,sort_order,created_at,updated_at',
+        'id,business_id,name,slug,code,public_code,address_line_1,address_line_2,city,region,postal_code,country_code,timezone,phone,email,is_active,sort_order,created_at,updated_at',
       )
       .single<LocationRow>();
 
@@ -273,7 +274,7 @@ export class LocationsService {
       .eq('id', locationId)
       .eq('business_id', actor.businessId)
       .select(
-        'id,business_id,name,slug,code,address_line_1,address_line_2,city,region,postal_code,country_code,timezone,phone,email,is_active,sort_order,created_at,updated_at',
+        'id,business_id,name,slug,code,public_code,address_line_1,address_line_2,city,region,postal_code,country_code,timezone,phone,email,is_active,sort_order,created_at,updated_at',
       )
       .single<LocationRow>();
 
@@ -335,7 +336,7 @@ export class LocationsService {
       .schema('core')
       .from('locations')
       .select(
-        'id,business_id,name,slug,code,address_line_1,address_line_2,city,region,postal_code,country_code,timezone,phone,email,is_active,sort_order,created_at,updated_at',
+        'id,business_id,name,slug,code,public_code,address_line_1,address_line_2,city,region,postal_code,country_code,timezone,phone,email,is_active,sort_order,created_at,updated_at',
       )
       .eq('id', locationId)
       .eq('business_id', businessId)
@@ -412,6 +413,7 @@ function toBusinessLocation(row: LocationRow): BusinessLocation {
     name: row.name,
     slug: row.slug,
     code: row.code,
+    publicCode: row.public_code,
     timezone: row.timezone,
     phone: row.phone ?? undefined,
     email: row.email ?? undefined,

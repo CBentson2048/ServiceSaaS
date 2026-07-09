@@ -60,6 +60,7 @@ interface LocationRow {
   business_id: string;
   name: string;
   slug: string;
+  public_code: string | null;
   timezone: string;
   is_active: boolean;
   address_line_1: string | null;
@@ -241,7 +242,7 @@ interface DepositRow {
 }
 
 const LOCATION_COLUMNS =
-  'id,business_id,name,slug,timezone,is_active,address_line_1,address_line_2,city,region,postal_code,country_code,phone,businesses!inner(slug,default_currency_code),location_settings(online_booking_enabled,allow_next_available,appointment_slot_minutes,same_day_booking_cutoff_minutes,cancellation_notice_hours,currency_code)';
+  'id,business_id,name,slug,public_code,timezone,is_active,address_line_1,address_line_2,city,region,postal_code,country_code,phone,businesses!inner(slug,default_currency_code),location_settings(online_booking_enabled,allow_next_available,appointment_slot_minutes,same_day_booking_cutoff_minutes,cancellation_notice_hours,currency_code)';
 // Services embed their managed category (booking.service_categories) via the
 // service_category_id FK so the booking flow can group + colour by category.
 // Same-schema embed (booking → booking), so PostgREST resolves it inline.
@@ -2337,6 +2338,7 @@ function toLocationSummary(row: LocationRow): PublicBookingLocationSummary {
     businessId: row.business_id,
     name: row.name,
     slug: row.slug,
+    salonCode: row.public_code ?? undefined,
     timezone: row.timezone,
     currencyCode: settings?.currency_code ?? business?.default_currency_code ?? 'GBP',
     appointmentSlotMinutes: settings?.appointment_slot_minutes ?? 15,

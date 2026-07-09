@@ -102,6 +102,9 @@ export function LocationDetailPage() {
             </div>
           </header>
 
+          {/* Salon Code — public-facing, immutable identifier */}
+          <SalonCodeCard code={location.publicCode} />
+
           {/* Contact summary */}
           <section className="rounded-card-lg border border-border bg-surface px-5 py-5">
             <h2 className="mb-3 text-[13px] font-semibold uppercase tracking-[0.08em] text-text-muted">
@@ -1285,6 +1288,47 @@ function SummaryRow({
 
 function fmtGbp(amount: number): string {
   return new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(amount);
+}
+
+function SalonCodeCard({ code }: { code: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard can be unavailable (insecure context / permissions); ignore.
+    }
+  }
+
+  return (
+    <section className="rounded-card-lg border border-border bg-surface px-5 py-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-[13px] font-semibold uppercase tracking-[0.08em] text-text-muted">
+            Salon Code
+          </h2>
+          <p className="mt-1 text-[13px] text-text-secondary">
+            Share this code so clients can find and book you. It never changes.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="rounded-input-lg border border-border-strong bg-surface-alt px-4 py-2 font-mono text-[18px] font-semibold tracking-[0.2em] text-text-primary">
+            {code}
+          </span>
+          <button
+            type="button"
+            onClick={copy}
+            className="inline-flex h-9 items-center justify-center rounded-pill border border-border-strong bg-surface px-4 text-[13px] font-medium text-text-secondary transition hover:bg-surface-alt"
+          >
+            {copied ? 'Copied' : 'Copy'}
+          </button>
+        </div>
+      </div>
+    </section>
+  );
 }
 
 function joinAddress(location: BusinessLocation): string | undefined {
