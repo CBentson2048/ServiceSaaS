@@ -90,6 +90,12 @@ interface DayCalendarBoardProps {
   serviceColorsByName?: Map<string, string>;
   selectedBookingId?: string | null;
   onSelectBooking: (booking: StaffBookingSummary) => void;
+  /**
+   * Double-tap / double-click a tile to open the client's profile. When
+   * provided, a single tap is briefly deferred so it can be distinguished from
+   * a double tap (single → action menu, double → profile).
+   */
+  onViewClientProfile?: (booking: StaffBookingSummary) => void;
   /** Tile action menu: mark the client arrived (confirmed → checked in). */
   onCheckIn?: (booking: StaffBookingSummary) => void;
   /** Tile action menu: open the checkout / payment screen (complete the service). */
@@ -206,6 +212,7 @@ export function DayCalendarBoard({
   serviceColorsByName,
   selectedBookingId,
   onSelectBooking,
+  onViewClientProfile,
   onCheckIn,
   onCheckOut,
   onEditBooking,
@@ -244,6 +251,49 @@ export function DayCalendarBoard({
   // Set right after a drag so the synthetic click that follows pointerup does not
   // also open the tile's action menu.
   const suppressClickRef = useRef(false);
+  // Double-tap detection for opening the client profile. `lastTapRef` records the
+  // last tile tap; `tapTimerRef` holds the pending single-tap (action menu) timer
+  // so a follow-up tap can cancel it and open the profile instead.
+  const lastTapRef = useRef<{ id: string; time: number } | null>(null);
+  const tapTimerRef = useRef<number | null>(null);
+
+  // Route a tile tap to either the action menu (single) or the client profile
+  // (double). Only defers the single tap when a profile handler is wired, so the
+  // existing single-tap behaviour is unchanged when the feature isn't enabled.
+  function handleBookingTap(clientX: number, clientY: number, booking: StaffBookingSummary) {
+    if (!onViewClientProfile) {
+      openBookingMenuAt(clientX, clientY, booking);
+      return;
+    }
+
+    const now = Date.now();
+    const last = lastTapRef.current;
+    const isDoubleTap = last && last.id === booking.id && now - last.time < 300;
+
+    if (isDoubleTap) {
+      if (tapTimerRef.current !== null) {
+        window.clearTimeout(tapTimerRef.current);
+        tapTimerRef.current = null;
+      }
+      lastTapRef.current = null;
+      onViewClientProfile(booking);
+      return;
+    }
+
+    lastTapRef.current = { id: booking.id, time: now };
+    if (tapTimerRef.current !== null) window.clearTimeout(tapTimerRef.current);
+    tapTimerRef.current = window.setTimeout(() => {
+      tapTimerRef.current = null;
+      lastTapRef.current = null;
+      openBookingMenuAt(clientX, clientY, booking);
+    }, 260);
+  }
+
+  useEffect(() => {
+    return () => {
+      if (tapTimerRef.current !== null) window.clearTimeout(tapTimerRef.current);
+    };
+  }, []);
 
   function openBookingMenuAt(clientX: number, clientY: number, booking: StaffBookingSummary) {
     onSelectBooking(booking);
@@ -754,7 +804,7 @@ export function DayCalendarBoard({
                               event.stopPropagation();
                               // A drag just ended — swallow the trailing click.
                               if (suppressClickRef.current) return;
-                              openBookingMenuAt(event.clientX, event.clientY, booking);
+                              handleBookingTap(event.clientX, event.clientY, booking);
                             }}
                             style={{
                               top: block.topPx,

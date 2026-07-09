@@ -40,6 +40,7 @@ import {
   type ResizeBookingInput,
 } from '../components/bookings/DayCalendarBoard';
 import { WeekStrip } from '../components/bookings/WeekStrip';
+import { ClientProfileModal } from '../components/bookings/ClientProfileModal';
 import type { CalendarToolbarKey, CalendarToolbarState } from '../components/bookings/CalendarToolbar';
 import { isSameLocalDay, snapToMonday, toIsoDate } from '../components/rota/dateUtils';
 
@@ -88,6 +89,8 @@ export function BookingsPage() {
   // Bumped to re-fetch the rota (e.g. after creating a bookout) so the board updates.
   const [rotaReloadNonce, setRotaReloadNonce] = useState(0);
   const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null);
+  // Double-tapping a tile opens this client's profile quick-look.
+  const [profileClient, setProfileClient] = useState<{ id: string; name: string } | null>(null);
   const [toolbar, setToolbar] = useState<CalendarToolbarState>(loadToolbarState);
 
   const toggleToolbar = useCallback((key: CalendarToolbarKey) => {
@@ -662,6 +665,13 @@ export function BookingsPage() {
         </ModalScrim>
       ) : null}
 
+      <ClientProfileModal
+        clientId={profileClient?.id ?? null}
+        clientName={profileClient?.name}
+        accessToken={accessToken}
+        onClose={() => setProfileClient(null)}
+      />
+
       {/* Calendar + timetable claim the full page width. Appointments are acted
           on directly from the board: clicking a tile opens an action menu (check
           in / out, edit, cancel). The location picker / refresh live in the toolbar. */}
@@ -702,6 +712,9 @@ export function BookingsPage() {
             serviceColorsByName={serviceColorsByName}
             selectedBookingId={selectedBookingId}
             onSelectBooking={(booking) => setSelectedBookingId(booking.id)}
+            onViewClientProfile={(booking) =>
+              setProfileClient({ id: booking.clientProfileId, name: booking.clientDisplayName })
+            }
             onCheckIn={(booking) => void handleCheckIn(booking)}
             onCheckOut={(booking) => void handleComplete(booking)}
             onEditBooking={(booking) => setRescheduleTarget(booking)}

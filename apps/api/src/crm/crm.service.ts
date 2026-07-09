@@ -120,6 +120,20 @@ interface StaffNameRow {
   display_name: string | null;
 }
 
+interface PaymentRow {
+  visit_id: string | null;
+  appointment_id: string | null;
+  amount_cents: number | string | null;
+  currency_code: string | null;
+}
+
+interface DepositRow {
+  appointment_id: string | null;
+  amount: number | string | null;
+  currency_code: string | null;
+  paid_at: string | null;
+}
+
 interface NoteRow {
   id: string;
   business_id: string;
@@ -770,12 +784,155 @@ export class CrmService {
       ].filter((id): id is string => Boolean(id)),
     );
 
-    return [
+    const summaries = [
       ...visits.map((visit) => toVisitSummary(visit, staffNames)),
       ...appointments.map((appointment) => toAppointmentVisitSummary(appointment, staffNames)),
-    ]
+    ];
+
+    // Overlay the amount the client has actually paid so the history reflects
+    // money in, not the planned service price (which is often 0 until checkout).
+    // Rule: an unprocessed appointment shows the deposit paid so far; once it is
+    // processed (checked out → billing.salon_payments), it shows the full total.
+    const appointmentIds = [
+      ...visits.map((visit) => visit.appointment_id),
+      ...appointments.map((appointment) => appointment.id),
+    ].filter((id): id is string => Boolean(id));
+    const [paid, deposits] = await Promise.all([
+      this.fetchPaidTotals(businessId, {
+        visitIds: visits.map((visit) => visit.id),
+        appointmentIds,
+      }),
+      this.fetchDepositTotals(businessId, appointmentIds),
+    ]);
+    for (const summary of summaries) {
+      const paidEntry =
+        paid.byVisit.get(summary.id) ??
+        (summary.appointmentId ? paid.byAppointment.get(summary.appointmentId) : undefined);
+      if (paidEntry && paidEntry.amountCents > 0) {
+        // Processed: the full amount taken at checkout (major currency units).
+        summary.priceAmount = paidEntry.amountCents / 100;
+        summary.amountKind = 'paid';
+        summary.currencyCode = paidEntry.currency ?? summary.currencyCode;
+        continue;
+      }
+
+      // Not processed: show only the deposit the client has paid, if any.
+      const depositEntry = summary.appointmentId
+        ? deposits.get(summary.appointmentId)
+        : undefined;
+      if (depositEntry && depositEntry.amount > 0) {
+        summary.priceAmount = depositEntry.amount;
+        summary.amountKind = 'deposit';
+        summary.currencyCode = depositEntry.currency ?? summary.currencyCode;
+      } else {
+        summary.priceAmount = undefined;
+        summary.amountKind = undefined;
+      }
+    }
+
+    return summaries
       .sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime())
       .slice(0, 25);
+  }
+
+  /**
+   * Actual amounts paid per visit / appointment from billing.salon_payments.
+   * Used to show the real charge in visit history rather than the (often zero)
+   * planned service price.
+   */
+  private async fetchPaidTotals(
+    businessId: string,
+    keys: { visitIds: string[]; appointmentIds: string[] },
+  ): Promise<{
+    byVisit: Map<string, { amountCents: number; currency?: string }>;
+    byAppointment: Map<string, { amountCents: number; currency?: string }>;
+  }> {
+    const byVisit = new Map<string, { amountCents: number; currency?: string }>();
+    const byAppointment = new Map<string, { amountCents: number; currency?: string }>();
+    const visitIds = [...new Set(keys.visitIds.filter(Boolean))];
+    const appointmentIds = [...new Set(keys.appointmentIds.filter(Boolean))];
+    if (visitIds.length === 0 && appointmentIds.length === 0) return { byVisit, byAppointment };
+
+    const [visitRows, appointmentRows] = await Promise.all([
+      this.fetchPaymentRows(businessId, 'visit_id', visitIds),
+      this.fetchPaymentRows(businessId, 'appointment_id', appointmentIds),
+    ]);
+
+    for (const row of visitRows) {
+      if (!row.visit_id) continue;
+      const prev = byVisit.get(row.visit_id);
+      byVisit.set(row.visit_id, {
+        amountCents: (prev?.amountCents ?? 0) + Number(row.amount_cents ?? 0),
+        currency: row.currency_code ?? prev?.currency,
+      });
+    }
+    for (const row of appointmentRows) {
+      if (!row.appointment_id) continue;
+      const prev = byAppointment.get(row.appointment_id);
+      byAppointment.set(row.appointment_id, {
+        amountCents: (prev?.amountCents ?? 0) + Number(row.amount_cents ?? 0),
+        currency: row.currency_code ?? prev?.currency,
+      });
+    }
+    return { byVisit, byAppointment };
+  }
+
+  private async fetchPaymentRows(
+    businessId: string,
+    column: 'visit_id' | 'appointment_id',
+    ids: string[],
+  ): Promise<PaymentRow[]> {
+    if (ids.length === 0) return [];
+    const { data, error } = await this.admin
+      .schema('billing')
+      .from('salon_payments')
+      .select('visit_id,appointment_id,amount_cents,currency_code')
+      .eq('business_id', businessId)
+      .in(column, ids)
+      .returns<PaymentRow[]>();
+    if (error) {
+      this.logger.error(`fetchPaymentRows(${column}) failed: ${error.message}`);
+      return [];
+    }
+    return data ?? [];
+  }
+
+  /**
+   * Deposits actually paid per appointment (booking.deposits, major units).
+   * Only rows with a paid_at are counted — an unpaid/authorized-only deposit is
+   * not money the client has parted with yet.
+   */
+  private async fetchDepositTotals(
+    businessId: string,
+    appointmentIds: string[],
+  ): Promise<Map<string, { amount: number; currency?: string }>> {
+    const byAppointment = new Map<string, { amount: number; currency?: string }>();
+    const ids = [...new Set(appointmentIds.filter(Boolean))];
+    if (ids.length === 0) return byAppointment;
+
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('deposits')
+      .select('appointment_id,amount,currency_code,paid_at')
+      .eq('business_id', businessId)
+      .in('appointment_id', ids)
+      .not('paid_at', 'is', null)
+      .returns<DepositRow[]>();
+
+    if (error) {
+      this.logger.error(`fetchDepositTotals failed: ${error.message}`);
+      return byAppointment;
+    }
+
+    for (const row of data ?? []) {
+      if (!row.appointment_id) continue;
+      const prev = byAppointment.get(row.appointment_id);
+      byAppointment.set(row.appointment_id, {
+        amount: (prev?.amount ?? 0) + Number(row.amount ?? 0),
+        currency: row.currency_code ?? prev?.currency,
+      });
+    }
+    return byAppointment;
   }
 
   private async fetchStaffNames(
@@ -956,19 +1113,29 @@ export class CrmService {
         .order('scheduled_start_at', { ascending: false }),
     ]);
 
+    // "Last visit" means the last time the client actually attended — a
+    // completed visit / appointment. We must NOT fall back to scheduled dates:
+    // a future (re)scheduled appointment would otherwise be picked as the last
+    // visit. Attended visits use completed/started/checked-in timestamps;
+    // appointments count only once completed. Future timestamps are ignored.
+    const now = Date.now();
     const rows = [
       ...((visitsResult.data ?? []) as Array<Record<string, string | null>>).map((row) => ({
         client_profile_id: row.client_profile_id,
-        occurred_at: row.completed_at ?? row.started_at ?? row.checked_in_at ?? row.created_at,
+        occurred_at: row.completed_at ?? row.started_at ?? row.checked_in_at ?? null,
       })),
       ...((appointmentsResult.data ?? []) as Array<Record<string, string | null>>).map((row) => ({
         client_profile_id: row.client_profile_id,
-        occurred_at: row.completed_at ?? row.scheduled_start_at ?? row.created_at,
+        occurred_at: row.completed_at ?? null,
       })),
-    ].sort(
-      (a, b) =>
-        new Date(b.occurred_at ?? '').getTime() - new Date(a.occurred_at ?? '').getTime(),
-    );
+    ]
+      .filter(
+        (row) => row.occurred_at && new Date(row.occurred_at).getTime() <= now,
+      )
+      .sort(
+        (a, b) =>
+          new Date(b.occurred_at ?? '').getTime() - new Date(a.occurred_at ?? '').getTime(),
+      );
 
     for (const row of rows) {
       const clientId = row.client_profile_id;

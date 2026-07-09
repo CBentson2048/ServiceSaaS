@@ -2871,7 +2871,14 @@ export interface CrmVisitSummary {
   occurredAt: string;
   serviceSummary?: string;
   clientVisibleSummary?: string;
+  /**
+   * Amount associated with the visit in major currency units. Its meaning
+   * depends on {@link amountKind}: the deposit paid so far while the appointment
+   * is unprocessed, or the full amount paid once it has been checked out.
+   */
   priceAmount?: number;
+  /** What {@link priceAmount} represents: a deposit (unprocessed) or the full paid total. */
+  amountKind?: 'deposit' | 'paid';
   currencyCode?: string;
   rebooked?: boolean;
   rebookSource?: 'stylist' | 'client';
