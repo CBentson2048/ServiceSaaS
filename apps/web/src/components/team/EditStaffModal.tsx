@@ -4,8 +4,16 @@ import type {
   BusinessLocationSummary,
   InvitableRole,
   ManagedService,
+  StaffCommissionStructure,
+  StaffEmploymentStatus,
+  StaffEmploymentType,
   StaffMember,
   UpdateStaffMemberRequest,
+} from '@sheer/domain';
+import {
+  STAFF_COMMISSION_STRUCTURE_LABELS,
+  STAFF_EMPLOYMENT_STATUS_LABELS,
+  STAFF_EMPLOYMENT_TYPE_LABELS,
 } from '@sheer/domain';
 import { ApiRequestError, listServices, updateStaffMember } from '../../auth/api';
 import { SelectField, TextField } from '../onboarding/FormField';
@@ -32,6 +40,16 @@ interface EditForm {
   contractedHours: string;
   averageBillBenchmark: string;
   leaveNotes: string;
+  employmentType: StaffEmploymentType;
+  employmentStatus: StaffEmploymentStatus;
+  commissionStructure: StaffCommissionStructure;
+  commissionFlatRatePercent: string;
+  performanceTargetAmount: string;
+  holidayEntitlementDays: string;
+  colourAllowanceAmount: string;
+  photoUrl: string;
+  startDate: string;
+  qCode: string;
   selectedServiceIds: string[];
   // serviceId -> price text input. Absent/blank means inherit the service base price.
   servicePrices: Record<string, string>;
@@ -120,6 +138,28 @@ export function EditStaffModal({
           ? String(staff.staffProfile.averageBillBenchmark)
           : '0',
       leaveNotes: staff.staffProfile?.leaveNotes ?? '',
+      employmentType: staff.staffProfile?.employmentType ?? 'employed',
+      employmentStatus: staff.staffProfile?.employmentStatus ?? 'active',
+      commissionStructure: staff.staffProfile?.commissionStructure ?? 'tiered',
+      commissionFlatRatePercent:
+        staff.staffProfile?.commissionFlatRatePercent !== undefined
+          ? String(staff.staffProfile.commissionFlatRatePercent)
+          : '0',
+      performanceTargetAmount:
+        staff.staffProfile?.performanceTargetAmount != null
+          ? String(staff.staffProfile.performanceTargetAmount)
+          : '',
+      holidayEntitlementDays:
+        staff.staffProfile?.holidayEntitlementDays !== undefined
+          ? String(staff.staffProfile.holidayEntitlementDays)
+          : '28',
+      colourAllowanceAmount:
+        staff.staffProfile?.colourAllowanceAmount !== undefined
+          ? String(staff.staffProfile.colourAllowanceAmount)
+          : '0',
+      photoUrl: staff.staffProfile?.photoUrl ?? '',
+      startDate: staff.staffProfile?.startDate ?? '',
+      qCode: staff.staffProfile?.qCode ?? '',
       selectedServiceIds: staff.staffProfile?.serviceIds ?? [],
       servicePrices: Object.fromEntries(
         (staff.staffProfile?.servicePricing ?? [])
@@ -183,6 +223,25 @@ export function EditStaffModal({
         next.contractedHours = 'Use 0-168 hours';
       if (Number.isNaN(Number(values.averageBillBenchmark)) || Number(values.averageBillBenchmark) < 0)
         next.averageBillBenchmark = 'Use a non-negative number';
+      if (
+        Number.isNaN(Number(values.commissionFlatRatePercent)) ||
+        Number(values.commissionFlatRatePercent) < 0 ||
+        Number(values.commissionFlatRatePercent) > 100
+      )
+        next.commissionFlatRatePercent = 'Use 0-100';
+      if (
+        Number.isNaN(Number(values.holidayEntitlementDays)) ||
+        Number(values.holidayEntitlementDays) < 0 ||
+        Number(values.holidayEntitlementDays) > 366
+      )
+        next.holidayEntitlementDays = 'Use 0-366 days';
+      if (Number.isNaN(Number(values.colourAllowanceAmount)) || Number(values.colourAllowanceAmount) < 0)
+        next.colourAllowanceAmount = 'Use a non-negative number';
+      if (
+        values.performanceTargetAmount.trim() &&
+        (Number.isNaN(Number(values.performanceTargetAmount)) || Number(values.performanceTargetAmount) < 0)
+      )
+        next.performanceTargetAmount = 'Use a non-negative number or leave blank';
       const badPrice = values.selectedServiceIds.some((id) => {
         const raw = values.servicePrices[id]?.trim();
         return raw ? Number.isNaN(Number(raw)) || Number(raw) < 0 : false;
@@ -217,6 +276,19 @@ export function EditStaffModal({
       contractedHours: isStylist ? Number(form.contractedHours) : undefined,
       averageBillBenchmark: isStylist ? Number(form.averageBillBenchmark) : undefined,
       leaveNotes: isStylist ? form.leaveNotes.trim() || null : undefined,
+      employmentType: isStylist ? form.employmentType : undefined,
+      employmentStatus: isStylist ? form.employmentStatus : undefined,
+      commissionStructure: isStylist ? form.commissionStructure : undefined,
+      commissionFlatRatePercent: isStylist ? Number(form.commissionFlatRatePercent) : undefined,
+      performanceTargetAmount: isStylist
+        ? form.performanceTargetAmount.trim()
+          ? Number(form.performanceTargetAmount)
+          : null
+        : undefined,
+      holidayEntitlementDays: isStylist ? Number(form.holidayEntitlementDays) : undefined,
+      colourAllowanceAmount: isStylist ? Number(form.colourAllowanceAmount) : undefined,
+      photoUrl: isStylist ? form.photoUrl.trim() || null : undefined,
+      startDate: isStylist ? form.startDate || null : undefined,
       serviceAssignments: isStylist
         ? form.selectedServiceIds.map((serviceId) => {
             const raw = form.servicePrices[serviceId]?.trim();
@@ -394,6 +466,85 @@ export function EditStaffModal({
               onValueChange={(v) => setForm({ ...form, leaveNotes: v })}
               optional
             />
+
+            <div className="sm:col-span-2 mt-1 border-t border-border pt-3">
+              <span className="text-[12px] font-semibold uppercase tracking-[0.08em] text-text-secondary">
+                Employment record
+              </span>
+            </div>
+            {form.qCode ? (
+              <div className="sm:col-span-2 flex items-center gap-2 text-[13px]">
+                <span className="text-text-secondary">Q Code</span>
+                <span className="rounded-input border border-border-strong bg-surface-alt px-2.5 py-1 font-mono font-semibold tracking-[0.15em] text-text-primary">
+                  {form.qCode}
+                </span>
+                <span className="text-[12px] text-text-muted">Assigned automatically · never changes</span>
+              </div>
+            ) : null}
+            <SelectField
+              label="Employment type"
+              value={form.employmentType}
+              onValueChange={(v) => setForm({ ...form, employmentType: v as StaffEmploymentType })}
+              options={Object.entries(STAFF_EMPLOYMENT_TYPE_LABELS).map(([value, label]) => ({ value, label }))}
+            />
+            <SelectField
+              label="Status"
+              value={form.employmentStatus}
+              onValueChange={(v) => setForm({ ...form, employmentStatus: v as StaffEmploymentStatus })}
+              options={Object.entries(STAFF_EMPLOYMENT_STATUS_LABELS).map(([value, label]) => ({ value, label }))}
+              hint="Employment status used by KPIs & P&L (separate from sign-in membership status)."
+            />
+            <SelectField
+              label="Commission structure"
+              value={form.commissionStructure}
+              onValueChange={(v) =>
+                setForm({ ...form, commissionStructure: v as StaffCommissionStructure })
+              }
+              options={Object.entries(STAFF_COMMISSION_STRUCTURE_LABELS).map(([value, label]) => ({ value, label }))}
+            />
+            <TextField
+              label="Flat commission rate (%)"
+              value={form.commissionFlatRatePercent}
+              onValueChange={(v) => setForm({ ...form, commissionFlatRatePercent: v })}
+              error={errors.commissionFlatRatePercent}
+              hint="Used when commission structure is Flat rate."
+            />
+            <TextField
+              label="Start date"
+              type="date"
+              value={form.startDate}
+              onValueChange={(v) => setForm({ ...form, startDate: v })}
+              optional
+            />
+            <TextField
+              label="Performance target"
+              value={form.performanceTargetAmount}
+              onValueChange={(v) => setForm({ ...form, performanceTargetAmount: v })}
+              error={errors.performanceTargetAmount}
+              hint="Leave blank to use the computed target."
+              optional
+            />
+            <TextField
+              label="Holiday entitlement (days)"
+              value={form.holidayEntitlementDays}
+              onValueChange={(v) => setForm({ ...form, holidayEntitlementDays: v })}
+              error={errors.holidayEntitlementDays}
+            />
+            <TextField
+              label="Colour allowance"
+              value={form.colourAllowanceAmount}
+              onValueChange={(v) => setForm({ ...form, colourAllowanceAmount: v })}
+              error={errors.colourAllowanceAmount}
+            />
+            <TextField
+              label="Provider photo URL"
+              value={form.photoUrl}
+              onValueChange={(v) => setForm({ ...form, photoUrl: v })}
+              hint="Shown internally and in the client-facing Salon Suite."
+              optional
+              className="sm:col-span-2"
+            />
+
             <label className="flex items-center gap-2 sm:col-span-2 text-[13px] text-text-secondary">
               <input
                 type="checkbox"

@@ -1055,6 +1055,29 @@ export interface InvitationLookupResponse {
   status: InvitationStatus;
 }
 
+export type StaffEmploymentType = 'employed' | 'self_employed' | 'hybrid';
+export type StaffCommissionStructure = 'tiered' | 'flat' | 'none';
+export type StaffEmploymentStatus = 'active' | 'on_leave' | 'notice' | 'terminated';
+
+export const STAFF_EMPLOYMENT_TYPE_LABELS: Record<StaffEmploymentType, string> = {
+  employed: 'Employed',
+  self_employed: 'Self-employed',
+  hybrid: 'Hybrid',
+};
+
+export const STAFF_COMMISSION_STRUCTURE_LABELS: Record<StaffCommissionStructure, string> = {
+  tiered: 'Tiered (KPI)',
+  flat: 'Flat rate',
+  none: 'No commission',
+};
+
+export const STAFF_EMPLOYMENT_STATUS_LABELS: Record<StaffEmploymentStatus, string> = {
+  active: 'Active',
+  on_leave: 'On leave',
+  notice: 'On notice',
+  terminated: 'Terminated',
+};
+
 export interface StaffMember {
   userProfileId: string;
   email: string;
@@ -1074,7 +1097,7 @@ export interface StaffMember {
   staffProfile?: {
     id: string;
     displayName: string;
-    employmentStatus: 'active' | 'on_leave' | 'notice' | 'terminated';
+    employmentStatus: StaffEmploymentStatus;
     isBookable: boolean;
     hourlyRate: number;
     contractedHours: number;
@@ -1083,6 +1106,24 @@ export interface StaffMember {
     leaveNotes?: string;
     colorHex?: string;
     bio?: string;
+    /** Employment basis — drives wage & commission handling (Week 3 pay logic). */
+    employmentType: StaffEmploymentType;
+    /** Commission model. `tiered` uses the V1 KPI engine. */
+    commissionStructure: StaffCommissionStructure;
+    /** Flat commission rate (%), applied when commissionStructure is `flat`. */
+    commissionFlatRatePercent: number;
+    /** Optional owner-set performance target (major currency). Null = computed target. */
+    performanceTargetAmount?: number | null;
+    /** Annual paid-holiday entitlement in days. */
+    holidayEntitlementDays: number;
+    /** Periodic colour/product allowance (major currency). */
+    colourAllowanceAmount: number;
+    /** Provider photo (internal + client-facing). Distinct from account avatarUrl. */
+    photoUrl?: string | null;
+    /** Globally-unique, immutable provider Q Code. */
+    qCode: string;
+    /** Employment start date ('YYYY-MM-DD'), backed by hire_date. */
+    startDate?: string | null;
     /**
      * IDs of the services this stylist is qualified to perform. Empty/undefined
      * means the stylist has no service eligibility yet. See
@@ -1126,6 +1167,24 @@ export interface UpdateStaffMemberRequest {
   contractedHours?: number;
   averageBillBenchmark?: number;
   leaveNotes?: string | null;
+  /** Employment basis. */
+  employmentType?: StaffEmploymentType;
+  /** Employment status override (active/on_leave/notice/terminated). */
+  employmentStatus?: StaffEmploymentStatus;
+  /** Commission model. */
+  commissionStructure?: StaffCommissionStructure;
+  /** Flat commission rate (%) for the `flat` structure. */
+  commissionFlatRatePercent?: number;
+  /** Owner-set performance target (major currency); null clears the override. */
+  performanceTargetAmount?: number | null;
+  /** Annual paid-holiday entitlement in days. */
+  holidayEntitlementDays?: number;
+  /** Periodic colour/product allowance (major currency). */
+  colourAllowanceAmount?: number;
+  /** Provider photo URL; null clears it. */
+  photoUrl?: string | null;
+  /** Employment start date ('YYYY-MM-DD'); null clears it. Backed by hire_date. */
+  startDate?: string | null;
   /**
    * Full replacement set of services this stylist can perform. When provided,
    * the stylist's service eligibility is replaced with exactly these IDs.

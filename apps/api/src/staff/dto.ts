@@ -10,15 +10,21 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   Max,
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
 const INVITABLE_ROLES = ['manager', 'stylist'] as const;
+const EMPLOYMENT_TYPES = ['employed', 'self_employed', 'hybrid'] as const;
+const EMPLOYMENT_STATUSES = ['active', 'on_leave', 'notice', 'terminated'] as const;
+const COMMISSION_STRUCTURES = ['tiered', 'flat', 'none'] as const;
+const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
 export class CreateStaffInvitationDto {
   @IsString()
@@ -169,6 +175,54 @@ export class UpdateStaffMemberDto {
   @IsString()
   @MaxLength(1000)
   leaveNotes?: string | null;
+
+  @IsOptional()
+  @IsIn(EMPLOYMENT_TYPES)
+  employmentType?: (typeof EMPLOYMENT_TYPES)[number];
+
+  @IsOptional()
+  @IsIn(EMPLOYMENT_STATUSES)
+  employmentStatus?: (typeof EMPLOYMENT_STATUSES)[number];
+
+  @IsOptional()
+  @IsIn(COMMISSION_STRUCTURES)
+  commissionStructure?: (typeof COMMISSION_STRUCTURES)[number];
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  commissionFlatRatePercent?: number;
+
+  @IsOptional()
+  @ValidateIf((o) => o.performanceTargetAmount !== null)
+  @IsNumber()
+  @Min(0)
+  @Max(10000000)
+  performanceTargetAmount?: number | null;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(366)
+  holidayEntitlementDays?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(10000000)
+  colourAllowanceAmount?: number;
+
+  @IsOptional()
+  @ValidateIf((o) => o.photoUrl !== null)
+  @IsString()
+  @MaxLength(2048)
+  photoUrl?: string | null;
+
+  @IsOptional()
+  @ValidateIf((o) => o.startDate !== null)
+  @Matches(DATE_REGEX, { message: 'startDate must be YYYY-MM-DD' })
+  startDate?: string | null;
 
   // Full replacement set of services this stylist can perform. When present,
   // eligibility is replaced with exactly these IDs; omit to leave unchanged.
