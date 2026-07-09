@@ -27,6 +27,7 @@ import { ProfileModule } from './profile/profile.module';
 import { PublicBookingModule } from './public-booking/public-booking.module';
 import { RetailSalesModule } from './retail-sales/retail-sales.module';
 import { RotaModule } from './rota/rota.module';
+import { SalonDirectoryModule } from './salon-directory/salon-directory.module';
 import { ServicesModule } from './services/services.module';
 import { StaffModule } from './staff/staff.module';
 import { StaffBookingModule } from './staff-booking/staff-booking.module';
@@ -53,6 +54,7 @@ import { validateEnv } from './config/env.validation';
     OwnerTaxSettingsModule,
     OwnerCancellationPolicyModule,
     PublicBookingModule,
+    SalonDirectoryModule,
     StaffBookingModule,
     TwilioModule,
     CrmModule,

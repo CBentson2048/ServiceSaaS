@@ -430,7 +430,13 @@ export interface BusinessLocation {
   businessId: string;
   name: string;
   slug: string;
+  /** Internal, per-business code derived from the slug. */
   code: string;
+  /**
+   * Globally-unique, public-facing Salon Code clients use to find this
+   * salon/location. Stable and immutable once issued.
+   */
+  publicCode: string;
   timezone: string;
   phone?: string;
   email?: string;
@@ -2394,6 +2400,8 @@ export interface PublicBookingLocationSummary {
   businessId: string;
   name: string;
   slug: string;
+  /** Public-facing Salon Code for this location (see {@link PublicSalonSummary}). */
+  salonCode?: string;
   timezone: string;
   currencyCode: string;
   appointmentSlotMinutes: number;
@@ -2485,6 +2493,41 @@ export interface PublicBookingServiceSelectionResponse {
 
 export interface PublicBookingLocationsResponse {
   locations: PublicBookingLocationSummary[];
+}
+
+// ---------------------------------------------------------------------------
+// Salon directory — public discovery by Salon Code or name (Week 9 Salon Suite)
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimal, public-safe view of a salon/location resolved from its Salon Code.
+ * Contains only information that is safe to expose to unauthenticated clients
+ * searching the directory — never internal codes, billing or staff data.
+ */
+export interface PublicSalonSummary {
+  locationId: string;
+  businessId: string;
+  /** The globally-unique, public-facing Salon Code. */
+  salonCode: string;
+  name: string;
+  businessName: string;
+  slug: string;
+  businessSlug: string;
+  city?: string;
+  region?: string;
+  postalCode?: string;
+  countryCode?: string;
+  phone?: string;
+}
+
+/** Resolve a single salon from an exact Salon Code. */
+export interface SalonLookupResponse {
+  salon: PublicSalonSummary | null;
+}
+
+/** Search the salon directory by Salon Code or name. */
+export interface SalonSearchResponse {
+  salons: PublicSalonSummary[];
 }
 
 export interface PublicBookingStylistsResponse {
