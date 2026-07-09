@@ -24,6 +24,7 @@ import { InventoryManagementPage } from './pages/InventoryManagementPage';
 import { InventoryPage } from './pages/InventoryPage';
 import { LandingPage } from './pages/LandingPage';
 import { LocationDetailPage } from './pages/LocationDetailPage';
+import { LocationRecordSettingsPage } from './pages/LocationRecordSettingsPage';
 import { LocationsPage } from './pages/LocationsPage';
 import { LoginPage } from './pages/LoginPage';
 import { NewBookingPage } from './pages/NewBookingPage';
@@ -121,6 +122,7 @@ export function App() {
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="/locations" element={<LocationsPage />} />
           <Route path="/locations/:id" element={<LocationDetailPage />} />
+          <Route path="/locations/:id/record-settings" element={<LocationRecordSettingsPage />} />
         </Route>
       </Route>
       <Route element={<ProtectedRoute allowedRoles={['owner']} />}>

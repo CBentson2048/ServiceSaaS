@@ -27,6 +27,7 @@ import {
 interface BusinessRow {
   id: string;
   default_country_code: string;
+  default_currency_code: string;
   timezone: string;
 }
 
@@ -174,7 +175,39 @@ export class LocationsService {
       throw new InternalServerErrorException('Unable to create location');
     }
 
+    // Seed the per-location settings row so downstream reporting/policy reads
+    // resolve real values (record fields, thresholds, fixed costs all key off it).
+    await this.ensureLocationSettings(actor.businessId, data.id, business.default_currency_code);
+
     return toBusinessLocation(data);
+  }
+
+  /**
+   * Guarantees a core.location_settings row exists for a location. Uses an upsert
+   * on the unique location_id so it is safe to call repeatedly and never clobbers
+   * existing settings. All record fields fall back to their column defaults.
+   */
+  private async ensureLocationSettings(
+    businessId: string,
+    locationId: string,
+    currencyCode: string | null | undefined,
+  ): Promise<void> {
+    const { error } = await this.admin
+      .schema('core')
+      .from('location_settings')
+      .upsert(
+        {
+          business_id: businessId,
+          location_id: locationId,
+          currency_code: (currencyCode || 'GBP').toUpperCase(),
+        },
+        { onConflict: 'location_id', ignoreDuplicates: true },
+      );
+    if (error) {
+      // Non-fatal: the location exists; settings will also be backfilled by
+      // migration/other paths. Log so it is visible but don't fail creation.
+      this.logger.error(`ensureLocationSettings failed for ${locationId}: ${error.message}`);
+    }
   }
 
   async update(
@@ -353,7 +386,7 @@ export class LocationsService {
     const { data, error } = await this.admin
       .schema('core')
       .from('businesses')
-      .select('id,default_country_code,timezone')
+      .select('id,default_country_code,default_currency_code,timezone')
       .eq('id', businessId)
       .maybeSingle<BusinessRow>();
     if (error) {

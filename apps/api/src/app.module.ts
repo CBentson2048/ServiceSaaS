@@ -21,6 +21,7 @@ import { MobileDashboardModule } from './mobile-dashboard/mobile-dashboard.modul
 import { OwnerBillingSettingsModule } from './owner-billing-settings/owner-billing-settings.module';
 import { OwnerBookingSettingsModule } from './owner-booking-settings/owner-booking-settings.module';
 import { OwnerCancellationPolicyModule } from './owner-cancellation-policy/owner-cancellation-policy.module';
+import { OwnerLocationSettingsModule } from './owner-location-settings/owner-location-settings.module';
 import { OwnerTaxSettingsModule } from './owner-tax-settings/owner-tax-settings.module';
 import { OwnerOnboardingModule } from './owner-onboarding/owner-onboarding.module';
 import { ProfileModule } from './profile/profile.module';
@@ -53,6 +54,7 @@ import { validateEnv } from './config/env.validation';
     OwnerBillingSettingsModule,
     OwnerTaxSettingsModule,
     OwnerCancellationPolicyModule,
+    OwnerLocationSettingsModule,
     PublicBookingModule,
     SalonDirectoryModule,
     StaffBookingModule,
