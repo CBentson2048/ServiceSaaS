@@ -126,6 +126,13 @@ import type {
   GetCancellationPolicyResponse,
   GetLocationProductBillingSettingsResponse,
   GetLocationTaxSettingsResponse,
+  LocationRecordSettingsResponse,
+  UpdateLocationRecordSettingsRequest,
+  ListLocationFixedCostsResponse,
+  LocationFixedCostResponse,
+  EffectiveFixedCostsResponse,
+  CreateLocationFixedCostRequest,
+  UpdateLocationFixedCostRequest,
   ListProfilesResponse,
   UpdateCancellationPolicyRequest,
   UpdateCancellationPolicyResponse,
@@ -1496,6 +1503,83 @@ export async function updateCancellationPolicy(
   return request<UpdateCancellationPolicyResponse>('/owner/cancellation-policy', {
     method: 'PATCH',
     body: payload,
+    accessToken,
+  });
+}
+
+// -------------------- Location record settings & fixed costs --------------------
+
+export async function getLocationRecordSettings(
+  accessToken: string,
+  locationId: string,
+): Promise<LocationRecordSettingsResponse> {
+  return request<LocationRecordSettingsResponse>(
+    `/owner/location-settings?locationId=${encodeURIComponent(locationId)}`,
+    { accessToken },
+  );
+}
+
+export async function updateLocationRecordSettings(
+  accessToken: string,
+  payload: UpdateLocationRecordSettingsRequest,
+): Promise<LocationRecordSettingsResponse> {
+  return request<LocationRecordSettingsResponse>('/owner/location-settings', {
+    method: 'PATCH',
+    body: payload,
+    accessToken,
+  });
+}
+
+export async function listLocationFixedCosts(
+  accessToken: string,
+  locationId: string,
+): Promise<ListLocationFixedCostsResponse> {
+  return request<ListLocationFixedCostsResponse>(
+    `/owner/location-settings/fixed-costs?locationId=${encodeURIComponent(locationId)}`,
+    { accessToken },
+  );
+}
+
+export async function getEffectiveFixedCosts(
+  accessToken: string,
+  params: { locationId: string; date?: string },
+): Promise<EffectiveFixedCostsResponse> {
+  const search = new URLSearchParams({ locationId: params.locationId });
+  if (params.date) search.set('date', params.date);
+  return request<EffectiveFixedCostsResponse>(
+    `/owner/location-settings/fixed-costs/effective?${search.toString()}`,
+    { accessToken },
+  );
+}
+
+export async function createLocationFixedCost(
+  accessToken: string,
+  payload: CreateLocationFixedCostRequest,
+): Promise<LocationFixedCostResponse> {
+  return request<LocationFixedCostResponse>('/owner/location-settings/fixed-costs', {
+    method: 'POST',
+    body: payload,
+    accessToken,
+  });
+}
+
+export async function updateLocationFixedCost(
+  accessToken: string,
+  id: string,
+  payload: UpdateLocationFixedCostRequest,
+): Promise<LocationFixedCostResponse> {
+  return request<LocationFixedCostResponse>(
+    `/owner/location-settings/fixed-costs/${encodeURIComponent(id)}`,
+    { method: 'PATCH', body: payload, accessToken },
+  );
+}
+
+export async function deleteLocationFixedCost(
+  accessToken: string,
+  id: string,
+): Promise<void> {
+  return request<void>(`/owner/location-settings/fixed-costs/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
     accessToken,
   });
 }

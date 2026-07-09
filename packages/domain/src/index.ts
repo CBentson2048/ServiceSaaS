@@ -462,6 +462,200 @@ export interface LocationDetailResponse {
   location: BusinessLocation;
 }
 
+// ---------------------------------------------------------------------------
+// Location record settings — operating, policy & reporting fields that every
+// later report / P&L / policy check reads from (owner + manager editable).
+// ---------------------------------------------------------------------------
+
+/** A single day of trading hours. weekday: 0=Sunday .. 6=Saturday. */
+export interface LocationOpeningHoursEntry {
+  weekday: number;
+  isOpen: boolean;
+  /** 'HH:MM' 24h. */
+  opensAt: string;
+  /** 'HH:MM' 24h. */
+  closesAt: string;
+}
+
+export type LocationDepositType = 'none' | 'fixed_amount' | 'percentage';
+
+export interface LocationRecordSettings {
+  locationId: string;
+  currencyCode: string;
+
+  // Operating
+  openingHours: LocationOpeningHoursEntry[];
+  /** Working chairs/stations — the denominator for utilisation reporting. */
+  chairCount: number;
+  appointmentSlotMinutes: number;
+  defaultDepositType: LocationDepositType;
+  defaultDepositValue: number;
+
+  // Policy thresholds
+  /** Discount % above which a manager/owner authorisation is required. */
+  discountAuthorisationThresholdPercent: number;
+  /** Acceptable end-of-day till variance before it is flagged (major units). */
+  cashVarianceThresholdAmount: number;
+
+  // Reporting targets / warning thresholds
+  colourMarginTargetPercent: number;
+  wasteAllowancePercent: number;
+  rebookRateBenchmarkPercent: number;
+  utilisationWarningThresholdPercent: number;
+  /** Payroll cost as % of revenue: amber warning threshold. */
+  payrollWarningPercent: number;
+  /** Payroll cost as % of revenue: red critical threshold. */
+  payrollCriticalPercent: number;
+
+  // Sunday Night Report
+  sundayReportEnabled: boolean;
+  sundayReportRecipients: string[];
+  /** Local hour (0-23) the weekly report is dispatched. */
+  sundayReportSendHour: number;
+}
+
+export type UpdateLocationRecordSettingsRequest = Partial<
+  Omit<LocationRecordSettings, 'locationId' | 'currencyCode'>
+> & { locationId: string };
+
+export interface LocationRecordSettingsResponse {
+  settings: LocationRecordSettings;
+}
+
+// --- Effective-dated fixed costs (Week 7 P&L reads these) -------------------
+
+export type FixedCostCategory =
+  | 'rent'
+  | 'rates'
+  | 'utilities'
+  | 'insurance'
+  | 'software'
+  | 'marketing'
+  | 'equipment'
+  | 'other';
+
+export type FixedCostCadence = 'weekly' | 'monthly' | 'quarterly' | 'annual';
+
+export const FIXED_COST_CATEGORY_LABELS: Record<FixedCostCategory, string> = {
+  rent: 'Rent',
+  rates: 'Business rates',
+  utilities: 'Utilities',
+  insurance: 'Insurance',
+  software: 'Software & subscriptions',
+  marketing: 'Marketing',
+  equipment: 'Equipment & leasing',
+  other: 'Other',
+};
+
+export const FIXED_COST_CADENCE_LABELS: Record<FixedCostCadence, string> = {
+  weekly: 'Weekly',
+  monthly: 'Monthly',
+  quarterly: 'Quarterly',
+  annual: 'Annual',
+};
+
+export interface LocationFixedCost {
+  id: string;
+  locationId: string;
+  category: FixedCostCategory;
+  label?: string | null;
+  amount: number;
+  cadence: FixedCostCadence;
+  /** 'YYYY-MM-DD'. */
+  effectiveFrom: string;
+  /** 'YYYY-MM-DD' exclusive end; null = still in force. */
+  effectiveTo?: string | null;
+  notes?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateLocationFixedCostRequest {
+  locationId: string;
+  category: FixedCostCategory;
+  label?: string | null;
+  amount: number;
+  cadence?: FixedCostCadence;
+  effectiveFrom: string;
+  effectiveTo?: string | null;
+  notes?: string | null;
+}
+
+export type UpdateLocationFixedCostRequest = Partial<
+  Omit<CreateLocationFixedCostRequest, 'locationId'>
+>;
+
+export interface ListLocationFixedCostsResponse {
+  fixedCosts: LocationFixedCost[];
+}
+
+export interface LocationFixedCostResponse {
+  fixedCost: LocationFixedCost;
+}
+
+export interface EffectiveFixedCostsResponse {
+  /** The date the costs were resolved for ('YYYY-MM-DD'). */
+  date: string;
+  /** Monthly-equivalent total of all fixed costs in force on `date`. */
+  monthlyEquivalentTotal: number;
+  items: LocationFixedCost[];
+}
+
+/** Normalise a fixed cost to a comparable monthly figure. */
+export function monthlyEquivalentFixedCost(amount: number, cadence: FixedCostCadence): number {
+  switch (cadence) {
+    case 'weekly':
+      return (amount * 52) / 12;
+    case 'quarterly':
+      return amount / 3;
+    case 'annual':
+      return amount / 12;
+    case 'monthly':
+    default:
+      return amount;
+  }
+}
+
+/** Standard trading week: Mon–Sat open, Sunday closed. Mirrors migration 0053. */
+export function defaultOpeningHours(): LocationOpeningHoursEntry[] {
+  return [
+    { weekday: 0, isOpen: false, opensAt: '09:00', closesAt: '18:00' },
+    { weekday: 1, isOpen: true, opensAt: '09:00', closesAt: '18:00' },
+    { weekday: 2, isOpen: true, opensAt: '09:00', closesAt: '18:00' },
+    { weekday: 3, isOpen: true, opensAt: '09:00', closesAt: '18:00' },
+    { weekday: 4, isOpen: true, opensAt: '09:00', closesAt: '20:00' },
+    { weekday: 5, isOpen: true, opensAt: '09:00', closesAt: '18:00' },
+    { weekday: 6, isOpen: true, opensAt: '09:00', closesAt: '17:00' },
+  ];
+}
+
+/** Safe defaults mirroring the core.location_settings column defaults. */
+export function defaultLocationRecordSettings(
+  locationId: string,
+  currencyCode = 'GBP',
+): LocationRecordSettings {
+  return {
+    locationId,
+    currencyCode,
+    openingHours: defaultOpeningHours(),
+    chairCount: 1,
+    appointmentSlotMinutes: 15,
+    defaultDepositType: 'none',
+    defaultDepositValue: 0,
+    discountAuthorisationThresholdPercent: 20,
+    cashVarianceThresholdAmount: 5,
+    colourMarginTargetPercent: 65,
+    wasteAllowancePercent: 10,
+    rebookRateBenchmarkPercent: 50,
+    utilisationWarningThresholdPercent: 60,
+    payrollWarningPercent: 45,
+    payrollCriticalPercent: 55,
+    sundayReportEnabled: true,
+    sundayReportRecipients: [],
+    sundayReportSendHour: 18,
+  };
+}
+
 export interface CreateLocationRequest {
   name: string;
   slug: string;
