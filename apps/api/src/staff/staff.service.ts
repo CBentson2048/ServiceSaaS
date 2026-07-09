@@ -105,6 +105,15 @@ interface StaffProfileRow {
   is_bookable: boolean;
   color_hex: string | null;
   bio: string | null;
+  employment_type: 'employed' | 'self_employed' | 'hybrid';
+  commission_structure: 'tiered' | 'flat' | 'none';
+  commission_flat_rate_percent: number | string;
+  performance_target_amount: number | string | null;
+  holiday_entitlement_days: number | string;
+  colour_allowance_amount: number | string;
+  photo_url: string | null;
+  q_code: string;
+  hire_date: string | null;
 }
 
 interface AcceptRpcRow {
@@ -619,6 +628,21 @@ export class StaffService {
     if (input.contractedHours !== undefined) patch.contracted_hours = input.contractedHours;
     if (input.averageBillBenchmark !== undefined) patch.average_bill_benchmark = input.averageBillBenchmark;
     if (input.leaveNotes !== undefined) patch.leave_notes = input.leaveNotes?.trim() || null;
+    if (input.employmentType !== undefined) patch.employment_type = input.employmentType;
+    // Applied after syncStaffProfile so an explicit status overrides the value
+    // derived from membership status (keeps notice/terminated owner-controlled).
+    if (input.employmentStatus !== undefined) patch.employment_status = input.employmentStatus;
+    if (input.commissionStructure !== undefined) patch.commission_structure = input.commissionStructure;
+    if (input.commissionFlatRatePercent !== undefined)
+      patch.commission_flat_rate_percent = input.commissionFlatRatePercent;
+    if (input.performanceTargetAmount !== undefined)
+      patch.performance_target_amount = input.performanceTargetAmount;
+    if (input.holidayEntitlementDays !== undefined)
+      patch.holiday_entitlement_days = input.holidayEntitlementDays;
+    if (input.colourAllowanceAmount !== undefined)
+      patch.colour_allowance_amount = input.colourAllowanceAmount;
+    if (input.photoUrl !== undefined) patch.photo_url = input.photoUrl?.trim() || null;
+    if (input.startDate !== undefined) patch.hire_date = input.startDate || null;
     if (Object.keys(patch).length === 0) return;
 
     const { error } = await this.admin
@@ -931,7 +955,7 @@ export class StaffService {
       .schema('core')
       .from('staff_profiles')
       .select(
-        'id,business_id,user_profile_id,primary_location_id,display_name,employment_status,hourly_rate,contracted_hours,average_bill_benchmark,sheer_lab_pin_enabled,leave_notes,is_bookable,color_hex,bio',
+        'id,business_id,user_profile_id,primary_location_id,display_name,employment_status,hourly_rate,contracted_hours,average_bill_benchmark,sheer_lab_pin_enabled,leave_notes,is_bookable,color_hex,bio,employment_type,commission_structure,commission_flat_rate_percent,performance_target_amount,holiday_entitlement_days,colour_allowance_amount,photo_url,q_code,hire_date',
       )
       .eq('business_id', businessId)
       .in('user_profile_id', ids)
@@ -1174,6 +1198,18 @@ export class StaffService {
             leaveNotes: staffProfile.leave_notes ?? undefined,
             colorHex: staffProfile.color_hex ?? undefined,
             bio: staffProfile.bio ?? undefined,
+            employmentType: staffProfile.employment_type,
+            commissionStructure: staffProfile.commission_structure,
+            commissionFlatRatePercent: Number(staffProfile.commission_flat_rate_percent),
+            performanceTargetAmount:
+              staffProfile.performance_target_amount === null
+                ? null
+                : Number(staffProfile.performance_target_amount),
+            holidayEntitlementDays: Number(staffProfile.holiday_entitlement_days),
+            colourAllowanceAmount: Number(staffProfile.colour_allowance_amount),
+            photoUrl: staffProfile.photo_url ?? undefined,
+            qCode: staffProfile.q_code,
+            startDate: staffProfile.hire_date ?? undefined,
             serviceIds: (eligibilityByStaffProfile.get(staffProfile.id) ?? []).map((e) => e.serviceId),
             servicePricing: eligibilityByStaffProfile.get(staffProfile.id) ?? [],
           }
