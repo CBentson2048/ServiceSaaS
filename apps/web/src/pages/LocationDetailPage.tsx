@@ -91,6 +91,12 @@ export function LocationDetailPage() {
             </div>
             <div className="flex items-center gap-2">
               <StatusPill active={location.isActive} />
+              <Link
+                to={`/locations/${location.id}/record-settings`}
+                className="inline-flex h-9 items-center justify-center rounded-pill border border-border-strong bg-surface px-4 text-[13px] font-medium text-text-secondary transition hover:bg-surface-alt"
+              >
+                Record settings
+              </Link>
               {role === 'owner' ? (
                 <Link
                   to={`/locations/${location.id}/edit`}
