@@ -14,6 +14,7 @@ import type {
   LocationDetailResponse,
 } from '@sheer/domain';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { PermissionsGuard, RequirePermissions } from '../auth/permissions.guard';
 import { RequireRoles, RolesGuard } from '../auth/roles.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { CreateLocationDto, UpdateLocationDto } from './dto';
@@ -25,8 +26,9 @@ import { LocationsService } from './locations.service';
  * a safety net even if the role guard regresses.
  */
 @Controller('owner/locations')
-@UseGuards(SupabaseAuthGuard, RolesGuard)
+@UseGuards(SupabaseAuthGuard, RolesGuard, PermissionsGuard)
 @RequireRoles('owner')
+@RequirePermissions('locations.manage')
 export class OwnerLocationsController {
   constructor(private readonly locations: LocationsService) {}
 

@@ -16,6 +16,7 @@ import type {
   UpdateStaffMemberResponse,
 } from '@sheer/domain';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { PermissionsGuard, RequirePermissions } from '../auth/permissions.guard';
 import { RequireRoles, RolesGuard } from '../auth/roles.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import type { AuthUser } from '@sheer/domain';
@@ -27,8 +28,9 @@ import {
 import { StaffService } from './staff.service';
 
 @Controller('owner')
-@UseGuards(SupabaseAuthGuard, RolesGuard)
+@UseGuards(SupabaseAuthGuard, RolesGuard, PermissionsGuard)
 @RequireRoles('owner')
+@RequirePermissions('staff.manage')
 export class OwnerStaffController {
   constructor(private readonly staff: StaffService) {}
 

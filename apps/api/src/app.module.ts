@@ -22,6 +22,7 @@ import { OwnerBillingSettingsModule } from './owner-billing-settings/owner-billi
 import { OwnerBookingSettingsModule } from './owner-booking-settings/owner-booking-settings.module';
 import { OwnerCancellationPolicyModule } from './owner-cancellation-policy/owner-cancellation-policy.module';
 import { OwnerLocationSettingsModule } from './owner-location-settings/owner-location-settings.module';
+import { OwnerSecurityLevelsModule } from './owner-security-levels/owner-security-levels.module';
 import { OwnerTaxSettingsModule } from './owner-tax-settings/owner-tax-settings.module';
 import { OwnerOnboardingModule } from './owner-onboarding/owner-onboarding.module';
 import { ProfileModule } from './profile/profile.module';
@@ -55,6 +56,7 @@ import { validateEnv } from './config/env.validation';
     OwnerTaxSettingsModule,
     OwnerCancellationPolicyModule,
     OwnerLocationSettingsModule,
+    OwnerSecurityLevelsModule,
     PublicBookingModule,
     SalonDirectoryModule,
     StaffBookingModule,

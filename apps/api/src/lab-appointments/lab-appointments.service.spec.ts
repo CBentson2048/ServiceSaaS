@@ -942,6 +942,7 @@ function stylistActor(): AuthUser {
       fullName: 'Stylist One',
     },
     staffProfileId: 'staff_1',
+    permissions: [],
   };
 }
 

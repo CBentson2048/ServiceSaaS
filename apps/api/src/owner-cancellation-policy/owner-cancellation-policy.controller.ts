@@ -13,14 +13,16 @@ import type {
   UpdateCancellationPolicyResponse,
 } from '@sheer/domain';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { PermissionsGuard, RequirePermissions } from '../auth/permissions.guard';
 import { RequireRoles, RolesGuard } from '../auth/roles.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { UpdateCancellationPolicyDto } from './dto';
 import { OwnerCancellationPolicyService } from './owner-cancellation-policy.service';
 
 @Controller('owner/cancellation-policy')
-@UseGuards(SupabaseAuthGuard, RolesGuard)
+@UseGuards(SupabaseAuthGuard, RolesGuard, PermissionsGuard)
 @RequireRoles('owner', 'manager')
+@RequirePermissions('settings.booking.manage')
 export class OwnerCancellationPolicyController {
   constructor(private readonly service: OwnerCancellationPolicyService) {}
 

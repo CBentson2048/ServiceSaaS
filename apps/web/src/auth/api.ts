@@ -84,6 +84,11 @@ import type {
   GetAccountResponse,
   UpdateAccountTierRequest,
   UpdateAccountTierResponse,
+  ListSecurityLevelsResponse,
+  PermissionCatalogResponse,
+  SecurityLevelResponse,
+  CreateSecurityLevelRequest,
+  UpdateSecurityLevelRequest,
   PasswordResetCompleteResponse,
   PasswordResetInspectResponse,
   PasswordResetRequestResponse,
@@ -1204,6 +1209,50 @@ export async function updateAccountTier(
   return request<UpdateAccountTierResponse>('/owner/account/tier', {
     method: 'PATCH',
     body: payload,
+    accessToken,
+  });
+}
+
+// -------------------- Security levels (owner-only) --------------------
+
+export async function listSecurityLevels(
+  accessToken: string,
+): Promise<ListSecurityLevelsResponse> {
+  return request<ListSecurityLevelsResponse>('/owner/security-levels', { accessToken });
+}
+
+export async function getPermissionCatalog(
+  accessToken: string,
+): Promise<PermissionCatalogResponse> {
+  return request<PermissionCatalogResponse>('/owner/security-levels/permissions', { accessToken });
+}
+
+export async function createSecurityLevel(
+  accessToken: string,
+  payload: CreateSecurityLevelRequest,
+): Promise<SecurityLevelResponse> {
+  return request<SecurityLevelResponse>('/owner/security-levels', {
+    method: 'POST',
+    body: payload,
+    accessToken,
+  });
+}
+
+export async function updateSecurityLevel(
+  accessToken: string,
+  id: string,
+  payload: UpdateSecurityLevelRequest,
+): Promise<SecurityLevelResponse> {
+  return request<SecurityLevelResponse>(`/owner/security-levels/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: payload,
+    accessToken,
+  });
+}
+
+export async function deleteSecurityLevel(accessToken: string, id: string): Promise<void> {
+  return request<void>(`/owner/security-levels/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
     accessToken,
   });
 }

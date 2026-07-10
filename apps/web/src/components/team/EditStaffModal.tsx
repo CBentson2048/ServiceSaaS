@@ -15,7 +15,8 @@ import {
   STAFF_EMPLOYMENT_STATUS_LABELS,
   STAFF_EMPLOYMENT_TYPE_LABELS,
 } from '@sheer/domain';
-import { ApiRequestError, listServices, updateStaffMember } from '../../auth/api';
+import { ApiRequestError, listSecurityLevels, listServices, updateStaffMember } from '../../auth/api';
+import type { SecurityLevel } from '@sheer/domain';
 import { SelectField, TextField } from '../onboarding/FormField';
 import { Modal } from './Modal';
 
@@ -50,6 +51,7 @@ interface EditForm {
   photoUrl: string;
   startDate: string;
   qCode: string;
+  securityLevelId: string;
   selectedServiceIds: string[];
   // serviceId -> price text input. Absent/blank means inherit the service base price.
   servicePrices: Record<string, string>;
@@ -83,6 +85,23 @@ export function EditStaffModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [services, setServices] = useState<ManagedService[]>([]);
   const [servicesLoading, setServicesLoading] = useState(false);
+  const [securityLevels, setSecurityLevels] = useState<SecurityLevel[]>([]);
+
+  // Load the business's security levels so the owner can assign one to the member.
+  useEffect(() => {
+    if (!open || !accessToken) return;
+    let cancelled = false;
+    listSecurityLevels(accessToken)
+      .then((result) => {
+        if (!cancelled) setSecurityLevels(result.levels);
+      })
+      .catch(() => {
+        if (!cancelled) setSecurityLevels([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, accessToken]);
 
   // Load the active service catalogue so a stylist's eligibility can be edited.
   useEffect(() => {
@@ -160,6 +179,7 @@ export function EditStaffModal({
       photoUrl: staff.staffProfile?.photoUrl ?? '',
       startDate: staff.staffProfile?.startDate ?? '',
       qCode: staff.staffProfile?.qCode ?? '',
+      securityLevelId: staff.securityLevelId ?? '',
       selectedServiceIds: staff.staffProfile?.serviceIds ?? [],
       servicePrices: Object.fromEntries(
         (staff.staffProfile?.servicePricing ?? [])
@@ -289,6 +309,7 @@ export function EditStaffModal({
       colourAllowanceAmount: isStylist ? Number(form.colourAllowanceAmount) : undefined,
       photoUrl: isStylist ? form.photoUrl.trim() || null : undefined,
       startDate: isStylist ? form.startDate || null : undefined,
+      securityLevelId: form.securityLevelId ? form.securityLevelId : null,
       serviceAssignments: isStylist
         ? form.selectedServiceIds.map((serviceId) => {
             const raw = form.servicePrices[serviceId]?.trim();
@@ -418,6 +439,22 @@ export function EditStaffModal({
             />
           )}
         </div>
+
+        {isOwner ? null : (
+          <SelectField
+            label="Security level"
+            value={form.securityLevelId}
+            onValueChange={(v) => setForm({ ...form, securityLevelId: v })}
+            options={[
+              { value: '', label: 'Default (base role permissions)' },
+              ...securityLevels.map((level) => ({
+                value: level.id,
+                label: level.isSystem ? `${level.name} (built-in)` : level.name,
+              })),
+            ]}
+            hint="Controls what this member can see and do (reports, financials, settings). Manage levels under Team Hub → Security levels."
+          />
+        )}
 
         {form.roles.includes('stylist') ? (
           <div className="grid gap-4 sm:grid-cols-2">

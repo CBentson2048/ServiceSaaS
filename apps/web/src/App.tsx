@@ -4,6 +4,7 @@ import { DashboardLayout } from './layouts/DashboardLayout';
 import { AcceptInvitationPage } from './pages/AcceptInvitationPage';
 import { AccountCreatedPage } from './pages/AccountCreatedPage';
 import { BookingSettingsPage } from './pages/BookingSettingsPage';
+import { SecurityLevelsPage } from './pages/SecurityLevelsPage';
 import { ClientBookingAccountPage } from './pages/ClientBookingAccountPage';
 import { ClientBookingDateTimePage } from './pages/ClientBookingDateTimePage';
 import { ClientBookingLocationPage } from './pages/ClientBookingLocationPage';
@@ -128,6 +129,7 @@ export function App() {
       <Route element={<ProtectedRoute allowedRoles={['owner']} />}>
         <Route element={<DashboardLayout />}>
           <Route path="/team" element={<TeamPage />} />
+          <Route path="/settings/security-levels" element={<SecurityLevelsPage />} />
           <Route path="/settings/booking" element={<BookingSettingsPage />} />
           <Route path="/locations/new" element={<CreateLocationPage />} />
           <Route path="/locations/:id/edit" element={<EditLocationPage />} />

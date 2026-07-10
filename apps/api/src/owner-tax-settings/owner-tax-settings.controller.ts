@@ -13,14 +13,16 @@ import type {
   UpdateLocationTaxSettingsResponse,
 } from '@sheer/domain';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { PermissionsGuard, RequirePermissions } from '../auth/permissions.guard';
 import { RequireRoles, RolesGuard } from '../auth/roles.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { UpdateTaxSettingsDto } from './dto';
 import { OwnerTaxSettingsService } from './owner-tax-settings.service';
 
 @Controller('owner/tax-settings')
-@UseGuards(SupabaseAuthGuard, RolesGuard)
+@UseGuards(SupabaseAuthGuard, RolesGuard, PermissionsGuard)
 @RequireRoles('owner', 'manager')
+@RequirePermissions('settings.tax.manage')
 export class OwnerTaxSettingsController {
   constructor(private readonly service: OwnerTaxSettingsService) {}
 

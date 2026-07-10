@@ -26,7 +26,7 @@ import type {
   ListInventoryProductsResponse,
   ListInventoryStockResponse,
 } from '@sheer/domain';
-import { userHasRole, userHasAnyRole } from '@sheer/domain';
+import { ALL_PERMISSIONS, DEFAULT_ROLE_PERMISSIONS, userHasRole, userHasAnyRole } from '@sheer/domain';
 import type { LabRuntimeSession } from '../lab-session/lab-session.service';
 import type {
   AdjustInventoryStockDto,
@@ -587,6 +587,10 @@ export class InventoryService {
       locations: [],
       profile: { id: session.userProfileId, email: '', fullName: '' },
       staffProfileId: session.staffProfileId,
+      permissions:
+        session.role === 'owner'
+          ? [...ALL_PERMISSIONS]
+          : [...(DEFAULT_ROLE_PERMISSIONS[session.role] ?? [])],
     };
   }
 
