@@ -9,7 +9,7 @@ export class SalonCodeParamDto {
   code!: string;
 }
 
-/** Query for the salon directory search (by Salon Code or name). */
+/** Query for the salon directory search (Salon Code, salon name, or provider Q Code). */
 export class SalonSearchQueryDto {
   @IsString()
   @Length(2, 80)

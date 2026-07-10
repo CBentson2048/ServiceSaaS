@@ -3,11 +3,13 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import type {
   PublicBookingLocationSummary,
   PublicBookingServiceSelectionResponse,
+  PublicSalonSummary,
 } from '@sheer/domain';
 import {
   ApiRequestError,
   getPublicBookingSelection,
   listPublicBookingLocations,
+  searchPublicSalons,
 } from '../auth/api';
 import { AppButton, AppCard } from '../design';
 import { ClientBookingShell } from './ClientBookingShell';
@@ -22,6 +24,11 @@ export function ClientBookingLocationPage() {
   const [data, setData] = useState<PublicBookingServiceSelectionResponse | null>(null);
   const [locations, setLocations] = useState<PublicBookingLocationSummary[]>([]);
   const [selectedLocation, setSelectedLocation] = useState<PublicBookingLocationSummary | null>(null);
+  const [query, setQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<PublicSalonSummary[]>([]);
+  const [selectedSalon, setSelectedSalon] = useState<PublicSalonSummary | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [resolvingSalon, setResolvingSalon] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -61,12 +68,61 @@ export function ClientBookingLocationPage() {
     };
   }, [businessSlug, locationId, locationSlug, navigate]);
 
+  useEffect(() => {
+    const normalized = query.trim();
+    if (normalized.length < 2) {
+      setSearchResults([]);
+      setSearching(false);
+      return;
+    }
+    setSearchResults([]);
+    setSearching(true);
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setError(null);
+      searchPublicSalons(normalized)
+        .then((result) => {
+          if (!cancelled) setSearchResults(result.salons);
+        })
+        .catch((err) => {
+          if (!cancelled) setError(toErrorMessage(err));
+        })
+        .finally(() => {
+          if (!cancelled) setSearching(false);
+        });
+    }, 300);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [query]);
+
   function chooseLocation(location: PublicBookingLocationSummary) {
     setSelectedLocation(location);
+    setSelectedSalon(null);
     writeInitialSelection(location);
   }
 
-  function continueNext() {
+  function chooseSalon(salon: PublicSalonSummary) {
+    setSelectedSalon(salon);
+    setSelectedLocation(null);
+  }
+
+  async function continueNext() {
+    if (selectedSalon) {
+      setResolvingSalon(true);
+      setError(null);
+      try {
+        const result = await getPublicBookingSelection({ locationId: selectedSalon.locationId });
+        writeInitialSelection(result.location);
+        navigate(`/book/service?locationId=${encodeURIComponent(result.location.id)}`);
+      } catch (err) {
+        setError(toErrorMessage(err));
+      } finally {
+        setResolvingSalon(false);
+      }
+      return;
+    }
     const id = selectedLocation?.id ?? data?.location.id;
     if (!id) return;
     navigate(`/book/service?locationId=${encodeURIComponent(id)}`);
@@ -80,18 +136,69 @@ export function ClientBookingLocationPage() {
         <AppButton
           size="lg"
           fullWidth
-          disabled={!selectedLocation && !data}
-          onClick={continueNext}
+          disabled={(!selectedLocation && !selectedSalon && !data) || resolvingSalon}
+          onClick={() => void continueNext()}
           className="min-h-12 bg-[#1C1628] text-white hover:bg-[#2A2139]"
         >
-          Continue
+          {resolvingSalon ? 'Opening salon…' : 'Continue'}
         </AppButton>
       }
     >
       <h1 className="text-[18px] font-semibold leading-6">Where would you like to book?</h1>
       <p className="mt-1 text-[12px] text-text-secondary">
-        Select your salon location to see real services and availability.
+        Search by salon name, Salon Code, or your stylist&apos;s Q Code.
       </p>
+      <label className="mt-5 block">
+        <span className="mb-1.5 block text-[12px] font-medium text-text-secondary">
+          Find your salon
+        </span>
+        <input
+          type="search"
+          value={query}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setSelectedSalon(null);
+          }}
+          placeholder="Salon name, Salon Code, or Q Code"
+          autoComplete="off"
+          className="h-11 w-full rounded-input-lg border border-border-strong bg-surface px-3 text-[14px] text-text-primary outline-none transition placeholder:text-text-muted focus:border-primary"
+        />
+      </label>
+      {searching ? <InfoCard text="Searching salons…" /> : null}
+      {!searching && query.trim().length >= 2 && searchResults.length === 0 && !error ? (
+        <InfoCard text="No matching salon found. Check the name or code and try again." />
+      ) : null}
+      {searchResults.length > 0 ? (
+        <div className="mt-4 grid gap-2 md:grid-cols-2">
+          {searchResults.map((salon) => (
+            <button
+              key={salon.locationId}
+              type="button"
+              onClick={() => chooseSalon(salon)}
+              className="block w-full text-left"
+            >
+              <AppCard
+                elevation="none"
+                className={
+                  selectedSalon?.locationId === salon.locationId
+                    ? 'border-[1.5px] border-primary bg-primary/5'
+                    : 'border-[1.5px] border-border bg-surface'
+                }
+              >
+                <div className="text-[14px] font-semibold">{salon.name}</div>
+                <div className="mt-1 text-[12px] text-text-secondary">
+                  {[salon.businessName !== salon.name ? salon.businessName : null, salon.city]
+                    .filter(Boolean)
+                    .join(' · ') || 'Online booking available'}
+                </div>
+                <div className="mt-2 font-mono text-[11px] tracking-wide text-text-muted">
+                  Salon Code: {salon.salonCode}
+                </div>
+              </AppCard>
+            </button>
+          ))}
+        </div>
+      ) : null}
       {loading ? <InfoCard text="Loading location..." /> : null}
       {error ? <ErrorCard text={error} /> : null}
       {!loading && !error && locations.length === 0 && !data ? (
@@ -105,7 +212,7 @@ export function ClientBookingLocationPage() {
           </div>
         </AppCard>
       ) : null}
-      {locations.length > 0 ? (
+      {locations.length > 0 && query.trim().length < 2 ? (
         <div className="mt-5 grid gap-2 md:grid-cols-2">
           {locations.map((location) => (
             <button

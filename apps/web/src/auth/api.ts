@@ -106,6 +106,7 @@ import type {
   PublicBookingLocationsResponse,
   PublicBookingServiceSelectionResponse,
   PublicBookingStylistsResponse,
+  SalonSearchResponse,
   RejectBookingRequest,
   RejectBookingResponse,
   RejectLeaveRequestRequest,
@@ -239,6 +240,11 @@ export async function updateProfile(
 
 export async function listPublicBookingLocations(): Promise<PublicBookingLocationsResponse> {
   return request<PublicBookingLocationsResponse>('/public/booking/locations');
+}
+
+export async function searchPublicSalons(query: string): Promise<SalonSearchResponse> {
+  const search = new URLSearchParams({ query: query.trim() });
+  return request<SalonSearchResponse>(`/public/salons?${search.toString()}`);
 }
 
 export async function getPublicBookingSelection(params: {
