@@ -1305,6 +1305,14 @@ export interface InvitationLookupResponse {
 export type StaffEmploymentType = 'employed' | 'self_employed' | 'hybrid';
 export type StaffCommissionStructure = 'tiered' | 'flat' | 'none';
 export type StaffEmploymentStatus = 'active' | 'on_leave' | 'notice' | 'terminated';
+/**
+ * How a staff member's performance target is applied.
+ * - `flat`: the stored amount is used exactly as entered.
+ * - `pro_rated`: the stored amount is a full-week basis; the pay engine scales it
+ *   by the days actually worked that week, so working one day less/more moves the
+ *   target automatically. See {@link proRatePerformanceTarget}.
+ */
+export type StaffPerformanceTargetMode = 'flat' | 'pro_rated';
 
 export const STAFF_EMPLOYMENT_TYPE_LABELS: Record<StaffEmploymentType, string> = {
   employed: 'Employed',
@@ -1324,6 +1332,33 @@ export const STAFF_EMPLOYMENT_STATUS_LABELS: Record<StaffEmploymentStatus, strin
   notice: 'On notice',
   terminated: 'Terminated',
 };
+
+export const STAFF_PERFORMANCE_TARGET_MODE_LABELS: Record<StaffPerformanceTargetMode, string> = {
+  flat: 'Flat',
+  pro_rated: 'Pro-rated (by days worked)',
+};
+
+/**
+ * Resolve the effective performance target for a week given the member's target
+ * mode. For `flat` the base amount is returned unchanged; for `pro_rated` it is
+ * scaled by the days actually worked relative to a full week, so working one day
+ * less/more automatically moves the target.
+ *
+ * @param baseTarget         The stored `performanceTargetAmount` (major currency).
+ * @param daysWorked         Days the member worked in the period.
+ * @param standardDaysPerWeek The member's full-week baseline (defaults to 5).
+ */
+export function proRatePerformanceTarget(
+  baseTarget: number,
+  daysWorked: number,
+  mode: StaffPerformanceTargetMode = 'flat',
+  standardDaysPerWeek = 5,
+): number {
+  if (mode !== 'pro_rated') return baseTarget;
+  if (standardDaysPerWeek <= 0) return baseTarget;
+  const factor = Math.max(0, daysWorked) / standardDaysPerWeek;
+  return baseTarget * factor;
+}
 
 export interface StaffMember {
   userProfileId: string;
@@ -1365,6 +1400,8 @@ export interface StaffMember {
     commissionFlatRatePercent: number;
     /** Optional owner-set performance target (major currency). Null = computed target. */
     performanceTargetAmount?: number | null;
+    /** Whether the performance target is a flat figure or a pro-rated basis. */
+    performanceTargetMode: StaffPerformanceTargetMode;
     /** Annual paid-holiday entitlement in days. */
     holidayEntitlementDays: number;
     /** Periodic colour/product allowance (major currency). */
@@ -1430,6 +1467,8 @@ export interface UpdateStaffMemberRequest {
   commissionFlatRatePercent?: number;
   /** Owner-set performance target (major currency); null clears the override. */
   performanceTargetAmount?: number | null;
+  /** Whether the performance target is a flat figure or a pro-rated basis. */
+  performanceTargetMode?: StaffPerformanceTargetMode;
   /** Annual paid-holiday entitlement in days. */
   holidayEntitlementDays?: number;
   /** Periodic colour/product allowance (major currency). */

@@ -24,6 +24,7 @@ const INVITABLE_ROLES = ['manager', 'stylist'] as const;
 const EMPLOYMENT_TYPES = ['employed', 'self_employed', 'hybrid'] as const;
 const EMPLOYMENT_STATUSES = ['active', 'on_leave', 'notice', 'terminated'] as const;
 const COMMISSION_STRUCTURES = ['tiered', 'flat', 'none'] as const;
+const PERFORMANCE_TARGET_MODES = ['flat', 'pro_rated'] as const;
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
 export class CreateStaffInvitationDto {
@@ -207,6 +208,10 @@ export class UpdateStaffMemberDto {
   @Min(0)
   @Max(10000000)
   performanceTargetAmount?: number | null;
+
+  @IsOptional()
+  @IsIn(PERFORMANCE_TARGET_MODES)
+  performanceTargetMode?: (typeof PERFORMANCE_TARGET_MODES)[number];
 
   @IsOptional()
   @IsNumber()

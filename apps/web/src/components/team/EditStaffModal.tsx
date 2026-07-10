@@ -8,12 +8,14 @@ import type {
   StaffEmploymentStatus,
   StaffEmploymentType,
   StaffMember,
+  StaffPerformanceTargetMode,
   UpdateStaffMemberRequest,
 } from '@sheer/domain';
 import {
   STAFF_COMMISSION_STRUCTURE_LABELS,
   STAFF_EMPLOYMENT_STATUS_LABELS,
   STAFF_EMPLOYMENT_TYPE_LABELS,
+  STAFF_PERFORMANCE_TARGET_MODE_LABELS,
 } from '@sheer/domain';
 import { ApiRequestError, listSecurityLevels, listServices, updateStaffMember } from '../../auth/api';
 import type { SecurityLevel } from '@sheer/domain';
@@ -46,6 +48,7 @@ interface EditForm {
   commissionStructure: StaffCommissionStructure;
   commissionFlatRatePercent: string;
   performanceTargetAmount: string;
+  performanceTargetMode: StaffPerformanceTargetMode;
   holidayEntitlementDays: string;
   colourAllowanceAmount: string;
   photoUrl: string;
@@ -168,6 +171,7 @@ export function EditStaffModal({
         staff.staffProfile?.performanceTargetAmount != null
           ? String(staff.staffProfile.performanceTargetAmount)
           : '',
+      performanceTargetMode: staff.staffProfile?.performanceTargetMode ?? 'flat',
       holidayEntitlementDays:
         staff.staffProfile?.holidayEntitlementDays !== undefined
           ? String(staff.staffProfile.holidayEntitlementDays)
@@ -305,6 +309,7 @@ export function EditStaffModal({
           ? Number(form.performanceTargetAmount)
           : null
         : undefined,
+      performanceTargetMode: isStylist ? form.performanceTargetMode : undefined,
       holidayEntitlementDays: isStylist ? Number(form.holidayEntitlementDays) : undefined,
       colourAllowanceAmount: isStylist ? Number(form.colourAllowanceAmount) : undefined,
       photoUrl: isStylist ? form.photoUrl.trim() || null : undefined,
@@ -560,6 +565,18 @@ export function EditStaffModal({
               error={errors.performanceTargetAmount}
               hint="Leave blank to use the computed target."
               optional
+            />
+            <SelectField
+              label="Performance target basis"
+              value={form.performanceTargetMode}
+              onValueChange={(v) =>
+                setForm({ ...form, performanceTargetMode: v as StaffPerformanceTargetMode })
+              }
+              options={Object.entries(STAFF_PERFORMANCE_TARGET_MODE_LABELS).map(([value, label]) => ({
+                value,
+                label,
+              }))}
+              hint="Pro-rated auto-adjusts the target by the days worked that week."
             />
             <TextField
               label="Holiday entitlement (days)"
