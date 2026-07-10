@@ -132,6 +132,13 @@ export interface AuthUser {
   clientCommunicationPreference?: 'whatsapp' | 'sms' | 'email';
   /** IANA timezone for the signed-in user (e.g. 'Europe/London'). Drives app-wide date/time display. */
   timezone?: string;
+  /**
+   * Effective, resolved permission keys for the current business — the union of
+   * every membership's security-level permissions (or base-role defaults when a
+   * membership has no level). Gate feature/report/financial access with
+   * {@link userHasPermission}. Owners always hold every permission.
+   */
+  permissions: Permission[];
 }
 
 /**
@@ -171,6 +178,246 @@ export function userHasAnyRole(
   roles: readonly UserRole[],
 ): boolean {
   return !!user && user.roles.some((role) => roles.includes(role));
+}
+
+// ===========================================================================
+// Expanded security model — configurable permissions & security levels.
+// A "security level" is a named set of permissions an owner assigns to team
+// members, layered on top of the base membership role (which still drives DB
+// scoping/RLS). System levels mirror the base roles (incl. Receptionist and
+// Group Admin); owners can also create custom levels (e.g. Senior Stylist,
+// Bookkeeper view-only). See migration 0055.
+// ===========================================================================
+
+/**
+ * Every permission key the platform understands. `report.*` keys gate visibility
+ * of reports/financial data; the rest gate feature access. This is the fixed
+ * catalogue consumed by both the API guard and the client UI — later weeks add
+ * new keys here and reference them, never invent ad-hoc strings.
+ */
+export type Permission =
+  // Reports / financial visibility
+  | 'report.dashboard.view'
+  | 'report.performance.view'
+  | 'report.commission.view'
+  | 'report.financials.view'
+  | 'report.lab_analytics.view'
+  // Operational features
+  | 'bookings.manage'
+  | 'crm.view'
+  | 'crm.manage'
+  | 'inventory.manage'
+  | 'services.manage'
+  | 'rota.manage'
+  | 'retail.record'
+  // Team / staff
+  | 'staff.view'
+  | 'staff.manage'
+  | 'staff.pay.manage'
+  // Business administration
+  | 'locations.manage'
+  | 'settings.location.manage'
+  | 'settings.billing.manage'
+  | 'settings.tax.manage'
+  | 'settings.booking.manage'
+  | 'account.manage'
+  | 'security.manage';
+
+export type PermissionKind = 'report' | 'feature';
+
+export interface PermissionDefinition {
+  key: Permission;
+  label: string;
+  description: string;
+  kind: PermissionKind;
+  /** Coarse grouping for UI (e.g. 'Reports & financials', 'Team', 'Settings'). */
+  group: string;
+}
+
+/** The full, ordered permission catalogue (source of truth for the UI + guard). */
+export const PERMISSION_CATALOG: readonly PermissionDefinition[] = [
+  { key: 'report.dashboard.view', label: 'Dashboard', description: 'View the business dashboard and its KPIs.', kind: 'report', group: 'Reports & financials' },
+  { key: 'report.performance.view', label: 'Team performance', description: 'View stylist performance reports.', kind: 'report', group: 'Reports & financials' },
+  { key: 'report.commission.view', label: 'Commission', description: 'View commission figures and readiness.', kind: 'report', group: 'Reports & financials' },
+  { key: 'report.financials.view', label: 'Financials (revenue, P&L)', description: 'View revenue, retail sales and P&L figures.', kind: 'report', group: 'Reports & financials' },
+  { key: 'report.lab_analytics.view', label: 'Colour lab analytics', description: 'View Sheer Lab analytics and margins.', kind: 'report', group: 'Reports & financials' },
+  { key: 'bookings.manage', label: 'Manage bookings', description: 'Create and manage appointments.', kind: 'feature', group: 'Front of house' },
+  { key: 'crm.view', label: 'View clients', description: 'View client records.', kind: 'feature', group: 'Front of house' },
+  { key: 'crm.manage', label: 'Manage clients', description: 'Create and edit client records.', kind: 'feature', group: 'Front of house' },
+  { key: 'retail.record', label: 'Record retail sales', description: 'Take retail sales at the till.', kind: 'feature', group: 'Front of house' },
+  { key: 'inventory.manage', label: 'Manage inventory', description: 'Manage products and stock.', kind: 'feature', group: 'Operations' },
+  { key: 'services.manage', label: 'Manage services', description: 'Manage the service catalogue.', kind: 'feature', group: 'Operations' },
+  { key: 'rota.manage', label: 'Manage rota', description: 'Manage schedules and shifts.', kind: 'feature', group: 'Operations' },
+  { key: 'staff.view', label: 'View team', description: 'View the team list.', kind: 'feature', group: 'Team' },
+  { key: 'staff.manage', label: 'Manage team', description: 'Invite, edit and deactivate team members.', kind: 'feature', group: 'Team' },
+  { key: 'staff.pay.manage', label: 'Manage pay & commission', description: 'View and edit pay, rates and commission fields.', kind: 'feature', group: 'Team' },
+  { key: 'locations.manage', label: 'Manage locations', description: 'Create and edit locations.', kind: 'feature', group: 'Settings' },
+  { key: 'settings.location.manage', label: 'Location settings', description: 'Edit location record, thresholds and fixed costs.', kind: 'feature', group: 'Settings' },
+  { key: 'settings.billing.manage', label: 'Billing settings', description: 'Edit product auto-billing settings.', kind: 'feature', group: 'Settings' },
+  { key: 'settings.tax.manage', label: 'Tax settings', description: 'Edit tax configuration.', kind: 'feature', group: 'Settings' },
+  { key: 'settings.booking.manage', label: 'Booking settings', description: 'Edit online booking and notification settings.', kind: 'feature', group: 'Settings' },
+  { key: 'account.manage', label: 'Account & plan', description: 'Change the account tier/plan.', kind: 'feature', group: 'Administration' },
+  { key: 'security.manage', label: 'Security levels', description: 'Create and assign security levels.', kind: 'feature', group: 'Administration' },
+];
+
+export const ALL_PERMISSIONS: readonly Permission[] = PERMISSION_CATALOG.map((p) => p.key);
+
+/** Base membership role a security level maps to for DB scoping/RLS. */
+export type SecurityLevelBaseRole = Extract<UserRole, 'owner' | 'manager' | 'stylist'>;
+
+/** Stable keys for the built-in (non-deletable) system security levels. */
+export type SystemSecurityLevelKey =
+  | 'owner'
+  | 'group_admin'
+  | 'manager'
+  | 'receptionist'
+  | 'stylist';
+
+/**
+ * Default permissions for a base role when a membership has NO security level
+ * assigned. Preserves V1 behaviour exactly: owners keep everything, managers
+ * keep reports + settings they already had, stylists/clients keep their subset.
+ */
+export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
+  owner: [...ALL_PERMISSIONS],
+  manager: [
+    'report.dashboard.view',
+    'report.performance.view',
+    'report.commission.view',
+    'report.financials.view',
+    'report.lab_analytics.view',
+    'bookings.manage',
+    'crm.view',
+    'crm.manage',
+    'retail.record',
+    'inventory.manage',
+    'services.manage',
+    'rota.manage',
+    'staff.view',
+    'settings.location.manage',
+    'settings.billing.manage',
+    'settings.tax.manage',
+    'settings.booking.manage',
+  ],
+  stylist: ['bookings.manage', 'crm.view', 'retail.record'],
+  client: [],
+};
+
+export interface SystemSecurityLevelDefinition {
+  key: SystemSecurityLevelKey;
+  name: string;
+  description: string;
+  baseRole: SecurityLevelBaseRole;
+  permissions: Permission[];
+}
+
+/**
+ * The built-in security levels seeded for every business. `owner`/`manager`/
+ * `stylist` mirror the base-role defaults; `group_admin` and `receptionist` are
+ * the expanded base levels called for in the brief.
+ */
+export const SYSTEM_SECURITY_LEVELS: readonly SystemSecurityLevelDefinition[] = [
+  {
+    key: 'owner',
+    name: 'Owner',
+    description: 'Full access to everything, including account and security settings.',
+    baseRole: 'owner',
+    permissions: [...ALL_PERMISSIONS],
+  },
+  {
+    key: 'group_admin',
+    name: 'Group Admin',
+    description: 'Runs the whole group across all locations, but cannot change the account plan or the security model.',
+    baseRole: 'owner',
+    permissions: ALL_PERMISSIONS.filter((p) => p !== 'account.manage' && p !== 'security.manage'),
+  },
+  {
+    key: 'manager',
+    name: 'Manager',
+    description: 'Runs a location: reports, settings, rota, clients and stock. No account, security, pay or location creation.',
+    baseRole: 'manager',
+    permissions: [...DEFAULT_ROLE_PERMISSIONS.manager],
+  },
+  {
+    key: 'receptionist',
+    name: 'Receptionist',
+    description: 'Front desk: bookings, clients and taking payments. No reports, financials, pay or settings.',
+    baseRole: 'manager',
+    permissions: ['bookings.manage', 'crm.view', 'crm.manage', 'retail.record'],
+  },
+  {
+    key: 'stylist',
+    name: 'Stylist',
+    description: 'Their own column: bookings, clients and taking payments.',
+    baseRole: 'stylist',
+    permissions: [...DEFAULT_ROLE_PERMISSIONS.stylist],
+  },
+];
+
+export interface SecurityLevel {
+  id: string;
+  businessId: string;
+  /** System-level key (e.g. 'receptionist'); `null` for owner-created custom levels. */
+  key: SystemSecurityLevelKey | null;
+  name: string;
+  description?: string | null;
+  baseRole: SecurityLevelBaseRole;
+  isSystem: boolean;
+  permissions: Permission[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ListSecurityLevelsResponse {
+  levels: SecurityLevel[];
+}
+
+export interface SecurityLevelResponse {
+  level: SecurityLevel;
+}
+
+export interface PermissionCatalogResponse {
+  permissions: PermissionDefinition[];
+}
+
+export interface CreateSecurityLevelRequest {
+  name: string;
+  description?: string | null;
+  baseRole: SecurityLevelBaseRole;
+  permissions: Permission[];
+}
+
+export interface UpdateSecurityLevelRequest {
+  name?: string;
+  description?: string | null;
+  permissions?: Permission[];
+}
+
+/**
+ * True when the user holds the given permission. Null-safe. Owners resolve with
+ * every permission, so this is safe as the single capability gate on the client.
+ */
+export function userHasPermission(
+  user: Pick<AuthUser, 'permissions'> | null | undefined,
+  permission: Permission,
+): boolean {
+  return !!user && user.permissions.includes(permission);
+}
+
+/** True when the user holds ALL of the given permissions. Null-safe. */
+export function userHasAllPermissions(
+  user: Pick<AuthUser, 'permissions'> | null | undefined,
+  permissions: readonly Permission[],
+): boolean {
+  return !!user && permissions.every((p) => user.permissions.includes(p));
+}
+
+/** True when the user holds ANY of the given permissions. Null-safe. */
+export function userHasAnyPermission(
+  user: Pick<AuthUser, 'permissions'> | null | undefined,
+  permissions: readonly Permission[],
+): boolean {
+  return !!user && permissions.some((p) => user.permissions.includes(p));
 }
 
 export interface AuthSession {
@@ -1094,6 +1341,10 @@ export interface StaffMember {
   membershipId: string;
   membershipStatus: MembershipStatus;
   location?: BusinessLocationSummary;
+  /** Assigned security level id (null = base-role defaults). */
+  securityLevelId?: string | null;
+  /** Assigned security level display name, when set. */
+  securityLevelName?: string | null;
   staffProfile?: {
     id: string;
     displayName: string;
@@ -1159,6 +1410,8 @@ export interface UpdateStaffMemberRequest {
   roles?: InvitableRole[];
   locationId?: string;
   membershipStatus?: Extract<MembershipStatus, 'active' | 'suspended' | 'revoked'>;
+  /** Security level to apply to this member's memberships; null clears it (base-role defaults). */
+  securityLevelId?: string | null;
   displayName?: string;
   colorHex?: string;
   bio?: string;

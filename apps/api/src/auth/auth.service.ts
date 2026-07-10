@@ -25,9 +25,16 @@ import type {
   PasswordResetInspectResponse,
   PasswordResetRequestResponse,
   PasswordResetTokenStatus,
+  Permission,
   UserRole,
 } from '@sheer/domain';
-import { sortRolesByPriority, userHasAnyRole, userHasRole } from '@sheer/domain';
+import {
+  ALL_PERMISSIONS,
+  DEFAULT_ROLE_PERMISSIONS,
+  sortRolesByPriority,
+  userHasAnyRole,
+  userHasRole,
+} from '@sheer/domain';
 import type { ClientBookingAccountDto, ClientBookingLoginDto } from './dto';
 import { EmailService } from '../email/email.service';
 import { renderPasswordResetEmail } from '../email/templates/password-reset.template';
@@ -52,6 +59,12 @@ interface MembershipRow {
   location_id: string | null;
   role: UserRole;
   status: string;
+  security_level_id: string | null;
+}
+
+interface SecurityLevelPermissionsRow {
+  id: string;
+  permissions: unknown;
 }
 
 interface BusinessRow {
@@ -383,6 +396,8 @@ export class AuthService {
       allowedLocationIds.includes(location.id),
     );
 
+    const permissions = await this.resolveEffectivePermissions(roles, sameBusinessMemberships);
+
     await this.admin
       .schema('core')
       .from('user_profiles')
@@ -429,7 +444,67 @@ export class AuthService {
       clientCode: clientProfile?.client_code,
       clientCommunicationPreference: clientProfile?.communication_preference ?? undefined,
       timezone: profile.timezone ?? undefined,
+      permissions,
     };
+  }
+
+  /**
+   * Resolve the effective permission set for the current business. Owners always
+   * hold every permission (they can never lock themselves out). For everyone
+   * else we union, across their active memberships, the permissions of an
+   * assigned security level — or the base-role defaults when no level is set
+   * (which is exactly V1 behaviour for un-migrated members).
+   */
+  private async resolveEffectivePermissions(
+    roles: UserRole[],
+    memberships: MembershipRow[],
+  ): Promise<Permission[]> {
+    if (roles.includes('owner')) {
+      return [...ALL_PERMISSIONS];
+    }
+
+    const levelIds = [
+      ...new Set(memberships.map((m) => m.security_level_id).filter(isString)),
+    ];
+    const levelPermissions = levelIds.length
+      ? await this.fetchSecurityLevelPermissions(levelIds)
+      : new Map<string, Permission[]>();
+
+    const effective = new Set<Permission>();
+    for (const membership of memberships) {
+      const fromLevel = membership.security_level_id
+        ? levelPermissions.get(membership.security_level_id)
+        : undefined;
+      const perms = fromLevel ?? DEFAULT_ROLE_PERMISSIONS[membership.role] ?? [];
+      for (const perm of perms) effective.add(perm);
+    }
+
+    // Keep catalogue order for stable output.
+    return ALL_PERMISSIONS.filter((p) => effective.has(p));
+  }
+
+  private async fetchSecurityLevelPermissions(
+    levelIds: string[],
+  ): Promise<Map<string, Permission[]>> {
+    const { data, error } = await this.admin
+      .schema('core')
+      .from('security_levels')
+      .select('id,permissions')
+      .in('id', levelIds)
+      .returns<SecurityLevelPermissionsRow[]>();
+
+    const map = new Map<string, Permission[]>();
+    if (error || !data) {
+      return map;
+    }
+    const valid = new Set<string>(ALL_PERMISSIONS);
+    for (const row of data) {
+      const perms = Array.isArray(row.permissions)
+        ? (row.permissions.filter((p): p is Permission => typeof p === 'string' && valid.has(p)))
+        : [];
+      map.set(row.id, perms);
+    }
+    return map;
   }
 
   // ---------------------------------------------------------------------------
@@ -949,7 +1024,7 @@ export class AuthService {
     const { data, error } = await this.admin
       .schema('core')
       .from('user_memberships')
-      .select('business_id,location_id,role,status')
+      .select('business_id,location_id,role,status,security_level_id')
       .eq('user_profile_id', userId)
       .returns<MembershipRow[]>();
 

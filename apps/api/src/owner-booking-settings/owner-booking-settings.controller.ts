@@ -20,6 +20,7 @@ import type {
   ServiceUpgradeSuggestionResponse,
 } from '@sheer/domain';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { PermissionsGuard, RequirePermissions } from '../auth/permissions.guard';
 import { RequireRoles, RolesGuard } from '../auth/roles.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import {
@@ -30,8 +31,9 @@ import {
 import { OwnerBookingSettingsService } from './owner-booking-settings.service';
 
 @Controller('owner/booking-settings')
-@UseGuards(SupabaseAuthGuard, RolesGuard)
+@UseGuards(SupabaseAuthGuard, RolesGuard, PermissionsGuard)
 @RequireRoles('owner')
+@RequirePermissions('settings.booking.manage')
 export class OwnerBookingSettingsController {
   constructor(private readonly settings: OwnerBookingSettingsService) {}
 

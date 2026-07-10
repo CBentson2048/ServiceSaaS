@@ -1,14 +1,16 @@
 import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import type { AuthUser, SheerLabAnalyticsRange, SheerLabAnalyticsResponse } from '@sheer/domain';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { PermissionsGuard, RequirePermissions } from '../auth/permissions.guard';
 import { RequireRoles, RolesGuard } from '../auth/roles.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { LabSessionService } from '../lab-session/lab-session.service';
 import { LabAnalyticsService } from './lab-analytics.service';
 
 @Controller('lab/analytics')
-@UseGuards(SupabaseAuthGuard, RolesGuard)
+@UseGuards(SupabaseAuthGuard, RolesGuard, PermissionsGuard)
 @RequireRoles('owner', 'manager')
+@RequirePermissions('report.lab_analytics.view')
 export class LabAnalyticsController {
   constructor(private readonly labAnalytics: LabAnalyticsService) {}
 

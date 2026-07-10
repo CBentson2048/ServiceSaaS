@@ -135,6 +135,13 @@ export class UpdateStaffMemberDto {
   @IsIn(['active', 'suspended', 'revoked'])
   membershipStatus?: 'active' | 'suspended' | 'revoked';
 
+  // Security level to apply to the member's memberships. null clears it (the
+  // member falls back to base-role default permissions).
+  @IsOptional()
+  @ValidateIf((o) => o.securityLevelId !== null)
+  @IsUUID()
+  securityLevelId?: string | null;
+
   @IsOptional()
   @IsString()
   @MaxLength(120)
