@@ -13,14 +13,16 @@ import type {
   UpdateLocationProductBillingSettingsResponse,
 } from '@sheer/domain';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { PermissionsGuard, RequirePermissions } from '../auth/permissions.guard';
 import { RequireRoles, RolesGuard } from '../auth/roles.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { UpdateProductBillingSettingsDto } from './dto';
 import { OwnerBillingSettingsService } from './owner-billing-settings.service';
 
 @Controller('owner/billing-settings')
-@UseGuards(SupabaseAuthGuard, RolesGuard)
+@UseGuards(SupabaseAuthGuard, RolesGuard, PermissionsGuard)
 @RequireRoles('owner', 'manager')
+@RequirePermissions('settings.billing.manage')
 export class OwnerBillingSettingsController {
   constructor(private readonly service: OwnerBillingSettingsService) {}
 

@@ -43,6 +43,7 @@ const NAV: NavItem[] = [
     icon: TeamIcon,
     children: [
       { to: '/team', label: 'Team', icon: TeamIcon, allowedRoles: ['owner'] },
+      { to: '/settings/security-levels', label: 'Security levels', icon: ShieldIcon, allowedRoles: ['owner'] },
       { to: '/rota', label: 'Rota', icon: ClockIcon },
       { to: '/performance', label: 'Performance', icon: ChartIcon, allowedRoles: ['owner', 'manager'] },
       { to: '/commission', label: 'Commission', icon: PercentIcon },
@@ -496,6 +497,15 @@ function GearIcon(props: SVGProps<SVGSVGElement>) {
     <Svg {...props}>
       <circle cx="10" cy="10" r="2.5" />
       <path d="M10 2.8v2M10 15.2v2M2.8 10h2M15.2 10h2M4.9 4.9l1.4 1.4M13.7 13.7l1.4 1.4M15.1 4.9l-1.4 1.4M6.3 13.7l-1.4 1.4" />
+    </Svg>
+  );
+}
+
+function ShieldIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Svg {...props}>
+      <path d="M10 2.5 4 5v4.2c0 3.4 2.4 6.3 6 8.3 3.6-2 6-4.9 6-8.3V5l-6-2.5Z" />
+      <path d="m7.6 9.8 1.7 1.7 3.1-3.4" />
     </Svg>
   );
 }

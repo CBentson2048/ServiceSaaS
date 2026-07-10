@@ -14,7 +14,7 @@ import type {
   LocationProductBillingSettings,
   ProductBillingRule,
 } from '@sheer/domain';
-import { userHasRole } from '@sheer/domain';
+import { ALL_PERMISSIONS, DEFAULT_ROLE_PERMISSIONS, userHasRole } from '@sheer/domain';
 import { buildProductBillingSnapshot } from '../common/product-billing.helper';
 import {
   calculateFormulaBillableChargeCents,
@@ -934,6 +934,10 @@ function toAuthUserFromLabSession(session: LabRuntimeSession): AuthUser {
       fullName: 'Sheer Lab session',
     },
     staffProfileId: session.staffProfileId,
+    permissions:
+      session.role === 'owner'
+        ? [...ALL_PERMISSIONS]
+        : [...(DEFAULT_ROLE_PERMISSIONS[session.role] ?? [])],
   };
 }
 

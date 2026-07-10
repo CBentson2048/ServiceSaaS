@@ -80,6 +80,7 @@ interface MembershipRow {
   suspended_at: string | null;
   revoked_at: string | null;
   created_at: string;
+  security_level_id: string | null;
 }
 
 interface UserProfileRow {
@@ -475,7 +476,7 @@ export class StaffService {
         .schema('core')
         .from('user_memberships')
         .select(
-          'id,business_id,location_id,user_profile_id,role,status,invited_by_user_profile_id,activated_at,suspended_at,revoked_at,created_at',
+          'id,business_id,location_id,user_profile_id,role,status,invited_by_user_profile_id,activated_at,suspended_at,revoked_at,created_at,security_level_id',
         )
         .eq('business_id', actor.businessId)
         .in('role', ['owner', 'manager', 'stylist'])
@@ -512,9 +513,18 @@ export class StaffService {
       membershipsByUser.set(m.user_profile_id, list);
     }
 
+    const securityLevelNameById = await this.fetchSecurityLevelNames(actor.businessId);
+
     const staff: StaffMember[] = Array.from(membershipsByUser.values())
       .map((group) =>
-        this.toStaffMember(group, profileById, staffProfileByUser, locationById, eligibilityByStaffProfile),
+        this.toStaffMember(
+          group,
+          profileById,
+          staffProfileByUser,
+          locationById,
+          eligibilityByStaffProfile,
+          securityLevelNameById,
+        ),
       )
       .filter((s): s is StaffMember => Boolean(s))
       .sort((a, b) => roleOrder(a.roles[0]) - roleOrder(b.roles[0]));
@@ -586,6 +596,10 @@ export class StaffService {
     await this.syncStaffProfile(actor.businessId, targetUserId, syncLocationId, desiredRoles, newStatus, input);
 
     await this.updateStaffBusinessFields(actor.businessId, targetUserId, input);
+
+    if (input.securityLevelId !== undefined) {
+      await this.applySecurityLevel(actor.businessId, targetUserId, input.securityLevelId);
+    }
 
     // Replace the stylist's service eligibility (and per-stylist prices) when an
     // explicit set was sent. `serviceAssignments` carries prices; `serviceIds`
@@ -975,7 +989,7 @@ export class StaffService {
       .schema('core')
       .from('user_memberships')
       .select(
-        'id,business_id,location_id,user_profile_id,role,status,invited_by_user_profile_id,activated_at,suspended_at,revoked_at,created_at',
+        'id,business_id,location_id,user_profile_id,role,status,invited_by_user_profile_id,activated_at,suspended_at,revoked_at,created_at,security_level_id',
       )
       .eq('business_id', businessId)
       .eq('user_profile_id', userProfileId)
@@ -1155,7 +1169,69 @@ export class StaffService {
       businessId,
       staffProfiles.map((s) => s.id),
     );
-    return this.toStaffMember(memberships, profileById, staffProfileByUser, locationById, eligibilityByStaffProfile);
+    const securityLevelNameById = await this.fetchSecurityLevelNames(businessId);
+    return this.toStaffMember(
+      memberships,
+      profileById,
+      staffProfileByUser,
+      locationById,
+      eligibilityByStaffProfile,
+      securityLevelNameById,
+    );
+  }
+
+  /**
+   * Assign (or clear, when `securityLevelId` is null) the security level on a
+   * member's location-scoped memberships. Owner memberships are never touched —
+   * owners always resolve with every permission.
+   */
+  private async applySecurityLevel(
+    businessId: string,
+    targetUserId: string,
+    securityLevelId: string | null,
+  ): Promise<void> {
+    if (securityLevelId) {
+      const { data, error } = await this.admin
+        .schema('core')
+        .from('security_levels')
+        .select('id')
+        .eq('id', securityLevelId)
+        .eq('business_id', businessId)
+        .maybeSingle<{ id: string }>();
+      if (error) {
+        this.logger.error(`applySecurityLevel lookup failed: ${error.message}`);
+        throw new InternalServerErrorException('Unable to assign security level');
+      }
+      if (!data) {
+        throw new BadRequestException('Unknown security level');
+      }
+    }
+
+    const { error } = await this.admin
+      .schema('core')
+      .from('user_memberships')
+      .update({ security_level_id: securityLevelId })
+      .eq('business_id', businessId)
+      .eq('user_profile_id', targetUserId)
+      .in('role', ['manager', 'stylist']);
+
+    if (error) {
+      this.logger.error(`applySecurityLevel update failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to assign security level');
+    }
+  }
+
+  private async fetchSecurityLevelNames(businessId: string): Promise<Map<string, string>> {
+    const { data, error } = await this.admin
+      .schema('core')
+      .from('security_levels')
+      .select('id,name')
+      .eq('business_id', businessId)
+      .returns<{ id: string; name: string }[]>();
+    const map = new Map<string, string>();
+    if (error || !data) return map;
+    for (const row of data) map.set(row.id, row.name);
+    return map;
   }
 
   private toStaffMember(
@@ -1164,6 +1240,7 @@ export class StaffService {
     staffProfileByUser: Map<string, StaffProfileRow>,
     locationById: Map<string, BusinessLocationSummary>,
     eligibilityByStaffProfile: Map<string, { serviceId: string; priceAmount: number | null }[]>,
+    securityLevelNameById: Map<string, string> = new Map(),
   ): StaffMember | null {
     if (memberships.length === 0) return null;
     // Highest-privilege membership represents the member; roles[] holds the set.
@@ -1175,6 +1252,7 @@ export class StaffService {
     const staffProfile = staffProfileByUser.get(membership.user_profile_id);
     const locationId = membership.location_id ?? ordered.find((m) => m.location_id)?.location_id ?? null;
     const location = locationId ? locationById.get(locationId) : undefined;
+    const securityLevelId = ordered.find((m) => m.security_level_id)?.security_level_id ?? null;
     return {
       userProfileId: profile.id,
       email: profile.email,
@@ -1185,6 +1263,8 @@ export class StaffService {
       membershipId: membership.id,
       membershipStatus: aggregateMembershipStatus(ordered.map((m) => m.status)),
       location,
+      securityLevelId,
+      securityLevelName: securityLevelId ? securityLevelNameById.get(securityLevelId) ?? null : null,
       staffProfile: staffProfile
         ? {
             id: staffProfile.id,
