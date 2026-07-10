@@ -3031,7 +3031,7 @@ export interface SalonLookupResponse {
   salon: PublicSalonSummary | null;
 }
 
-/** Search the salon directory by Salon Code or name. */
+/** Search the salon directory by Salon Code, salon name, or provider Q Code. */
 export interface SalonSearchResponse {
   salons: PublicSalonSummary[];
 }

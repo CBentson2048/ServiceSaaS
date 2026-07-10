@@ -5,7 +5,7 @@ import { SalonDirectoryService } from './salon-directory.service';
 
 /**
  * Public salon directory. Unauthenticated on purpose — this is how clients find
- * a salon by its Salon Code or name before booking (Week 9 Salon Suite).
+ * a salon by its Salon Code, name, or a provider Q Code before booking.
  */
 @Controller('public/salons')
 export class SalonDirectoryController {
