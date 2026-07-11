@@ -336,7 +336,6 @@ export function SecurityLevelsPage() {
                       <PermissionNode
                         key={node.def.key}
                         node={node}
-                        depth={0}
                         selected={form.permissions}
                         labelByKey={labelByKey}
                         onChange={setPermission}
