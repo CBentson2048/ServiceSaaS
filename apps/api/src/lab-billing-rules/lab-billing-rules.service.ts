@@ -173,8 +173,8 @@ export class LabBillingRulesService {
   // ---------------------------------------------------------------------------
 
   private assertManagement(session: LabRuntimeSession): void {
-    if (session.role !== 'owner' && session.role !== 'manager') {
-      throw new ForbiddenException('Billing & revenue rules are limited to owners and managers');
+    if (!session.permissions.includes('settings.billing.manage')) {
+      throw new ForbiddenException('You do not have permission to manage billing rules');
     }
   }
 

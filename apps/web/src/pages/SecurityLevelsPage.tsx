@@ -6,7 +6,11 @@ import type {
   SecurityLevel,
   SecurityLevelBaseRole,
 } from '@sheer/domain';
-import { userHasRole } from '@sheer/domain';
+import {
+  expandPermissions,
+  getPermissionDependents,
+  userHasRole,
+} from '@sheer/domain';
 import {
   ApiRequestError,
   createSecurityLevel,
@@ -76,18 +80,15 @@ export function SecurityLevelsPage() {
     void reload();
   }, [reload]);
 
-  const groups = useMemo(() => {
-    const map = new Map<string, PermissionDefinition[]>();
-    for (const def of catalog) {
-      const list = map.get(def.group) ?? [];
-      list.push(def);
-      map.set(def.group, list);
-    }
-    return Array.from(map.entries());
-  }, [catalog]);
+  // Build one tree per group. A permission nests under a prerequisite that
+  // lives in the same group (e.g. crm.manage under crm.view); cross-group
+  // prerequisites are surfaced as a "requires" hint instead. This turns the
+  // flat catalogue into the dependency tree the page renders.
+  const groupTrees = useMemo(() => buildGroupTrees(catalog), [catalog]);
 
   const customLevels = levels.filter((l) => !l.isSystem);
   const systemLevels = levels.filter((l) => l.isSystem);
+  const editingSystem = levels.some((level) => level.id === editingId && level.isSystem);
 
   if (!isOwner) {
     return <Navigate to="/unauthorized" replace />;
@@ -110,11 +111,18 @@ export function SecurityLevelsPage() {
     setFormError(null);
   }
 
-  function togglePermission(key: Permission) {
+  // Toggling respects the dependency tree: enabling a permission pulls in its
+  // prerequisites; disabling one drops everything that depends on it.
+  function setPermission(key: Permission, checked: boolean) {
     setForm((prev) => {
-      const next = new Set(prev.permissions);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
+      let next: Set<Permission>;
+      if (checked) {
+        next = new Set(expandPermissions([...prev.permissions, key]));
+      } else {
+        next = new Set(prev.permissions);
+        next.delete(key);
+        for (const dependent of getPermissionDependents(key)) next.delete(dependent);
+      }
       return { ...prev, permissions: next };
     });
   }
@@ -132,11 +140,17 @@ export function SecurityLevelsPage() {
     try {
       const permissions = Array.from(form.permissions);
       if (editingId) {
-        await updateSecurityLevel(accessToken, editingId, {
-          name,
-          description: form.description.trim() || null,
-          permissions,
-        });
+        await updateSecurityLevel(
+          accessToken,
+          editingId,
+          editingSystem
+            ? { permissions }
+            : {
+                name,
+                description: form.description.trim() || null,
+                permissions,
+              },
+        );
         setNotice(`Updated "${name}".`);
       } else {
         await createSecurityLevel(accessToken, {
@@ -233,7 +247,13 @@ export function SecurityLevelsPage() {
               </h2>
               <ul className="space-y-2">
                 {systemLevels.map((level) => (
-                  <LevelCard key={level.id} level={level} catalog={catalog} readOnly />
+                  <LevelCard
+                    key={level.id}
+                    level={level}
+                    catalog={catalog}
+                    onEdit={() => startEdit(level)}
+                    busy={busy}
+                  />
                 ))}
               </ul>
             </section>
@@ -265,6 +285,7 @@ export function SecurityLevelsPage() {
             <input
               className={FIELD}
               value={form.name}
+              disabled={editingSystem}
               maxLength={60}
               placeholder="e.g. Senior Stylist"
               onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
@@ -274,6 +295,7 @@ export function SecurityLevelsPage() {
             <input
               className={FIELD}
               value={form.description}
+              disabled={editingSystem}
               maxLength={280}
               placeholder="Optional"
               onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))}
@@ -295,35 +317,30 @@ export function SecurityLevelsPage() {
               ))}
             </select>
             <p className="mt-1 text-[11px] text-text-secondary">
-              Determines location scope. The permissions below decide what they can see and do.
+              {editingSystem
+                ? 'Built-in names and base roles stay fixed. Add or remove permissions below.'
+                : 'Determines location scope. The permissions below decide what they can see and do.'}
             </p>
 
             <div className="mt-4 space-y-3">
-              {groups.map(([group, defs]) => (
+              <p className="text-[11px] text-text-secondary">
+                Turning on a feature automatically enables everything it needs (its nested
+                requirements and anything listed under “also enables”). Turning off a requirement
+                removes any feature that depends on it.
+              </p>
+              {groupTrees.map(({ group, roots, labelByKey }) => (
                 <div key={group}>
                   <div className="mb-1 text-[12px] font-semibold text-text-primary">{group}</div>
                   <div className="space-y-1">
-                    {defs.map((def) => (
-                      <label
-                        key={def.key}
-                        className="flex cursor-pointer items-start gap-2 text-[12px] text-text-secondary"
-                        title={def.description}
-                      >
-                        <input
-                          type="checkbox"
-                          className="mt-0.5"
-                          checked={form.permissions.has(def.key)}
-                          onChange={() => togglePermission(def.key)}
-                        />
-                        <span>
-                          <span className="text-text-primary">{def.label}</span>
-                          {def.kind === 'report' ? (
-                            <span className="ml-1 rounded-pill bg-surface-alt px-1.5 py-0.5 text-[10px] text-text-secondary">
-                              report
-                            </span>
-                          ) : null}
-                        </span>
-                      </label>
+                    {roots.map((node) => (
+                      <PermissionNode
+                        key={node.def.key}
+                        node={node}
+                        depth={0}
+                        selected={form.permissions}
+                        labelByKey={labelByKey}
+                        onChange={setPermission}
+                      />
                     ))}
                   </div>
                 </div>
@@ -345,19 +362,157 @@ export function SecurityLevelsPage() {
   );
 }
 
+interface PermissionTreeNode {
+  def: PermissionDefinition;
+  /** Required permissions nested directly beneath this feature. */
+  children: PermissionTreeNode[];
+  /**
+   * Other requirements this feature pulls in that aren't nested here (they live
+   * under a different owner or are higher-level capabilities). Shown as an
+   * "also enables" hint so the dependency is explicit.
+   */
+  requiresHint: Permission[];
+}
+
+interface GroupTree {
+  group: string;
+  roots: PermissionTreeNode[];
+  labelByKey: Map<Permission, string>;
+}
+
+/**
+ * Turn the flat catalogue into one dependency tree per group, oriented so the
+ * high-level feature is the PARENT and the permissions it requires are its
+ * CHILDREN. Selecting a parent therefore cascades down to everything it needs
+ * (see {@link expandPermissions}).
+ *
+ * Nesting rule: a "read" prerequisite (a leaf permission with no requirements of
+ * its own, e.g. `crm.view`) nests under the single feature that owns it — the
+ * first feature in catalogue order that requires it. Any other requirement (a
+ * shared read owned elsewhere, or a higher-level capability like `staff.manage`
+ * under `staff.pay.manage`) is surfaced as an "also enables" hint instead of
+ * being duplicated. Every permission is therefore reachable exactly once, and
+ * every dependency edge is visible.
+ */
+function buildGroupTrees(catalog: PermissionDefinition[]): GroupTree[] {
+  const defByKey = new Map<Permission, PermissionDefinition>(catalog.map((d) => [d.key, d]));
+  const labelByKey = new Map<Permission, string>(catalog.map((d) => [d.key, d.label]));
+  const isLeaf = (key: Permission) => (defByKey.get(key)?.requires ?? []).length === 0;
+
+  // Each leaf requirement nests under the feature that "owns" it: the most
+  // dedicated requirer (fewest total requirements), tie-broken by catalogue
+  // order. So `services.view` nests under "Manage services" (1 requirement)
+  // rather than "Manage bookings" (3), which lists it as a hint instead.
+  const requirersOf = new Map<Permission, Permission[]>();
+  for (const def of catalog) {
+    for (const req of def.requires ?? []) {
+      if (!isLeaf(req)) continue;
+      const list = requirersOf.get(req) ?? [];
+      list.push(def.key);
+      requirersOf.set(req, list);
+    }
+  }
+  const requiresCount = (key: Permission) => (defByKey.get(key)?.requires ?? []).length;
+  const ownerOf = new Map<Permission, Permission>();
+  for (const [leaf, requirers] of requirersOf) {
+    let owner = requirers[0];
+    for (const candidate of requirers) {
+      if (requiresCount(candidate) < requiresCount(owner)) owner = candidate;
+    }
+    ownerOf.set(leaf, owner);
+  }
+
+  const buildNode = (key: Permission): PermissionTreeNode => {
+    const def = defByKey.get(key)!;
+    const requires = def.requires ?? [];
+    const children = requires
+      .filter((req) => ownerOf.get(req) === key)
+      .map((req) => buildNode(req));
+    const nested = new Set(children.map((c) => c.def.key));
+    return { def, children, requiresHint: requires.filter((req) => !nested.has(req)) };
+  };
+
+  const groupOrder: string[] = [];
+  const rootsByGroup = new Map<string, PermissionTreeNode[]>();
+  for (const def of catalog) {
+    // Owned leaves only appear nested under their owner, never as a root.
+    if (ownerOf.has(def.key)) continue;
+    if (!rootsByGroup.has(def.group)) {
+      rootsByGroup.set(def.group, []);
+      groupOrder.push(def.group);
+    }
+    rootsByGroup.get(def.group)!.push(buildNode(def.key));
+  }
+
+  return groupOrder.map((group) => ({ group, roots: rootsByGroup.get(group)!, labelByKey }));
+}
+
+function PermissionNode({
+  node,
+  selected,
+  labelByKey,
+  onChange,
+}: {
+  node: PermissionTreeNode;
+  selected: Set<Permission>;
+  labelByKey: Map<Permission, string>;
+  onChange: (key: Permission, checked: boolean) => void;
+}) {
+  const { def, children, requiresHint } = node;
+  return (
+    <div>
+      <label
+        className="flex cursor-pointer items-start gap-2 text-[12px] text-text-secondary"
+        title={def.description}
+      >
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          checked={selected.has(def.key)}
+          onChange={(e) => onChange(def.key, e.target.checked)}
+        />
+        <span>
+          <span className="text-text-primary">{def.label}</span>
+          {def.kind === 'report' ? (
+            <span className="ml-1 rounded-pill bg-surface-alt px-1.5 py-0.5 text-[10px] text-text-secondary">
+              report
+            </span>
+          ) : null}
+          {requiresHint.length ? (
+            <span className="ml-1 text-[10px] text-text-muted">
+              · also enables {requiresHint.map((r) => labelByKey.get(r) ?? r).join(', ')}
+            </span>
+          ) : null}
+        </span>
+      </label>
+      {children.length ? (
+        <div className="ml-3 mt-1 space-y-1 border-l border-border-strong pl-3">
+          {children.map((child) => (
+            <PermissionNode
+              key={child.def.key}
+              node={child}
+              selected={selected}
+              labelByKey={labelByKey}
+              onChange={onChange}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function LevelCard({
   level,
   catalog,
   onEdit,
   onDelete,
-  readOnly,
   busy,
 }: {
   level: SecurityLevel;
   catalog: PermissionDefinition[];
   onEdit?: () => void;
   onDelete?: () => void;
-  readOnly?: boolean;
   busy?: boolean;
 }) {
   const labelByKey = useMemo(
@@ -380,24 +535,28 @@ function LevelCard({
             <p className="mt-0.5 text-[12px] text-text-secondary">{level.description}</p>
           ) : null}
         </div>
-        {!readOnly ? (
+        {onEdit || onDelete ? (
           <div className="flex shrink-0 gap-2">
-            <button
-              type="button"
-              disabled={busy}
-              onClick={onEdit}
-              className="rounded-pill border border-border-strong px-3 py-1 text-[12px] font-medium text-text-secondary hover:bg-surface-alt disabled:opacity-60"
-            >
-              Edit
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={onDelete}
-              className="rounded-pill border border-danger/40 px-3 py-1 text-[12px] font-medium text-danger hover:bg-danger/10 disabled:opacity-60"
-            >
-              Delete
-            </button>
+            {onEdit ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={onEdit}
+                className="rounded-pill border border-border-strong px-3 py-1 text-[12px] font-medium text-text-secondary hover:bg-surface-alt disabled:opacity-60"
+              >
+                Edit permissions
+              </button>
+            ) : null}
+            {onDelete ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={onDelete}
+                className="rounded-pill border border-danger/40 px-3 py-1 text-[12px] font-medium text-danger hover:bg-danger/10 disabled:opacity-60"
+              >
+                Delete
+              </button>
+            ) : null}
           </div>
         ) : null}
       </div>

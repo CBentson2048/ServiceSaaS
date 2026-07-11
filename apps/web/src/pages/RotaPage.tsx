@@ -5,6 +5,7 @@ import type {
   RotaShift,
   WeeklyRotaResponse,
 } from '@sheer/domain';
+import { userHasPermission } from '@sheer/domain';
 import { ApiRequestError, getWeeklyRota } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
 import { useLocationScope } from '../components/LocationScopeContext';
@@ -62,6 +63,9 @@ export function RotaPage() {
   const [absenceModal, setAbsenceModal] = useState<AbsenceModalState>({ open: false });
 
   const role = auth.user?.primaryRole;
+  // Viewers with only `rota.view` (e.g. receptionists) get a read-only board;
+  // shift/absence/week management requires `rota.manage`.
+  const canManage = userHasPermission(auth.user, 'rota.manage');
   const locations = useMemo(() => auth.user?.locations ?? [], [auth.user?.locations]);
   const managerLocationId =
     role === 'manager' ? auth.user?.allowedLocationIds[0] ?? null : null;
@@ -183,7 +187,9 @@ export function RotaPage() {
         <div>
           <h1 className="text-[22px] font-semibold leading-7 text-text-primary">Rota</h1>
           <p className="mt-1 text-[13px] text-text-secondary">
-            Manage shifts, breaks, leave, and absences for {locationName}.
+            {canManage
+              ? `Manage shifts, breaks, leave, and absences for ${locationName}.`
+              : `View shifts, breaks, leave, and absences for ${locationName}.`}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -212,35 +218,39 @@ export function RotaPage() {
           <AppButton variant="secondary" size="sm" onClick={() => shiftWeek(7)} disabled={loading}>
             Next week →
           </AppButton>
-          <AppButton
-            variant="primary"
-            size="sm"
-            onClick={() => navigate('/rota/new-week')}
-            disabled={loading}
-          >
-            Create New Week
-          </AppButton>
-          <AppButton
-            variant="secondary"
-            size="sm"
-            onClick={() =>
-              setShiftEditor({
-                open: true,
-                date: dateInputValue(new Date(`${weekStart}T00:00:00`)),
-              })
-            }
-            disabled={!data || (data.staff.length === 0)}
-          >
-            New shift
-          </AppButton>
-          <AppButton
-            variant="secondary"
-            size="sm"
-            onClick={() => setAbsenceModal({ open: true })}
-            disabled={!data || data.staff.length === 0}
-          >
-            Mark absence
-          </AppButton>
+          {canManage ? (
+            <>
+              <AppButton
+                variant="primary"
+                size="sm"
+                onClick={() => navigate('/rota/new-week')}
+                disabled={loading}
+              >
+                Create New Week
+              </AppButton>
+              <AppButton
+                variant="secondary"
+                size="sm"
+                onClick={() =>
+                  setShiftEditor({
+                    open: true,
+                    date: dateInputValue(new Date(`${weekStart}T00:00:00`)),
+                  })
+                }
+                disabled={!data || (data.staff.length === 0)}
+              >
+                New shift
+              </AppButton>
+              <AppButton
+                variant="secondary"
+                size="sm"
+                onClick={() => setAbsenceModal({ open: true })}
+                disabled={!data || data.staff.length === 0}
+              >
+                Mark absence
+              </AppButton>
+            </>
+          ) : null}
         </div>
       </header>
 
@@ -275,16 +285,19 @@ export function RotaPage() {
             onMarkAbsence={(staffProfileId) =>
               setAbsenceModal({ open: true, staffProfileId })
             }
+            readOnly={!canManage}
           />
 
-          <div className="mt-6">
-            {targetLocationId ? (
-              <LeaveRequestsPanel
-                accessToken={accessToken}
-                locationId={targetLocationId}
-              />
-            ) : null}
-          </div>
+          {canManage ? (
+            <div className="mt-6">
+              {targetLocationId ? (
+                <LeaveRequestsPanel
+                  accessToken={accessToken}
+                  locationId={targetLocationId}
+                />
+              ) : null}
+            </div>
+          ) : null}
         </>
       )}
 

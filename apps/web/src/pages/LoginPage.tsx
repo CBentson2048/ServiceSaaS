@@ -1,7 +1,8 @@
 import type { FormEvent} from 'react';
 import { useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import type { LoginResponse } from '@sheer/domain';
+import type { AuthUser, LoginResponse, Permission } from '@sheer/domain';
+import { userHasPermission } from '@sheer/domain';
 import { useAuth } from '../auth/AuthProvider';
 import { loginClientBookingAccount } from '../auth/api';
 import { BrandLogo } from '../components/BrandLogo';
@@ -22,9 +23,8 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const from = bookingMode
-    ? '/book/review'
-    : (location.state as { from?: { pathname?: string } } | null)?.from?.pathname ?? '/dashboard';
+  const requestedFrom = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname;
+  const from = bookingMode ? '/book/review' : requestedFrom;
   const justOnboarded = searchParams.get('onboarded') === '1';
   const justAcceptedInvitation = searchParams.get('invitation') === 'accepted';
   const justResetPassword = searchParams.get('password') === 'reset';
@@ -37,7 +37,16 @@ export function LoginPage() {
     if (bookingMode && auth.session && auth.user.clientProfileId) {
       completeBookingAuth({ session: auth.session, user: auth.user });
     }
-    return <Navigate to={bookingMode && !auth.user.clientCommunicationPreference ? '/book/preference' : from} replace />;
+    return (
+      <Navigate
+        to={
+          bookingMode && !auth.user.clientCommunicationPreference
+            ? '/book/preference'
+            : (from ?? defaultRouteFor(auth.user))
+        }
+        replace
+      />
+    );
   }
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
@@ -54,12 +63,15 @@ export function LoginPage() {
         });
         completeBookingAuth(response);
         auth.applyAuthenticatedSession(response.session, response.user);
-        navigate(response.user.clientCommunicationPreference ? from : '/book/preference', { replace: true });
+        navigate(response.user.clientCommunicationPreference ? (from ?? '/book/review') : '/book/preference', {
+          replace: true,
+        });
         return;
       } else {
-        await auth.signIn(email, password);
+        const user = await auth.signIn(email, password);
+        navigate(from ?? defaultRouteFor(user), { replace: true });
+        return;
       }
-      navigate(from, { replace: true });
     } catch {
       setError(
         bookingMode
@@ -167,6 +179,24 @@ export function LoginPage() {
       </section>
     </main>
   );
+}
+
+const DEFAULT_PERMISSION_ROUTES: readonly [Permission, string][] = [
+  ['report.dashboard.view', '/dashboard'],
+  ['bookings.manage', '/bookings'],
+  ['crm.view', '/crm'],
+  ['inventory.manage', '/inventory'],
+  ['services.manage', '/services'],
+  ['rota.manage', '/rota'],
+  ['report.performance.view', '/performance'],
+  ['report.commission.view', '/commission'],
+  ['staff.manage', '/team'],
+  ['settings.location.manage', '/locations'],
+  ['settings.booking.manage', '/settings/booking'],
+];
+
+function defaultRouteFor(user: AuthUser): string {
+  return DEFAULT_PERMISSION_ROUTES.find(([permission]) => userHasPermission(user, permission))?.[1] ?? '/profile';
 }
 
 function completeBookingAuth(response: LoginResponse): void {

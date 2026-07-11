@@ -34,7 +34,7 @@ import {
   BUSINESS_TIER_LABELS,
   getBusinessTierLimits,
   suggestTierUpgrade,
-  userHasRole,
+  userHasPermission,
 } from '@sheer/domain';
 import { AuthService } from '../auth/auth.service';
 import { EmailService } from '../email/email.service';
@@ -159,7 +159,7 @@ export class StaffService {
     actor: AuthUser,
     input: CreateStaffInvitationRequest,
   ): Promise<StaffInvitationWithToken> {
-    this.assertOwner(actor);
+    this.assertStaffManage(actor);
 
     if (input.role !== 'manager' && input.role !== 'stylist') {
       throw new BadRequestException('Invitable roles are limited to manager and stylist');
@@ -217,7 +217,7 @@ export class StaffService {
     actor: AuthUser,
     statusFilter?: InvitationStatus | 'all',
   ): Promise<StaffInvitation[]> {
-    this.assertOwner(actor);
+    this.assertStaffManage(actor);
     let query = this.admin
       .schema('core')
       .from('staff_invitations')
@@ -239,7 +239,7 @@ export class StaffService {
   }
 
   async resendInvitation(actor: AuthUser, invitationId: string): Promise<StaffInvitationWithToken> {
-    this.assertOwner(actor);
+    this.assertStaffManage(actor);
     const existing = await this.fetchInvitation(actor.businessId, invitationId);
 
     if (existing.status === 'accepted') {
@@ -278,7 +278,7 @@ export class StaffService {
   }
 
   async revokeInvitation(actor: AuthUser, invitationId: string): Promise<StaffInvitation> {
-    this.assertOwner(actor);
+    this.assertStaffManage(actor);
     const existing = await this.fetchInvitation(actor.businessId, invitationId);
 
     if (existing.status === 'accepted') {
@@ -470,7 +470,9 @@ export class StaffService {
   // -------------------------------------------------------------------------
 
   async listStaff(actor: AuthUser): Promise<ListStaffResponse> {
-    this.assertOwner(actor);
+    if (!userHasPermission(actor, 'staff.view')) {
+      throw new ForbiddenException('You do not have permission to view staff');
+    }
 
     const [{ data: memberships, error: membershipsError }, locations, pendingInvitations] = await Promise.all([
       this.admin
@@ -483,7 +485,9 @@ export class StaffService {
         .in('role', ['owner', 'manager', 'stylist'])
         .returns<MembershipRow[]>(),
       this.fetchBusinessLocations(actor.businessId),
-      this.listInvitations(actor, 'pending'),
+      userHasPermission(actor, 'staff.manage')
+        ? this.listInvitations(actor, 'pending')
+        : Promise.resolve([]),
     ]);
 
     if (membershipsError) {
@@ -525,6 +529,7 @@ export class StaffService {
           locationById,
           eligibilityByStaffProfile,
           securityLevelNameById,
+          userHasPermission(actor, 'staff.pay.manage'),
         ),
       )
       .filter((s): s is StaffMember => Boolean(s))
@@ -538,7 +543,8 @@ export class StaffService {
     targetUserId: string,
     input: UpdateStaffMemberRequest,
   ): Promise<UpdateStaffMemberResponse> {
-    this.assertOwner(actor);
+    this.assertStaffManage(actor);
+    this.assertSensitiveStaffFields(actor, input);
     const isSelf = targetUserId === actor.id;
 
     const memberships = await this.fetchUserMemberships(actor.businessId, targetUserId);
@@ -615,7 +621,7 @@ export class StaffService {
       );
     }
 
-    const updated = await this.findStaffMember(actor.businessId, targetUserId);
+    const updated = await this.findStaffMember(actor, targetUserId);
     if (!updated) throw new NotFoundException('Staff member not found after update');
 
     return { staff: updated };
@@ -770,9 +776,25 @@ export class StaffService {
     return byStaff;
   }
 
-  private assertOwner(actor: AuthUser): void {
-    if (!userHasRole(actor, 'owner')) {
-      throw new ForbiddenException('Only owners can manage staff');
+  private assertStaffManage(actor: AuthUser): void {
+    if (!userHasPermission(actor, 'staff.manage')) {
+      throw new ForbiddenException('You do not have permission to manage staff');
+    }
+  }
+
+  private assertSensitiveStaffFields(actor: AuthUser, input: UpdateStaffMemberRequest): void {
+    const changesPay =
+      input.hourlyRate !== undefined ||
+      input.commissionStructure !== undefined ||
+      input.commissionFlatRatePercent !== undefined ||
+      input.performanceTargetAmount !== undefined ||
+      input.performanceTargetMode !== undefined ||
+      input.colourAllowanceAmount !== undefined;
+    if (changesPay && !userHasPermission(actor, 'staff.pay.manage')) {
+      throw new ForbiddenException('You do not have permission to manage staff pay');
+    }
+    if (input.securityLevelId !== undefined && !userHasPermission(actor, 'security.manage')) {
+      throw new ForbiddenException('You do not have permission to assign security levels');
     }
   }
 
@@ -1157,7 +1179,8 @@ export class StaffService {
     }
   }
 
-  private async findStaffMember(businessId: string, userProfileId: string): Promise<StaffMember | null> {
+  private async findStaffMember(actor: AuthUser, userProfileId: string): Promise<StaffMember | null> {
+    const businessId = actor.businessId;
     const memberships = await this.fetchUserMemberships(businessId, userProfileId);
     if (memberships.length === 0) return null;
     const [profiles, staffProfiles, locations] = await Promise.all([
@@ -1180,6 +1203,7 @@ export class StaffService {
       locationById,
       eligibilityByStaffProfile,
       securityLevelNameById,
+      userHasPermission(actor, 'staff.pay.manage'),
     );
   }
 
@@ -1244,6 +1268,7 @@ export class StaffService {
     locationById: Map<string, BusinessLocationSummary>,
     eligibilityByStaffProfile: Map<string, { serviceId: string; priceAmount: number | null }[]>,
     securityLevelNameById: Map<string, string> = new Map(),
+    includePayFields = false,
   ): StaffMember | null {
     if (memberships.length === 0) return null;
     // Highest-privilege membership represents the member; roles[] holds the set.
@@ -1274,7 +1299,6 @@ export class StaffService {
             displayName: staffProfile.display_name,
             employmentStatus: staffProfile.employment_status,
             isBookable: staffProfile.is_bookable,
-            hourlyRate: Number(staffProfile.hourly_rate),
             contractedHours: Number(staffProfile.contracted_hours),
             averageBillBenchmark: Number(staffProfile.average_bill_benchmark),
             sheerLabPinEnabled: staffProfile.sheer_lab_pin_enabled,
@@ -1282,20 +1306,25 @@ export class StaffService {
             colorHex: staffProfile.color_hex ?? undefined,
             bio: staffProfile.bio ?? undefined,
             employmentType: staffProfile.employment_type,
-            commissionStructure: staffProfile.commission_structure,
-            commissionFlatRatePercent: Number(staffProfile.commission_flat_rate_percent),
-            performanceTargetAmount:
-              staffProfile.performance_target_amount === null
-                ? null
-                : Number(staffProfile.performance_target_amount),
-            performanceTargetMode: staffProfile.performance_target_mode,
             holidayEntitlementDays: Number(staffProfile.holiday_entitlement_days),
-            colourAllowanceAmount: Number(staffProfile.colour_allowance_amount),
             photoUrl: staffProfile.photo_url ?? undefined,
             qCode: staffProfile.q_code,
             startDate: staffProfile.hire_date ?? undefined,
             serviceIds: (eligibilityByStaffProfile.get(staffProfile.id) ?? []).map((e) => e.serviceId),
             servicePricing: eligibilityByStaffProfile.get(staffProfile.id) ?? [],
+            ...(includePayFields
+              ? {
+                  hourlyRate: Number(staffProfile.hourly_rate),
+                  commissionStructure: staffProfile.commission_structure,
+                  commissionFlatRatePercent: Number(staffProfile.commission_flat_rate_percent),
+                  performanceTargetAmount:
+                    staffProfile.performance_target_amount === null
+                      ? null
+                      : Number(staffProfile.performance_target_amount),
+                  performanceTargetMode: staffProfile.performance_target_mode,
+                  colourAllowanceAmount: Number(staffProfile.colour_allowance_amount),
+                }
+              : {}),
           }
         : undefined,
       invitedAt: membership.invited_by_user_profile_id ? membership.created_at : undefined,

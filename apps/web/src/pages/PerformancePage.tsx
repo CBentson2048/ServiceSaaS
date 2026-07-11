@@ -8,7 +8,7 @@ import { StylistKpiCard } from '../components/kpi/StylistKpiCard';
 import { StylistKpiDetailModal } from '../components/kpi/StylistKpiDetailModal';
 import { useAuth } from '../auth/AuthProvider';
 import { useLocationScope } from '../components/LocationScopeContext';
-import { ApiRequestError, getStylistKpis } from '../auth/api';
+import { ApiRequestError, getStylistPerformanceKpis } from '../auth/api';
 
 const RANGE_LABEL: Record<DashboardRange, string> = {
   today: 'today',
@@ -44,7 +44,7 @@ export function PerformancePage() {
     setLoading(true);
     setError(null);
     try {
-      const result = await getStylistKpis(accessToken, {
+      const result = await getStylistPerformanceKpis(accessToken, {
         ...queryParams,
         locationId: locationId !== 'all' ? locationId : undefined,
       });

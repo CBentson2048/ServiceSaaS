@@ -22,7 +22,7 @@ interface AuthState {
     fullName: string;
     businessName: string;
   }) => Promise<void>;
-  signIn: (email: string, password: string) => Promise<void>;
+  signIn: (email: string, password: string) => Promise<AuthUser>;
   signOut: () => Promise<void>;
   applyAuthenticatedSession: (session: AuthSession, user: AuthUser) => void;
 }
@@ -89,6 +89,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (email: string, password: string) => {
       const response = await authApi.login({ email, password });
       applySession(response.session, response.user);
+      return response.user;
     },
     [applySession],
   );

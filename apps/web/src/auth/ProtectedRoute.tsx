@@ -1,9 +1,15 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
-import type { UserRole } from '@sheer/domain';
-import { userHasAnyRole } from '@sheer/domain';
+import type { Permission, UserRole } from '@sheer/domain';
+import { userHasAllPermissions, userHasAnyRole } from '@sheer/domain';
 import { useAuth } from './AuthProvider';
 
-export function ProtectedRoute({ allowedRoles }: { allowedRoles: UserRole[] }) {
+export function ProtectedRoute({
+  allowedRoles,
+  requiredPermissions = [],
+}: {
+  allowedRoles: UserRole[];
+  requiredPermissions?: Permission[];
+}) {
   const auth = useAuth();
   const location = useLocation();
 
@@ -20,6 +26,10 @@ export function ProtectedRoute({ allowedRoles }: { allowedRoles: UserRole[] }) {
   }
 
   if (!userHasAnyRole(auth.user, allowedRoles)) {
+    return <Navigate to="/unauthorized" replace />;
+  }
+
+  if (!userHasAllPermissions(auth.user, requiredPermissions)) {
     return <Navigate to="/unauthorized" replace />;
   }
 

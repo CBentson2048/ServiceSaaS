@@ -620,6 +620,13 @@ export async function getStylistKpis(
   return request<StylistKpiListResponse>(`/kpi/stylists${kpiSearch(params)}`, { accessToken });
 }
 
+export async function getStylistPerformanceKpis(
+  accessToken: string,
+  params: { locationId?: string; period?: KpiPeriod; from?: string; to?: string },
+): Promise<StylistKpiListResponse> {
+  return request<StylistKpiListResponse>(`/kpi/performance${kpiSearch(params)}`, { accessToken });
+}
+
 // Stylist-facing: the caller's own KPI progress and unlock state.
 export async function getMyKpi(
   accessToken: string,

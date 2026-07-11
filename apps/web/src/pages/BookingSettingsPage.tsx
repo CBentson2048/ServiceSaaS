@@ -21,7 +21,7 @@ import {
   updateServiceUpgradeSuggestion,
 } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
-import { userHasRole } from '@sheer/domain';
+import { userHasPermission } from '@sheer/domain';
 
 type RuleFormState = {
   id?: string;
@@ -85,7 +85,10 @@ export function BookingSettingsPage() {
   const activeServices = services.filter((service) => service.isActive);
   const serviceById = useMemo(() => new Map(services.map((service) => [service.id, service])), [services]);
 
-  if (auth.status === 'authenticated' && (!auth.user || !userHasRole(auth.user, 'owner'))) {
+  if (
+    auth.status === 'authenticated' &&
+    !userHasPermission(auth.user, 'settings.booking.manage')
+  ) {
     return <Navigate to="/unauthorized" replace />;
   }
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import type { AccountTierState, BusinessLocation, BusinessTier } from '@sheer/domain';
-import { BUSINESS_TIER_LABELS, BUSINESS_TIER_ORDER } from '@sheer/domain';
+import { BUSINESS_TIER_LABELS, BUSINESS_TIER_ORDER, userHasPermission } from '@sheer/domain';
 import {
   ApiRequestError,
   deactivateLocation,
@@ -17,6 +17,8 @@ type StatusFilter = 'all' | 'active' | 'inactive';
 export function LocationsPage() {
   const auth = useAuth();
   const role = auth.user?.primaryRole;
+  const canManageLocations = userHasPermission(auth.user, 'locations.manage');
+  const canManageAccount = userHasPermission(auth.user, 'account.manage');
   const accessToken = auth.session?.accessToken;
   const [locations, setLocations] = useState<BusinessLocation[]>([]);
   const [scope, setScope] = useState<'owner' | 'manager' | null>(null);
@@ -73,7 +75,7 @@ export function LocationsPage() {
   // single location. If they happen to have no allowed location (edge case
   // where the membership lost its location_id) we fall through to the empty
   // state below so they still see something useful.
-  if (auth.status === 'authenticated' && role === 'manager') {
+  if (auth.status === 'authenticated' && role === 'manager' && !canManageLocations) {
     if (loading) {
       return <CenteredHint message="Loading your location…" />;
     }
@@ -89,7 +91,7 @@ export function LocationsPage() {
     );
   }
 
-  if (auth.status === 'authenticated' && role !== 'owner') {
+  if (auth.status === 'authenticated' && role !== 'owner' && !canManageLocations) {
     return <Navigate to="/unauthorized" replace />;
   }
 
@@ -143,7 +145,7 @@ export function LocationsPage() {
         </Link>
       </header>
 
-      {accessToken ? <PlanCard accessToken={accessToken} /> : null}
+      {accessToken && canManageAccount ? <PlanCard accessToken={accessToken} /> : null}
 
       {actionMessage ? (
         <div className="mb-4 rounded-input-lg border border-success-border bg-success-soft px-4 py-3 text-[13px] text-success">

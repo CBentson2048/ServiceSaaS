@@ -8,6 +8,7 @@ import type {
   UnassignedServicesResponse,
 } from '@sheer/domain';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { PermissionsGuard, RequirePermissions } from '../auth/permissions.guard';
 import { RequireRoles, RolesGuard } from '../auth/roles.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import {
@@ -21,14 +22,16 @@ import {
 import { ServicesService } from './services.service';
 
 @Controller('services')
-@UseGuards(SupabaseAuthGuard, RolesGuard)
+@UseGuards(SupabaseAuthGuard, RolesGuard, PermissionsGuard)
 @RequireRoles('owner', 'manager')
+@RequirePermissions('services.manage')
 export class ServicesController {
   constructor(private readonly services: ServicesService) {}
 
   // --- Service categories ---------------------------------------------------
 
   @Get('categories')
+  @RequirePermissions('services.view')
   listCategories(
     @CurrentUser() actor: AuthUser,
     @Query() query: ServiceCategoryQueryDto,
@@ -70,12 +73,14 @@ export class ServicesController {
   // --- Services -------------------------------------------------------------
 
   @Get()
+  @RequirePermissions('services.view')
   listServices(@CurrentUser() actor: AuthUser, @Query() query: ServiceQueryDto): Promise<ListManagedServicesResponse> {
     return this.services.listServices(actor, query);
   }
 
   // Services with no bookable stylist assigned — drives the dashboard warning.
   @Get('unassigned')
+  @RequirePermissions('services.view')
   listUnassignedServices(@CurrentUser() actor: AuthUser): Promise<UnassignedServicesResponse> {
     return this.services.listServicesMissingStaff(actor);
   }

@@ -8,7 +8,7 @@ import type {
   StaffInvitationWithToken,
   StaffMember,
 } from '@sheer/domain';
-import { userHasRole } from '@sheer/domain';
+import { userHasPermission } from '@sheer/domain';
 import {
   ApiRequestError,
   deactivateStaffMember,
@@ -66,6 +66,8 @@ function invitationStatusesForFilter(filter: StatusFilter): InvitationStatus[] {
 export function TeamPage() {
   const auth = useAuth();
   const accessToken = auth.session?.accessToken;
+  const canManagePay = userHasPermission(auth.user, 'staff.pay.manage');
+  const canManageSecurity = userHasPermission(auth.user, 'security.manage');
   const [staff, setStaff] = useState<StaffMember[]>([]);
   const [invitations, setInvitations] = useState<StaffInvitation[]>([]);
   const [locations, setLocations] = useState<BusinessLocationSummary[]>([]);
@@ -150,7 +152,7 @@ export function TeamPage() {
   const showStaffSection = membershipAllowed === 'all' || membershipAllowed.length > 0;
   const isFiltering = term.length > 0 || statusFilter !== 'all';
 
-  if (auth.status === 'authenticated' && !userHasRole(auth.user, 'owner')) {
+  if (auth.status === 'authenticated' && !userHasPermission(auth.user, 'staff.manage')) {
     return <Navigate to="/unauthorized" replace />;
   }
 
@@ -379,6 +381,8 @@ export function TeamPage() {
         accessToken={accessToken ?? ''}
         staff={editingStaff}
         locations={locations}
+        canManagePay={canManagePay}
+        canManageSecurity={canManageSecurity}
       />
     </div>
   );

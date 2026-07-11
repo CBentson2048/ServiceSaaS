@@ -20,6 +20,14 @@ export class KpiController {
     return this.kpi.stylistList(actor, query);
   }
 
+  /** Owner / manager: team KPI performance without granting commission-page access. */
+  @Get('performance')
+  @RequireRoles('owner', 'manager')
+  @RequirePermissions('report.performance.view')
+  performance(@CurrentUser() actor: AuthUser, @Query() query: KpiQueryDto): Promise<StylistKpiListResponse> {
+    return this.kpi.stylistList(actor, query);
+  }
+
   /** Stylist-facing: the caller's own KPI progress and unlock state. */
   @Get('me')
   @RequireRoles('owner', 'manager', 'stylist')

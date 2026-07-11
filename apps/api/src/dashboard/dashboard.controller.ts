@@ -34,6 +34,7 @@ export class DashboardController {
   }
 
   @Get('stylist-performance')
+  @RequirePermissions('report.performance.view')
   stylistPerformance(
     @CurrentUser() actor: AuthUser,
     @Query() query: DashboardDateRangeQueryDto,

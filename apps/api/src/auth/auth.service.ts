@@ -31,6 +31,7 @@ import type {
 import {
   ALL_PERMISSIONS,
   DEFAULT_ROLE_PERMISSIONS,
+  expandPermissions,
   sortRolesByPriority,
   userHasAnyRole,
   userHasRole,
@@ -472,15 +473,19 @@ export class AuthService {
 
     const effective = new Set<Permission>();
     for (const membership of memberships) {
-      const fromLevel = membership.security_level_id
-        ? levelPermissions.get(membership.security_level_id)
-        : undefined;
-      const perms = fromLevel ?? DEFAULT_ROLE_PERMISSIONS[membership.role] ?? [];
+      // An explicitly assigned level must fail closed. Falling back to the base
+      // role when the referenced level is missing would silently restore broader
+      // V1 manager access after a stale/deleted assignment.
+      const perms = membership.security_level_id
+        ? (levelPermissions.get(membership.security_level_id) ?? [])
+        : (DEFAULT_ROLE_PERMISSIONS[membership.role] ?? []);
       for (const perm of perms) effective.add(perm);
     }
 
-    // Keep catalogue order for stable output.
-    return ALL_PERMISSIONS.filter((p) => effective.has(p));
+    // Close over the dependency tree so a held permission always carries its
+    // prerequisites (e.g. `bookings.manage` implies the read side of clients,
+    // services and rota). Returns catalogue order for stable output.
+    return expandPermissions(effective);
   }
 
   private async fetchSecurityLevelPermissions(
@@ -495,7 +500,7 @@ export class AuthService {
 
     const map = new Map<string, Permission[]>();
     if (error || !data) {
-      return map;
+      throw new ForbiddenException('Unable to resolve security level permissions');
     }
     const valid = new Set<string>(ALL_PERMISSIONS);
     for (const row of data) {

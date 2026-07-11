@@ -13,6 +13,7 @@ import type {
   ListCrmVisitPhotosResponse,
 } from '@sheer/domain';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { PermissionsGuard, RequirePermissions } from '../auth/permissions.guard';
 import { RequireRoles, RolesGuard } from '../auth/roles.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import {
@@ -27,8 +28,9 @@ import {
 import { CrmService } from './crm.service';
 
 @Controller('crm')
-@UseGuards(SupabaseAuthGuard, RolesGuard)
+@UseGuards(SupabaseAuthGuard, RolesGuard, PermissionsGuard)
 @RequireRoles('owner', 'manager', 'stylist')
+@RequirePermissions('crm.view')
 export class CrmController {
   constructor(private readonly crm: CrmService) {}
 
@@ -41,6 +43,7 @@ export class CrmController {
   }
 
   @Post('clients')
+  @RequirePermissions('crm.manage')
   createClient(
     @CurrentUser() actor: AuthUser,
     @Body() body: CreateCrmClientDto,
@@ -57,6 +60,7 @@ export class CrmController {
   }
 
   @Patch('clients/:id')
+  @RequirePermissions('crm.manage')
   updateClient(
     @CurrentUser() actor: AuthUser,
     @Param('id') id: string,
@@ -82,6 +86,7 @@ export class CrmController {
   }
 
   @Post('clients/:id/notes')
+  @RequirePermissions('crm.manage')
   createNote(
     @CurrentUser() actor: AuthUser,
     @Param('id') id: string,
@@ -99,6 +104,7 @@ export class CrmController {
   }
 
   @Post('clients/:id/allergies')
+  @RequirePermissions('crm.manage')
   createAllergy(
     @CurrentUser() actor: AuthUser,
     @Param('id') id: string,
@@ -116,6 +122,7 @@ export class CrmController {
   }
 
   @Post('clients/:id/patch-tests')
+  @RequirePermissions('crm.manage')
   createPatchTest(
     @CurrentUser() actor: AuthUser,
     @Param('id') id: string,
@@ -149,6 +156,7 @@ export class CrmController {
   }
 
   @Post('visits/:visitId/photos')
+  @RequirePermissions('crm.manage')
   createVisitPhoto(
     @CurrentUser() actor: AuthUser,
     @Param('visitId') visitId: string,

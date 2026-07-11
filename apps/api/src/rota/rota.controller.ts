@@ -25,6 +25,7 @@ import type {
   WeeklyRotaResponse,
 } from '@sheer/domain';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { PermissionsGuard, RequirePermissions } from '../auth/permissions.guard';
 import { RequireRoles, RolesGuard } from '../auth/roles.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import {
@@ -54,12 +55,14 @@ import { RotaService } from './rota.service';
  * is already permission-aware so reuse will be minimal.
  */
 @Controller('rota')
-@UseGuards(SupabaseAuthGuard, RolesGuard)
+@UseGuards(SupabaseAuthGuard, RolesGuard, PermissionsGuard)
 @RequireRoles('owner', 'manager')
+@RequirePermissions('rota.manage')
 export class RotaController {
   constructor(private readonly rota: RotaService) {}
 
   @Get('week')
+  @RequirePermissions('rota.view')
   getWeeklyRota(
     @CurrentUser() actor: AuthUser,
     @Query() query: GetWeeklyRotaQueryDto,

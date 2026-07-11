@@ -9,8 +9,9 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { createHash } from 'node:crypto';
-import type { PinUnlockResponse, UserRole } from '@sheer/domain';
+import type { Permission, PinUnlockResponse, UserRole } from '@sheer/domain';
 import { LAB_INACTIVITY_TIMEOUT_MS } from '@sheer/auth';
+import { AuthService } from '../auth/auth.service';
 import type { LabSessionIdDto, UnlockLabSessionDto } from './dto';
 
 interface SharedDeviceRow {
@@ -57,6 +58,8 @@ export interface LabRuntimeSession {
   userProfileId: string;
   staffProfileId?: string;
   role: Extract<UserRole, 'owner' | 'manager' | 'stylist'>;
+  /** Resolved from the same security level as JWT requests. */
+  permissions: Permission[];
 }
 
 const PIN_LOCK_THRESHOLD = 5;
@@ -70,7 +73,10 @@ export class LabSessionService {
   private readonly admin: SupabaseClient;
   private readonly pinPepper: string;
 
-  constructor(config: ConfigService) {
+  constructor(
+    config: ConfigService,
+    private readonly auth: AuthService,
+  ) {
     const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
     this.pinPepper = config.get<string>('SHEER_LAB_PIN_PEPPER') ?? serviceRoleKey;
@@ -233,6 +239,11 @@ export class LabSessionService {
       throw new UnauthorizedException('Sheer Lab session expired');
     }
 
+    const actor = await this.auth.resolveAuthUser(data.user_profile_id);
+    if (actor.businessId !== data.business_id) {
+      throw new UnauthorizedException('Sheer Lab session no longer matches the user business');
+    }
+
     return {
       sessionId: data.id,
       businessId: data.business_id,
@@ -241,6 +252,7 @@ export class LabSessionService {
       userProfileId: data.user_profile_id,
       staffProfileId: await this.fetchStaffProfileId(data),
       role: data.role,
+      permissions: actor.permissions,
     };
   }
 

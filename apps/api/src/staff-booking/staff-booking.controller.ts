@@ -10,6 +10,7 @@ import type {
 } from '@sheer/domain';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { LocationScopeGuard, RequireLocationScope } from '../auth/location-scope.guard';
+import { PermissionsGuard, RequirePermissions } from '../auth/permissions.guard';
 import { RequireRoles, RolesGuard } from '../auth/roles.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { CreateCrmClientDto, ListCrmClientsQueryDto } from '../crm/dto';
@@ -32,8 +33,9 @@ import { StaffBookingService } from './staff-booking.service';
  * frontend to hide the feature.
  */
 @Controller('staff/booking')
-@UseGuards(SupabaseAuthGuard, RolesGuard, LocationScopeGuard)
+@UseGuards(SupabaseAuthGuard, RolesGuard, PermissionsGuard, LocationScopeGuard)
 @RequireRoles('owner', 'manager', 'stylist')
+@RequirePermissions('bookings.manage')
 export class StaffBookingController {
   constructor(private readonly staffBooking: StaffBookingService) {}
 
@@ -65,6 +67,7 @@ export class StaffBookingController {
   }
 
   @Get('clients')
+  @RequirePermissions('bookings.manage', 'crm.view')
   searchClients(
     @CurrentUser() actor: AuthUser,
     @Query() query: ListCrmClientsQueryDto,
@@ -73,6 +76,7 @@ export class StaffBookingController {
   }
 
   @Post('clients')
+  @RequirePermissions('bookings.manage', 'crm.manage')
   createClient(
     @CurrentUser() actor: AuthUser,
     @Body() body: CreateCrmClientDto,

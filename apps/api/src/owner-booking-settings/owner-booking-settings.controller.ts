@@ -32,7 +32,7 @@ import { OwnerBookingSettingsService } from './owner-booking-settings.service';
 
 @Controller('owner/booking-settings')
 @UseGuards(SupabaseAuthGuard, RolesGuard, PermissionsGuard)
-@RequireRoles('owner')
+@RequireRoles('owner', 'manager')
 @RequirePermissions('settings.booking.manage')
 export class OwnerBookingSettingsController {
   constructor(private readonly settings: OwnerBookingSettingsService) {}

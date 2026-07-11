@@ -29,12 +29,13 @@ import { StaffService } from './staff.service';
 
 @Controller('owner')
 @UseGuards(SupabaseAuthGuard, RolesGuard, PermissionsGuard)
-@RequireRoles('owner')
-@RequirePermissions('staff.manage')
+@RequireRoles('owner', 'manager')
+@RequirePermissions('staff.view')
 export class OwnerStaffController {
   constructor(private readonly staff: StaffService) {}
 
   @Post('staff/invitations')
+  @RequirePermissions('staff.manage')
   createInvitation(
     @CurrentUser() actor: AuthUser,
     @Body() body: CreateStaffInvitationDto,
@@ -43,6 +44,7 @@ export class OwnerStaffController {
   }
 
   @Get('staff/invitations')
+  @RequirePermissions('staff.manage')
   listInvitations(
     @CurrentUser() actor: AuthUser,
     @Query() query: ListStaffInvitationsQueryDto,
@@ -51,6 +53,7 @@ export class OwnerStaffController {
   }
 
   @Post('staff/invitations/:id/resend')
+  @RequirePermissions('staff.manage')
   resendInvitation(
     @CurrentUser() actor: AuthUser,
     @Param('id') id: string,
@@ -59,6 +62,7 @@ export class OwnerStaffController {
   }
 
   @Post('staff/invitations/:id/revoke')
+  @RequirePermissions('staff.manage')
   revokeInvitation(
     @CurrentUser() actor: AuthUser,
     @Param('id') id: string,
@@ -72,6 +76,7 @@ export class OwnerStaffController {
   }
 
   @Patch('staff/:userId')
+  @RequirePermissions('staff.manage')
   updateStaff(
     @CurrentUser() actor: AuthUser,
     @Param('userId') userId: string,
@@ -82,6 +87,7 @@ export class OwnerStaffController {
 
   @Post('staff/:userId/deactivate')
   @HttpCode(200)
+  @RequirePermissions('staff.manage')
   deactivate(
     @CurrentUser() actor: AuthUser,
     @Param('userId') userId: string,
@@ -91,6 +97,7 @@ export class OwnerStaffController {
 
   @Post('staff/:userId/reactivate')
   @HttpCode(200)
+  @RequirePermissions('staff.manage')
   reactivate(
     @CurrentUser() actor: AuthUser,
     @Param('userId') userId: string,
