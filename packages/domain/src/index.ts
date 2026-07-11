@@ -207,7 +207,9 @@ export type Permission =
   | 'crm.view'
   | 'crm.manage'
   | 'inventory.manage'
+  | 'services.view'
   | 'services.manage'
+  | 'rota.view'
   | 'rota.manage'
   | 'retail.record'
   // Team / staff
@@ -232,6 +234,14 @@ export interface PermissionDefinition {
   kind: PermissionKind;
   /** Coarse grouping for UI (e.g. 'Reports & financials', 'Team', 'Settings'). */
   group: string;
+  /**
+   * Direct prerequisite permissions. Granting this key is meaningless without
+   * these (e.g. `crm.manage` needs `crm.view`; the Appointment Book needs the
+   * read side of services/rota/clients to render). The full catalogue forms a
+   * dependency tree: use {@link expandPermissions} to close a selection over its
+   * prerequisites, and {@link getPermissionDependents} for the reverse edge.
+   */
+  requires?: Permission[];
 }
 
 /** The full, ordered permission catalogue (source of truth for the UI + guard). */
@@ -241,16 +251,18 @@ export const PERMISSION_CATALOG: readonly PermissionDefinition[] = [
   { key: 'report.commission.view', label: 'Commission', description: 'View commission figures and readiness.', kind: 'report', group: 'Reports & financials' },
   { key: 'report.financials.view', label: 'Financials (revenue, P&L)', description: 'View revenue, retail sales and P&L figures.', kind: 'report', group: 'Reports & financials' },
   { key: 'report.lab_analytics.view', label: 'Colour lab analytics', description: 'View Sheer Lab analytics and margins.', kind: 'report', group: 'Reports & financials' },
-  { key: 'bookings.manage', label: 'Manage bookings', description: 'Create and manage appointments.', kind: 'feature', group: 'Front of house' },
   { key: 'crm.view', label: 'View clients', description: 'View client records.', kind: 'feature', group: 'Front of house' },
-  { key: 'crm.manage', label: 'Manage clients', description: 'Create and edit client records.', kind: 'feature', group: 'Front of house' },
+  { key: 'crm.manage', label: 'Manage clients', description: 'Create and edit client records.', kind: 'feature', group: 'Front of house', requires: ['crm.view'] },
+  { key: 'services.view', label: 'View services', description: 'View the service catalogue without changing it.', kind: 'feature', group: 'Operations' },
+  { key: 'rota.view', label: 'View rota', description: 'View working hours and rota coverage without changing shifts.', kind: 'feature', group: 'Operations' },
+  { key: 'bookings.manage', label: 'Manage bookings', description: 'Create and manage appointments (needs read access to clients, services and rota).', kind: 'feature', group: 'Front of house', requires: ['crm.view', 'services.view', 'rota.view'] },
   { key: 'retail.record', label: 'Record retail sales', description: 'Take retail sales at the till.', kind: 'feature', group: 'Front of house' },
   { key: 'inventory.manage', label: 'Manage inventory', description: 'Manage products and stock.', kind: 'feature', group: 'Operations' },
-  { key: 'services.manage', label: 'Manage services', description: 'Manage the service catalogue.', kind: 'feature', group: 'Operations' },
-  { key: 'rota.manage', label: 'Manage rota', description: 'Manage schedules and shifts.', kind: 'feature', group: 'Operations' },
+  { key: 'services.manage', label: 'Manage services', description: 'Manage the service catalogue.', kind: 'feature', group: 'Operations', requires: ['services.view'] },
+  { key: 'rota.manage', label: 'Manage rota', description: 'Manage schedules and shifts.', kind: 'feature', group: 'Operations', requires: ['rota.view'] },
   { key: 'staff.view', label: 'View team', description: 'View the team list.', kind: 'feature', group: 'Team' },
-  { key: 'staff.manage', label: 'Manage team', description: 'Invite, edit and deactivate team members.', kind: 'feature', group: 'Team' },
-  { key: 'staff.pay.manage', label: 'Manage pay & commission', description: 'View and edit pay, rates and commission fields.', kind: 'feature', group: 'Team' },
+  { key: 'staff.manage', label: 'Manage team', description: 'Invite, edit and deactivate team members.', kind: 'feature', group: 'Team', requires: ['staff.view'] },
+  { key: 'staff.pay.manage', label: 'Manage pay & commission', description: 'View and edit pay, rates and commission fields.', kind: 'feature', group: 'Team', requires: ['staff.manage'] },
   { key: 'locations.manage', label: 'Manage locations', description: 'Create and edit locations.', kind: 'feature', group: 'Settings' },
   { key: 'settings.location.manage', label: 'Location settings', description: 'Edit location record, thresholds and fixed costs.', kind: 'feature', group: 'Settings' },
   { key: 'settings.billing.manage', label: 'Billing settings', description: 'Edit product auto-billing settings.', kind: 'feature', group: 'Settings' },
@@ -261,6 +273,54 @@ export const PERMISSION_CATALOG: readonly PermissionDefinition[] = [
 ];
 
 export const ALL_PERMISSIONS: readonly Permission[] = PERMISSION_CATALOG.map((p) => p.key);
+
+const PERMISSION_DEFINITION_BY_KEY: ReadonlyMap<Permission, PermissionDefinition> = new Map(
+  PERMISSION_CATALOG.map((def) => [def.key, def]),
+);
+
+/** Direct prerequisite permissions for a single key (one edge up the tree). */
+export function getPermissionPrerequisites(permission: Permission): Permission[] {
+  return [...(PERMISSION_DEFINITION_BY_KEY.get(permission)?.requires ?? [])];
+}
+
+/**
+ * Close a permission selection over its prerequisites: for every selected key,
+ * pull in everything it (transitively) requires. Result is deduped and returned
+ * in catalogue order for stable storage/output. This is the single source of
+ * truth used by the API on save/resolve and by the UI when toggling.
+ */
+export function expandPermissions(permissions: Iterable<Permission>): Permission[] {
+  const resolved = new Set<Permission>();
+  const visit = (permission: Permission) => {
+    if (resolved.has(permission)) return;
+    resolved.add(permission);
+    for (const prerequisite of getPermissionPrerequisites(permission)) visit(prerequisite);
+  };
+  for (const permission of permissions) visit(permission);
+  return ALL_PERMISSIONS.filter((p) => resolved.has(p));
+}
+
+/**
+ * Every permission that (transitively) requires the given key — i.e. the keys
+ * that must be removed when this one is switched off. Returned in catalogue
+ * order.
+ */
+export function getPermissionDependents(permission: Permission): Permission[] {
+  const dependents = new Set<Permission>();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const def of PERMISSION_CATALOG) {
+      if (dependents.has(def.key)) continue;
+      const requires = def.requires ?? [];
+      if (requires.includes(permission) || requires.some((r) => dependents.has(r))) {
+        dependents.add(def.key);
+        changed = true;
+      }
+    }
+  }
+  return ALL_PERMISSIONS.filter((p) => dependents.has(p));
+}
 
 /** Base membership role a security level maps to for DB scoping/RLS. */
 export type SecurityLevelBaseRole = Extract<UserRole, 'owner' | 'manager' | 'stylist'>;
@@ -291,7 +351,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'crm.manage',
     'retail.record',
     'inventory.manage',
+    'services.view',
     'services.manage',
+    'rota.view',
     'rota.manage',
     'staff.view',
     'settings.location.manage',
@@ -299,7 +361,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'settings.tax.manage',
     'settings.booking.manage',
   ],
-  stylist: ['bookings.manage', 'crm.view', 'retail.record'],
+  stylist: ['bookings.manage', 'crm.view', 'retail.record', 'services.view', 'rota.view'],
   client: [],
 };
 
@@ -343,7 +405,14 @@ export const SYSTEM_SECURITY_LEVELS: readonly SystemSecurityLevelDefinition[] = 
     name: 'Receptionist',
     description: 'Front desk: bookings, clients and taking payments. No reports, financials, pay or settings.',
     baseRole: 'manager',
-    permissions: ['bookings.manage', 'crm.view', 'crm.manage', 'retail.record'],
+    permissions: [
+      'bookings.manage',
+      'crm.view',
+      'crm.manage',
+      'retail.record',
+      'services.view',
+      'rota.view',
+    ],
   },
   {
     key: 'stylist',
@@ -1385,7 +1454,8 @@ export interface StaffMember {
     displayName: string;
     employmentStatus: StaffEmploymentStatus;
     isBookable: boolean;
-    hourlyRate: number;
+    /** Hidden unless the caller can manage staff pay. */
+    hourlyRate?: number;
     contractedHours: number;
     averageBillBenchmark: number;
     sheerLabPinEnabled: boolean;
@@ -1395,17 +1465,17 @@ export interface StaffMember {
     /** Employment basis — drives wage & commission handling (Week 3 pay logic). */
     employmentType: StaffEmploymentType;
     /** Commission model. `tiered` uses the V1 KPI engine. */
-    commissionStructure: StaffCommissionStructure;
+    commissionStructure?: StaffCommissionStructure;
     /** Flat commission rate (%), applied when commissionStructure is `flat`. */
-    commissionFlatRatePercent: number;
+    commissionFlatRatePercent?: number;
     /** Optional owner-set performance target (major currency). Null = computed target. */
     performanceTargetAmount?: number | null;
     /** Whether the performance target is a flat figure or a pro-rated basis. */
-    performanceTargetMode: StaffPerformanceTargetMode;
+    performanceTargetMode?: StaffPerformanceTargetMode;
     /** Annual paid-holiday entitlement in days. */
     holidayEntitlementDays: number;
     /** Periodic colour/product allowance (major currency). */
-    colourAllowanceAmount: number;
+    colourAllowanceAmount?: number;
     /** Provider photo (internal + client-facing). Distinct from account avatarUrl. */
     photoUrl?: string | null;
     /** Globally-unique, immutable provider Q Code. */

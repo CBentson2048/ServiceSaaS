@@ -20,6 +20,7 @@ import {
   BUSINESS_TIER_LABELS,
   getBusinessTierLimits,
   suggestTierUpgrade,
+  userHasPermission,
   userHasRole,
   userHasAnyRole,
 } from '@sheer/domain';
@@ -86,7 +87,7 @@ export class LocationsService {
       .order('sort_order', { ascending: true })
       .order('name', { ascending: true });
 
-    if (userHasRole(actor, 'manager')) {
+    if (userHasRole(actor, 'manager') && !userHasPermission(actor, 'locations.manage')) {
       // Manager only sees the location(s) attached to their active membership.
       // `allowedLocationIds` is computed by AuthService from user_memberships.
       if (actor.allowedLocationIds.length === 0) {
@@ -103,14 +104,18 @@ export class LocationsService {
 
     return {
       locations: (data ?? []).map(toBusinessLocation),
-      scope: userHasRole(actor, 'owner') ? 'owner' : 'manager',
+      scope: userHasRole(actor, 'owner') || userHasPermission(actor, 'locations.manage') ? 'owner' : 'manager',
     };
   }
 
   async getForActor(actor: AuthUser, locationId: string): Promise<BusinessLocation> {
     this.assertManagerOrOwner(actor);
 
-    if (userHasRole(actor, 'manager') && !actor.allowedLocationIds.includes(locationId)) {
+    if (
+      userHasRole(actor, 'manager') &&
+      !userHasPermission(actor, 'locations.manage') &&
+      !actor.allowedLocationIds.includes(locationId)
+    ) {
       throw new ForbiddenException('Location is outside your assigned scope');
     }
 
@@ -123,7 +128,7 @@ export class LocationsService {
   // -------------------------------------------------------------------------
 
   async create(actor: AuthUser, input: CreateLocationRequest): Promise<BusinessLocation> {
-    this.assertOwner(actor);
+    this.assertLocationManage(actor);
     await this.assertLocationTierLimit(actor);
 
     const business = await this.fetchBusinessDefaults(actor.businessId);
@@ -215,7 +220,7 @@ export class LocationsService {
     locationId: string,
     input: UpdateLocationRequest,
   ): Promise<BusinessLocation> {
-    this.assertOwner(actor);
+    this.assertLocationManage(actor);
     const existing = await this.fetchLocation(actor.businessId, locationId);
 
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
@@ -297,7 +302,7 @@ export class LocationsService {
     locationId: string,
     isActive: boolean,
   ): Promise<BusinessLocation> {
-    this.assertOwner(actor);
+    this.assertLocationManage(actor);
     await this.fetchLocation(actor.businessId, locationId);
 
     const { data, error } = await this.admin
@@ -321,9 +326,9 @@ export class LocationsService {
     return toBusinessLocation(data);
   }
 
-  private assertOwner(actor: AuthUser): void {
-    if (!userHasRole(actor, 'owner')) {
-      throw new ForbiddenException('Only owners can perform this action');
+  private assertLocationManage(actor: AuthUser): void {
+    if (!userHasPermission(actor, 'locations.manage')) {
+      throw new ForbiddenException('You do not have permission to manage locations');
     }
   }
 

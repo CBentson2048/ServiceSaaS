@@ -131,8 +131,8 @@ export class LabAnalyticsService {
     from?: string,
     to?: string,
   ): Promise<SheerLabAnalyticsResponse> {
-    if (session.role !== 'owner' && session.role !== 'manager') {
-      throw new ForbiddenException('Sheer Lab analytics are limited to owners and managers');
+    if (!session.permissions.includes('report.lab_analytics.view')) {
+      throw new ForbiddenException('You do not have permission to view Sheer Lab analytics');
     }
     const customWindow = resolveCustomWindow(from, to);
     const normalizedRange: SheerLabAnalyticsRange = customWindow ? 'custom' : normalizeRange(range);

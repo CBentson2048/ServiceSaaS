@@ -29,6 +29,8 @@ interface EditStaffModalProps {
   accessToken: string;
   staff: StaffMember | null;
   locations: BusinessLocationSummary[];
+  canManagePay: boolean;
+  canManageSecurity: boolean;
 }
 
 interface EditForm {
@@ -81,6 +83,8 @@ export function EditStaffModal({
   accessToken,
   staff,
   locations,
+  canManagePay,
+  canManageSecurity,
 }: EditStaffModalProps) {
   const [form, setForm] = useState<EditForm | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -92,7 +96,10 @@ export function EditStaffModal({
 
   // Load the business's security levels so the owner can assign one to the member.
   useEffect(() => {
-    if (!open || !accessToken) return;
+    if (!open || !accessToken || !canManageSecurity) {
+      setSecurityLevels([]);
+      return;
+    }
     let cancelled = false;
     listSecurityLevels(accessToken)
       .then((result) => {
@@ -104,7 +111,7 @@ export function EditStaffModal({
     return () => {
       cancelled = true;
     };
-  }, [open, accessToken]);
+  }, [open, accessToken, canManageSecurity]);
 
   // Load the active service catalogue so a stylist's eligibility can be edited.
   useEffect(() => {
@@ -296,25 +303,31 @@ export function EditStaffModal({
       colorHex: isStylist ? form.colorHex.trim() || undefined : undefined,
       bio: isStylist ? form.bio.trim() || undefined : undefined,
       isBookable: isStylist ? form.isBookable : undefined,
-      hourlyRate: isStylist ? Number(form.hourlyRate) : undefined,
+      hourlyRate: isStylist && canManagePay ? Number(form.hourlyRate) : undefined,
       contractedHours: isStylist ? Number(form.contractedHours) : undefined,
       averageBillBenchmark: isStylist ? Number(form.averageBillBenchmark) : undefined,
       leaveNotes: isStylist ? form.leaveNotes.trim() || null : undefined,
       employmentType: isStylist ? form.employmentType : undefined,
       employmentStatus: isStylist ? form.employmentStatus : undefined,
-      commissionStructure: isStylist ? form.commissionStructure : undefined,
-      commissionFlatRatePercent: isStylist ? Number(form.commissionFlatRatePercent) : undefined,
-      performanceTargetAmount: isStylist
+      commissionStructure: isStylist && canManagePay ? form.commissionStructure : undefined,
+      commissionFlatRatePercent:
+        isStylist && canManagePay ? Number(form.commissionFlatRatePercent) : undefined,
+      performanceTargetAmount: isStylist && canManagePay
         ? form.performanceTargetAmount.trim()
           ? Number(form.performanceTargetAmount)
           : null
         : undefined,
-      performanceTargetMode: isStylist ? form.performanceTargetMode : undefined,
+      performanceTargetMode: isStylist && canManagePay ? form.performanceTargetMode : undefined,
       holidayEntitlementDays: isStylist ? Number(form.holidayEntitlementDays) : undefined,
-      colourAllowanceAmount: isStylist ? Number(form.colourAllowanceAmount) : undefined,
+      colourAllowanceAmount:
+        isStylist && canManagePay ? Number(form.colourAllowanceAmount) : undefined,
       photoUrl: isStylist ? form.photoUrl.trim() || null : undefined,
       startDate: isStylist ? form.startDate || null : undefined,
-      securityLevelId: form.securityLevelId ? form.securityLevelId : null,
+      securityLevelId: canManageSecurity
+        ? form.securityLevelId
+          ? form.securityLevelId
+          : null
+        : undefined,
       serviceAssignments: isStylist
         ? form.selectedServiceIds.map((serviceId) => {
             const raw = form.servicePrices[serviceId]?.trim();
@@ -445,7 +458,7 @@ export function EditStaffModal({
           )}
         </div>
 
-        {isOwner ? null : (
+        {isOwner || !canManageSecurity ? null : (
           <SelectField
             label="Security level"
             value={form.securityLevelId}
@@ -484,12 +497,14 @@ export function EditStaffModal({
               optional
               className="sm:col-span-2"
             />
-            <TextField
-              label="Hourly rate"
-              value={form.hourlyRate}
-              onValueChange={(v) => setForm({ ...form, hourlyRate: v })}
-              error={errors.hourlyRate}
-            />
+            {canManagePay ? (
+              <TextField
+                label="Hourly rate"
+                value={form.hourlyRate}
+                onValueChange={(v) => setForm({ ...form, hourlyRate: v })}
+                error={errors.hourlyRate}
+              />
+            ) : null}
             <TextField
               label="Contracted hours"
               value={form.contractedHours}
@@ -536,21 +551,25 @@ export function EditStaffModal({
               options={Object.entries(STAFF_EMPLOYMENT_STATUS_LABELS).map(([value, label]) => ({ value, label }))}
               hint="Employment status used by KPIs & P&L (separate from sign-in membership status)."
             />
-            <SelectField
-              label="Commission structure"
-              value={form.commissionStructure}
-              onValueChange={(v) =>
-                setForm({ ...form, commissionStructure: v as StaffCommissionStructure })
-              }
-              options={Object.entries(STAFF_COMMISSION_STRUCTURE_LABELS).map(([value, label]) => ({ value, label }))}
-            />
-            <TextField
-              label="Flat commission rate (%)"
-              value={form.commissionFlatRatePercent}
-              onValueChange={(v) => setForm({ ...form, commissionFlatRatePercent: v })}
-              error={errors.commissionFlatRatePercent}
-              hint="Used when commission structure is Flat rate."
-            />
+            {canManagePay ? (
+              <>
+                <SelectField
+                  label="Commission structure"
+                  value={form.commissionStructure}
+                  onValueChange={(v) =>
+                    setForm({ ...form, commissionStructure: v as StaffCommissionStructure })
+                  }
+                  options={Object.entries(STAFF_COMMISSION_STRUCTURE_LABELS).map(([value, label]) => ({ value, label }))}
+                />
+                <TextField
+                  label="Flat commission rate (%)"
+                  value={form.commissionFlatRatePercent}
+                  onValueChange={(v) => setForm({ ...form, commissionFlatRatePercent: v })}
+                  error={errors.commissionFlatRatePercent}
+                  hint="Used when commission structure is Flat rate."
+                />
+              </>
+            ) : null}
             <TextField
               label="Start date"
               type="date"
@@ -558,38 +577,44 @@ export function EditStaffModal({
               onValueChange={(v) => setForm({ ...form, startDate: v })}
               optional
             />
-            <TextField
-              label="Performance target"
-              value={form.performanceTargetAmount}
-              onValueChange={(v) => setForm({ ...form, performanceTargetAmount: v })}
-              error={errors.performanceTargetAmount}
-              hint="Leave blank to use the computed target."
-              optional
-            />
-            <SelectField
-              label="Performance target basis"
-              value={form.performanceTargetMode}
-              onValueChange={(v) =>
-                setForm({ ...form, performanceTargetMode: v as StaffPerformanceTargetMode })
-              }
-              options={Object.entries(STAFF_PERFORMANCE_TARGET_MODE_LABELS).map(([value, label]) => ({
-                value,
-                label,
-              }))}
-              hint="Pro-rated auto-adjusts the target by the days worked that week."
-            />
+            {canManagePay ? (
+              <>
+                <TextField
+                  label="Performance target"
+                  value={form.performanceTargetAmount}
+                  onValueChange={(v) => setForm({ ...form, performanceTargetAmount: v })}
+                  error={errors.performanceTargetAmount}
+                  hint="Leave blank to use the computed target."
+                  optional
+                />
+                <SelectField
+                  label="Performance target basis"
+                  value={form.performanceTargetMode}
+                  onValueChange={(v) =>
+                    setForm({ ...form, performanceTargetMode: v as StaffPerformanceTargetMode })
+                  }
+                  options={Object.entries(STAFF_PERFORMANCE_TARGET_MODE_LABELS).map(([value, label]) => ({
+                    value,
+                    label,
+                  }))}
+                  hint="Pro-rated auto-adjusts the target by the days worked that week."
+                />
+              </>
+            ) : null}
             <TextField
               label="Holiday entitlement (days)"
               value={form.holidayEntitlementDays}
               onValueChange={(v) => setForm({ ...form, holidayEntitlementDays: v })}
               error={errors.holidayEntitlementDays}
             />
-            <TextField
-              label="Colour allowance"
-              value={form.colourAllowanceAmount}
-              onValueChange={(v) => setForm({ ...form, colourAllowanceAmount: v })}
-              error={errors.colourAllowanceAmount}
-            />
+            {canManagePay ? (
+              <TextField
+                label="Colour allowance"
+                value={form.colourAllowanceAmount}
+                onValueChange={(v) => setForm({ ...form, colourAllowanceAmount: v })}
+                error={errors.colourAllowanceAmount}
+              />
+            ) : null}
             <TextField
               label="Provider photo URL"
               value={form.photoUrl}

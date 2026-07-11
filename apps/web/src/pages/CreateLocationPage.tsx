@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { userHasRole } from '@sheer/domain';
+import { userHasPermission } from '@sheer/domain';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { ApiRequestError, createLocation } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
@@ -15,7 +15,7 @@ export function CreateLocationPage() {
   const accessToken = auth.session?.accessToken;
   const [error, setError] = useState<string | null>(null);
 
-  if (auth.status === 'authenticated' && !userHasRole(auth.user, 'owner')) {
+  if (auth.status === 'authenticated' && !userHasPermission(auth.user, 'locations.manage')) {
     return <Navigate to="/unauthorized" replace />;
   }
 

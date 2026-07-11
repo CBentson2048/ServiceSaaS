@@ -14,6 +14,7 @@ import type {
   StaffBookingDetail,
 } from '@sheer/domain';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { PermissionsGuard, RequirePermissions } from '../auth/permissions.guard';
 import { RequireRoles, RolesGuard } from '../auth/roles.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { LabSessionService } from '../lab-session/lab-session.service';
@@ -27,8 +28,9 @@ import {
 import { LabAppointmentsService } from './lab-appointments.service';
 
 @Controller('lab/appointments')
-@UseGuards(SupabaseAuthGuard, RolesGuard)
+@UseGuards(SupabaseAuthGuard, RolesGuard, PermissionsGuard)
 @RequireRoles('owner', 'manager', 'stylist')
+@RequirePermissions('bookings.manage')
 export class LabAppointmentsController {
   constructor(
     private readonly labAppointmentsService: LabAppointmentsService,

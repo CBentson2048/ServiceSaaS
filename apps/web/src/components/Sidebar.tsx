@@ -1,7 +1,7 @@
 import { useState, type ReactElement, type ReactNode, type SVGProps } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import type { AuthUser, UserRole } from '@sheer/domain';
-import { userHasAnyRole } from '@sheer/domain';
+import type { AuthUser, Permission, UserRole } from '@sheer/domain';
+import { userHasAnyRole, userHasPermission } from '@sheer/domain';
 import { cn } from '@sheer/utils';
 import { useAuth } from '../auth/AuthProvider';
 import { ALL_LOCATIONS, useLocationScope } from './LocationScopeContext';
@@ -16,6 +16,7 @@ interface NavEntry {
   icon: IconComponent;
   end?: boolean;
   allowedRoles?: UserRole[];
+  permission?: Permission;
 }
 
 interface NavGroup {
@@ -31,32 +32,33 @@ function isGroup(item: NavItem): item is NavGroup {
 }
 
 const NAV: NavItem[] = [
-  { to: '/dashboard', label: 'Dashboard', icon: DashboardIcon, end: true },
-  { to: '/bookings', label: 'Appointment Book', icon: CalendarIcon, end: true },
-  { to: '/bookings/new', label: 'New booking', icon: PlusIcon, allowedRoles: ['owner', 'manager'] },
-  { to: '/services', label: 'Service management', icon: ScissorsIcon, allowedRoles: ['owner', 'manager'] },
-  { to: '/crm', label: 'Client Hub', icon: CrmIcon },
-  { to: '/inventory', label: 'Product management', icon: BoxIcon, allowedRoles: ['owner', 'manager'] },
-  { to: '/sheer-lab', label: 'Sheer Lab', icon: BeakerIcon },
+  { to: '/dashboard', label: 'Dashboard', icon: DashboardIcon, end: true, permission: 'report.dashboard.view' },
+  { to: '/bookings', label: 'Appointment Book', icon: CalendarIcon, end: true, permission: 'bookings.manage' },
+  { to: '/bookings/new', label: 'New booking', icon: PlusIcon, allowedRoles: ['owner', 'manager'], permission: 'bookings.manage' },
+  { to: '/services', label: 'Service management', icon: ScissorsIcon, allowedRoles: ['owner', 'manager'], permission: 'services.manage' },
+  { to: '/crm', label: 'Client Hub', icon: CrmIcon, permission: 'crm.view' },
+  { to: '/inventory', label: 'Product management', icon: BoxIcon, allowedRoles: ['owner', 'manager'], permission: 'inventory.manage' },
+  { to: '/sheer-lab', label: 'Sheer Lab', icon: BeakerIcon, permission: 'report.lab_analytics.view' },
   {
     group: 'Team Hub',
     icon: TeamIcon,
     children: [
-      { to: '/team', label: 'Team', icon: TeamIcon, allowedRoles: ['owner'] },
-      { to: '/settings/security-levels', label: 'Security levels', icon: ShieldIcon, allowedRoles: ['owner'] },
-      { to: '/rota', label: 'Rota', icon: ClockIcon },
-      { to: '/performance', label: 'Performance', icon: ChartIcon, allowedRoles: ['owner', 'manager'] },
-      { to: '/commission', label: 'Commission', icon: PercentIcon },
+      { to: '/team', label: 'Team', icon: TeamIcon, allowedRoles: ['owner', 'manager'], permission: 'staff.manage' },
+      { to: '/settings/security-levels', label: 'Security levels', icon: ShieldIcon, allowedRoles: ['owner'], permission: 'security.manage' },
+      { to: '/rota', label: 'Rota', icon: ClockIcon, permission: 'rota.view' },
+      { to: '/performance', label: 'Performance', icon: ChartIcon, allowedRoles: ['owner', 'manager'], permission: 'report.performance.view' },
+      { to: '/commission', label: 'Commission', icon: PercentIcon, permission: 'report.commission.view' },
     ],
   },
-  { to: '/locations', label: 'Locations', icon: PinIcon, allowedRoles: ['owner', 'manager'] },
-  { to: '/settings/booking', label: 'Booking settings', icon: GearIcon, allowedRoles: ['owner'] },
+  { to: '/locations', label: 'Locations', icon: PinIcon, allowedRoles: ['owner', 'manager'], permission: 'settings.location.manage' },
+  { to: '/settings/booking', label: 'Booking settings', icon: GearIcon, allowedRoles: ['owner', 'manager'], permission: 'settings.booking.manage' },
 ];
 
 // Keeps leaf entries and any group that still has at least one role-visible child.
 function filterNav(items: NavItem[], user?: AuthUser | null): NavItem[] {
   const allowed = (entry: NavEntry) =>
-    !entry.allowedRoles || (!!user && userHasAnyRole(user, entry.allowedRoles));
+    (!entry.allowedRoles || (!!user && userHasAnyRole(user, entry.allowedRoles))) &&
+    (!entry.permission || userHasPermission(user, entry.permission));
   return items.reduce<NavItem[]>((acc, item) => {
     if (isGroup(item)) {
       const children = item.children.filter(allowed);

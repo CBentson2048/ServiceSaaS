@@ -15,7 +15,7 @@ import type {
   SecurityLevel,
   SecurityLevelBaseRole,
 } from '@sheer/domain';
-import { ALL_PERMISSIONS, SYSTEM_SECURITY_LEVELS, userHasRole } from '@sheer/domain';
+import { ALL_PERMISSIONS, SYSTEM_SECURITY_LEVELS, expandPermissions, userHasRole } from '@sheer/domain';
 import type { CreateSecurityLevelDto, UpdateSecurityLevelDto } from './dto';
 
 interface SecurityLevelRow {
@@ -110,13 +110,12 @@ export class OwnerSecurityLevelsService {
     this.assertOwner(actor);
     const existing = await this.fetchLevel(actor.businessId, id);
 
-    if (existing.is_system) {
-      throw new BadRequestException('System security levels cannot be edited');
-    }
-
     const patch: Record<string, unknown> = {};
-    if (dto.name !== undefined) patch.name = dto.name.trim();
-    if (dto.description !== undefined) patch.description = dto.description?.trim() || null;
+    // Built-in identities (name, description and base role) stay stable, but
+    // owners can customise their permission set just like a custom level.
+    if (!existing.is_system && dto.name !== undefined) patch.name = dto.name.trim();
+    if (!existing.is_system && dto.description !== undefined)
+      patch.description = dto.description?.trim() || null;
     if (dto.permissions !== undefined) patch.permissions = this.sanitisePermissions(dto.permissions);
 
     if (Object.keys(patch).length === 0) {
@@ -231,8 +230,10 @@ export class OwnerSecurityLevelsService {
 
   private sanitisePermissions(permissions: readonly Permission[]): Permission[] {
     const filtered = permissions.filter((p) => VALID_PERMISSIONS.has(p));
-    // Preserve catalogue order for stable storage/output.
-    return ALL_PERMISSIONS.filter((p) => filtered.includes(p));
+    // Close the selection over the dependency tree so a stored level is never
+    // internally inconsistent (e.g. `crm.manage` without `crm.view`). Returned
+    // in catalogue order for stable storage/output.
+    return expandPermissions(filtered);
   }
 
   private toSecurityLevel(row: SecurityLevelRow): SecurityLevel {

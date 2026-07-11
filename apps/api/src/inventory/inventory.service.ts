@@ -26,7 +26,7 @@ import type {
   ListInventoryProductsResponse,
   ListInventoryStockResponse,
 } from '@sheer/domain';
-import { ALL_PERMISSIONS, DEFAULT_ROLE_PERMISSIONS, userHasRole, userHasAnyRole } from '@sheer/domain';
+import { userHasPermission, userHasRole } from '@sheer/domain';
 import type { LabRuntimeSession } from '../lab-session/lab-session.service';
 import type {
   AdjustInventoryStockDto,
@@ -587,16 +587,13 @@ export class InventoryService {
       locations: [],
       profile: { id: session.userProfileId, email: '', fullName: '' },
       staffProfileId: session.staffProfileId,
-      permissions:
-        session.role === 'owner'
-          ? [...ALL_PERMISSIONS]
-          : [...(DEFAULT_ROLE_PERMISSIONS[session.role] ?? [])],
+      permissions: session.permissions,
     };
   }
 
   private assertManagerOrOwner(actor: AuthUser): void {
-    if (!userHasAnyRole(actor, ['owner', 'manager'])) {
-      throw new ForbiddenException('Inventory is limited to owners and managers');
+    if (!userHasPermission(actor, 'inventory.manage')) {
+      throw new ForbiddenException('You do not have permission to manage inventory');
     }
   }
 

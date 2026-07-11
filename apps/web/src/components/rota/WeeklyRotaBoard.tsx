@@ -22,6 +22,8 @@ interface WeeklyRotaBoardProps {
   onCreateShift: (staffProfileId: string, dayIso: string) => void;
   onEditShift: (shift: RotaShift) => void;
   onMarkAbsence: (staffProfileId: string) => void;
+  /** When true, the board is a read-only view (no create/edit/absence controls). */
+  readOnly?: boolean;
 }
 
 /**
@@ -41,6 +43,7 @@ export function WeeklyRotaBoard({
   onCreateShift,
   onEditShift,
   onMarkAbsence,
+  readOnly = false,
 }: WeeklyRotaBoardProps) {
   const start = new Date(`${weekStart}T00:00:00`);
   const days = Array.from({ length: 7 }, (_, idx) => addDays(start, idx));
@@ -99,13 +102,15 @@ export function WeeklyRotaBoard({
                     <div className="text-[13px] font-medium text-text-primary">
                       {member.displayName}
                     </div>
-                    <button
-                      type="button"
-                      className="text-[11px] text-text-secondary underline-offset-2 hover:underline"
-                      onClick={() => onMarkAbsence(member.staffProfileId)}
-                    >
-                      Mark absence
-                    </button>
+                    {readOnly ? null : (
+                      <button
+                        type="button"
+                        className="text-[11px] text-text-secondary underline-offset-2 hover:underline"
+                        onClick={() => onMarkAbsence(member.staffProfileId)}
+                      >
+                        Mark absence
+                      </button>
+                    )}
                   </div>
                 </div>
               </th>
@@ -132,35 +137,56 @@ export function WeeklyRotaBoard({
                     className="border-l border-t border-border align-top"
                     style={{ minHeight: 96 }}
                   >
-                    <button
-                      type="button"
-                      className="block w-full px-2 py-2 text-left transition hover:bg-surface-alt"
-                      onClick={() => onCreateShift(member.staffProfileId, dayIso)}
-                    >
-                      <div className="space-y-1">
-                        {cellShifts.length === 0 &&
-                        cellLeave.length === 0 &&
-                        cellAbsences.length === 0 ? (
-                          <span className="text-[11px] text-text-muted">+ Add shift</span>
-                        ) : null}
-                        {cellShifts.map((shift) => (
-                          <ShiftChip
-                            key={shift.id}
-                            shift={shift}
-                            onEdit={(event) => {
-                              event.stopPropagation();
-                              onEditShift(shift);
-                            }}
-                          />
-                        ))}
-                        {cellLeave.map((l) => (
-                          <LeaveChip key={l.id} leave={l} />
-                        ))}
-                        {cellAbsences.map((a) => (
-                          <AbsenceChip key={a.id} absence={a} />
-                        ))}
+                    {readOnly ? (
+                      <div className="block w-full px-2 py-2 text-left">
+                        <div className="space-y-1">
+                          {cellShifts.length === 0 &&
+                          cellLeave.length === 0 &&
+                          cellAbsences.length === 0 ? (
+                            <span className="text-[11px] text-text-muted">—</span>
+                          ) : null}
+                          {cellShifts.map((shift) => (
+                            <ShiftChip key={shift.id} shift={shift} />
+                          ))}
+                          {cellLeave.map((l) => (
+                            <LeaveChip key={l.id} leave={l} />
+                          ))}
+                          {cellAbsences.map((a) => (
+                            <AbsenceChip key={a.id} absence={a} />
+                          ))}
+                        </div>
                       </div>
-                    </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="block w-full px-2 py-2 text-left transition hover:bg-surface-alt"
+                        onClick={() => onCreateShift(member.staffProfileId, dayIso)}
+                      >
+                        <div className="space-y-1">
+                          {cellShifts.length === 0 &&
+                          cellLeave.length === 0 &&
+                          cellAbsences.length === 0 ? (
+                            <span className="text-[11px] text-text-muted">+ Add shift</span>
+                          ) : null}
+                          {cellShifts.map((shift) => (
+                            <ShiftChip
+                              key={shift.id}
+                              shift={shift}
+                              onEdit={(event) => {
+                                event.stopPropagation();
+                                onEditShift(shift);
+                              }}
+                            />
+                          ))}
+                          {cellLeave.map((l) => (
+                            <LeaveChip key={l.id} leave={l} />
+                          ))}
+                          {cellAbsences.map((a) => (
+                            <AbsenceChip key={a.id} absence={a} />
+                          ))}
+                        </div>
+                      </button>
+                    )}
                   </td>
                 );
               })}
@@ -172,8 +198,22 @@ export function WeeklyRotaBoard({
   );
 }
 
-function ShiftChip({ shift, onEdit }: { shift: RotaShift; onEdit: (event: React.MouseEvent) => void }) {
+function ShiftChip({ shift, onEdit }: { shift: RotaShift; onEdit?: (event: React.MouseEvent) => void }) {
   const tone = statusTone(shift.status);
+  if (!onEdit) {
+    return (
+      <div className={`rounded-input-lg border px-2 py-1 text-[11px] leading-tight ${tone}`}>
+        <div className="font-medium">
+          {formatTime(shift.scheduledStartAt)}–{formatTime(shift.scheduledEndAt)}
+        </div>
+        <div className="text-[10px] uppercase tracking-[0.06em] opacity-80">
+          {shift.breaks.length > 0
+            ? `${shift.breaks.length} break${shift.breaks.length === 1 ? '' : 's'}`
+            : 'No breaks'}
+        </div>
+      </div>
+    );
+  }
   return (
     <div
       role="button"

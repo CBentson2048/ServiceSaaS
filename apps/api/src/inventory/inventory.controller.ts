@@ -11,6 +11,7 @@ import type {
   ListInventoryStockResponse,
 } from '@sheer/domain';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { PermissionsGuard, RequirePermissions } from '../auth/permissions.guard';
 import { RequireRoles, RolesGuard } from '../auth/roles.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { LabSessionService } from '../lab-session/lab-session.service';
@@ -29,8 +30,9 @@ import {
 import { InventoryService } from './inventory.service';
 
 @Controller('inventory')
-@UseGuards(SupabaseAuthGuard, RolesGuard)
+@UseGuards(SupabaseAuthGuard, RolesGuard, PermissionsGuard)
 @RequireRoles('owner', 'manager')
+@RequirePermissions('inventory.manage')
 export class InventoryController {
   constructor(private readonly inventory: InventoryService) {}
 

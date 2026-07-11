@@ -21,13 +21,13 @@ import { CreateLocationDto, UpdateLocationDto } from './dto';
 import { LocationsService } from './locations.service';
 
 /**
- * Owner-only writes. Lives under `/owner/locations` for parity with the
+ * Permission-gated writes. Lives under `/owner/locations` for parity with the
  * `/owner/staff` and `/owner/onboarding` modules — the prefix itself acts as
  * a safety net even if the role guard regresses.
  */
 @Controller('owner/locations')
 @UseGuards(SupabaseAuthGuard, RolesGuard, PermissionsGuard)
-@RequireRoles('owner')
+@RequireRoles('owner', 'manager')
 @RequirePermissions('locations.manage')
 export class OwnerLocationsController {
   constructor(private readonly locations: LocationsService) {}

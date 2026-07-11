@@ -102,37 +102,67 @@ export function App() {
       <Route path="/unauthorized" element={<UnauthorizedPage />} />
       <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} />}>
         <Route element={<DashboardLayout />}>
-          <Route path="/dashboard" element={<DashboardPage />} />
-          <Route path="/bookings" element={<BookingsPage />} />
-          <Route path="/bookings/new" element={<NewBookingPage />} />
-          <Route path="/crm" element={<CrmClientsPage />} />
-          <Route path="/crm/clients/:id" element={<CrmClientDetailPage />} />
-          <Route path="/rota" element={<RotaPage />} />
-          <Route path="/rota/new-week" element={<NewWeekRotaPage />} />
-          <Route path="/services" element={<ServiceManagementPage />}>
-            <Route index element={<ServicesPage />} />
-            <Route path="categories" element={<ServiceCategoriesPage />} />
+          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['report.dashboard.view']} />}>
+            <Route path="/dashboard" element={<DashboardPage />} />
           </Route>
-          <Route path="/inventory" element={<InventoryManagementPage />}>
-            <Route index element={<InventoryPage />} />
-            <Route path="categories" element={<InventoryCategoriesPage />} />
+          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['bookings.manage']} />}>
+            <Route path="/bookings" element={<BookingsPage />} />
+            <Route path="/bookings/new" element={<NewBookingPage />} />
           </Route>
-          <Route path="/sheer-lab" element={<SheerLabPage />} />
-          <Route path="/performance" element={<PerformancePage />} />
-          <Route path="/commission" element={<CommissionPage />} />
+          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['report.lab_analytics.view']} />}>
+            <Route path="/sheer-lab" element={<SheerLabPage />} />
+          </Route>
+          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['crm.view']} />}>
+            <Route path="/crm" element={<CrmClientsPage />} />
+            <Route path="/crm/clients/:id" element={<CrmClientDetailPage />} />
+          </Route>
+          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['rota.view']} />}>
+            <Route path="/rota" element={<RotaPage />} />
+          </Route>
+          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['rota.manage']} />}>
+            <Route path="/rota/new-week" element={<NewWeekRotaPage />} />
+          </Route>
+          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['services.manage']} />}>
+            <Route path="/services" element={<ServiceManagementPage />}>
+              <Route index element={<ServicesPage />} />
+              <Route path="categories" element={<ServiceCategoriesPage />} />
+            </Route>
+          </Route>
+          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['inventory.manage']} />}>
+            <Route path="/inventory" element={<InventoryManagementPage />}>
+              <Route index element={<InventoryPage />} />
+              <Route path="categories" element={<InventoryCategoriesPage />} />
+            </Route>
+          </Route>
+          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['report.performance.view']} />}>
+            <Route path="/performance" element={<PerformancePage />} />
+          </Route>
+          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['report.commission.view']} />}>
+            <Route path="/commission" element={<CommissionPage />} />
+          </Route>
+          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['staff.manage']} />}>
+            <Route path="/team" element={<TeamPage />} />
+          </Route>
           <Route path="/profile" element={<ProfilePage />} />
-          <Route path="/locations" element={<LocationsPage />} />
-          <Route path="/locations/:id" element={<LocationDetailPage />} />
-          <Route path="/locations/:id/record-settings" element={<LocationRecordSettingsPage />} />
+          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['settings.location.manage']} />}>
+            <Route path="/locations" element={<LocationsPage />} />
+            <Route path="/locations/:id" element={<LocationDetailPage />} />
+            <Route path="/locations/:id/record-settings" element={<LocationRecordSettingsPage />} />
+          </Route>
+          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['settings.booking.manage']} />}>
+            <Route path="/settings/booking" element={<BookingSettingsPage />} />
+          </Route>
+          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['locations.manage']} />}>
+            <Route path="/locations/new" element={<CreateLocationPage />} />
+            <Route path="/locations/:id/edit" element={<EditLocationPage />} />
+          </Route>
         </Route>
       </Route>
       <Route element={<ProtectedRoute allowedRoles={['owner']} />}>
         <Route element={<DashboardLayout />}>
-          <Route path="/team" element={<TeamPage />} />
-          <Route path="/settings/security-levels" element={<SecurityLevelsPage />} />
-          <Route path="/settings/booking" element={<BookingSettingsPage />} />
-          <Route path="/locations/new" element={<CreateLocationPage />} />
-          <Route path="/locations/:id/edit" element={<EditLocationPage />} />
+          <Route element={<ProtectedRoute allowedRoles={['owner']} requiredPermissions={['security.manage']} />}>
+            <Route path="/settings/security-levels" element={<SecurityLevelsPage />} />
+          </Route>
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

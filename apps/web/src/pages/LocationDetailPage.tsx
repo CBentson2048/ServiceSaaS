@@ -9,7 +9,7 @@ import type {
   TaxAppliesTo,
   TaxDisplayMode,
 } from '@sheer/domain';
-import { describeTaxedAmount } from '@sheer/domain';
+import { describeTaxedAmount, userHasPermission } from '@sheer/domain';
 import {
   ApiRequestError,
   getCancellationPolicy,
@@ -26,7 +26,11 @@ export function LocationDetailPage() {
   const auth = useAuth();
   const params = useParams<{ id: string }>();
   const accessToken = auth.session?.accessToken;
-  const role = auth.user?.primaryRole;
+  const canManageLocations = userHasPermission(auth.user, 'locations.manage');
+  const canManageLocationSettings = userHasPermission(auth.user, 'settings.location.manage');
+  const canManageBookingSettings = userHasPermission(auth.user, 'settings.booking.manage');
+  const canManageBillingSettings = userHasPermission(auth.user, 'settings.billing.manage');
+  const canManageTaxSettings = userHasPermission(auth.user, 'settings.tax.manage');
   const [location, setLocation] = useState<BusinessLocation | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -56,7 +60,7 @@ export function LocationDetailPage() {
   return (
     <div className="mx-auto w-full max-w-4xl px-4 py-6 lg:px-8">
       <nav className="mb-4 flex items-center gap-1.5 text-[12px] text-text-secondary">
-        {role === 'owner' ? (
+        {canManageLocations ? (
           <Link to="/locations" className="hover:text-text-primary transition-colors">Locations</Link>
         ) : (
           <span>My location</span>
@@ -91,13 +95,15 @@ export function LocationDetailPage() {
             </div>
             <div className="flex items-center gap-2">
               <StatusPill active={location.isActive} />
-              <Link
-                to={`/locations/${location.id}/record-settings`}
-                className="inline-flex h-9 items-center justify-center rounded-pill border border-border-strong bg-surface px-4 text-[13px] font-medium text-text-secondary transition hover:bg-surface-alt"
-              >
-                Record settings
-              </Link>
-              {role === 'owner' ? (
+              {canManageLocationSettings ? (
+                <Link
+                  to={`/locations/${location.id}/record-settings`}
+                  className="inline-flex h-9 items-center justify-center rounded-pill border border-border-strong bg-surface px-4 text-[13px] font-medium text-text-secondary transition hover:bg-surface-alt"
+                >
+                  Record settings
+                </Link>
+              ) : null}
+              {canManageLocations ? (
                 <Link
                   to={`/locations/${location.id}/edit`}
                   className="inline-flex h-9 items-center justify-center rounded-pill border border-border-strong bg-surface px-4 text-[13px] font-medium text-text-secondary transition hover:bg-surface-alt"
@@ -133,7 +139,7 @@ export function LocationDetailPage() {
                   Mandatory finishing services and upgrade prompts for public booking.
                 </p>
               </div>
-              {role === 'owner' ? (
+              {canManageBookingSettings ? (
                 <Link
                   to={`/settings/booking?locationId=${encodeURIComponent(location.id)}`}
                   className="inline-flex h-9 shrink-0 items-center justify-center rounded-pill bg-primary px-4 text-[13px] font-semibold text-text-on-primary transition hover:bg-primary-deep"
@@ -145,17 +151,17 @@ export function LocationDetailPage() {
           </section>
 
           {/* Product auto-billing */}
-          {role === 'owner' || role === 'manager' ? (
+          {canManageBillingSettings ? (
             <ProductBillingSection locationId={location.id} accessToken={accessToken} />
           ) : null}
 
           {/* Tax configuration */}
-          {role === 'owner' || role === 'manager' ? (
+          {canManageTaxSettings ? (
             <TaxSettingsSection locationId={location.id} accessToken={accessToken} />
           ) : null}
 
           {/* Cancellation policy */}
-          {role === 'owner' || role === 'manager' ? (
+          {canManageBookingSettings ? (
             <CancellationPolicySection locationId={location.id} accessToken={accessToken} />
           ) : null}
         </div>
