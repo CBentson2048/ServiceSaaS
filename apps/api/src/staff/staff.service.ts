@@ -36,6 +36,7 @@ import {
   suggestTierUpgrade,
   userHasPermission,
 } from '@sheer/domain';
+import { AuditService } from '../audit/audit.service';
 import { AuthService } from '../auth/auth.service';
 import { EmailService } from '../email/email.service';
 import { renderStaffInvitationEmail } from '../email/templates/staff-invitation.template';
@@ -136,6 +137,7 @@ export class StaffService {
     config: ConfigService,
     private readonly auth: AuthService,
     private readonly email: EmailService,
+    private readonly audit: AuditService,
   ) {
     const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
@@ -605,7 +607,7 @@ export class StaffService {
     await this.updateStaffBusinessFields(actor.businessId, targetUserId, input);
 
     if (input.securityLevelId !== undefined) {
-      await this.applySecurityLevel(actor.businessId, targetUserId, input.securityLevelId);
+      await this.applySecurityLevel(actor, targetUserId, input.securityLevelId);
     }
 
     // Replace the stylist's service eligibility (and per-stylist prices) when an
@@ -1213,10 +1215,11 @@ export class StaffService {
    * owners always resolve with every permission.
    */
   private async applySecurityLevel(
-    businessId: string,
+    actor: AuthUser,
     targetUserId: string,
     securityLevelId: string | null,
   ): Promise<void> {
+    const businessId = actor.businessId;
     if (securityLevelId) {
       const { data, error } = await this.admin
         .schema('core')
@@ -1234,6 +1237,18 @@ export class StaffService {
       }
     }
 
+    // Capture the prior assignment so the audit entry has a before/after delta.
+    const { data: current } = await this.admin
+      .schema('core')
+      .from('user_memberships')
+      .select('security_level_id')
+      .eq('business_id', businessId)
+      .eq('user_profile_id', targetUserId)
+      .in('role', ['manager', 'stylist'])
+      .limit(1)
+      .maybeSingle<{ security_level_id: string | null }>();
+    const previousLevelId = current?.security_level_id ?? null;
+
     const { error } = await this.admin
       .schema('core')
       .from('user_memberships')
@@ -1245,6 +1260,16 @@ export class StaffService {
     if (error) {
       this.logger.error(`applySecurityLevel update failed: ${error.message}`);
       throw new InternalServerErrorException('Unable to assign security level');
+    }
+
+    if (previousLevelId !== securityLevelId) {
+      await this.audit.record(actor, {
+        action: 'membership.security_level.changed',
+        entityType: 'membership',
+        entityId: targetUserId,
+        before: { securityLevelId: previousLevelId },
+        after: { securityLevelId },
+      });
     }
   }
 

@@ -16,6 +16,7 @@ import type {
   SecurityLevelBaseRole,
 } from '@sheer/domain';
 import { ALL_PERMISSIONS, SYSTEM_SECURITY_LEVELS, expandPermissions, userHasRole } from '@sheer/domain';
+import { AuditService } from '../audit/audit.service';
 import type { CreateSecurityLevelDto, UpdateSecurityLevelDto } from './dto';
 
 interface SecurityLevelRow {
@@ -47,7 +48,10 @@ export class OwnerSecurityLevelsService {
   private readonly logger = new Logger(OwnerSecurityLevelsService.name);
   private readonly admin: SupabaseClient;
 
-  constructor(config: ConfigService) {
+  constructor(
+    config: ConfigService,
+    private readonly audit: AuditService,
+  ) {
     const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
     this.admin = createClient(supabaseUrl, serviceRoleKey, {
@@ -103,7 +107,14 @@ export class OwnerSecurityLevelsService {
       throw new InternalServerErrorException('Unable to create security level');
     }
 
-    return this.toSecurityLevel(data);
+    const level = this.toSecurityLevel(data);
+    await this.audit.record(actor, {
+      action: 'security_level.created',
+      entityType: 'security_level',
+      entityId: level.id,
+      after: { name: level.name, baseRole: level.baseRole, permissions: level.permissions },
+    });
+    return level;
   }
 
   async update(actor: AuthUser, id: string, dto: UpdateSecurityLevelDto): Promise<SecurityLevel> {
@@ -139,7 +150,17 @@ export class OwnerSecurityLevelsService {
       throw new InternalServerErrorException('Unable to update security level');
     }
 
-    return this.toSecurityLevel(data);
+    const before = this.toSecurityLevel(existing);
+    const updated = this.toSecurityLevel(data);
+    await this.audit.record(actor, {
+      action: 'security_level.updated',
+      entityType: 'security_level',
+      entityId: updated.id,
+      before: { name: before.name, permissions: before.permissions },
+      after: { name: updated.name, permissions: updated.permissions },
+      metadata: { isSystem: updated.isSystem, key: updated.key },
+    });
+    return updated;
   }
 
   async remove(actor: AuthUser, id: string): Promise<void> {
@@ -163,6 +184,14 @@ export class OwnerSecurityLevelsService {
       this.logger.error(`delete security level failed: ${error.message}`);
       throw new InternalServerErrorException('Unable to delete security level');
     }
+
+    const removed = this.toSecurityLevel(existing);
+    await this.audit.record(actor, {
+      action: 'security_level.deleted',
+      entityType: 'security_level',
+      entityId: removed.id,
+      before: { name: removed.name, baseRole: removed.baseRole, permissions: removed.permissions },
+    });
   }
 
   /**

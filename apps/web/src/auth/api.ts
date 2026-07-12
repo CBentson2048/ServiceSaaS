@@ -84,6 +84,7 @@ import type {
   GetAccountResponse,
   UpdateAccountTierRequest,
   UpdateAccountTierResponse,
+  ListAuditLogResponse,
   ListSecurityLevelsResponse,
   PermissionCatalogResponse,
   SecurityLevelResponse,
@@ -1238,6 +1239,28 @@ export async function getPermissionCatalog(
   accessToken: string,
 ): Promise<PermissionCatalogResponse> {
   return request<PermissionCatalogResponse>('/owner/security-levels/permissions', { accessToken });
+}
+
+export async function listAuditEvents(
+  accessToken: string,
+  params: {
+    entityType?: string;
+    action?: string;
+    from?: string;
+    to?: string;
+    limit?: number;
+    cursor?: string;
+  } = {},
+): Promise<ListAuditLogResponse> {
+  const search = new URLSearchParams();
+  if (params.entityType) search.set('entityType', params.entityType);
+  if (params.action) search.set('action', params.action);
+  if (params.from) search.set('from', params.from);
+  if (params.to) search.set('to', params.to);
+  if (params.limit) search.set('limit', String(params.limit));
+  if (params.cursor) search.set('cursor', params.cursor);
+  const query = search.toString();
+  return request<ListAuditLogResponse>(`/audit/events${query ? `?${query}` : ''}`, { accessToken });
 }
 
 export async function createSecurityLevel(

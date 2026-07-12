@@ -223,7 +223,8 @@ export type Permission =
   | 'settings.tax.manage'
   | 'settings.booking.manage'
   | 'account.manage'
-  | 'security.manage';
+  | 'security.manage'
+  | 'audit.read';
 
 export type PermissionKind = 'report' | 'feature';
 
@@ -270,6 +271,7 @@ export const PERMISSION_CATALOG: readonly PermissionDefinition[] = [
   { key: 'settings.booking.manage', label: 'Booking settings', description: 'Edit online booking and notification settings.', kind: 'feature', group: 'Settings' },
   { key: 'account.manage', label: 'Account & plan', description: 'Change the account tier/plan.', kind: 'feature', group: 'Administration' },
   { key: 'security.manage', label: 'Security levels', description: 'Create and assign security levels.', kind: 'feature', group: 'Administration' },
+  { key: 'audit.read', label: 'Audit log', description: 'View the activity/audit trail of who did what and when.', kind: 'report', group: 'Administration' },
 ];
 
 export const ALL_PERMISSIONS: readonly Permission[] = PERMISSION_CATALOG.map((p) => p.key);
@@ -360,6 +362,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'settings.billing.manage',
     'settings.tax.manage',
     'settings.booking.manage',
+    'audit.read',
   ],
   stylist: ['bookings.manage', 'crm.view', 'retail.record', 'services.view', 'rota.view'],
   client: [],
@@ -447,6 +450,59 @@ export interface SecurityLevelResponse {
 
 export interface PermissionCatalogResponse {
   permissions: PermissionDefinition[];
+}
+
+// ===========================================================================
+// Audit log (R10 Audit & Compliance foundation)
+// ===========================================================================
+
+/**
+ * Broad category of the audited entity. Free-form at the DB layer (so new
+ * entities don't require a migration) but enumerated here for the shared UI.
+ */
+export type AuditEntityType =
+  | 'booking'
+  | 'payment'
+  | 'stock'
+  | 'security_level'
+  | 'membership'
+  | 'account'
+  | 'order';
+
+/**
+ * Dotted `entity.verb` action key, e.g. `booking.created`, `booking.cancelled`,
+ * `payment.recorded`, `stock.adjusted`, `security_level.updated`,
+ * `membership.security_level.changed`, `account.tier.changed`.
+ */
+export type AuditAction = string;
+
+export interface AuditLogActor {
+  userProfileId: string | null;
+  role: string | null;
+  name: string | null;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  businessId: string;
+  actor: AuditLogActor;
+  locationId: string | null;
+  locationName: string | null;
+  action: AuditAction;
+  entityType: string;
+  entityId: string | null;
+  /** Prior values for edits; null for creates. */
+  before: Record<string, unknown> | null;
+  /** New values for creates/edits; null for deletes. */
+  after: Record<string, unknown> | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface ListAuditLogResponse {
+  entries: AuditLogEntry[];
+  /** Opaque cursor for the next page, or null when there are no more rows. */
+  nextCursor: string | null;
 }
 
 export interface CreateSecurityLevelRequest {

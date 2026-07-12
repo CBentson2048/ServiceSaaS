@@ -1,6 +1,7 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AccountModule } from './account/account.module';
+import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
 import { CommunicationsModule } from './communications/communications.module';
 import { RequestResponseLoggingMiddleware } from './common/request-response-logging.middleware';
@@ -46,6 +47,7 @@ import { validateEnv } from './config/env.validation';
     }),
     AuthModule,
     AccountModule,
+    AuditModule,
     CommunicationsModule,
     OwnerOnboardingModule,
     ProfileModule,
