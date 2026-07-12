@@ -36,12 +36,8 @@ import {
   type RenderedMessage,
 } from './notification.templates';
 import { isValidEmail, normalizeE164, toWhatsAppAddress } from './phone';
-import { EmailService } from '../email/email.service';
-import { WhatsAppService } from './whatsapp.service';
-import { SmsService } from './sms.service';
+import { MessageProviderRegistry } from './providers/message-provider.registry';
 import { WhatsAppTemplateConfig } from './whatsapp-template.config';
-
-const EMAIL_PROVIDER = 'resend';
 
 interface DueEventRow {
   id: string;
@@ -101,9 +97,7 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
 
   constructor(
     config: ConfigService,
-    private readonly whatsapp: WhatsAppService,
-    private readonly sms: SmsService,
-    private readonly email: EmailService,
+    private readonly providers: MessageProviderRegistry,
     private readonly templates: WhatsAppTemplateConfig,
     private readonly settingsService: CommunicationSettingsService,
     private readonly booking: BookingNotificationService,
@@ -142,7 +136,7 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
   async tick(): Promise<void> {
     if (this.running) return; // prevent overlapping ticks
     // log-only mode for every channel — don't churn the queue
-    if (!this.whatsapp.isEnabled && !this.sms.isEnabled && !this.email.isEnabled) return;
+    if (!this.providers.anyEnabled) return;
     this.running = true;
     try {
       // Keep processing full batches so a backlog (e.g. accumulated during downtime, or lazy
@@ -259,8 +253,9 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
     context: AppointmentNotificationContext,
     plan: ChannelPlan,
   ): Promise<void> {
-    const whatsappViable = this.whatsapp.isEnabled && channelAllowedByPlan(plan, WHATSAPP_CHANNEL);
-    if (!whatsappViable) {
+    const provider = this.providers.forChannel(WHATSAPP_CHANNEL);
+    const whatsappViable = Boolean(provider?.isEnabled) && channelAllowedByPlan(plan, WHATSAPP_CHANNEL);
+    if (!whatsappViable || !provider) {
       // WhatsApp ineligible/unavailable now → escalate to the next channel in the chain, or skip.
       await this.escalateOrSkip(event, context, WHATSAPP_CHANNEL, plan);
       return;
@@ -284,16 +279,16 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
     }
 
     const logId = await this.ensureMessageLog(event, context, WHATSAPP_CHANNEL, message, contentSid, contentVariables);
-    const result = await this.whatsapp.send({
+    const result = await provider.send({
       to: context.clientPhone!,
-      contentSid,
-      contentVariables,
+      templateId: contentSid,
+      templateVariables: contentVariables,
       body: message.body,
-      statusCallback: this.templates.statusCallbackUrl,
+      statusCallbackUrl: this.templates.statusCallbackUrl,
     });
 
     if (result.accepted) {
-      await this.markAccepted(event, logId, this.whatsapp.provider, result.providerMessageId, result.providerStatus);
+      await this.markAccepted(event, logId, provider.providerName, result.providerMessageId, result.providerStatus);
     } else {
       // A real send failure. Retry; on terminal failure escalate to the next channel in the chain.
       await this.markFailed(event, logId, result.error ?? 'WhatsApp send failed', plan);
@@ -305,8 +300,9 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
     context: AppointmentNotificationContext,
     plan: ChannelPlan,
   ): Promise<void> {
-    const smsViable = this.sms.isEnabled && channelAllowedByPlan(plan, SMS_CHANNEL);
-    if (!smsViable) {
+    const provider = this.providers.forChannel(SMS_CHANNEL);
+    const smsViable = Boolean(provider?.isEnabled) && channelAllowedByPlan(plan, SMS_CHANNEL);
+    if (!smsViable || !provider) {
       // SMS is the last channel in the chain → escalateOrSkip records a truthful skip.
       await this.escalateOrSkip(event, context, SMS_CHANNEL, plan);
       return;
@@ -317,14 +313,14 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
     const message = renderNotification(eventKey, renderCtx);
 
     const logId = await this.ensureMessageLog(event, context, SMS_CHANNEL, message, undefined, buildContentVariables(renderCtx));
-    const result = await this.sms.send({
+    const result = await provider.send({
       to: context.clientPhone!,
       body: message.body,
-      statusCallback: this.templates.statusCallbackUrl,
+      statusCallbackUrl: this.templates.statusCallbackUrl,
     });
 
     if (result.accepted) {
-      await this.markAccepted(event, logId, this.sms.provider, result.providerMessageId, result.providerStatus);
+      await this.markAccepted(event, logId, provider.providerName, result.providerMessageId, result.providerStatus);
     } else {
       // SMS is the last channel — markFailed finds no next channel, so there is no further fallback.
       await this.markFailed(event, logId, result.error ?? 'SMS send failed', plan);
@@ -336,8 +332,9 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
     context: AppointmentNotificationContext,
     plan: ChannelPlan,
   ): Promise<void> {
-    const emailViable = this.email.isEnabled && channelAllowedByPlan(plan, EMAIL_CHANNEL);
-    if (!emailViable) {
+    const provider = this.providers.forChannel(EMAIL_CHANNEL);
+    const emailViable = Boolean(provider?.isEnabled) && channelAllowedByPlan(plan, EMAIL_CHANNEL);
+    if (!emailViable || !provider) {
       // Email ineligible/unavailable now → escalate to the next channel (SMS), or skip truthfully.
       await this.escalateOrSkip(event, context, EMAIL_CHANNEL, plan);
       return;
@@ -349,7 +346,7 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
     const email = renderEmail(eventKey, renderCtx);
 
     const logId = await this.ensureMessageLog(event, context, EMAIL_CHANNEL, message, undefined, buildContentVariables(renderCtx));
-    const result = await this.email.send({
+    const result = await provider.send({
       to: context.clientEmail!,
       subject: email.subject,
       html: email.html,
@@ -357,11 +354,11 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
       tags: [{ name: 'type', value: eventKey }],
     });
 
-    if (result.delivered) {
+    if (result.accepted) {
       // Resend accepted the message → `sent`. The Resend bounce/delivery webhook advances it to
       // delivered/failed and escalates to SMS on a real bounce. We never claim `delivered` here, and
       // a merely-accepted (pending) email never triggers SMS.
-      await this.markAccepted(event, logId, EMAIL_PROVIDER, result.id, undefined);
+      await this.markAccepted(event, logId, provider.providerName, result.providerMessageId, undefined);
     } else if (result.skipped) {
       // Sender lost its config between scheduling and dispatch → escalate to the next channel / skip.
       await this.escalateOrSkip(event, context, EMAIL_CHANNEL, plan);
@@ -401,10 +398,7 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
   }
 
   private senderDisabled(channel: DeliveryChannel): boolean {
-    if (channel === WHATSAPP_CHANNEL) return !this.whatsapp.isEnabled;
-    if (channel === SMS_CHANNEL) return !this.sms.isEnabled;
-    if (channel === EMAIL_CHANNEL) return !this.email.isEnabled;
-    return true;
+    return !this.providers.isChannelEnabled(channel);
   }
 
   private renderContext(context: AppointmentNotificationContext): NotificationContext {
@@ -425,7 +419,7 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
   }
 
   private providerFor(channel: DeliveryChannel): string {
-    return channel === EMAIL_CHANNEL ? EMAIL_PROVIDER : this.whatsapp.provider;
+    return this.providers.providerName(channel) ?? 'unknown';
   }
 
   /** Find the existing message log for retries, or create one in `queued` state. */

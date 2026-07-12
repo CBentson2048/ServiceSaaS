@@ -3,10 +3,8 @@ import type { LocationCommunicationSettings } from '@sheer/domain';
 import { NotificationDispatchService } from './notification-dispatch.service';
 import type { BookingNotificationService } from './booking-notification.service';
 import type { CommunicationSettingsService } from './communication-settings.service';
-import type { SmsService } from './sms.service';
-import type { WhatsAppService } from './whatsapp.service';
+import type { MessageProviderRegistry } from './providers/message-provider.registry';
 import type { WhatsAppTemplateConfig } from './whatsapp-template.config';
-import type { EmailService } from '../email/email.service';
 
 const DAY = 86_400_000;
 const FUTURE = new Date(Date.now() + 3 * DAY).toISOString();
@@ -106,6 +104,13 @@ function baseState(over: Partial<State> = {}): State {
   };
 }
 
+interface ProviderMock {
+  channel: string;
+  providerName: string;
+  isEnabled: boolean;
+  send: jest.Mock;
+}
+
 function makeDispatcher(
   state: State,
   set: LocationCommunicationSettings,
@@ -118,20 +123,36 @@ function makeDispatcher(
   } = {},
 ) {
   const config = { getOrThrow: () => 'https://example.supabase.co', get: () => undefined } as unknown as ConfigService;
-  const whatsapp = {
+  // Provider mocks now sit behind the MessageProviderRegistry seam — the dispatcher only ever talks to
+  // the registry, so swapping a provider is invisible to it. Each mock implements the normalised
+  // MessageProvider contract ({ channel, providerName, isEnabled, send → ProviderSendResult }).
+  const whatsapp: ProviderMock = {
+    channel: 'whatsapp',
+    providerName: 'twilio',
     isEnabled: opts.whatsappEnabled ?? true,
-    provider: 'twilio',
     send: jest.fn().mockResolvedValue(opts.whatsappResult ?? { accepted: true, providerMessageId: 'SM1', providerStatus: 'queued' }),
-  } as unknown as WhatsAppService;
-  const sms = {
+  };
+  const sms: ProviderMock = {
+    channel: 'sms',
+    providerName: 'twilio',
     isEnabled: opts.smsEnabled ?? true,
-    provider: 'twilio',
     send: jest.fn().mockResolvedValue({ accepted: true, providerMessageId: 'SMS1', providerStatus: 'queued' }),
-  } as unknown as SmsService;
-  const email = {
+  };
+  const email: ProviderMock = {
+    channel: 'email',
+    providerName: 'resend',
     isEnabled: opts.emailEnabled ?? true,
-    send: jest.fn().mockResolvedValue(opts.emailResult ?? { delivered: true, id: 'resend-1' }),
-  } as unknown as EmailService;
+    send: jest.fn().mockResolvedValue(opts.emailResult ?? { accepted: true, providerMessageId: 'resend-1' }),
+  };
+  const byChannel: Record<string, ProviderMock> = { whatsapp, sms, email };
+  const providers = {
+    forChannel: (ch: string) => byChannel[ch],
+    isChannelEnabled: (ch: string) => byChannel[ch]?.isEnabled ?? false,
+    providerName: (ch: string) => byChannel[ch]?.providerName,
+    get anyEnabled() {
+      return Object.values(byChannel).some((p) => p.isEnabled);
+    },
+  } as unknown as MessageProviderRegistry;
   const templates = { contentSidFor: () => 'HX1', statusCallbackUrl: 'https://cb' } as unknown as WhatsAppTemplateConfig;
   const settingsService = { getForLocation: jest.fn().mockResolvedValue(set) } as unknown as CommunicationSettingsService;
   const booking = {
@@ -143,7 +164,7 @@ function makeDispatcher(
     }),
   } as unknown as BookingNotificationService;
 
-  const d = new NotificationDispatchService(config, whatsapp, sms, email, templates, settingsService, booking);
+  const d = new NotificationDispatchService(config, providers, templates, settingsService, booking);
   (d as unknown as { admin: unknown }).admin = makeFakeClient(state);
   return { d, whatsapp, sms, email, booking };
 }
@@ -196,7 +217,7 @@ describe('NotificationDispatchService channel + fallback behaviour', () => {
   it('delegates escalation on a terminal EMAIL send failure (email → SMS)', async () => {
     const state = baseState();
     const { d } = makeDispatcher(state, settings({ emailFallbackEnabled: true }), {
-      emailResult: { delivered: false, error: 'rejected' },
+      emailResult: { accepted: false, error: 'rejected' },
     });
     await run(d, event({ channel: 'email', attempts: 3 }));
 
@@ -275,7 +296,7 @@ describe('NotificationDispatchService channel + fallback behaviour', () => {
     const { d, sms } = makeDispatcher(
       state,
       settings({ emailFallbackEnabled: true, smsFallbackEnabled: true }),
-      { emailResult: { delivered: true, id: 'resend-2' } },
+      { emailResult: { accepted: true, providerMessageId: 'resend-2' } },
     );
     await run(d, event({ channel: 'email', payload_json: { appointment_start: FUTURE, fallback: true, primary_channel: 'whatsapp' } }));
 
