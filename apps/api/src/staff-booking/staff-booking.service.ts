@@ -18,6 +18,7 @@ import type {
   PublicBookingStylistsResponse,
 } from '@sheer/domain';
 import { userHasRole } from '@sheer/domain';
+import { AuditService } from '../audit/audit.service';
 import { CrmService } from '../crm/crm.service';
 import { PublicBookingService } from '../public-booking/public-booking.service';
 import type {
@@ -52,6 +53,7 @@ export class StaffBookingService {
     config: ConfigService,
     private readonly publicBooking: PublicBookingService,
     private readonly crm: CrmService,
+    private readonly audit: AuditService,
   ) {
     const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
@@ -116,11 +118,32 @@ export class StaffBookingService {
   ): Promise<CreateStaffBookingResponse> {
     this.assertLocationScope(actor, request.locationId);
     await this.assertClientInScope(actor, request.clientProfileId, request.locationId);
-    return this.publicBooking.createInternalBooking({
+    const result = await this.publicBooking.createInternalBooking({
       businessId: actor.businessId,
       bookedByUserProfileId: actor.id,
       request,
     });
+
+    await this.audit.record(actor, {
+      action: 'booking.created',
+      entityType: 'booking',
+      entityId: result.appointment.id,
+      locationId: result.appointment.locationId,
+      after: {
+        status: result.appointment.status,
+        scheduledStartAt: result.appointment.scheduledStartAt,
+        scheduledEndAt: result.appointment.scheduledEndAt,
+        serviceIds: result.appointment.serviceIds,
+        staffProfileId: result.appointment.staffProfileId,
+      },
+      metadata: {
+        clientProfileId: request.clientProfileId,
+        bookingSource: result.bookingSource,
+        paymentMode: result.paymentMode,
+      },
+    });
+
+    return result;
   }
 
   private assertLocationScope(actor: AuthUser, locationId: string): void {

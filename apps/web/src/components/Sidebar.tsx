@@ -52,6 +52,7 @@ const NAV: NavItem[] = [
   },
   { to: '/locations', label: 'Locations', icon: PinIcon, allowedRoles: ['owner', 'manager'], permission: 'settings.location.manage' },
   { to: '/settings/booking', label: 'Booking settings', icon: GearIcon, allowedRoles: ['owner', 'manager'], permission: 'settings.booking.manage' },
+  { to: '/audit-log', label: 'Audit log', icon: ShieldIcon, allowedRoles: ['owner', 'manager'], permission: 'audit.read' },
 ];
 
 // Keeps leaf entries and any group that still has at least one role-visible child.

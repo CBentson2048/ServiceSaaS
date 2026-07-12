@@ -14,6 +14,7 @@ import {
   suggestTierUpgrade,
   userHasRole,
 } from '@sheer/domain';
+import { AuditService } from '../audit/audit.service';
 
 const VALID_TIERS: readonly BusinessTier[] = ['solo', 'studio', 'salon', 'group'];
 
@@ -22,7 +23,10 @@ export class AccountService {
   private readonly logger = new Logger(AccountService.name);
   private readonly admin: SupabaseClient;
 
-  constructor(config: ConfigService) {
+  constructor(
+    config: ConfigService,
+    private readonly audit: AuditService,
+  ) {
     const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
     this.admin = createClient(supabaseUrl, serviceRoleKey, {
@@ -51,6 +55,7 @@ export class AccountService {
       throw new ConflictException('Unknown account tier');
     }
 
+    const previousTier = await this.fetchTier(actor.businessId);
     const usage = await this.fetchUsage(actor.businessId);
     const limits = getBusinessTierLimits(nextTier);
 
@@ -74,6 +79,16 @@ export class AccountService {
     if (error) {
       this.logger.error(`updateTier failed: ${error.message}`);
       throw new InternalServerErrorException('Unable to update account tier');
+    }
+
+    if (previousTier !== nextTier) {
+      await this.audit.record(actor, {
+        action: 'account.tier.changed',
+        entityType: 'account',
+        entityId: actor.businessId,
+        before: { tier: previousTier },
+        after: { tier: nextTier },
+      });
     }
 
     return this.buildState(actor.businessId, nextTier, usage);

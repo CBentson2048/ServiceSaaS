@@ -27,6 +27,7 @@ import type {
   ListInventoryStockResponse,
 } from '@sheer/domain';
 import { userHasPermission, userHasRole } from '@sheer/domain';
+import { AuditService } from '../audit/audit.service';
 import type { LabRuntimeSession } from '../lab-session/lab-session.service';
 import type {
   AdjustInventoryStockDto,
@@ -126,7 +127,10 @@ export class InventoryService {
   private readonly logger = new Logger(InventoryService.name);
   private readonly admin: SupabaseClient;
 
-  constructor(config: ConfigService) {
+  constructor(
+    config: ConfigService,
+    private readonly audit: AuditService,
+  ) {
     const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
     this.admin = createClient(supabaseUrl, serviceRoleKey, {
@@ -316,7 +320,25 @@ export class InventoryService {
       this.logger.error(`adjustStock failed: ${error.message}`);
       throw new InternalServerErrorException('Unable to adjust stock');
     }
-    return { stock: await this.fetchStock(actor, dto.locationId, dto.productId) };
+
+    const stock = await this.fetchStock(actor, dto.locationId, dto.productId);
+    const afterGrams = stock.quantityOnHandGrams;
+    await this.audit.record(actor, {
+      action: 'stock.adjusted',
+      entityType: 'stock',
+      entityId: dto.productId,
+      locationId: dto.locationId,
+      before: { quantityOnHandGrams: afterGrams - dto.quantityDeltaGrams },
+      after: { quantityOnHandGrams: afterGrams },
+      metadata: {
+        movementType: dto.movementType,
+        quantityDeltaGrams: dto.quantityDeltaGrams,
+        reason: dto.reason ?? null,
+        notes: dto.notes ?? null,
+        productName: stock.productName ?? null,
+      },
+    });
+    return { stock };
   }
 
   async updateStockThreshold(

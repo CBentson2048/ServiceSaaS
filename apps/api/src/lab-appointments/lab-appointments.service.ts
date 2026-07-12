@@ -49,6 +49,7 @@ import {
   parseMultirange,
   toMultirangeLiteral,
 } from '../common/occupied-ranges';
+import { AuditService } from '../audit/audit.service';
 import { BookingNotificationService } from '../communications/booking-notification.service';
 import type { LabRuntimeSession } from '../lab-session/lab-session.service';
 import { OwnerTaxSettingsService } from '../owner-tax-settings/owner-tax-settings.service';
@@ -299,6 +300,7 @@ export class LabAppointmentsService {
     private readonly taxSettings: OwnerTaxSettingsService,
     private readonly bookingNotifications: BookingNotificationService,
     private readonly stripe: StripeService,
+    private readonly audit: AuditService,
   ) {
     const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
@@ -778,6 +780,21 @@ export class LabAppointmentsService {
     }
     await this.bookingNotifications.syncBookingNotificationsSafe(data.id);
 
+    await this.audit.record(actor, {
+      action: 'booking.cancelled',
+      entityType: 'booking',
+      entityId: data.id,
+      locationId: data.location_id,
+      before: { status: appointment.status },
+      after: { status: 'cancelled', cancellationReason: reason?.trim() || 'Cancelled by salon' },
+      metadata: {
+        clientProfileId: data.client_profile_id,
+        depositRefunded,
+        depositForfeited,
+        cancelledBy: 'salon',
+      },
+    });
+
     const clientsById = await this.fetchClientProfiles(actor.businessId, [data.client_profile_id]);
     return {
       appointment: toBookingDetail(data, clientsById.get(data.client_profile_id)),
@@ -856,6 +873,21 @@ export class LabAppointmentsService {
       depositForfeited = arrayOf(data.deposits).some((deposit) => deposit.status === 'paid');
     }
     await this.bookingNotifications.syncBookingNotificationsSafe(data.id);
+
+    await this.audit.record(actor, {
+      action: 'booking.cancelled',
+      entityType: 'booking',
+      entityId: data.id,
+      locationId: data.location_id,
+      before: { status: appointment.status },
+      after: { status: 'cancelled', cancellationReason: reason?.trim() || 'Cancelled by client' },
+      metadata: {
+        clientProfileId: data.client_profile_id,
+        depositRefunded,
+        depositForfeited,
+        cancelledBy: 'client',
+      },
+    });
 
     const clientsById = await this.fetchClientProfiles(actor.businessId, [data.client_profile_id]);
     return {
@@ -1473,6 +1505,26 @@ export class LabAppointmentsService {
     const paidVisit = visit.status === 'paid'
       ? visit
       : await this.markVisitPaid(visit, appointment.business_id, actor, paidAt, confirmedByStaffProfileId);
+    if (!existingPayment) {
+      await this.audit.record(actor, {
+        action: 'payment.recorded',
+        entityType: 'payment',
+        entityId: payment.id,
+        locationId: appointment.location_id,
+        after: {
+          amountCents: payment.amount_cents,
+          currencyCode: billing.currencyCode,
+          paymentMethod: input.paymentMethod,
+        },
+        metadata: {
+          appointmentId: appointment.id,
+          visitId: visit.id,
+          clientProfileId: appointment.client_profile_id,
+          source: 'in_salon_checkout',
+        },
+      });
+    }
+
     const clientsById = await this.fetchClientProfiles(actor.businessId, [paidAppointment.client_profile_id]);
     const responseBilling: AppointmentPaymentConfirmationResponse['billing'] = {
       ...billing,

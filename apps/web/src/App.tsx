@@ -3,6 +3,7 @@ import { ProtectedRoute } from './auth/ProtectedRoute';
 import { DashboardLayout } from './layouts/DashboardLayout';
 import { AcceptInvitationPage } from './pages/AcceptInvitationPage';
 import { AccountCreatedPage } from './pages/AccountCreatedPage';
+import { AuditLogPage } from './pages/AuditLogPage';
 import { BookingSettingsPage } from './pages/BookingSettingsPage';
 import { SecurityLevelsPage } from './pages/SecurityLevelsPage';
 import { ClientBookingAccountPage } from './pages/ClientBookingAccountPage';
@@ -142,6 +143,9 @@ export function App() {
           </Route>
           <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['staff.manage']} />}>
             <Route path="/team" element={<TeamPage />} />
+          </Route>
+          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['audit.read']} />}>
+            <Route path="/audit-log" element={<AuditLogPage />} />
           </Route>
           <Route path="/profile" element={<ProfilePage />} />
           <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['settings.location.manage']} />}>
