@@ -1,4 +1,4 @@
-import type { FormEvent} from 'react';
+import type { FormEvent, ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import type {
   BusinessLocationSummary,
@@ -81,6 +81,33 @@ function formatBasePrice(service: ManagedService): string {
   } catch {
     return String(service.basePrice);
   }
+}
+
+// A titled, bordered group used to break the editor into scannable sections
+// instead of one long flat grid. `bodyClassName` lets a section opt into its
+// own layout (grid columns, spacing) while keeping a consistent chrome.
+function FormSection({
+  title,
+  description,
+  children,
+  bodyClassName = 'grid gap-4 sm:grid-cols-2',
+}: {
+  title: string;
+  description?: string;
+  children: ReactNode;
+  bodyClassName?: string;
+}) {
+  return (
+    <section className="overflow-hidden rounded-card-lg border border-border bg-surface">
+      <div className="border-b border-border bg-surface-alt px-4 py-2.5">
+        <h3 className="text-[12px] font-semibold uppercase tracking-[0.1em] text-text-secondary">
+          {title}
+        </h3>
+        {description ? <p className="mt-0.5 text-[12px] text-text-muted">{description}</p> : null}
+      </div>
+      <div className={`px-4 py-4 ${bodyClassName}`}>{children}</div>
+    </section>
+  );
 }
 
 export function EditStaffModal({
@@ -386,6 +413,7 @@ export function EditStaffModal({
     <Modal
       open={open}
       onClose={onClose}
+      widthClassName="max-w-3xl"
       title={isOwner ? 'Your stylist role' : `Edit ${staff.fullName || staff.email}`}
       description={
         isOwner
@@ -414,7 +442,14 @@ export function EditStaffModal({
       }
     >
       <form id="edit-staff-form" onSubmit={onSubmit} className="space-y-4">
-        <div className="grid gap-4 sm:grid-cols-2">
+        <FormSection
+          title="Access"
+          description={
+            isOwner
+              ? 'Your owner access is always on — add the stylist role to become bookable.'
+              : 'Roles, location and sign-in status for this team member.'
+          }
+        >
           <div>
             <span className="mb-1.5 block text-[12px] font-medium text-text-secondary">Roles</span>
             <div className="flex flex-wrap gap-2">
@@ -490,103 +525,188 @@ export function EditStaffModal({
               hint="Suspended team members keep their history but cannot sign in until reactivated."
             />
           )}
-        </div>
-
-        {isOwner || !canManageSecurity ? null : (
-          <SelectField
-            label="Security level"
-            value={form.securityLevelId}
-            onValueChange={(v) => setForm({ ...form, securityLevelId: v })}
-            options={[
-              { value: '', label: 'Default (base role permissions)' },
-              ...securityLevels.map((level) => ({
-                value: level.id,
-                label: level.isSystem ? `${level.name} (built-in)` : level.name,
-              })),
-            ]}
-            hint="Controls what this member can see and do (reports, financials, settings). Manage levels under Team Hub → Security levels."
-          />
-        )}
+          {isOwner || !canManageSecurity ? null : (
+            <SelectField
+              label="Security level"
+              value={form.securityLevelId}
+              onValueChange={(v) => setForm({ ...form, securityLevelId: v })}
+              options={[
+                { value: '', label: 'Default (base role permissions)' },
+                ...securityLevels.map((level) => ({
+                  value: level.id,
+                  label: level.isSystem ? `${level.name} (built-in)` : level.name,
+                })),
+              ]}
+              className="sm:col-span-2"
+              hint="Controls what this member can see and do (reports, financials, settings). Manage levels under Team Hub → Security levels."
+            />
+          )}
+        </FormSection>
 
         {form.roles.includes('stylist') ? (
-          <div className="grid gap-4 sm:grid-cols-2">
-            <TextField
-              label="Display name"
-              value={form.displayName}
-              onValueChange={(v) => setForm({ ...form, displayName: v })}
-              optional
-            />
-            <TextField
-              label="Calendar colour"
-              value={form.colorHex}
-              onValueChange={(v) => setForm({ ...form, colorHex: v })}
-              hint="Hex colour like #A67CF5"
-              error={errors.colorHex}
-              optional
-            />
-            <TextField
-              label="Bio"
-              value={form.bio}
-              onValueChange={(v) => setForm({ ...form, bio: v })}
-              optional
-              className="sm:col-span-2"
-            />
-            {canManagePay ? (
+          <>
+            <FormSection
+              title="Profile"
+              description="How this stylist appears on the schedule and to clients."
+            >
               <TextField
-                label="Hourly rate"
-                value={form.hourlyRate}
-                onValueChange={(v) => setForm({ ...form, hourlyRate: v })}
-                error={errors.hourlyRate}
+                label="Display name"
+                value={form.displayName}
+                onValueChange={(v) => setForm({ ...form, displayName: v })}
+                optional
               />
-            ) : null}
-            <TextField
-              label="Contracted hours"
-              value={form.contractedHours}
-              onValueChange={(v) => setForm({ ...form, contractedHours: v })}
-              error={errors.contractedHours}
-            />
-            <TextField
-              label="Average bill benchmark"
-              value={form.averageBillBenchmark}
-              onValueChange={(v) => setForm({ ...form, averageBillBenchmark: v })}
-              error={errors.averageBillBenchmark}
-            />
-            <TextField
-              label="Leave / absence context"
-              value={form.leaveNotes}
-              onValueChange={(v) => setForm({ ...form, leaveNotes: v })}
-              optional
-            />
-
-            <div className="sm:col-span-2 mt-1 border-t border-border pt-3">
-              <span className="text-[12px] font-semibold uppercase tracking-[0.08em] text-text-secondary">
-                Employment record
-              </span>
-            </div>
-            {form.qCode ? (
-              <div className="sm:col-span-2 flex items-center gap-2 text-[13px]">
-                <span className="text-text-secondary">Q Code</span>
-                <span className="rounded-input border border-border-strong bg-surface-alt px-2.5 py-1 font-mono font-semibold tracking-[0.15em] text-text-primary">
-                  {form.qCode}
+              <TextField
+                label="Calendar colour"
+                value={form.colorHex}
+                onValueChange={(v) => setForm({ ...form, colorHex: v })}
+                hint="Hex colour like #A67CF5"
+                error={errors.colorHex}
+                optional
+              />
+              <TextField
+                label="Bio"
+                value={form.bio}
+                onValueChange={(v) => setForm({ ...form, bio: v })}
+                optional
+                className="sm:col-span-2"
+              />
+              <div className="sm:col-span-2">
+                <span className="mb-1.5 block text-[12px] font-semibold uppercase tracking-[0.12em] text-text-secondary">
+                  Provider photo <span className="font-normal normal-case tracking-normal text-text-muted">(optional)</span>
                 </span>
-                <span className="text-[12px] text-text-muted">Assigned automatically · never changes</span>
+                <div
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    void handlePhotoFile(event.dataTransfer.files?.[0]);
+                  }}
+                  className="flex items-center gap-4 rounded-input-lg border border-dashed border-border-strong bg-surface-alt px-4 py-3"
+                >
+                  {form.photoUrl ? (
+                    <img
+                      src={form.photoUrl}
+                      alt="Provider"
+                      className="h-16 w-16 shrink-0 rounded-full object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-[11px] text-text-secondary">
+                      No photo
+                    </div>
+                  )}
+                  <div className="flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <label className="inline-flex cursor-pointer items-center rounded-pill border border-border-strong bg-surface px-3 py-1.5 text-[13px] font-medium text-text-primary transition hover:bg-surface-alt">
+                        {photoUploading ? 'Uploading…' : form.photoUrl ? 'Replace photo' : 'Upload photo'}
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp"
+                          className="hidden"
+                          disabled={photoUploading}
+                          onChange={(event) => {
+                            void handlePhotoFile(event.target.files?.[0]);
+                            event.target.value = '';
+                          }}
+                        />
+                      </label>
+                      {form.photoUrl ? (
+                        <button
+                          type="button"
+                          onClick={() => setForm({ ...form, photoUrl: '' })}
+                          className="text-[13px] font-medium text-danger hover:underline"
+                        >
+                          Remove
+                        </button>
+                      ) : null}
+                    </div>
+                    <p className="mt-1 text-[12px] text-text-secondary">
+                      Drag &amp; drop or choose a JPEG/PNG/WebP (max 5 MB). Shown internally and in the
+                      client-facing Salon Suite.
+                    </p>
+                    {photoError ? <p className="mt-1 text-[12px] text-danger">{photoError}</p> : null}
+                  </div>
+                </div>
               </div>
-            ) : null}
-            <SelectField
-              label="Employment type"
-              value={form.employmentType}
-              onValueChange={(v) => setForm({ ...form, employmentType: v as StaffEmploymentType })}
-              options={Object.entries(STAFF_EMPLOYMENT_TYPE_LABELS).map(([value, label]) => ({ value, label }))}
-            />
-            <SelectField
-              label="Status"
-              value={form.employmentStatus}
-              onValueChange={(v) => setForm({ ...form, employmentStatus: v as StaffEmploymentStatus })}
-              options={Object.entries(STAFF_EMPLOYMENT_STATUS_LABELS).map(([value, label]) => ({ value, label }))}
-              hint="Employment status used by KPIs & P&L (separate from sign-in membership status)."
-            />
+              <label className="flex items-center gap-2 sm:col-span-2 text-[13px] text-text-secondary">
+                <input
+                  type="checkbox"
+                  checked={form.isBookable}
+                  onChange={(event) => setForm({ ...form, isBookable: event.target.checked })}
+                  className="h-4 w-4 rounded border-border-strong text-primary focus:ring-primary"
+                />
+                Bookable on the schedule
+              </label>
+            </FormSection>
+
+            <FormSection
+              title="Employment"
+              description="Contract details feeding KPIs, P&L and holiday tracking."
+            >
+              {form.qCode ? (
+                <div className="sm:col-span-2 flex flex-wrap items-center gap-2 rounded-input-lg border border-border bg-surface-alt px-3 py-2 text-[13px]">
+                  <span className="text-text-secondary">Q Code</span>
+                  <span className="rounded-input border border-border-strong bg-surface px-2.5 py-1 font-mono font-semibold tracking-[0.15em] text-text-primary">
+                    {form.qCode}
+                  </span>
+                  <span className="text-[12px] text-text-muted">Assigned automatically · never changes</span>
+                </div>
+              ) : null}
+              <SelectField
+                label="Employment type"
+                value={form.employmentType}
+                onValueChange={(v) => setForm({ ...form, employmentType: v as StaffEmploymentType })}
+                options={Object.entries(STAFF_EMPLOYMENT_TYPE_LABELS).map(([value, label]) => ({ value, label }))}
+              />
+              <SelectField
+                label="Status"
+                value={form.employmentStatus}
+                onValueChange={(v) => setForm({ ...form, employmentStatus: v as StaffEmploymentStatus })}
+                options={Object.entries(STAFF_EMPLOYMENT_STATUS_LABELS).map(([value, label]) => ({ value, label }))}
+                hint="Employment status used by KPIs & P&L (separate from sign-in membership status)."
+              />
+              <TextField
+                label="Start date"
+                type="date"
+                value={form.startDate}
+                onValueChange={(v) => setForm({ ...form, startDate: v })}
+                optional
+              />
+              <TextField
+                label="Contracted hours"
+                value={form.contractedHours}
+                onValueChange={(v) => setForm({ ...form, contractedHours: v })}
+                error={errors.contractedHours}
+              />
+              <TextField
+                label="Holiday entitlement (days)"
+                value={form.holidayEntitlementDays}
+                onValueChange={(v) => setForm({ ...form, holidayEntitlementDays: v })}
+                error={errors.holidayEntitlementDays}
+              />
+              <TextField
+                label="Leave / absence context"
+                value={form.leaveNotes}
+                onValueChange={(v) => setForm({ ...form, leaveNotes: v })}
+                optional
+              />
+            </FormSection>
+
             {canManagePay ? (
-              <>
+              <FormSection
+                title="Pay & commission"
+                description="Sensitive pay data — only visible to owners and pay managers."
+              >
+                <TextField
+                  label="Hourly rate"
+                  value={form.hourlyRate}
+                  onValueChange={(v) => setForm({ ...form, hourlyRate: v })}
+                  error={errors.hourlyRate}
+                />
+                <TextField
+                  label="Colour allowance"
+                  value={form.colourAllowanceAmount}
+                  onValueChange={(v) => setForm({ ...form, colourAllowanceAmount: v })}
+                  error={errors.colourAllowanceAmount}
+                />
                 <SelectField
                   label="Commission structure"
                   value={form.commissionStructure}
@@ -602,149 +722,74 @@ export function EditStaffModal({
                   error={errors.commissionFlatRatePercent}
                   hint="Used when commission structure is Flat rate."
                 />
-              </>
+              </FormSection>
             ) : null}
-            <TextField
-              label="Start date"
-              type="date"
-              value={form.startDate}
-              onValueChange={(v) => setForm({ ...form, startDate: v })}
-              optional
-            />
-            {canManagePay ? (
-              <>
-                <TextField
-                  label="Performance target"
-                  value={form.performanceTargetAmount}
-                  onValueChange={(v) => setForm({ ...form, performanceTargetAmount: v })}
-                  error={errors.performanceTargetAmount}
-                  hint="Leave blank to use the computed target."
-                  optional
-                />
-                <SelectField
-                  label="Performance target basis"
-                  value={form.performanceTargetMode}
-                  onValueChange={(v) =>
-                    setForm({ ...form, performanceTargetMode: v as StaffPerformanceTargetMode })
-                  }
-                  options={Object.entries(STAFF_PERFORMANCE_TARGET_MODE_LABELS).map(([value, label]) => ({
-                    value,
-                    label,
-                  }))}
-                  hint={STAFF_PERFORMANCE_TARGET_MODE_DESCRIPTIONS[form.performanceTargetMode]}
-                />
-              </>
-            ) : null}
-            <TextField
-              label="Holiday entitlement (days)"
-              value={form.holidayEntitlementDays}
-              onValueChange={(v) => setForm({ ...form, holidayEntitlementDays: v })}
-              error={errors.holidayEntitlementDays}
-            />
-            {canManagePay ? (
+
+            <FormSection
+              title="Targets & KPIs"
+              description="Benchmarks used to measure this stylist's performance."
+            >
               <TextField
-                label="Colour allowance"
-                value={form.colourAllowanceAmount}
-                onValueChange={(v) => setForm({ ...form, colourAllowanceAmount: v })}
-                error={errors.colourAllowanceAmount}
+                label="Average bill benchmark"
+                value={form.averageBillBenchmark}
+                onValueChange={(v) => setForm({ ...form, averageBillBenchmark: v })}
+                error={errors.averageBillBenchmark}
               />
-            ) : null}
-            <div className="sm:col-span-2">
-              <span className="mb-1 block text-[13px] font-medium text-text-primary">
-                Provider photo <span className="font-normal text-text-secondary">(optional)</span>
-              </span>
-              <div
-                onDragOver={(event) => event.preventDefault()}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  void handlePhotoFile(event.dataTransfer.files?.[0]);
-                }}
-                className="flex items-center gap-4 rounded-input-lg border border-dashed border-border-strong bg-surface-alt px-4 py-3"
-              >
-                {form.photoUrl ? (
-                  <img
-                    src={form.photoUrl}
-                    alt="Provider"
-                    className="h-16 w-16 shrink-0 rounded-full object-cover"
+              {canManagePay ? (
+                <>
+                  <TextField
+                    label="Performance target"
+                    value={form.performanceTargetAmount}
+                    onValueChange={(v) => setForm({ ...form, performanceTargetAmount: v })}
+                    error={errors.performanceTargetAmount}
+                    hint="Leave blank to use the computed target."
+                    optional
                   />
-                ) : (
-                  <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-[11px] text-text-secondary">
-                    No photo
-                  </div>
-                )}
-                <div className="flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <label className="inline-flex cursor-pointer items-center rounded-pill border border-border-strong bg-surface px-3 py-1.5 text-[13px] font-medium text-text-primary transition hover:bg-surface-alt">
-                      {photoUploading ? 'Uploading…' : form.photoUrl ? 'Replace photo' : 'Upload photo'}
-                      <input
-                        type="file"
-                        accept="image/jpeg,image/png,image/webp"
-                        className="hidden"
-                        disabled={photoUploading}
-                        onChange={(event) => {
-                          void handlePhotoFile(event.target.files?.[0]);
-                          event.target.value = '';
-                        }}
-                      />
-                    </label>
-                    {form.photoUrl ? (
-                      <button
-                        type="button"
-                        onClick={() => setForm({ ...form, photoUrl: '' })}
-                        className="text-[13px] font-medium text-danger hover:underline"
-                      >
-                        Remove
-                      </button>
-                    ) : null}
-                  </div>
-                  <p className="mt-1 text-[12px] text-text-secondary">
-                    Drag &amp; drop or choose a JPEG/PNG/WebP (max 5 MB). Shown internally and in the
-                    client-facing Salon Suite.
-                  </p>
-                  {photoError ? <p className="mt-1 text-[12px] text-danger">{photoError}</p> : null}
+                  <SelectField
+                    label="Performance target basis"
+                    value={form.performanceTargetMode}
+                    onValueChange={(v) =>
+                      setForm({ ...form, performanceTargetMode: v as StaffPerformanceTargetMode })
+                    }
+                    options={Object.entries(STAFF_PERFORMANCE_TARGET_MODE_LABELS).map(([value, label]) => ({
+                      value,
+                      label,
+                    }))}
+                    hint={STAFF_PERFORMANCE_TARGET_MODE_DESCRIPTIONS[form.performanceTargetMode]}
+                  />
+                </>
+              ) : null}
+            </FormSection>
+
+            <FormSection
+              title="Services"
+              description="Which services this stylist can perform, and their per-stylist price."
+              bodyClassName="px-4 py-4"
+            >
+              {services.length > 0 ? (
+                <div className="mb-2 flex items-center justify-end gap-2 text-[12px]">
+                  <span className="text-text-secondary">
+                    {form.selectedServiceIds.length} selected
+                  </span>
+                  <button
+                    type="button"
+                    className="font-medium text-primary hover:text-primary-deep"
+                    onClick={() =>
+                      setForm({ ...form, selectedServiceIds: services.map((s) => s.id) })
+                    }
+                  >
+                    Select all
+                  </button>
+                  <span className="text-border-strong">·</span>
+                  <button
+                    type="button"
+                    className="font-medium text-text-secondary hover:text-text-primary"
+                    onClick={() => setForm({ ...form, selectedServiceIds: [] })}
+                  >
+                    Clear
+                  </button>
                 </div>
-              </div>
-            </div>
-
-            <label className="flex items-center gap-2 sm:col-span-2 text-[13px] text-text-secondary">
-              <input
-                type="checkbox"
-                checked={form.isBookable}
-                onChange={(event) => setForm({ ...form, isBookable: event.target.checked })}
-                className="h-4 w-4 rounded border-border-strong text-primary focus:ring-primary"
-              />
-              Bookable on the schedule
-            </label>
-
-            <div className="sm:col-span-2">
-              <div className="mb-1.5 flex items-center justify-between gap-2">
-                <span className="text-[12px] font-medium text-text-secondary">
-                  Services this stylist can perform
-                </span>
-                {services.length > 0 ? (
-                  <div className="flex items-center gap-2 text-[12px]">
-                    <span className="text-text-secondary">
-                      {form.selectedServiceIds.length} selected
-                    </span>
-                    <button
-                      type="button"
-                      className="font-medium text-primary hover:text-primary-deep"
-                      onClick={() =>
-                        setForm({ ...form, selectedServiceIds: services.map((s) => s.id) })
-                      }
-                    >
-                      Select all
-                    </button>
-                    <button
-                      type="button"
-                      className="font-medium text-text-secondary hover:text-text-primary"
-                      onClick={() => setForm({ ...form, selectedServiceIds: [] })}
-                    >
-                      Clear
-                    </button>
-                  </div>
-                ) : null}
-              </div>
+              ) : null}
 
               {servicesLoading ? (
                 <div className="rounded-input-lg border border-border bg-surface-alt px-3 py-4 text-[13px] text-text-secondary">
@@ -758,7 +803,7 @@ export function EditStaffModal({
                 <div className="max-h-56 overflow-y-auto rounded-input-lg border border-border-strong bg-surface">
                   {serviceGroups.map(([category, groupServices]) => (
                     <div key={category} className="border-b border-border last:border-b-0">
-                      <div className="bg-surface-alt px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-secondary">
+                      <div className="sticky top-0 bg-surface-alt px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-secondary">
                         {category}
                       </div>
                       {groupServices.map((service) => {
@@ -811,19 +856,19 @@ export function EditStaffModal({
               )}
 
               {!servicesLoading && services.length > 0 && form.selectedServiceIds.length === 0 ? (
-                <p className="mt-1.5 text-[12px] text-warning">
+                <p className="mt-2 text-[12px] text-warning">
                   No services selected — this stylist won&apos;t be bookable for anything until you pick at least one.
                 </p>
               ) : !servicesLoading && services.length > 0 ? (
-                <p className="mt-1.5 text-[12px] text-text-secondary">
+                <p className="mt-2 text-[12px] text-text-secondary">
                   Set a price for this stylist next to each service, or leave it blank to use the service base price.
                 </p>
               ) : null}
               {errors.servicePrices ? (
                 <p className="mt-1 text-[12px] text-danger">{errors.servicePrices}</p>
               ) : null}
-            </div>
-          </div>
+            </FormSection>
+          </>
         ) : null}
 
         {submitError ? (
