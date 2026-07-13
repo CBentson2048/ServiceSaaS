@@ -416,12 +416,20 @@ function StaffRow({
     <tr>
       <td className="px-4 py-3">
         <div className="flex items-center gap-3">
-          <div
-            className="grid h-9 w-9 place-items-center rounded-full text-[12px] font-semibold text-white"
-            style={{ backgroundColor: member.staffProfile?.colorHex ?? '#A67CF5' }}
-          >
-            {initials || '·'}
-          </div>
+          {member.staffProfile?.photoUrl ? (
+            <img
+              src={member.staffProfile.photoUrl}
+              alt={member.fullName || member.email}
+              className="h-9 w-9 shrink-0 rounded-full object-cover"
+            />
+          ) : (
+            <div
+              className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-[12px] font-semibold text-white"
+              style={{ backgroundColor: member.staffProfile?.colorHex ?? '#A67CF5' }}
+            >
+              {initials || '·'}
+            </div>
+          )}
           <div>
             <div className="font-medium text-text-primary">
               {member.fullName || member.email}

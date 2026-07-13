@@ -26,6 +26,7 @@ import type {
   StaffInvitation,
   StaffInvitationWithToken,
   StaffMember,
+  StaffPhotoUploadResponse,
   UpdateStaffMemberRequest,
   UpdateStaffMemberResponse,
   UserRole,
@@ -42,6 +43,23 @@ import { EmailService } from '../email/email.service';
 import { renderStaffInvitationEmail } from '../email/templates/staff-invitation.template';
 
 const DEFAULT_INVITE_EXPIRY_HOURS = 14 * 24;
+
+/** Provider photo storage (Wrike #4507280825 — drag & drop upload). */
+const PROVIDER_PHOTO_BUCKET = 'provider-photos';
+const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
+const PHOTO_EXT_BY_MIME: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+};
+
+/** Minimal shape of a Multer-parsed upload; avoids depending on Express type augmentation. */
+export interface UploadedPhotoFile {
+  buffer: Buffer;
+  mimetype: string;
+  size: number;
+  originalname?: string;
+}
 
 interface InvitationRow {
   id: string;
@@ -776,6 +794,58 @@ export class StaffService {
       byStaff.set(row.staff_profile_id, list);
     }
     return byStaff;
+  }
+
+  /**
+   * Upload a provider photo (JPEG/PNG/WebP, ≤5 MB) to the `provider-photos` bucket
+   * and return its public URL. The URL is persisted on the profile by the caller's
+   * subsequent update (photoUrl), so cancelling the edit never mutates the record.
+   */
+  async uploadStaffPhoto(
+    actor: AuthUser,
+    targetUserId: string,
+    file: UploadedPhotoFile | undefined,
+  ): Promise<StaffPhotoUploadResponse> {
+    this.assertStaffManage(actor);
+    if (!file || !file.buffer?.length) {
+      throw new BadRequestException('No file uploaded');
+    }
+    const contentType = (file.mimetype || '').toLowerCase();
+    const ext = PHOTO_EXT_BY_MIME[contentType];
+    if (!ext) {
+      throw new BadRequestException('Photo must be a JPEG, PNG or WebP image');
+    }
+    if (file.size > MAX_PHOTO_BYTES || file.buffer.length > MAX_PHOTO_BYTES) {
+      throw new BadRequestException('Photo must be 5 MB or smaller');
+    }
+
+    // Confirm the target has a staff profile in this business before uploading.
+    const { data: profile, error: profileError } = await this.admin
+      .schema('core')
+      .from('staff_profiles')
+      .select('id')
+      .eq('business_id', actor.businessId)
+      .eq('user_profile_id', targetUserId)
+      .maybeSingle<{ id: string }>();
+    if (profileError) {
+      this.logger.error(`load staff profile for photo failed: ${profileError.message}`);
+      throw new InternalServerErrorException('Unable to load staff profile');
+    }
+    if (!profile) {
+      throw new NotFoundException('Staff profile not found');
+    }
+
+    const path = `${actor.businessId}/${profile.id}/${Date.now()}.${ext}`;
+    const { error: uploadError } = await this.admin.storage
+      .from(PROVIDER_PHOTO_BUCKET)
+      .upload(path, file.buffer, { contentType, upsert: true });
+    if (uploadError) {
+      this.logger.error(`provider photo upload failed: ${uploadError.message}`);
+      throw new InternalServerErrorException('Unable to upload photo');
+    }
+
+    const { data: publicUrl } = this.admin.storage.from(PROVIDER_PHOTO_BUCKET).getPublicUrl(path);
+    return { photoUrl: publicUrl.publicUrl };
   }
 
   private assertStaffManage(actor: AuthUser): void {
