@@ -124,6 +124,7 @@ import type {
   UpdateCrmClientRequest,
   UpdateLocationRequest,
   UpdateShiftRequest,
+  StaffPhotoUploadResponse,
   UpdateStaffMemberRequest,
   UpdateStaffMemberResponse,
   UpsertServiceRequirementRuleRequest,
@@ -1309,6 +1310,32 @@ export async function updateStaffMember(
     body: payload,
     accessToken,
   });
+}
+
+export async function uploadStaffPhoto(
+  accessToken: string,
+  userId: string,
+  file: File,
+): Promise<StaffPhotoUploadResponse> {
+  const form = new FormData();
+  form.append('file', file);
+  // Multipart upload — do not set Content-Type; the browser adds the boundary.
+  const response = await fetch(
+    `${API_BASE_URL}/api/owner/staff/${encodeURIComponent(userId)}/photo`,
+    { method: 'POST', headers: { Authorization: `Bearer ${accessToken}` }, body: form },
+  );
+  if (!response.ok) {
+    const raw = await response.text();
+    let parsed: unknown;
+    try {
+      parsed = raw ? JSON.parse(raw) : undefined;
+    } catch {
+      parsed = undefined;
+    }
+    const message = extractErrorMessage(parsed) ?? raw ?? `Request failed with ${response.status}`;
+    throw new ApiRequestError(message, response.status, parsed);
+  }
+  return (await response.json()) as StaffPhotoUploadResponse;
 }
 
 export async function deactivateStaffMember(

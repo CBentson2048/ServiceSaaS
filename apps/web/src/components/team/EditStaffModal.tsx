@@ -15,9 +15,16 @@ import {
   STAFF_COMMISSION_STRUCTURE_LABELS,
   STAFF_EMPLOYMENT_STATUS_LABELS,
   STAFF_EMPLOYMENT_TYPE_LABELS,
+  STAFF_PERFORMANCE_TARGET_MODE_DESCRIPTIONS,
   STAFF_PERFORMANCE_TARGET_MODE_LABELS,
 } from '@sheer/domain';
-import { ApiRequestError, listSecurityLevels, listServices, updateStaffMember } from '../../auth/api';
+import {
+  ApiRequestError,
+  listSecurityLevels,
+  listServices,
+  updateStaffMember,
+  uploadStaffPhoto,
+} from '../../auth/api';
 import type { SecurityLevel } from '@sheer/domain';
 import { SelectField, TextField } from '../onboarding/FormField';
 import { Modal } from './Modal';
@@ -93,6 +100,8 @@ export function EditStaffModal({
   const [services, setServices] = useState<ManagedService[]>([]);
   const [servicesLoading, setServicesLoading] = useState(false);
   const [securityLevels, setSecurityLevels] = useState<SecurityLevel[]>([]);
+  const [photoUploading, setPhotoUploading] = useState(false);
+  const [photoError, setPhotoError] = useState<string | null>(null);
 
   // Load the business's security levels so the owner can assign one to the member.
   useEffect(() => {
@@ -280,6 +289,31 @@ export function EditStaffModal({
       if (badPrice) next.servicePrices = 'Enter valid, non-negative prices (leave blank to use the base price)';
     }
     return next;
+  }
+
+  async function handlePhotoFile(file: File | null | undefined) {
+    if (!file || !staff) return;
+    setPhotoError(null);
+    const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowed.includes(file.type)) {
+      setPhotoError('Use a JPEG, PNG or WebP image.');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setPhotoError('Image must be 5 MB or smaller.');
+      return;
+    }
+    setPhotoUploading(true);
+    try {
+      const { photoUrl } = await uploadStaffPhoto(accessToken, staff.userProfileId, file);
+      setForm((prev) => (prev ? { ...prev, photoUrl } : prev));
+    } catch (err) {
+      setPhotoError(
+        err instanceof ApiRequestError ? err.message : 'Upload failed. Please try again.',
+      );
+    } finally {
+      setPhotoUploading(false);
+    }
   }
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
@@ -597,7 +631,7 @@ export function EditStaffModal({
                     value,
                     label,
                   }))}
-                  hint="Pro-rated auto-adjusts the target by the days worked that week."
+                  hint={STAFF_PERFORMANCE_TARGET_MODE_DESCRIPTIONS[form.performanceTargetMode]}
                 />
               </>
             ) : null}
@@ -615,14 +649,62 @@ export function EditStaffModal({
                 error={errors.colourAllowanceAmount}
               />
             ) : null}
-            <TextField
-              label="Provider photo URL"
-              value={form.photoUrl}
-              onValueChange={(v) => setForm({ ...form, photoUrl: v })}
-              hint="Shown internally and in the client-facing Salon Suite."
-              optional
-              className="sm:col-span-2"
-            />
+            <div className="sm:col-span-2">
+              <span className="mb-1 block text-[13px] font-medium text-text-primary">
+                Provider photo <span className="font-normal text-text-secondary">(optional)</span>
+              </span>
+              <div
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  void handlePhotoFile(event.dataTransfer.files?.[0]);
+                }}
+                className="flex items-center gap-4 rounded-input-lg border border-dashed border-border-strong bg-surface-alt px-4 py-3"
+              >
+                {form.photoUrl ? (
+                  <img
+                    src={form.photoUrl}
+                    alt="Provider"
+                    className="h-16 w-16 shrink-0 rounded-full object-cover"
+                  />
+                ) : (
+                  <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-[11px] text-text-secondary">
+                    No photo
+                  </div>
+                )}
+                <div className="flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="inline-flex cursor-pointer items-center rounded-pill border border-border-strong bg-surface px-3 py-1.5 text-[13px] font-medium text-text-primary transition hover:bg-surface-alt">
+                      {photoUploading ? 'Uploading…' : form.photoUrl ? 'Replace photo' : 'Upload photo'}
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        className="hidden"
+                        disabled={photoUploading}
+                        onChange={(event) => {
+                          void handlePhotoFile(event.target.files?.[0]);
+                          event.target.value = '';
+                        }}
+                      />
+                    </label>
+                    {form.photoUrl ? (
+                      <button
+                        type="button"
+                        onClick={() => setForm({ ...form, photoUrl: '' })}
+                        className="text-[13px] font-medium text-danger hover:underline"
+                      >
+                        Remove
+                      </button>
+                    ) : null}
+                  </div>
+                  <p className="mt-1 text-[12px] text-text-secondary">
+                    Drag &amp; drop or choose a JPEG/PNG/WebP (max 5 MB). Shown internally and in the
+                    client-facing Salon Suite.
+                  </p>
+                  {photoError ? <p className="mt-1 text-[12px] text-danger">{photoError}</p> : null}
+                </div>
+              </div>
+            </div>
 
             <label className="flex items-center gap-2 sm:col-span-2 text-[13px] text-text-secondary">
               <input

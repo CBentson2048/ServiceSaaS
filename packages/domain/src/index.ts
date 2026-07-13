@@ -1448,8 +1448,9 @@ export type StaffEmploymentStatus = 'active' | 'on_leave' | 'notice' | 'terminat
  * How a staff member's performance target is applied.
  * - `flat`: the stored amount is used exactly as entered.
  * - `pro_rated`: the stored amount is a full-week basis; the pay engine scales it
- *   by the days actually worked that week, so working one day less/more moves the
- *   target automatically. See {@link proRatePerformanceTarget}.
+ *   by the hours actually worked that week relative to the member's contracted
+ *   hours, so working more/fewer hours moves the target automatically. Hours are
+ *   used (not days) as the fairest basis. See {@link proRatePerformanceTarget}.
  */
 export type StaffPerformanceTargetMode = 'flat' | 'pro_rated';
 
@@ -1474,28 +1475,41 @@ export const STAFF_EMPLOYMENT_STATUS_LABELS: Record<StaffEmploymentStatus, strin
 
 export const STAFF_PERFORMANCE_TARGET_MODE_LABELS: Record<StaffPerformanceTargetMode, string> = {
   flat: 'Flat',
-  pro_rated: 'Pro-rated (by days worked)',
+  pro_rated: 'Pro-rated (by hours worked)',
 };
 
+/** Human-readable explanation of each performance-target mode, for UI hints. */
+export const STAFF_PERFORMANCE_TARGET_MODE_DESCRIPTIONS: Record<StaffPerformanceTargetMode, string> = {
+  flat: 'Target is used exactly as entered, regardless of hours worked.',
+  pro_rated:
+    'Target scales with hours actually worked vs contracted hours, so a shorter/longer week moves it automatically.',
+};
+
+/** Standard full-time hours used as the pro-rata baseline when a member has no contracted hours set. */
+export const DEFAULT_CONTRACTED_HOURS_PER_WEEK = 40;
+
 /**
- * Resolve the effective performance target for a week given the member's target
+ * Resolve the effective performance target for a period given the member's target
  * mode. For `flat` the base amount is returned unchanged; for `pro_rated` it is
- * scaled by the days actually worked relative to a full week, so working one day
- * less/more automatically moves the target.
+ * scaled by the hours actually worked relative to the member's contracted hours,
+ * so a shorter/longer week automatically moves the target. Hours (not days) are
+ * used as the fairest basis (per Wrike #4507280825 review feedback).
  *
- * @param baseTarget         The stored `performanceTargetAmount` (major currency).
- * @param daysWorked         Days the member worked in the period.
- * @param standardDaysPerWeek The member's full-week baseline (defaults to 5).
+ * @param baseTarget            The stored `performanceTargetAmount` (major currency).
+ * @param hoursWorked           Hours the member worked in the period.
+ * @param mode                  The member's performance target mode.
+ * @param contractedHoursPerWeek The member's contracted-hours baseline; defaults to
+ *                              {@link DEFAULT_CONTRACTED_HOURS_PER_WEEK} when 0/unset.
  */
 export function proRatePerformanceTarget(
   baseTarget: number,
-  daysWorked: number,
+  hoursWorked: number,
   mode: StaffPerformanceTargetMode = 'flat',
-  standardDaysPerWeek = 5,
+  contractedHoursPerWeek = DEFAULT_CONTRACTED_HOURS_PER_WEEK,
 ): number {
   if (mode !== 'pro_rated') return baseTarget;
-  if (standardDaysPerWeek <= 0) return baseTarget;
-  const factor = Math.max(0, daysWorked) / standardDaysPerWeek;
+  const baseline = contractedHoursPerWeek > 0 ? contractedHoursPerWeek : DEFAULT_CONTRACTED_HOURS_PER_WEEK;
+  const factor = Math.max(0, hoursWorked) / baseline;
   return baseTarget * factor;
 }
 
@@ -1635,6 +1649,11 @@ export interface UpdateStaffMemberRequest {
 
 export interface UpdateStaffMemberResponse {
   staff: StaffMember;
+}
+
+/** Result of uploading a provider photo; the URL should be saved on the profile. */
+export interface StaffPhotoUploadResponse {
+  photoUrl: string;
 }
 
 export interface RefreshSessionRequest {

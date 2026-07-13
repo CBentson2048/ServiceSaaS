@@ -7,12 +7,16 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import type {
   ListStaffResponse,
   StaffInvitation,
   StaffInvitationWithToken,
+  StaffPhotoUploadResponse,
   UpdateStaffMemberResponse,
 } from '@sheer/domain';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -25,7 +29,11 @@ import {
   ListStaffInvitationsQueryDto,
   UpdateStaffMemberDto,
 } from './dto';
-import { StaffService } from './staff.service';
+import { StaffService, type UploadedPhotoFile } from './staff.service';
+
+// Backstop above the 5 MB business rule (enforced precisely in the service) so a
+// runaway upload can't buffer unbounded memory.
+const PHOTO_UPLOAD_HARD_LIMIT_BYTES = 8 * 1024 * 1024;
 
 @Controller('owner')
 @UseGuards(SupabaseAuthGuard, RolesGuard, PermissionsGuard)
@@ -83,6 +91,17 @@ export class OwnerStaffController {
     @Body() body: UpdateStaffMemberDto,
   ): Promise<UpdateStaffMemberResponse> {
     return this.staff.updateStaffMember(actor, userId, body);
+  }
+
+  @Post('staff/:userId/photo')
+  @RequirePermissions('staff.manage')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: PHOTO_UPLOAD_HARD_LIMIT_BYTES } }))
+  uploadPhoto(
+    @CurrentUser() actor: AuthUser,
+    @Param('userId') userId: string,
+    @UploadedFile() file: UploadedPhotoFile,
+  ): Promise<StaffPhotoUploadResponse> {
+    return this.staff.uploadStaffPhoto(actor, userId, file);
   }
 
   @Post('staff/:userId/deactivate')
