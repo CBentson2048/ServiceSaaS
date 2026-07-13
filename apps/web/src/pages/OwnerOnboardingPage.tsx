@@ -370,15 +370,36 @@ export function OwnerOnboardingPage() {
         }
         navigate(response.redirectTo || '/login?onboarded=1', { replace: true });
       } catch (error: unknown) {
-        if (error instanceof ApiRequestError) {
-          setSubmitError(error.message);
-          if (/email/i.test(error.message)) goTo(0);
-          else if (/slug/i.test(error.message)) goTo(1);
-        } else if (error instanceof Error) {
-          setSubmitError(error.message);
-        } else {
-          setSubmitError('Account creation failed. Please try again.');
+        // Always surface the exact, human-readable message from the API. The
+        // backend returns specific conflicts (duplicate phone, duplicate email,
+        // taken slug, …); we route the user to the field it's about and show
+        // the message both inline and as a banner.
+        const message =
+          error instanceof ApiRequestError || error instanceof Error
+            ? error.message
+            : 'Account creation failed. Please try again.';
+        const lower = message.toLowerCase();
+
+        let field: string | null = null;
+        let step: number | null = null;
+        if (lower.includes('phone')) {
+          field = 'owner.phone';
+          step = 0;
+        } else if (lower.includes('email')) {
+          field = 'owner.email';
+          step = 0;
+        } else if (lower.includes('slug') || lower.includes('business')) {
+          field = 'business.slug';
+          step = 1;
+        } else if (lower.includes('location')) {
+          step = 2;
         }
+
+        // `goTo` clears submitError, so navigate first, then set the messages
+        // (later state updates win) to guarantee the error stays visible.
+        if (step != null && step !== stepIndex) goTo(step);
+        if (field) setErrors((prev) => ({ ...prev, [field]: message }));
+        setSubmitError(message);
       } finally {
         setIsSubmitting(false);
       }
