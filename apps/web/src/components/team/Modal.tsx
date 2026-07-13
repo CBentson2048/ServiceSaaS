@@ -7,9 +7,19 @@ export interface ModalProps {
   description?: string;
   children: ReactNode;
   footer?: ReactNode;
+  /** Tailwind max-width class for the dialog. Defaults to a compact form width. */
+  widthClassName?: string;
 }
 
-export function Modal({ open, onClose, title, description, children, footer }: ModalProps) {
+export function Modal({
+  open,
+  onClose,
+  title,
+  description,
+  children,
+  footer,
+  widthClassName = 'max-w-lg',
+}: ModalProps) {
   useEffect(() => {
     if (!open) return;
     function onKeyDown(event: KeyboardEvent) {
@@ -30,7 +40,7 @@ export function Modal({ open, onClose, title, description, children, footer }: M
       onClick={onClose}
     >
       <div
-        className="w-full max-w-lg overflow-hidden rounded-card-lg border border-border bg-surface shadow-modal"
+        className={`w-full ${widthClassName} overflow-hidden rounded-card-lg border border-border bg-surface shadow-modal`}
         onClick={(event) => event.stopPropagation()}
       >
         <div className="border-b border-border bg-surface-alt px-6 py-4">
