@@ -182,11 +182,7 @@ export class OwnerOnboardingService {
       });
 
       if (createError || !createdUser.user) {
-        const message = createError?.message ?? 'Unable to create owner account';
-        if (/already|exists|registered/i.test(message)) {
-          throw new ConflictException('An account already exists for this email');
-        }
-        throw new BadRequestException(message);
+        throw this.describeCreateUserError(createError);
       }
 
       createdUserId = createdUser.user.id;
@@ -283,6 +279,45 @@ export class OwnerOnboardingService {
     if (data) {
       throw new ConflictException('An account already exists for this email');
     }
+  }
+
+  /**
+   * Turns a Supabase auth `createUser` failure into a precise, honest error.
+   *
+   * `auth.users` has a UNIQUE index on `phone` as well as `email`, and the
+   * owner form submits an optional phone. When that phone is already used by
+   * another auth user (a prior owner, or an accepted staff invitation) gotrue
+   * rejects the create. The previous handler pattern-matched any
+   * "already/exists/registered" message and blamed the email — which is very
+   * confusing when the tester is deliberately using a fresh email each time.
+   * We now use the structured error `code` (with a message fallback) so a
+   * duplicate phone reports as a phone conflict and only a real duplicate
+   * email reports as an email conflict.
+   */
+  private describeCreateUserError(error: { message?: string; code?: string } | null): Error {
+    const message = error?.message ?? 'Unable to create owner account';
+    const code = error?.code ?? '';
+    const normalized = message.toLowerCase();
+
+    const isPhoneConflict =
+      code === 'phone_exists' ||
+      (normalized.includes('phone') && /already|exists|registered|taken/.test(normalized));
+    if (isPhoneConflict) {
+      return new ConflictException(
+        'This phone number is already registered to another account. Use a different number or leave it blank.',
+      );
+    }
+
+    const isEmailConflict =
+      code === 'email_exists' ||
+      code === 'user_already_exists' ||
+      (/already|exists|registered/.test(normalized) &&
+        (normalized.includes('email') || normalized.includes('user')));
+    if (isEmailConflict) {
+      return new ConflictException('An account already exists for this email');
+    }
+
+    return new BadRequestException(message);
   }
 
   private async rollbackAuthUser(userId?: string): Promise<void> {
