@@ -21,10 +21,14 @@ import {
   updateLocationTaxSettings,
 } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
+import { useLocationRouteSync } from '../components/LocationScopeContext';
 
 export function LocationDetailPage() {
   const auth = useAuth();
   const params = useParams<{ id: string }>();
+  // Keep this page and the sidebar location picker in lock-step so switching
+  // salons in the sidebar swaps the settings shown here (and vice versa).
+  useLocationRouteSync(params.id);
   const accessToken = auth.session?.accessToken;
   const canManageLocations = userHasPermission(auth.user, 'locations.manage');
   const canManageLocationSettings = userHasPermission(auth.user, 'settings.location.manage');

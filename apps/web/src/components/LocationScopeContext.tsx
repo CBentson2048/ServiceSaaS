@@ -1,4 +1,13 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
+import { useNavigate } from 'react-router-dom';
 import type { AuthLocation } from '@sheer/domain';
 import { useAuth } from '../auth/AuthProvider';
 
@@ -72,4 +81,48 @@ export function useLocationScope(): LocationScopeValue {
   const value = useContext(LocationScopeContext);
   if (!value) throw new Error('useLocationScope must be used within a LocationScopeProvider');
   return value;
+}
+
+/**
+ * Two-way binds a `/locations/:id`-style page to the sidebar location picker so
+ * the two never drift apart. When the URL changes (e.g. following a link), the
+ * picker is updated to match; when the picker changes, the page navigates to the
+ * same route for the newly selected location — letting a multi-location manager
+ * flip between their salons' settings straight from the sidebar.
+ *
+ * `pathSuffix` is appended after the location id (e.g. `'/record-settings'`).
+ * Only concrete, in-scope locations are honoured — the "All" sentinel and ids
+ * the user can't access are ignored so we never navigate somewhere forbidden.
+ */
+export function useLocationRouteSync(routeLocationId: string | undefined, pathSuffix = ''): void {
+  const { selectedLocationId, setSelectedLocationId, locations } = useLocationScope();
+  const navigate = useNavigate();
+  // Seed with sentinels so the very first run reflects the landing URL into the
+  // picker (both refs start "changed").
+  const prevRoute = useRef<string | undefined>(undefined);
+  const prevSelected = useRef<string | undefined>(undefined);
+
+  useEffect(() => {
+    const routeChanged = routeLocationId !== prevRoute.current;
+    const selectedChanged = selectedLocationId !== prevSelected.current;
+    prevRoute.current = routeLocationId;
+    prevSelected.current = selectedLocationId;
+
+    const known = (id: string) => locations.some((location) => location.id === id);
+
+    // The URL is the source of truth when it moves — mirror it into the picker.
+    if (routeChanged && routeLocationId && known(routeLocationId)) {
+      if (selectedLocationId !== routeLocationId) setSelectedLocationId(routeLocationId);
+      return;
+    }
+    // Otherwise the picker leads — follow it in the URL.
+    if (
+      selectedChanged &&
+      selectedLocationId !== ALL_LOCATIONS &&
+      known(selectedLocationId) &&
+      routeLocationId !== selectedLocationId
+    ) {
+      navigate(`/locations/${selectedLocationId}${pathSuffix}`, { replace: true });
+    }
+  }, [routeLocationId, selectedLocationId, locations, pathSuffix, navigate, setSelectedLocationId]);
 }

@@ -451,9 +451,24 @@ function StaffRow({
         </div>
       </td>
       <td className="px-4 py-3 text-text-secondary">
-        {isOwner
-          ? 'Business-wide'
-          : member.location?.name ?? <span className="text-warning">No location</span>}
+        {isOwner ? (
+          'Business-wide'
+        ) : member.locations && member.locations.length > 0 ? (
+          <div className="flex flex-wrap gap-1">
+            {member.locations.map((loc) => (
+              <span
+                key={loc.id}
+                className="inline-flex h-5 items-center rounded-pill bg-surface-alt px-2 text-[11px] font-medium text-text-secondary"
+              >
+                {loc.name}
+              </span>
+            ))}
+          </div>
+        ) : member.location?.name ? (
+          member.location.name
+        ) : (
+          <span className="text-warning">No location</span>
+        )}
       </td>
       <td className="px-4 py-3">
         <span
