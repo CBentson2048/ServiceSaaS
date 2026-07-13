@@ -32,6 +32,12 @@ export interface BusinessTierLimits {
    * plus pending invitations); `null` for unlimited. Clients never count.
    */
   maxTeamMembers: number | null;
+  /**
+   * Included outbound billable messages (WhatsApp/SMS) per location per calendar
+   * month before overage. `null` for unlimited. Enforcement (counters + overage)
+   * lands in Week 6; this is the authoritative cap the counters snapshot against.
+   */
+  messagingMonthlyCapPerLocation: number | null;
 }
 
 /**
@@ -39,10 +45,10 @@ export interface BusinessTierLimits {
  * enforcing limits and by the web/mobile clients when rendering plan usage.
  */
 export const BUSINESS_TIER_LIMITS: Record<BusinessTier, BusinessTierLimits> = {
-  solo: { tier: 'solo', maxLocations: 1, maxTeamMembers: 1 },
-  studio: { tier: 'studio', maxLocations: 1, maxTeamMembers: null },
-  salon: { tier: 'salon', maxLocations: 5, maxTeamMembers: null },
-  group: { tier: 'group', maxLocations: null, maxTeamMembers: null },
+  solo: { tier: 'solo', maxLocations: 1, maxTeamMembers: 1, messagingMonthlyCapPerLocation: 100 },
+  studio: { tier: 'studio', maxLocations: 1, maxTeamMembers: null, messagingMonthlyCapPerLocation: 300 },
+  salon: { tier: 'salon', maxLocations: 5, maxTeamMembers: null, messagingMonthlyCapPerLocation: 600 },
+  group: { tier: 'group', maxLocations: null, maxTeamMembers: null, messagingMonthlyCapPerLocation: 1000 },
 };
 
 /** Human-friendly tier labels for UI. */
@@ -56,6 +62,14 @@ export const BUSINESS_TIER_LABELS: Record<BusinessTier, string> = {
 /** Limits for a tier, defaulting to the safest (solo) for unknown values. */
 export function getBusinessTierLimits(tier: BusinessTier | null | undefined): BusinessTierLimits {
   return (tier && BUSINESS_TIER_LIMITS[tier]) || BUSINESS_TIER_LIMITS.solo;
+}
+
+/**
+ * Included monthly messaging allowance (billable channels) per location for a
+ * tier; `null` means unlimited. Defaults to the solo cap for unknown tiers.
+ */
+export function getMessagingMonthlyCap(tier: BusinessTier | null | undefined): number | null {
+  return getBusinessTierLimits(tier).messagingMonthlyCapPerLocation;
 }
 
 /**
@@ -3496,9 +3510,90 @@ export type CrmPatchTestStatus = 'pending' | 'passed' | 'failed' | 'expired';
 
 export type CrmVisitPhotoType = 'before' | 'after' | 'inspiration' | 'condition' | 'other';
 
-export type CrmMessageChannel = 'sms' | 'email' | 'push' | 'whatsapp';
+/**
+ * Delivery channels for the messaging foundation. Channel-agnostic by design so
+ * the provider abstraction (Twilio for now) can be swapped without touching core
+ * tables. `in_app`/`push` are recorded for in-app notification states; the
+ * outbound fallback chain today is WhatsApp → Email → SMS (logic in Week 6).
+ */
+export type MessageChannel = 'whatsapp' | 'sms' | 'email' | 'in_app' | 'push';
 
-export type CrmMessageDeliveryStatus = 'queued' | 'sent' | 'delivered' | 'failed' | 'cancelled' | 'skipped';
+export const MESSAGE_CHANNELS: readonly MessageChannel[] = [
+  'whatsapp',
+  'sms',
+  'email',
+  'in_app',
+  'push',
+];
+
+/** Billable channels that count against the per-location monthly messaging cap. */
+export const BILLABLE_MESSAGE_CHANNELS: readonly MessageChannel[] = ['whatsapp', 'sms'];
+
+/**
+ * Lifecycle states a message record can move through. Mirrors
+ * `comms.notification_status_enum` exactly so DB, API and clients stay aligned:
+ * outbound delivery (`queued`→`sent`→`delivered`/`undelivered`/`failed`),
+ * in-app read state (`read`), the pre-fallback holding state
+ * (`fallback_pending`) and the terminal non-send states (`cancelled`, `skipped`).
+ */
+export type MessageDeliveryStatus =
+  | 'queued'
+  | 'sent'
+  | 'delivered'
+  | 'failed'
+  | 'undelivered'
+  | 'read'
+  | 'fallback_pending'
+  | 'cancelled'
+  | 'skipped';
+
+export const MESSAGE_DELIVERY_STATES: readonly MessageDeliveryStatus[] = [
+  'queued',
+  'sent',
+  'delivered',
+  'failed',
+  'undelivered',
+  'read',
+  'fallback_pending',
+  'cancelled',
+  'skipped',
+];
+
+/** Terminal states — no further transition is expected. */
+export const TERMINAL_MESSAGE_DELIVERY_STATES: readonly MessageDeliveryStatus[] = [
+  'delivered',
+  'failed',
+  'undelivered',
+  'read',
+  'cancelled',
+  'skipped',
+];
+
+export type CrmMessageChannel = MessageChannel;
+
+export type CrmMessageDeliveryStatus = MessageDeliveryStatus;
+
+/**
+ * Per-location, per-month messaging usage counter — the foundation for tier caps
+ * and overage tracking. Rows are keyed by (business, location, period) and
+ * snapshot the tier cap in force for the period so historical usage stays
+ * accurate even if the plan later changes. Enforcement lands in Week 6.
+ */
+export interface MessagingUsageCounter {
+  id: string;
+  businessId: string;
+  locationId: string;
+  /** First day of the calendar month (UTC), ISO date `YYYY-MM-01`. */
+  periodMonth: string;
+  /** Tier cap snapshot for this period; `null` for unlimited. */
+  monthlyCap: number | null;
+  /** Billable messages counted this period. */
+  sentCount: number;
+  /** Messages sent beyond {@link monthlyCap}. */
+  overageCount: number;
+  updatedAt: string;
+  createdAt: string;
+}
 
 export interface CrmClientSummary {
   id: string;

@@ -3,6 +3,10 @@ import { EmailModule } from '../email/email.module';
 import { BookingNotificationService } from './booking-notification.service';
 import { CommunicationSettingsService } from './communication-settings.service';
 import { NotificationDispatchService } from './notification-dispatch.service';
+import { EmailMessageProvider } from './providers/email-message.provider';
+import { MessageProviderRegistry } from './providers/message-provider.registry';
+import { SmsMessageProvider } from './providers/sms-message.provider';
+import { WhatsAppMessageProvider } from './providers/whatsapp-message.provider';
 import { ResendCallbackService } from './resend-callback.service';
 import { ResendWebhookController } from './resend-webhook.controller';
 import { SmsService } from './sms.service';
@@ -26,11 +30,15 @@ import { WhatsAppTemplateConfig } from './whatsapp-template.config';
     WhatsAppService,
     SmsService,
     WhatsAppTemplateConfig,
+    WhatsAppMessageProvider,
+    SmsMessageProvider,
+    EmailMessageProvider,
+    MessageProviderRegistry,
     CommunicationSettingsService,
     BookingNotificationService,
     NotificationDispatchService,
     ResendCallbackService,
   ],
-  exports: [CommunicationSettingsService, BookingNotificationService, WhatsAppService],
+  exports: [CommunicationSettingsService, BookingNotificationService, WhatsAppService, MessageProviderRegistry],
 })
 export class CommunicationsModule {}
