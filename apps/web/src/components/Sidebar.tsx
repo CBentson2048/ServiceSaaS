@@ -46,6 +46,7 @@ const NAV: NavItem[] = [
       { to: '/team', label: 'Team', icon: TeamIcon, allowedRoles: ['owner', 'manager'], permission: 'staff.manage' },
       { to: '/settings/security-levels', label: 'Security levels', icon: ShieldIcon, allowedRoles: ['owner'], permission: 'security.manage' },
       { to: '/rota', label: 'Rota', icon: ClockIcon, permission: 'rota.view' },
+      { to: '/settings/book-out-types', label: 'Book-out types', icon: ClockIcon, allowedRoles: ['owner', 'manager'], permission: 'rota.manage' },
       { to: '/performance', label: 'Performance', icon: ChartIcon, allowedRoles: ['owner', 'manager'], permission: 'report.performance.view' },
       { to: '/commission', label: 'Commission', icon: PercentIcon, permission: 'report.commission.view' },
     ],

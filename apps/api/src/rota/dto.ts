@@ -4,12 +4,15 @@ import {
   IsArray,
   IsBoolean,
   IsIn,
+  IsInt,
   IsISO8601,
   IsOptional,
   IsString,
   IsUUID,
   Matches,
+  Max,
   MaxLength,
+  Min,
   MinLength,
   ValidateNested,
 } from 'class-validator';
@@ -208,6 +211,77 @@ export class CreateAbsenceDto {
   @IsString()
   @MaxLength(500)
   notes?: string;
+
+  @IsOptional()
+  @IsUUID()
+  bookOutTypeId?: string;
+}
+
+const HEX_COLOR = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+
+export class CreateBookOutTypeDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(60)
+  name!: string;
+
+  @IsOptional()
+  @IsBoolean()
+  blocksAppointments?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  reducesAvailableHours?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  countsAsPaidTime?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @Matches(HEX_COLOR, { message: 'colorHex must be a hex colour like #6366f1' })
+  colorHex?: string | null;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100000)
+  sortOrder?: number;
+}
+
+export class UpdateBookOutTypeDto {
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(60)
+  name?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  blocksAppointments?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  reducesAvailableHours?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  countsAsPaidTime?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @Matches(HEX_COLOR, { message: 'colorHex must be a hex colour like #6366f1' })
+  colorHex?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100000)
+  sortOrder?: number;
 }
 
 export class SaveWeeklyRotaShiftDto {

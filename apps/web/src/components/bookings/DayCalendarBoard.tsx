@@ -1,11 +1,13 @@
 import { Fragment, useEffect, useRef, useState, type SVGProps } from 'react';
 import type {
+  BookOutType,
   RotaAbsenceIndicator,
   RotaLeaveIndicator,
   RotaShift,
   RotaStaffSummary,
   StaffBookingSummary,
 } from '@sheer/domain';
+import { computeDailyUtilisation } from '@sheer/domain';
 import { formatTime, isSameLocalDay, toIsoDate } from '../rota/dateUtils';
 
 function CalendarEmptyIcon(props: SVGProps<SVGSVGElement>) {
@@ -43,6 +45,8 @@ interface ColumnModel {
   absences: RotaAbsenceIndicator[];
   onLeave: boolean;
   bookings: StaffBookingSummary[];
+  /** booked ÷ available for the day (null when the stylist has no available time). */
+  utilisationPercent: number | null;
 }
 
 const SLOT_SNAP_MINUTES = 15;
@@ -57,6 +61,8 @@ export interface AddAppointmentInput {
 export interface AddBookoutInput extends AddAppointmentInput {
   endsAt: string;
   notes?: string;
+  /** Chosen configurable book-out type (drives availability + utilisation). */
+  bookOutTypeId?: string;
 }
 
 interface SlotMenuState {
@@ -77,6 +83,11 @@ interface DayCalendarBoardProps {
   absences: RotaAbsenceIndicator[];
   /** Appointments already scoped to this day + location. */
   bookings: StaffBookingSummary[];
+  /**
+   * Configurable book-out types for this business. Powers the book-out reason
+   * picker and lets the utilisation badge respect each type's flags.
+   */
+  bookOutTypes?: BookOutType[];
   /**
    * serviceId → category colour (#RRGGBB). A tile is tinted by the first of its
    * services that resolves a colour; the thin left bar keeps showing status.
@@ -208,6 +219,7 @@ export function DayCalendarBoard({
   leave,
   absences,
   bookings,
+  bookOutTypes,
   serviceColors,
   serviceColorsByName,
   selectedBookingId,
@@ -330,6 +342,7 @@ export function DayCalendarBoard({
     shiftsForDay,
     absencesForDay,
     leaveStaffOnDay,
+    day,
   });
 
   // "Show all team members" off → drop columns with nothing booked. The
@@ -640,10 +653,20 @@ export function DayCalendarBoard({
               >
                 {initials(column.name)}
               </span>
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <div className="truncate text-[13px] font-semibold text-text-primary">{column.name}</div>
                 <div className="truncate text-[11px] text-text-muted">{column.subtitle}</div>
               </div>
+              {column.utilisationPercent !== null ? (
+                <span
+                  className={`shrink-0 rounded-pill px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${utilisationTone(
+                    column.utilisationPercent,
+                  )}`}
+                  title={`Utilisation: ${column.utilisationPercent}% of available hours booked`}
+                >
+                  {column.utilisationPercent}%
+                </span>
+              ) : null}
             </div>
 
             <div
@@ -980,6 +1003,7 @@ export function DayCalendarBoard({
         {slotMenu ? (
           <SlotMenu
             state={slotMenu}
+            bookOutTypes={bookOutTypes}
             onClose={() => setSlotMenu(null)}
             onAddAppointment={
               onAddAppointment
@@ -995,7 +1019,7 @@ export function DayCalendarBoard({
             }
             onAddBookout={
               onAddBookout
-                ? (minutes, notes) => {
+                ? (minutes, notes, bookOutTypeId) => {
                     const endsAt = new Date(new Date(slotMenu.startAt).getTime() + minutes * 60_000).toISOString();
                     onAddBookout({
                       staffProfileId: slotMenu.staffProfileId,
@@ -1003,6 +1027,7 @@ export function DayCalendarBoard({
                       startAt: slotMenu.startAt,
                       endsAt,
                       notes,
+                      bookOutTypeId,
                     });
                     setSlotMenu(null);
                   }
@@ -1044,18 +1069,22 @@ function QuarterHourGridlines({ ticks }: { ticks: number[] }) {
 
 function SlotMenu({
   state,
+  bookOutTypes,
   onClose,
   onAddAppointment,
   onAddBookout,
 }: {
   state: SlotMenuState;
+  bookOutTypes?: BookOutType[];
   onClose: () => void;
   onAddAppointment?: () => void;
-  onAddBookout?: (minutes: number, notes?: string) => void;
+  onAddBookout?: (minutes: number, notes?: string, bookOutTypeId?: string) => void;
 }) {
   const [bookoutMode, setBookoutMode] = useState(false);
   const [minutes, setMinutes] = useState(30);
   const [note, setNote] = useState('');
+  const activeTypes = (bookOutTypes ?? []).filter((type) => type.isActive);
+  const [bookOutTypeId, setBookOutTypeId] = useState<string>('');
 
   const PANEL_WIDTH = 256;
   const left = Math.max(8, Math.min(state.x, state.boardWidth - PANEL_WIDTH - 8));
@@ -1086,6 +1115,24 @@ function SlotMenu({
 
         {bookoutMode ? (
           <div className="flex flex-col gap-2">
+            {activeTypes.length > 0 ? (
+              <label className="text-[11px] font-medium uppercase tracking-[0.06em] text-text-secondary">
+                Reason
+                <select
+                  value={bookOutTypeId}
+                  onChange={(event) => setBookOutTypeId(event.target.value)}
+                  className="mt-1 h-9 w-full rounded-input border border-border bg-surface px-2 text-[13px] text-text-primary outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                >
+                  <option value="">General book out</option>
+                  {activeTypes.map((type) => (
+                    <option key={type.id} value={type.id}>
+                      {type.name}
+                      {type.blocksAppointments ? '' : ' (bookable)'}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             <label className="text-[11px] font-medium uppercase tracking-[0.06em] text-text-secondary">
               Duration
               <select
@@ -1103,7 +1150,7 @@ function SlotMenu({
             <input
               value={note}
               onChange={(event) => setNote(event.target.value)}
-              placeholder="Reason (optional)"
+              placeholder="Note (optional)"
               className="h-9 w-full rounded-input border border-border bg-surface px-2 text-[13px] text-text-primary outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
             />
             <div className="flex gap-2">
@@ -1116,7 +1163,7 @@ function SlotMenu({
               </button>
               <button
                 type="button"
-                onClick={() => onAddBookout?.(minutes, note.trim() || undefined)}
+                onClick={() => onAddBookout?.(minutes, note.trim() || undefined, bookOutTypeId || undefined)}
                 className="h-9 flex-1 rounded-pill bg-primary text-[13px] font-semibold text-text-on-primary transition hover:bg-primary-deep"
               >
                 Create bookout
@@ -1598,8 +1645,9 @@ function buildColumns(input: {
   shiftsForDay: RotaShift[];
   absencesForDay: RotaAbsenceIndicator[];
   leaveStaffOnDay: Set<string>;
+  day: Date;
 }): ColumnModel[] {
-  const { staff, bookings, shiftsForDay, absencesForDay, leaveStaffOnDay } = input;
+  const { staff, bookings, shiftsForDay, absencesForDay, leaveStaffOnDay, day } = input;
   const bookingsByStaff = new Map<string, StaffBookingSummary[]>();
   const unassigned: StaffBookingSummary[] = [];
   for (const booking of bookings) {
@@ -1612,17 +1660,26 @@ function buildColumns(input: {
     }
   }
 
-  const columns: ColumnModel[] = staff.map((member) => ({
-    key: member.staffProfileId,
-    staffProfileId: member.staffProfileId,
-    name: member.displayName || member.fullName || 'Stylist',
-    subtitle: subtitleForStaff(member, leaveStaffOnDay.has(member.staffProfileId), shiftsForDay),
-    colorHex: member.colorHex,
-    shifts: shiftsForDay.filter((shift) => shift.staffProfileId === member.staffProfileId),
-    absences: absencesForDay.filter((absence) => absence.staffProfileId === member.staffProfileId),
-    onLeave: leaveStaffOnDay.has(member.staffProfileId),
-    bookings: bookingsByStaff.get(member.staffProfileId) ?? [],
-  }));
+  const columns: ColumnModel[] = staff.map((member) => {
+    const memberShifts = shiftsForDay.filter((shift) => shift.staffProfileId === member.staffProfileId);
+    const memberAbsences = absencesForDay.filter(
+      (absence) => absence.staffProfileId === member.staffProfileId,
+    );
+    const onLeave = leaveStaffOnDay.has(member.staffProfileId);
+    const memberBookings = bookingsByStaff.get(member.staffProfileId) ?? [];
+    return {
+      key: member.staffProfileId,
+      staffProfileId: member.staffProfileId,
+      name: member.displayName || member.fullName || 'Stylist',
+      subtitle: subtitleForStaff(member, onLeave, shiftsForDay),
+      colorHex: member.colorHex,
+      shifts: memberShifts,
+      absences: memberAbsences,
+      onLeave,
+      bookings: memberBookings,
+      utilisationPercent: columnUtilisation(memberShifts, memberAbsences, memberBookings, onLeave, day),
+    };
+  });
 
   // Surface any appointments assigned to stylists who are not in this
   // location's roster so nothing is silently hidden.
@@ -1638,6 +1695,7 @@ function buildColumns(input: {
       absences: [],
       onLeave: false,
       bookings: list,
+      utilisationPercent: null,
     });
   }
 
@@ -1650,10 +1708,106 @@ function buildColumns(input: {
       absences: [],
       onLeave: false,
       bookings: unassigned,
+      utilisationPercent: null,
     });
   }
 
   return columns;
+}
+
+// Statuses that occupy the stylist's time and so count toward utilisation.
+// Cancelled / rejected / no-show appointments free the slot up again.
+const UTILISATION_BOOKED_STATUSES: StaffBookingSummary['status'][] = [
+  'pending',
+  'accepted',
+  'checked_in',
+  'awaiting_payment',
+  'completed',
+];
+
+// Stylist-occupied milliseconds an appointment contributes on the given day.
+// Mirrors the calendar's per-service occupied runs (development/stylist-free
+// segments don't count), clamped to the day, with a whole-duration fallback.
+function bookingOccupiedMs(booking: StaffBookingSummary, dayStartMs: number, dayEndMs: number): number {
+  const clampMs = (value: number) => Math.min(Math.max(value, dayStartMs), dayEndMs);
+  const services = booking.services ?? [];
+  if (services.length === 0) {
+    const startMs = new Date(booking.startsAt).getTime();
+    let endMs = new Date(booking.endsAt).getTime();
+    if (endMs <= startMs) endMs = startMs + (booking.durationMinutes ?? 30) * 60_000;
+    return Math.max(0, clampMs(endMs) - clampMs(startMs));
+  }
+  let total = 0;
+  for (const service of services) {
+    let cursor = new Date(service.startsAt).getTime();
+    const segments = service.segments ?? [];
+    if (segments.length === 0) {
+      total += Math.max(0, clampMs(cursor + service.durationMinutes * 60_000) - clampMs(cursor));
+    } else {
+      for (const segment of segments) {
+        const end = cursor + segment.durationMinutes * 60_000;
+        if (!segment.isStylistFree) total += Math.max(0, clampMs(end) - clampMs(cursor));
+        cursor = end;
+      }
+    }
+  }
+  return total;
+}
+
+// Daily utilisation for one stylist column: booked ÷ available, where available
+// is shift time minus breaks minus any book-out/leave that reduces available
+// hours. Returns null when there's no available time (nothing to show).
+function columnUtilisation(
+  shifts: RotaShift[],
+  absences: RotaAbsenceIndicator[],
+  bookings: StaffBookingSummary[],
+  onLeave: boolean,
+  day: Date,
+): number | null {
+  if (onLeave) return null;
+  const dayStartMs = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
+  const dayEndMs = dayStartMs + 86_400_000;
+  const clampMs = (value: number) => Math.min(Math.max(value, dayStartMs), dayEndMs);
+
+  const shiftIntervals = shifts
+    .filter((shift) => shift.status !== 'cancelled')
+    .map((shift) => ({
+      startMs: clampMs(new Date(shift.scheduledStartAt).getTime()),
+      endMs: clampMs(new Date(shift.scheduledEndAt).getTime()),
+    }));
+
+  const breakIntervals = shifts
+    .flatMap((shift) => shift.breaks)
+    .map((brk) => ({
+      startMs: clampMs(new Date(brk.startedAt).getTime()),
+      endMs: clampMs(new Date(brk.endedAt).getTime()),
+    }));
+
+  const reducingBlocks = absences
+    .filter((absence) => absence.reducesAvailableHours)
+    .map((absence) => ({
+      startMs: clampMs(new Date(absence.startsAt).getTime()),
+      endMs: absence.endsAt ? clampMs(new Date(absence.endsAt).getTime()) : dayEndMs,
+    }));
+
+  const bookedMs = bookings
+    .filter((booking) => UTILISATION_BOOKED_STATUSES.includes(booking.status))
+    .reduce((sum, booking) => sum + bookingOccupiedMs(booking, dayStartMs, dayEndMs), 0);
+
+  return computeDailyUtilisation({
+    shifts: shiftIntervals,
+    breaks: breakIntervals,
+    reducingBlocks,
+    bookedMs,
+  }).utilisationPercent;
+}
+
+// Colour the utilisation badge: red when under-booked, amber mid, green when
+// healthily busy. Thresholds mirror common salon utilisation targets.
+function utilisationTone(percent: number): string {
+  if (percent >= 75) return 'bg-success-soft text-success';
+  if (percent >= 45) return 'bg-warning-soft text-warning';
+  return 'bg-danger-soft text-danger';
 }
 
 function subtitleForStaff(member: RotaStaffSummary, onLeave: boolean, shiftsForDay: RotaShift[]): string {

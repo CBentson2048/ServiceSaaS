@@ -3910,6 +3910,93 @@ export type AbsenceType =
   | 'unauthorised'
   | 'other';
 
+// ---------------------------------------------------------------------------
+// Book Out Types — configurable, per-business calendar block-out / absence
+// reasons whose three flags drive availability, utilisation and (future)
+// payroll. See Wrike #4507280825 review feedback.
+// ---------------------------------------------------------------------------
+
+export interface BookOutType {
+  id: string;
+  businessId: string;
+  /** Stable machine key, unique per business (system rows use well-known keys). */
+  key: string;
+  name: string;
+  /** When false, clients can still be booked over this block. */
+  blocksAppointments: boolean;
+  /** When true, the time is removed from the utilisation denominator (available hours). */
+  reducesAvailableHours: boolean;
+  /** When true, the time counts as paid working time (reserved for payroll/reporting). */
+  countsAsPaidTime: boolean;
+  colorHex?: string;
+  /** System rows are platform-seeded — editable but not deletable. */
+  isSystem: boolean;
+  isActive: boolean;
+  sortOrder: number;
+}
+
+/** Behavioural flags a book-out type contributes; used by the utilisation engine. */
+export interface BookOutTypeBehaviour {
+  blocksAppointments: boolean;
+  reducesAvailableHours: boolean;
+  countsAsPaidTime: boolean;
+}
+
+/**
+ * Legacy fallback: absences with no book-out type (created before the catalog,
+ * or via the old enum path) both block appointments and reduce available hours,
+ * preserving the historical behaviour.
+ */
+export const LEGACY_BOOK_OUT_BEHAVIOUR: BookOutTypeBehaviour = {
+  blocksAppointments: true,
+  reducesAvailableHours: true,
+  countsAsPaidTime: false,
+};
+
+/** System book-out types seeded for every business (mirrors migration 0061). */
+export const SYSTEM_BOOK_OUT_TYPES: Array<
+  Pick<
+    BookOutType,
+    'key' | 'name' | 'blocksAppointments' | 'reducesAvailableHours' | 'countsAsPaidTime' | 'colorHex' | 'sortOrder'
+  >
+> = [
+  { key: 'lunch', name: 'Lunch', blocksAppointments: true, reducesAvailableHours: true, countsAsPaidTime: false, colorHex: '#94a3b8', sortOrder: 10 },
+  { key: 'staff_meeting', name: 'Staff meeting', blocksAppointments: true, reducesAvailableHours: true, countsAsPaidTime: true, colorHex: '#6366f1', sortOrder: 20 },
+  { key: 'training', name: 'Training', blocksAppointments: true, reducesAvailableHours: false, countsAsPaidTime: true, colorHex: '#8b5cf6', sortOrder: 30 },
+  { key: 'admin', name: 'Admin', blocksAppointments: true, reducesAvailableHours: false, countsAsPaidTime: true, colorHex: '#0ea5e9', sortOrder: 40 },
+  { key: 'marketing', name: 'Marketing', blocksAppointments: true, reducesAvailableHours: false, countsAsPaidTime: true, colorHex: '#14b8a6', sortOrder: 50 },
+  { key: 'annual_leave', name: 'Annual leave', blocksAppointments: true, reducesAvailableHours: true, countsAsPaidTime: false, colorHex: '#22c55e', sortOrder: 60 },
+  { key: 'sick_leave', name: 'Sick leave', blocksAppointments: true, reducesAvailableHours: true, countsAsPaidTime: true, colorHex: '#f59e0b', sortOrder: 70 },
+  { key: 'other', name: 'Other book out', blocksAppointments: true, reducesAvailableHours: true, countsAsPaidTime: false, colorHex: '#94a3b8', sortOrder: 80 },
+];
+
+export interface CreateBookOutTypeRequest {
+  name: string;
+  blocksAppointments?: boolean;
+  reducesAvailableHours?: boolean;
+  countsAsPaidTime?: boolean;
+  colorHex?: string | null;
+  sortOrder?: number;
+}
+
+export interface UpdateBookOutTypeRequest {
+  name?: string;
+  blocksAppointments?: boolean;
+  reducesAvailableHours?: boolean;
+  countsAsPaidTime?: boolean;
+  colorHex?: string | null;
+  isActive?: boolean;
+  sortOrder?: number;
+}
+
+export interface ListBookOutTypesResponse {
+  bookOutTypes: BookOutType[];
+}
+
+export interface BookOutTypeMutationResponse {
+  bookOutType: BookOutType;
+}
+
 export interface RotaBreak {
   id: string;
   shiftId: string;
@@ -3964,6 +4051,18 @@ export interface RotaAbsenceIndicator {
   startsAt: string;
   endsAt?: string;
   notes?: string;
+  /** Linked configurable book-out type, when one was chosen. */
+  bookOutTypeId?: string | null;
+  bookOutTypeName?: string;
+  bookOutTypeColorHex?: string;
+  /**
+   * Effective behaviour flags resolved from the linked type (or
+   * {@link LEGACY_BOOK_OUT_BEHAVIOUR} when unlinked). Duplicated onto each
+   * indicator so the calendar can compute utilisation without a second lookup.
+   */
+  blocksAppointments: boolean;
+  reducesAvailableHours: boolean;
+  countsAsPaidTime: boolean;
 }
 
 export interface WeeklyRotaResponse {
@@ -4101,10 +4200,96 @@ export interface CreateAbsenceRequest {
   startsAt: string;
   endsAt?: string;
   notes?: string;
+  /** Optional configurable book-out type driving availability/utilisation. */
+  bookOutTypeId?: string;
 }
 
 export interface AbsenceMutationResponse {
   absence: RotaAbsenceIndicator;
+}
+
+// ---------------------------------------------------------------------------
+// Utilisation
+//
+// Utilisation is measured against AVAILABLE working hours, not raw scheduled
+// hours: a stylist rostered 9–6 (9h) who takes a 30m lunch and a 1h staff
+// meeting has 7.5h available, so 6h of appointments is 80% — not 66.7%.
+// Which blocks reduce "available" is driven by each book-out type's
+// `reducesAvailableHours` flag (breaks always reduce it). Pure + deterministic
+// so it can be shared by the calendar badge, KPI reports and tests.
+// ---------------------------------------------------------------------------
+
+export interface UtilisationIntervalMs {
+  startMs: number;
+  endMs: number;
+}
+
+export interface DailyUtilisationInput {
+  /** Rostered (non-cancelled) shift spans, already clamped to the day. */
+  shifts: UtilisationIntervalMs[];
+  /** All breaks within the shifts — always reduce available hours. */
+  breaks: UtilisationIntervalMs[];
+  /** Block-out/leave spans whose type has `reducesAvailableHours = true`. */
+  reducingBlocks: UtilisationIntervalMs[];
+  /** Stylist-occupied appointment time (numerator), in milliseconds. */
+  bookedMs: number;
+}
+
+export interface DailyUtilisation {
+  availableMs: number;
+  bookedMs: number;
+  /** booked ÷ available × 100, rounded. Null when there is no available time. */
+  utilisationPercent: number | null;
+}
+
+function normaliseIntervalsMs(intervals: UtilisationIntervalMs[]): UtilisationIntervalMs[] {
+  const valid = intervals.filter((i) => i.endMs > i.startMs).sort((a, b) => a.startMs - b.startMs);
+  const merged: UtilisationIntervalMs[] = [];
+  for (const interval of valid) {
+    const last = merged[merged.length - 1];
+    if (last && interval.startMs <= last.endMs) last.endMs = Math.max(last.endMs, interval.endMs);
+    else merged.push({ startMs: interval.startMs, endMs: interval.endMs });
+  }
+  return merged;
+}
+
+function subtractIntervalsMs(a: UtilisationIntervalMs[], b: UtilisationIntervalMs[]): UtilisationIntervalMs[] {
+  const cuts = normaliseIntervalsMs(b);
+  let current = normaliseIntervalsMs(a);
+  for (const cut of cuts) {
+    const next: UtilisationIntervalMs[] = [];
+    for (const interval of current) {
+      if (cut.endMs <= interval.startMs || cut.startMs >= interval.endMs) {
+        next.push(interval);
+        continue;
+      }
+      if (cut.startMs > interval.startMs) next.push({ startMs: interval.startMs, endMs: cut.startMs });
+      if (cut.endMs < interval.endMs) next.push({ startMs: cut.endMs, endMs: interval.endMs });
+    }
+    current = next;
+  }
+  return current;
+}
+
+function totalIntervalMs(intervals: UtilisationIntervalMs[]): number {
+  return intervals.reduce((sum, i) => sum + Math.max(0, i.endMs - i.startMs), 0);
+}
+
+/**
+ * Available time = scheduled shift time minus breaks and any book-out/leave
+ * blocks flagged as reducing available hours. Utilisation = booked ÷ available.
+ */
+export function computeDailyUtilisation(input: DailyUtilisationInput): DailyUtilisation {
+  const available = subtractIntervalsMs(input.shifts, [...input.breaks, ...input.reducingBlocks]);
+  const availableMs = totalIntervalMs(available);
+  const bookedMs = Math.max(0, input.bookedMs);
+  const utilisationPercent = availableMs > 0 ? Math.round((bookedMs / availableMs) * 100) : null;
+  return { availableMs, bookedMs, utilisationPercent };
+}
+
+/** Resolve a book-out type's behaviour flags, falling back to legacy defaults. */
+export function resolveBookOutBehaviour(type?: BookOutTypeBehaviour | null): BookOutTypeBehaviour {
+  return type ?? LEGACY_BOOK_OUT_BEHAVIOUR;
 }
 
 export interface SaveWeeklyRotaShiftInput {

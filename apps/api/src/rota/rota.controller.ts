@@ -13,9 +13,11 @@ import {
 import type {
   AbsenceMutationResponse,
   AuthUser,
+  BookOutTypeMutationResponse,
   BreakMutationResponse,
   CreateNewWeekResponse,
   LeaveRequestMutationResponse,
+  ListBookOutTypesResponse,
   ListLeaveRequestsResponse,
   MyLeaveRequestsResponse,
   PreviewNewWeekResponse,
@@ -31,6 +33,7 @@ import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import {
   ApproveLeaveRequestDto,
   CreateAbsenceDto,
+  CreateBookOutTypeDto,
   CreateBreakDto,
   CreateMyLeaveRequestDto,
   CreateNewWeekDto,
@@ -40,6 +43,7 @@ import {
   PreviewNewWeekDto,
   RejectLeaveRequestDto,
   SaveWeeklyRotaDto,
+  UpdateBookOutTypeDto,
   UpdateBreakDto,
   UpdateShiftDto,
 } from './dto';
@@ -169,6 +173,40 @@ export class RotaController {
     @Body() body: CreateAbsenceDto,
   ): Promise<AbsenceMutationResponse> {
     return this.rota.markAbsence(actor, body);
+  }
+
+  // -------------------- Book Out Types (configurable block-out reasons) -----
+
+  @Get('book-out-types')
+  @RequirePermissions('rota.view')
+  listBookOutTypes(@CurrentUser() actor: AuthUser): Promise<ListBookOutTypesResponse> {
+    return this.rota.listBookOutTypes(actor);
+  }
+
+  @Post('book-out-types')
+  createBookOutType(
+    @CurrentUser() actor: AuthUser,
+    @Body() body: CreateBookOutTypeDto,
+  ): Promise<BookOutTypeMutationResponse> {
+    return this.rota.createBookOutType(actor, body);
+  }
+
+  @Patch('book-out-types/:id')
+  updateBookOutType(
+    @CurrentUser() actor: AuthUser,
+    @Param('id') id: string,
+    @Body() body: UpdateBookOutTypeDto,
+  ): Promise<BookOutTypeMutationResponse> {
+    return this.rota.updateBookOutType(actor, id, body);
+  }
+
+  @Delete('book-out-types/:id')
+  @HttpCode(200)
+  deleteBookOutType(
+    @CurrentUser() actor: AuthUser,
+    @Param('id') id: string,
+  ): Promise<{ success: true }> {
+    return this.rota.deleteBookOutType(actor, id);
   }
 
   // -------------------------------------------------------------------------

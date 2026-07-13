@@ -131,6 +131,10 @@ import type {
   UpsertServiceUpgradeSuggestionRequest,
   WeeklyRotaResponse,
   AdminUpdateProfileRequest,
+  BookOutTypeMutationResponse,
+  CreateBookOutTypeRequest,
+  ListBookOutTypesResponse,
+  UpdateBookOutTypeRequest,
   GetCancellationPolicyResponse,
   GetLocationProductBillingSettingsResponse,
   GetLocationTaxSettingsResponse,
@@ -1837,6 +1841,43 @@ export async function saveWeeklyRota(
   return request<SaveWeeklyRotaResponse>('/rota/week/save', {
     method: 'POST',
     body: payload,
+    accessToken,
+  });
+}
+
+export async function listBookOutTypes(accessToken: string): Promise<ListBookOutTypesResponse> {
+  return request<ListBookOutTypesResponse>('/rota/book-out-types', { accessToken });
+}
+
+export async function createBookOutType(
+  accessToken: string,
+  payload: CreateBookOutTypeRequest,
+): Promise<BookOutTypeMutationResponse> {
+  return request<BookOutTypeMutationResponse>('/rota/book-out-types', {
+    method: 'POST',
+    body: payload,
+    accessToken,
+  });
+}
+
+export async function updateBookOutType(
+  accessToken: string,
+  id: string,
+  payload: UpdateBookOutTypeRequest,
+): Promise<BookOutTypeMutationResponse> {
+  return request<BookOutTypeMutationResponse>(`/rota/book-out-types/${id}`, {
+    method: 'PATCH',
+    body: payload,
+    accessToken,
+  });
+}
+
+export async function deleteBookOutType(
+  accessToken: string,
+  id: string,
+): Promise<{ success: true }> {
+  return request<{ success: true }>(`/rota/book-out-types/${id}`, {
+    method: 'DELETE',
     accessToken,
   });
 }

@@ -187,6 +187,7 @@ interface AbsenceRow {
   staff_profile_id: string;
   starts_at: string;
   ends_at: string | null;
+  book_out_type_id: string | null;
 }
 
 interface ClientProfileRow {
@@ -261,7 +262,7 @@ const BOOKING_ATTEMPT_COLUMNS =
 const BOOKING_ATTEMPT_SERVICE_COLUMNS =
   'service_id,sequence_no,service_name_snapshot,duration_minutes,price_amount,deposit_required_amount';
 const LEAVE_COLUMNS = 'staff_profile_id,start_date,end_date';
-const ABSENCE_COLUMNS = 'staff_profile_id,starts_at,ends_at';
+const ABSENCE_COLUMNS = 'staff_profile_id,starts_at,ends_at,book_out_type_id';
 const LOOKAHEAD_DAYS = 28;
 const BOOKING_ATTEMPT_TTL_MINUTES = 15;
 
@@ -1037,6 +1038,35 @@ export class PublicBookingService {
     }
   }
 
+  /**
+   * Of the book-out types referenced by these absences, return the ids whose
+   * type is configured NOT to block appointments. Those absences should not
+   * remove availability. Returns an empty set when no typed absences exist.
+   */
+  private async fetchNonBlockingBookOutTypeIds(
+    businessId: string,
+    absences: AbsenceRow[],
+  ): Promise<Set<string>> {
+    const typeIds = Array.from(
+      new Set(absences.map((row) => row.book_out_type_id).filter((id): id is string => Boolean(id))),
+    );
+    if (typeIds.length === 0) return new Set();
+    const { data, error } = await this.admin
+      .schema('rota')
+      .from('book_out_types')
+      .select('id,blocks_appointments')
+      .eq('business_id', businessId)
+      .in('id', typeIds)
+      .eq('blocks_appointments', false)
+      .returns<{ id: string; blocks_appointments: boolean }[]>();
+    if (error) {
+      this.logger.error(`fetchNonBlockingBookOutTypeIds failed: ${error.message}`);
+      // Fail closed: treat everything as blocking (safer for availability).
+      return new Set();
+    }
+    return new Set((data ?? []).map((row) => row.id));
+  }
+
   private async fetchNextAvailableByStaff(
     businessId: string,
     locationId: string,
@@ -1197,8 +1227,13 @@ export class PublicBookingService {
       rows.push(leaveRow);
       leaveByStaff.set(leaveRow.staff_profile_id, rows);
     }
+    // Book-out types flagged "does not block appointments" must NOT make the
+    // stylist unavailable — clients can still be booked over them. Legacy
+    // absences (no type) always block, preserving historical behaviour.
+    const nonBlockingTypeIds = await this.fetchNonBlockingBookOutTypeIds(businessId, absences ?? []);
     const absencesByStaff = new Map<string, AbsenceRow[]>();
     for (const absence of (absences ?? []).filter((row) => !row.ends_at || new Date(row.ends_at) > searchStart)) {
+      if (absence.book_out_type_id && nonBlockingTypeIds.has(absence.book_out_type_id)) continue;
       const rows = absencesByStaff.get(absence.staff_profile_id) ?? [];
       rows.push(absence);
       absencesByStaff.set(absence.staff_profile_id, rows);

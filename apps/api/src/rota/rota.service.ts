@@ -13,8 +13,11 @@ import type {
   AbsenceType,
   ApproveLeaveRequestRequest,
   AuthUser,
+  BookOutType,
+  BookOutTypeMutationResponse,
   BreakMutationResponse,
   CreateAbsenceRequest,
+  CreateBookOutTypeRequest,
   CreateBreakRequest,
   CreateMyLeaveRequest,
   CreateNewWeekRequest,
@@ -22,6 +25,7 @@ import type {
   CreateShiftRequest,
   LeaveRequestMutationResponse,
   LeaveRequestStatus,
+  ListBookOutTypesResponse,
   ListLeaveRequestsResponse,
   MyLeaveRequestsResponse,
   PreviewNewWeekRequest,
@@ -37,11 +41,12 @@ import type {
   ShiftMutationResponse,
   ShiftStatus,
   StylistMyWeekResponse,
+  UpdateBookOutTypeRequest,
   UpdateBreakRequest,
   UpdateShiftRequest,
   WeeklyRotaResponse,
 } from '@sheer/domain';
-import { userHasAnyRole, userHasRole } from '@sheer/domain';
+import { LEGACY_BOOK_OUT_BEHAVIOUR, SYSTEM_BOOK_OUT_TYPES, userHasAnyRole, userHasRole } from '@sheer/domain';
 
 // ---------------------------------------------------------------------------
 // Row types — narrow projections of the rota schema rows the service uses.
@@ -97,6 +102,21 @@ interface AbsenceRow {
   starts_at: string;
   ends_at: string | null;
   notes: string | null;
+  book_out_type_id: string | null;
+}
+
+interface BookOutTypeRow {
+  id: string;
+  business_id: string;
+  key: string;
+  name: string;
+  blocks_appointments: boolean;
+  reduces_available_hours: boolean;
+  counts_as_paid_time: boolean;
+  color_hex: string | null;
+  is_system: boolean;
+  is_active: boolean;
+  sort_order: number;
 }
 
 interface StaffProfileRow {
@@ -145,7 +165,7 @@ type AuditAction =
   | 'mark_absence'
   | 'past_edit';
 
-type AuditEntity = 'shift' | 'shift_break' | 'leave_request' | 'absence_event';
+type AuditEntity = 'shift' | 'shift_break' | 'leave_request' | 'absence_event' | 'book_out_type';
 
 const DEFAULT_HOLIDAY_NOTICE_DAYS = 30;
 const DEFAULT_BREAK_MINUTES = 30;
@@ -197,21 +217,23 @@ export class RotaService {
     const startIso = startOfWeek.toISOString();
     const endIso = endOfWeek.toISOString();
 
-    const [staff, shifts, breaks, leave, absences, holidayNoticeDays] = await Promise.all([
-      this.fetchLocationStaff(actor.businessId, locationId),
-      this.fetchShiftsInRange(actor.businessId, locationId, startIso, endIso),
-      // Break query is keyed on the same range, but we filter by shift_id
-      // afterwards to keep it tight in case `started_at` falls outside.
-      this.fetchBreaksForRange(actor.businessId, locationId, startIso, endIso),
-      this.fetchLeaveOverlapping(
-        actor.businessId,
-        locationId,
-        toIsoDate(startOfWeek),
-        toIsoDate(endOfWeek),
-      ),
-      this.fetchAbsencesOverlapping(actor.businessId, locationId, startIso, endIso),
-      this.fetchHolidayNoticeDays(locationId),
-    ]);
+    const [staff, shifts, breaks, leave, absences, holidayNoticeDays, bookOutTypesById] =
+      await Promise.all([
+        this.fetchLocationStaff(actor.businessId, locationId),
+        this.fetchShiftsInRange(actor.businessId, locationId, startIso, endIso),
+        // Break query is keyed on the same range, but we filter by shift_id
+        // afterwards to keep it tight in case `started_at` falls outside.
+        this.fetchBreaksForRange(actor.businessId, locationId, startIso, endIso),
+        this.fetchLeaveOverlapping(
+          actor.businessId,
+          locationId,
+          toIsoDate(startOfWeek),
+          toIsoDate(endOfWeek),
+        ),
+        this.fetchAbsencesOverlapping(actor.businessId, locationId, startIso, endIso),
+        this.fetchHolidayNoticeDays(locationId),
+        this.fetchBookOutTypesMap(actor.businessId),
+      ]);
 
     const breaksByShift = new Map<string, BreakRow[]>();
     for (const row of breaks) {
@@ -236,7 +258,7 @@ export class RotaService {
         endDate: row.end_date,
         reason: row.reason ?? undefined,
       })),
-      absences: absences.map(toRotaAbsenceIndicator),
+      absences: absences.map((row) => toRotaAbsenceIndicator(row, bookOutTypesById)),
       holidayNoticeDays,
       scope: userHasRole(actor, 'owner') ? 'owner' : 'manager',
     };
@@ -656,7 +678,7 @@ export class RotaService {
     const startIso = startOfWeek.toISOString();
     const endIso = endOfWeek.toISOString();
 
-    const [shifts, breaks, leave, absences] = await Promise.all([
+    const [shifts, breaks, leave, absences, bookOutTypesById] = await Promise.all([
       this.fetchShiftsInRange(actor.businessId, locationId, startIso, endIso),
       this.fetchBreaksForRange(actor.businessId, locationId, startIso, endIso),
       this.fetchLeaveOverlapping(
@@ -666,6 +688,7 @@ export class RotaService {
         toIsoDate(endOfWeek),
       ),
       this.fetchAbsencesOverlapping(actor.businessId, locationId, startIso, endIso),
+      this.fetchBookOutTypesMap(actor.businessId),
     ]);
 
     const ownShifts = shifts.filter((row) => row.staff_profile_id === staffProfileId);
@@ -692,7 +715,7 @@ export class RotaService {
         })),
       absences: absences
         .filter((row) => row.staff_profile_id === staffProfileId)
-        .map(toRotaAbsenceIndicator),
+        .map((row) => toRotaAbsenceIndicator(row, bookOutTypesById)),
     };
   }
 
@@ -1023,6 +1046,17 @@ export class RotaService {
       throw new BadRequestException('Absence end must be strictly after start');
     }
 
+    // Resolve the (optional) configurable book-out type so we can both validate
+    // it belongs to this business and echo its behaviour flags in the response.
+    let bookOutType: BookOutTypeRow | undefined;
+    if (input.bookOutTypeId) {
+      const typesById = await this.fetchBookOutTypesMap(actor.businessId);
+      bookOutType = typesById.get(input.bookOutTypeId);
+      if (!bookOutType) {
+        throw new BadRequestException('Unknown book-out type for this business');
+      }
+    }
+
     const { data, error } = await this.admin
       .schema('rota')
       .from('absence_events')
@@ -1034,6 +1068,7 @@ export class RotaService {
         starts_at: start.toISOString(),
         ends_at: end?.toISOString() ?? null,
         notes: input.notes?.trim() || null,
+        book_out_type_id: bookOutType?.id ?? null,
         created_by_user_profile_id: actor.id,
       })
       .select(ABSENCE_COLUMNS)
@@ -1051,12 +1086,261 @@ export class RotaService {
       action: 'mark_absence',
       metadata: {
         absence_type: data.absence_type,
+        book_out_type_id: data.book_out_type_id,
         starts_at: data.starts_at,
         ends_at: data.ends_at,
       },
     });
 
-    return { absence: toRotaAbsenceIndicator(data) };
+    const typesById = bookOutType ? new Map([[bookOutType.id, bookOutType]]) : undefined;
+    return { absence: toRotaAbsenceIndicator(data, typesById) };
+  }
+
+  // -------------------------------------------------------------------------
+  // Book Out Types — per-business configurable calendar block-out reasons.
+  // The three flags (blocks appointments / reduces available hours / counts as
+  // paid time) drive availability, utilisation and future payroll.
+  // -------------------------------------------------------------------------
+
+  async listBookOutTypes(actor: AuthUser): Promise<ListBookOutTypesResponse> {
+    this.assertManagerOrOwner(actor);
+    await this.ensureBookOutTypesSeeded(actor.businessId);
+    const { data, error } = await this.admin
+      .schema('rota')
+      .from('book_out_types')
+      .select(BOOK_OUT_TYPE_COLUMNS)
+      .eq('business_id', actor.businessId)
+      .order('sort_order', { ascending: true })
+      .order('name', { ascending: true })
+      .returns<BookOutTypeRow[]>();
+    if (error) {
+      this.logger.error(`listBookOutTypes failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load book-out types');
+    }
+    return { bookOutTypes: (data ?? []).map(toBookOutType) };
+  }
+
+  async createBookOutType(
+    actor: AuthUser,
+    input: CreateBookOutTypeRequest,
+  ): Promise<BookOutTypeMutationResponse> {
+    this.assertManagerOrOwner(actor);
+    const name = input.name?.trim();
+    if (!name) throw new BadRequestException('A name is required');
+    await this.ensureBookOutTypesSeeded(actor.businessId);
+
+    const key = await this.uniqueBookOutTypeKey(actor.businessId, name);
+    const { data, error } = await this.admin
+      .schema('rota')
+      .from('book_out_types')
+      .insert({
+        business_id: actor.businessId,
+        key,
+        name,
+        blocks_appointments: input.blocksAppointments ?? true,
+        reduces_available_hours: input.reducesAvailableHours ?? true,
+        counts_as_paid_time: input.countsAsPaidTime ?? false,
+        color_hex: input.colorHex ?? null,
+        is_system: false,
+        is_active: true,
+        sort_order: input.sortOrder ?? 100,
+      })
+      .select(BOOK_OUT_TYPE_COLUMNS)
+      .single<BookOutTypeRow>();
+    if (error || !data) {
+      this.logger.error(`createBookOutType failed: ${error?.message ?? 'no row'}`);
+      throw new InternalServerErrorException('Unable to create book-out type');
+    }
+
+    await this.recordAudit(actor, {
+      entity: 'book_out_type',
+      entityId: data.id,
+      locationId: null,
+      action: 'create',
+      metadata: { key: data.key, name: data.name },
+    });
+
+    return { bookOutType: toBookOutType(data) };
+  }
+
+  async updateBookOutType(
+    actor: AuthUser,
+    id: string,
+    input: UpdateBookOutTypeRequest,
+  ): Promise<BookOutTypeMutationResponse> {
+    this.assertManagerOrOwner(actor);
+    const existing = await this.fetchBookOutType(actor.businessId, id);
+
+    const patch: Record<string, unknown> = {};
+    if (input.name !== undefined) {
+      const name = input.name.trim();
+      if (!name) throw new BadRequestException('A name cannot be blank');
+      patch.name = name;
+    }
+    if (input.blocksAppointments !== undefined) patch.blocks_appointments = input.blocksAppointments;
+    if (input.reducesAvailableHours !== undefined)
+      patch.reduces_available_hours = input.reducesAvailableHours;
+    if (input.countsAsPaidTime !== undefined) patch.counts_as_paid_time = input.countsAsPaidTime;
+    if (input.colorHex !== undefined) patch.color_hex = input.colorHex;
+    if (input.sortOrder !== undefined) patch.sort_order = input.sortOrder;
+    // System rows are always available for selection; only custom rows may be
+    // deactivated so a business can retire a reason it no longer uses.
+    if (input.isActive !== undefined && !existing.is_system) patch.is_active = input.isActive;
+
+    if (Object.keys(patch).length === 0) return { bookOutType: toBookOutType(existing) };
+
+    const { data, error } = await this.admin
+      .schema('rota')
+      .from('book_out_types')
+      .update(patch)
+      .eq('id', id)
+      .eq('business_id', actor.businessId)
+      .select(BOOK_OUT_TYPE_COLUMNS)
+      .single<BookOutTypeRow>();
+    if (error || !data) {
+      this.logger.error(`updateBookOutType failed: ${error?.message ?? 'no row'}`);
+      throw new InternalServerErrorException('Unable to update book-out type');
+    }
+
+    await this.recordAudit(actor, {
+      entity: 'book_out_type',
+      entityId: data.id,
+      locationId: null,
+      action: 'update',
+      metadata: { previous: existing, next: patch },
+    });
+
+    return { bookOutType: toBookOutType(data) };
+  }
+
+  async deleteBookOutType(actor: AuthUser, id: string): Promise<{ success: true }> {
+    this.assertManagerOrOwner(actor);
+    const existing = await this.fetchBookOutType(actor.businessId, id);
+    if (existing.is_system) {
+      throw new BadRequestException(
+        'System book-out types cannot be deleted — deactivate a custom type instead',
+      );
+    }
+
+    // Absences reference the type with ON DELETE SET NULL, so historical rows
+    // survive (falling back to legacy behaviour) — no orphan cleanup needed.
+    const { error } = await this.admin
+      .schema('rota')
+      .from('book_out_types')
+      .delete()
+      .eq('id', id)
+      .eq('business_id', actor.businessId);
+    if (error) {
+      this.logger.error(`deleteBookOutType failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to delete book-out type');
+    }
+
+    await this.recordAudit(actor, {
+      entity: 'book_out_type',
+      entityId: id,
+      locationId: null,
+      action: 'delete',
+      metadata: { key: existing.key, name: existing.name },
+    });
+
+    return { success: true };
+  }
+
+  private async fetchBookOutType(businessId: string, id: string): Promise<BookOutTypeRow> {
+    const { data, error } = await this.admin
+      .schema('rota')
+      .from('book_out_types')
+      .select(BOOK_OUT_TYPE_COLUMNS)
+      .eq('id', id)
+      .eq('business_id', businessId)
+      .maybeSingle<BookOutTypeRow>();
+    if (error) {
+      this.logger.error(`fetchBookOutType failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load book-out type');
+    }
+    if (!data) throw new NotFoundException('Book-out type not found');
+    return data;
+  }
+
+  private async fetchBookOutTypesMap(businessId: string): Promise<Map<string, BookOutTypeRow>> {
+    await this.ensureBookOutTypesSeeded(businessId);
+    const { data, error } = await this.admin
+      .schema('rota')
+      .from('book_out_types')
+      .select(BOOK_OUT_TYPE_COLUMNS)
+      .eq('business_id', businessId)
+      .returns<BookOutTypeRow[]>();
+    if (error) {
+      this.logger.error(`fetchBookOutTypesMap failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load book-out types');
+    }
+    return new Map((data ?? []).map((row) => [row.id, row]));
+  }
+
+  /**
+   * Idempotently seed the system book-out types for a business the first time
+   * they're needed. Existing businesses were seeded by migration 0061; this
+   * covers businesses created afterwards without touching the onboarding SQL.
+   */
+  private async ensureBookOutTypesSeeded(businessId: string): Promise<void> {
+    const { count, error } = await this.admin
+      .schema('rota')
+      .from('book_out_types')
+      .select('id', { count: 'exact', head: true })
+      .eq('business_id', businessId);
+    if (error) {
+      this.logger.error(`ensureBookOutTypesSeeded count failed: ${error.message}`);
+      return; // fail-soft: never block the rota because seeding hiccuped
+    }
+    if ((count ?? 0) > 0) return;
+
+    const rows = SYSTEM_BOOK_OUT_TYPES.map((type) => ({
+      business_id: businessId,
+      key: type.key,
+      name: type.name,
+      blocks_appointments: type.blocksAppointments,
+      reduces_available_hours: type.reducesAvailableHours,
+      counts_as_paid_time: type.countsAsPaidTime,
+      color_hex: type.colorHex ?? null,
+      is_system: true,
+      is_active: true,
+      sort_order: type.sortOrder,
+    }));
+    const { error: insertError } = await this.admin
+      .schema('rota')
+      .from('book_out_types')
+      .upsert(rows, { onConflict: 'business_id,key', ignoreDuplicates: true });
+    if (insertError) {
+      this.logger.error(`ensureBookOutTypesSeeded insert failed: ${insertError.message}`);
+    }
+  }
+
+  /** Build a unique per-business key from a display name (slug + numeric suffix). */
+  private async uniqueBookOutTypeKey(businessId: string, name: string): Promise<string> {
+    const base =
+      name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 40) || 'book_out';
+    const { data, error } = await this.admin
+      .schema('rota')
+      .from('book_out_types')
+      .select('key')
+      .eq('business_id', businessId)
+      .like('key', `${base}%`)
+      .returns<{ key: string }[]>();
+    if (error) {
+      this.logger.error(`uniqueBookOutTypeKey failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to create book-out type');
+    }
+    const taken = new Set((data ?? []).map((row) => row.key));
+    if (!taken.has(base)) return base;
+    for (let i = 2; i < 1000; i += 1) {
+      const candidate = `${base}_${i}`;
+      if (!taken.has(candidate)) return candidate;
+    }
+    return `${base}_${Date.now()}`;
   }
 
   // -------------------------------------------------------------------------
@@ -1833,7 +2117,26 @@ const BREAK_COLUMNS =
 const LEAVE_COLUMNS =
   'id,business_id,location_id,staff_profile_id,start_date,end_date,status,reason,reviewed_at,reviewed_by_user_profile_id,metadata,created_at,updated_at';
 const ABSENCE_COLUMNS =
-  'id,business_id,location_id,staff_profile_id,absence_type,starts_at,ends_at,notes';
+  'id,business_id,location_id,staff_profile_id,absence_type,starts_at,ends_at,notes,book_out_type_id';
+
+const BOOK_OUT_TYPE_COLUMNS =
+  'id,business_id,key,name,blocks_appointments,reduces_available_hours,counts_as_paid_time,color_hex,is_system,is_active,sort_order';
+
+function toBookOutType(row: BookOutTypeRow): BookOutType {
+  return {
+    id: row.id,
+    businessId: row.business_id,
+    key: row.key,
+    name: row.name,
+    blocksAppointments: row.blocks_appointments,
+    reducesAvailableHours: row.reduces_available_hours,
+    countsAsPaidTime: row.counts_as_paid_time,
+    colorHex: row.color_hex ?? undefined,
+    isSystem: row.is_system,
+    isActive: row.is_active,
+    sortOrder: row.sort_order,
+  };
+}
 
 function toRotaShift(row: ShiftRow, breaks: BreakRow[]): RotaShift {
   return {
@@ -1883,7 +2186,18 @@ function toDraftShift(row: ShiftRow, breaks: BreakRow[], dayOffset: number): Rot
   };
 }
 
-function toRotaAbsenceIndicator(row: AbsenceRow): RotaAbsenceIndicator {
+function toRotaAbsenceIndicator(
+  row: AbsenceRow,
+  typesById?: Map<string, BookOutTypeRow>,
+): RotaAbsenceIndicator {
+  const type = row.book_out_type_id ? typesById?.get(row.book_out_type_id) : undefined;
+  const behaviour = type
+    ? {
+        blocksAppointments: type.blocks_appointments,
+        reducesAvailableHours: type.reduces_available_hours,
+        countsAsPaidTime: type.counts_as_paid_time,
+      }
+    : LEGACY_BOOK_OUT_BEHAVIOUR;
   return {
     id: row.id,
     staffProfileId: row.staff_profile_id,
@@ -1891,6 +2205,12 @@ function toRotaAbsenceIndicator(row: AbsenceRow): RotaAbsenceIndicator {
     startsAt: row.starts_at,
     endsAt: row.ends_at ?? undefined,
     notes: row.notes ?? undefined,
+    bookOutTypeId: row.book_out_type_id,
+    bookOutTypeName: type?.name,
+    bookOutTypeColorHex: type?.color_hex ?? undefined,
+    blocksAppointments: behaviour.blocksAppointments,
+    reducesAvailableHours: behaviour.reducesAvailableHours,
+    countsAsPaidTime: behaviour.countsAsPaidTime,
   };
 }
 

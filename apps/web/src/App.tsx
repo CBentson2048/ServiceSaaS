@@ -5,6 +5,7 @@ import { AcceptInvitationPage } from './pages/AcceptInvitationPage';
 import { AccountCreatedPage } from './pages/AccountCreatedPage';
 import { AuditLogPage } from './pages/AuditLogPage';
 import { BookingSettingsPage } from './pages/BookingSettingsPage';
+import { BookOutTypesPage } from './pages/BookOutTypesPage';
 import { SecurityLevelsPage } from './pages/SecurityLevelsPage';
 import { ClientBookingAccountPage } from './pages/ClientBookingAccountPage';
 import { ClientBookingDateTimePage } from './pages/ClientBookingDateTimePage';
@@ -122,6 +123,7 @@ export function App() {
           </Route>
           <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['rota.manage']} />}>
             <Route path="/rota/new-week" element={<NewWeekRotaPage />} />
+            <Route path="/settings/book-out-types" element={<BookOutTypesPage />} />
           </Route>
           <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['services.manage']} />}>
             <Route path="/services" element={<ServiceManagementPage />}>

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import type {
   AppointmentCompletionLineItem,
   AppointmentCompletionResponse,
+  BookOutType,
   CreateStylistRebookingRequest,
   PublicBookingServiceSummary,
   RescheduleAppointmentRequest,
@@ -24,6 +25,7 @@ import {
   getStaffBookingSelection,
   getWeeklyRota,
   listBookings,
+  listBookOutTypes,
   listServiceCategories,
   listServices,
   markRotaAbsence,
@@ -89,6 +91,8 @@ export function BookingsPage() {
   // Bumped to re-fetch the rota (e.g. after creating a bookout) so the board updates.
   const [rotaReloadNonce, setRotaReloadNonce] = useState(0);
   const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null);
+  // Configurable book-out reasons, powering the bookout picker + utilisation.
+  const [bookOutTypes, setBookOutTypes] = useState<BookOutType[]>([]);
   // Double-tapping a tile opens this client's profile quick-look.
   const [profileClient, setProfileClient] = useState<{ id: string; name: string } | null>(null);
   const [toolbar, setToolbar] = useState<CalendarToolbarState>(loadToolbarState);
@@ -451,6 +455,7 @@ export function BookingsPage() {
           startsAt: input.startAt,
           endsAt: input.endsAt,
           notes: input.notes ?? 'Bookout',
+          bookOutTypeId: input.bookOutTypeId,
         });
         setRotaReloadNonce((nonce) => nonce + 1);
         setCheckoutMessage(`Bookout added for ${input.staffName} at ${formatTime(input.startAt)}.`);
@@ -466,6 +471,24 @@ export function BookingsPage() {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  // Load configurable book-out types once (reviewers only) for the bookout
+  // picker and the utilisation badge; failures degrade to a general book out.
+  useEffect(() => {
+    if (!accessToken || !isReviewer) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await listBookOutTypes(accessToken);
+        if (!cancelled) setBookOutTypes(result.bookOutTypes);
+      } catch {
+        if (!cancelled) setBookOutTypes([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, isReviewer]);
 
   // Build the serviceId → category-colour map once. Categories own the colour;
   // a service inherits its category's colour. Business-scoped, so location-agnostic.
@@ -708,6 +731,7 @@ export function BookingsPage() {
             leave={rota?.leave ?? []}
             absences={rota?.absences ?? []}
             bookings={calendarBookings}
+            bookOutTypes={bookOutTypes}
             serviceColors={serviceColors}
             serviceColorsByName={serviceColorsByName}
             selectedBookingId={selectedBookingId}
