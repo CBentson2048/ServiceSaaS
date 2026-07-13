@@ -43,6 +43,7 @@ interface EditStaffModalProps {
 interface EditForm {
   roles: InvitableRole[];
   locationId: string;
+  managerLocationIds: string[];
   membershipStatus: 'active' | 'suspended' | 'revoked';
   displayName: string;
   colorHex: string;
@@ -185,8 +186,15 @@ export function EditStaffModal({
     setForm({
       roles: roles.length > 0 ? roles : editingOwner ? [] : ['stylist'],
       locationId:
+        staff.stylistLocationId ??
         staff.location?.id ??
         (editingOwner && locations.length > 1 ? '' : locations[0]?.id ?? ''),
+      managerLocationIds:
+        staff.managerLocationIds && staff.managerLocationIds.length > 0
+          ? staff.managerLocationIds
+          : staff.roles.includes('manager') && staff.location
+            ? [staff.location.id]
+            : [],
       membershipStatus:
         staff.membershipStatus === 'suspended' || staff.membershipStatus === 'revoked'
           ? staff.membershipStatus
@@ -276,7 +284,9 @@ export function EditStaffModal({
   function validate(values: EditForm): Record<string, string> {
     const next: Record<string, string> = {};
     if (!isOwner && values.roles.length === 0) next.roles = 'Select at least one role';
-    if (values.roles.length > 0 && !values.locationId) next.locationId = 'Pick a location';
+    if (values.roles.includes('stylist') && !values.locationId) next.locationId = 'Pick a location';
+    if (values.roles.includes('manager') && values.managerLocationIds.length === 0)
+      next.managerLocationIds = 'Pick at least one location this manager oversees';
     // The fields below are stylist-only: they're rendered AND submitted solely
     // when the stylist role is selected. Only validate them then, or a stale
     // (now-hidden) value would silently block an owner/manager-only save with no
@@ -359,6 +369,9 @@ export function EditStaffModal({
       // trip the endpoint's UUID validation; validate() guarantees a location
       // whenever a role is selected.
       locationId: form.locationId || undefined,
+      // Managers may oversee several salons; send the ticked set. Omit for
+      // non-managers so the endpoint leaves manager rows untouched.
+      managerLocationIds: form.roles.includes('manager') ? form.managerLocationIds : undefined,
       membershipStatus: form.membershipStatus,
       displayName: isStylist ? form.displayName.trim() || undefined : undefined,
       colorHex: isStylist ? form.colorHex.trim() || undefined : undefined,
@@ -500,15 +513,64 @@ export function EditStaffModal({
               </p>
             )}
           </div>
-          <SelectField
-            label="Location"
-            value={form.locationId}
-            onValueChange={(v) => setForm({ ...form, locationId: v })}
-            options={locationOptions}
-            placeholder="Select a location"
-            error={errors.locationId}
-            hint={isOwner ? "The location you'll take appointments at as a stylist." : undefined}
-          />
+          {form.roles.includes('stylist') ? (
+            <SelectField
+              label="Stylist location"
+              value={form.locationId}
+              onValueChange={(v) => setForm({ ...form, locationId: v })}
+              options={locationOptions}
+              placeholder="Select a location"
+              error={errors.locationId}
+              hint={
+                isOwner
+                  ? "The location you'll take appointments at as a stylist."
+                  : 'Where this stylist is bookable.'
+              }
+            />
+          ) : null}
+
+          {form.roles.includes('manager') && !isOwner ? (
+            <div className="sm:col-span-2">
+              <span className="mb-1.5 block text-[12px] font-semibold uppercase tracking-[0.12em] text-text-secondary">
+                Manager locations
+              </span>
+              <div className="grid gap-1 rounded-input-lg border border-border-strong bg-surface p-2 sm:grid-cols-2">
+                {locations.map((loc) => {
+                  const checked = form.managerLocationIds.includes(loc.id);
+                  return (
+                    <label
+                      key={loc.id}
+                      className="flex cursor-pointer items-center gap-2 rounded-input px-2 py-1.5 text-[13px] text-text-primary transition hover:bg-surface-alt"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(event) =>
+                          setForm({
+                            ...form,
+                            managerLocationIds: event.target.checked
+                              ? [...form.managerLocationIds, loc.id]
+                              : form.managerLocationIds.filter((id) => id !== loc.id),
+                          })
+                        }
+                        className="h-4 w-4 rounded border-border-strong text-primary focus:ring-primary"
+                      />
+                      <span className="flex-1">
+                        {loc.code ? `${loc.name} · ${loc.code}` : loc.name}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+              {errors.managerLocationIds ? (
+                <p className="mt-1 text-[12px] text-danger">{errors.managerLocationIds}</p>
+              ) : (
+                <p className="mt-1 text-[12px] text-text-secondary">
+                  Tick every salon this manager can manage — an area manager can oversee several.
+                </p>
+              )}
+            </div>
+          ) : null}
           {isOwner ? null : (
             <SelectField
               label="Membership status"

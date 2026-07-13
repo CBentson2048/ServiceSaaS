@@ -11,12 +11,14 @@ import {
   updateAccountTier,
 } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
+import { useLocationScope } from '../components/LocationScopeContext';
 
 type StatusFilter = 'all' | 'active' | 'inactive';
 
 export function LocationsPage() {
   const auth = useAuth();
   const role = auth.user?.primaryRole;
+  const { selectedLocationId, isAllLocations } = useLocationScope();
   const canManageLocations = userHasPermission(auth.user, 'locations.manage');
   const canManageAccount = userHasPermission(auth.user, 'account.manage');
   const accessToken = auth.session?.accessToken;
@@ -71,10 +73,12 @@ export function LocationsPage() {
     });
   }, [locations, search, statusFilter]);
 
-  // Manager users land here from the sidebar; redirect them to their own
-  // single location. If they happen to have no allowed location (edge case
-  // where the membership lost its location_id) we fall through to the empty
-  // state below so they still see something useful.
+  // Managers don't get the multi-location table; they land on a single
+  // location's settings. Honour the sidebar location picker so an area manager
+  // who selected "Kensington" opens Kensington here (not just their first
+  // salon). Fall back to the first accessible location when "All" is selected
+  // or the picked one isn't among their salons. If they have no location at all
+  // (edge case where the membership lost its location_id) we show a hint.
   if (auth.status === 'authenticated' && role === 'manager' && !canManageLocations) {
     if (loading) {
       return <CenteredHint message="Loading your location…" />;
@@ -82,9 +86,12 @@ export function LocationsPage() {
     if (error) {
       return <CenteredHint message={error} tone="danger" />;
     }
-    const own = locations[0];
-    if (own) {
-      return <Navigate to={`/locations/${own.id}`} replace />;
+    const picked =
+      !isAllLocations && locations.some((l) => l.id === selectedLocationId)
+        ? selectedLocationId
+        : locations[0]?.id;
+    if (picked) {
+      return <Navigate to={`/locations/${picked}`} replace />;
     }
     return (
       <CenteredHint message="No location is assigned to your account yet. Ask your business owner to assign you to a location." />
