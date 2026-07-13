@@ -23,6 +23,7 @@ import {
   updateLocationRecordSettings,
 } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
+import { useLocationRouteSync } from '../components/LocationScopeContext';
 
 const WEEKDAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const FIELD =
@@ -57,6 +58,8 @@ function emptyFixedCostForm(): FixedCostForm {
 export function LocationRecordSettingsPage() {
   const auth = useAuth();
   const params = useParams<{ id: string }>();
+  // Follow the sidebar location picker (and reflect the URL back into it).
+  useLocationRouteSync(params.id, '/record-settings');
   const accessToken = auth.session?.accessToken;
   const locationId = params.id;
 

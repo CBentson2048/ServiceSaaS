@@ -1528,7 +1528,21 @@ export interface StaffMember {
   /** The highest-privilege membership's id (representative of the member's set). */
   membershipId: string;
   membershipStatus: MembershipStatus;
+  /** Representative/primary location (highest-privilege membership). */
   location?: BusinessLocationSummary;
+  /**
+   * Every distinct location this member is attached to, across all roles. A
+   * manager may oversee several salons ("area manager"); a stylist is bookable
+   * at a single location.
+   */
+  locations?: BusinessLocationSummary[];
+  /**
+   * Location ids where the member holds the MANAGER role. Empty when they are
+   * not a manager. Drives the location tick-boxes when editing the member.
+   */
+  managerLocationIds?: string[];
+  /** The single location where the member is a bookable stylist, when applicable. */
+  stylistLocationId?: string | null;
   /** Assigned security level id (null = base-role defaults). */
   securityLevelId?: string | null;
   /** Assigned security level display name, when set. */
@@ -1599,7 +1613,20 @@ export interface UpdateStaffMemberRequest {
    * these. Omit to leave the current roles unchanged (e.g. status-only updates).
    */
   roles?: InvitableRole[];
+  /**
+   * Primary/stylist location. Required (directly or via existing membership)
+   * while the member keeps the stylist role. Also used as the manager fallback
+   * when `managerLocationIds` is omitted.
+   */
   locationId?: string;
+  /**
+   * Locations where the member holds the MANAGER role. When the desired role
+   * set includes `manager`, the manager memberships are synced to exactly these
+   * locations — letting one manager oversee several salons ("area manager")
+   * while another oversees a different subset. Ignored for non-managers; falls
+   * back to `locationId` when omitted.
+   */
+  managerLocationIds?: string[];
   membershipStatus?: Extract<MembershipStatus, 'active' | 'suspended' | 'revoked'>;
   /** Security level to apply to this member's memberships; null clears it (base-role defaults). */
   securityLevelId?: string | null;

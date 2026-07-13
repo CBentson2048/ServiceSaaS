@@ -596,15 +596,51 @@ export class StaffService {
       throw new BadRequestException('Select at least one role');
     }
 
-    // A location is only required while the member keeps a location-scoped staff
-    // role. An owner dropping to owner-only needs none — their owner row is
-    // business-wide (location_id NULL).
-    const newLocationId =
-      input.locationId ?? memberships.find((m) => m.location_id)?.location_id ?? undefined;
-    if (desiredRoles.length > 0 && !newLocationId) {
-      throw new BadRequestException('Location is required for staff');
+    // Resolve which location(s) each desired role attaches to. Stylists are
+    // single-location; managers may span several salons ("area manager"). We
+    // then reconcile membership rows to exactly these (role, location) pairs.
+    // An owner dropping to owner-only keeps no staff rows (their owner row is
+    // business-wide, location_id NULL).
+    const existingStylistLocation =
+      memberships.find((m) => m.role === 'stylist' && m.location_id)?.location_id ?? undefined;
+    const existingManagerLocations = memberships
+      .filter((m) => m.role === 'manager' && m.location_id)
+      .map((m) => m.location_id as string);
+    const existingAnyLocation = memberships.find((m) => m.location_id)?.location_id ?? undefined;
+
+    const stylistLocationId = desiredRoles.includes('stylist')
+      ? input.locationId ?? existingStylistLocation ?? existingAnyLocation
+      : undefined;
+    if (desiredRoles.includes('stylist') && !stylistLocationId) {
+      throw new BadRequestException('A location is required for a stylist');
     }
-    if (newLocationId) await this.assertLocationInBusiness(actor.businessId, newLocationId);
+
+    let managerLocationIds: string[] = [];
+    if (desiredRoles.includes('manager')) {
+      const requested =
+        input.managerLocationIds ??
+        (input.locationId ? [input.locationId] : undefined) ??
+        (existingManagerLocations.length > 0 ? existingManagerLocations : undefined) ??
+        (existingAnyLocation ? [existingAnyLocation] : []);
+      managerLocationIds = Array.from(new Set(requested));
+      if (managerLocationIds.length === 0) {
+        throw new BadRequestException('Select at least one location for a manager');
+      }
+    }
+
+    // Validate every referenced location belongs to the business.
+    const referencedLocationIds = Array.from(
+      new Set([...(stylistLocationId ? [stylistLocationId] : []), ...managerLocationIds]),
+    );
+    for (const locationId of referencedLocationIds) {
+      await this.assertLocationInBusiness(actor.businessId, locationId);
+    }
+
+    // The desired (role, location) membership pairs. A manager over 3 salons
+    // yields 3 manager rows; a stylist yields exactly one.
+    const desiredPairs: { role: InvitableRole; locationId: string }[] = [];
+    if (stylistLocationId) desiredPairs.push({ role: 'stylist', locationId: stylistLocationId });
+    for (const locationId of managerLocationIds) desiredPairs.push({ role: 'manager', locationId });
 
     // An owner can never suspend/revoke themselves through this endpoint; their
     // own edits always run as 'active'. For others, default to current status.
@@ -616,11 +652,18 @@ export class StaffService {
       throw new BadRequestException('Invalid membership status');
     }
 
-    // `newLocationId` is only read by the sync helpers when a location-scoped
-    // role/profile is being written, which the guard above guarantees is set.
-    const syncLocationId = newLocationId ?? '';
-    await this.syncMembershipRoles(actor, targetUserId, memberships, desiredRoles, syncLocationId, newStatus);
-    await this.syncStaffProfile(actor.businessId, targetUserId, syncLocationId, desiredRoles, newStatus, input);
+    // The stylist location drives the (single) staff profile; manager-only
+    // members reuse their first location purely for internal bookkeeping.
+    const profileLocationId = stylistLocationId ?? managerLocationIds[0] ?? existingAnyLocation ?? '';
+    await this.syncMembershipRoles(actor, targetUserId, memberships, desiredPairs, newStatus);
+    await this.syncStaffProfile(
+      actor.businessId,
+      targetUserId,
+      profileLocationId,
+      desiredRoles,
+      newStatus,
+      input,
+    );
 
     await this.updateStaffBusinessFields(actor.businessId, targetUserId, input);
 
@@ -1100,32 +1143,38 @@ export class StaffService {
   }
 
   /**
-   * Sync a member's role memberships to exactly `desiredRoles` at `locationId`,
-   * applying `status`. Existing rows for a desired role are updated in place
-   * (history preserved); roles no longer wanted — and any rows at other
-   * locations — are removed. A member can hold several roles at one location.
+   * Sync a member's memberships to exactly the given (role, location) pairs,
+   * applying `status`. Rows that already match a desired pair are updated in
+   * place (history preserved); rows no longer wanted — a dropped role, or a
+   * location the manager no longer oversees — are removed. A member can hold
+   * the stylist role at one location and the manager role across several
+   * ("area manager").
    */
   private async syncMembershipRoles(
     actor: AuthUser,
     targetUserId: string,
     existing: MembershipRow[],
-    desiredRoles: InvitableRole[],
-    locationId: string,
+    desiredPairs: { role: InvitableRole; locationId: string }[],
     status: 'active' | 'suspended' | 'revoked',
   ): Promise<void> {
     const nowIso = new Date().toISOString();
-    const existingByRole = new Map(existing.map((m) => [m.role, m]));
+    const keyOf = (role: string, locationId: string | null): string => `${role}:${locationId ?? ''}`;
+    const existingByKey = new Map(existing.map((m) => [keyOf(m.role, m.location_id), m]));
     const keptIds = new Set<string>();
+    // Newly-added rows (e.g. an extra manager location) inherit the member's
+    // current security level so permissions stay consistent even when this
+    // request doesn't touch the level. applySecurityLevel may override later.
+    const currentLevelId = existing.find((m) => m.security_level_id)?.security_level_id ?? null;
 
-    for (const role of desiredRoles) {
-      const current = existingByRole.get(role);
+    for (const pair of desiredPairs) {
+      const current = existingByKey.get(keyOf(pair.role, pair.locationId));
       if (current) {
         keptIds.add(current.id);
         const { error } = await this.admin
           .schema('core')
           .from('user_memberships')
           .update({
-            location_id: locationId,
+            location_id: pair.locationId,
             status,
             activated_at: status === 'active' ? current.activated_at ?? nowIso : current.activated_at,
             suspended_at: status === 'suspended' ? nowIso : null,
@@ -1143,10 +1192,11 @@ export class StaffService {
           .from('user_memberships')
           .insert({
             business_id: actor.businessId,
-            location_id: locationId,
+            location_id: pair.locationId,
             user_profile_id: targetUserId,
-            role,
+            role: pair.role,
             status,
+            security_level_id: currentLevelId,
             invited_by_user_profile_id: actor.id,
             activated_at: status === 'active' ? nowIso : null,
             suspended_at: status === 'suspended' ? nowIso : null,
@@ -1375,6 +1425,20 @@ export class StaffService {
     const staffProfile = staffProfileByUser.get(membership.user_profile_id);
     const locationId = membership.location_id ?? ordered.find((m) => m.location_id)?.location_id ?? null;
     const location = locationId ? locationById.get(locationId) : undefined;
+    const managerLocationIds = Array.from(
+      new Set(
+        ordered
+          .filter((m) => m.role === 'manager' && m.location_id)
+          .map((m) => m.location_id as string),
+      ),
+    );
+    const stylistLocationId =
+      ordered.find((m) => m.role === 'stylist' && m.location_id)?.location_id ?? null;
+    const locations = Array.from(
+      new Set(ordered.map((m) => m.location_id).filter((id): id is string => Boolean(id))),
+    )
+      .map((id) => locationById.get(id))
+      .filter((l): l is BusinessLocationSummary => Boolean(l));
     const securityLevelId = ordered.find((m) => m.security_level_id)?.security_level_id ?? null;
     return {
       userProfileId: profile.id,
@@ -1386,6 +1450,9 @@ export class StaffService {
       membershipId: membership.id,
       membershipStatus: aggregateMembershipStatus(ordered.map((m) => m.status)),
       location,
+      locations,
+      managerLocationIds,
+      stylistLocationId,
       securityLevelId,
       securityLevelName: securityLevelId ? securityLevelNameById.get(securityLevelId) ?? null : null,
       staffProfile: staffProfile

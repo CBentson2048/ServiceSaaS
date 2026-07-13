@@ -132,6 +132,15 @@ export class UpdateStaffMemberDto {
   @IsUUID()
   locationId?: string;
 
+  // Locations where the member holds the manager role. When the desired role set
+  // includes `manager`, manager memberships are synced to exactly these ("area
+  // manager" over several salons). Falls back to `locationId` when omitted.
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(200)
+  @IsUUID('all', { each: true })
+  managerLocationIds?: string[];
+
   @IsOptional()
   @IsIn(['active', 'suspended', 'revoked'])
   membershipStatus?: 'active' | 'suspended' | 'revoked';
