@@ -51,6 +51,7 @@ import {
 } from '../common/occupied-ranges';
 import { AuditService } from '../audit/audit.service';
 import { BookingNotificationService } from '../communications/booking-notification.service';
+import { RebookingNudgeService } from '../communications/rebooking-nudge.service';
 import type { LabRuntimeSession } from '../lab-session/lab-session.service';
 import { OwnerTaxSettingsService } from '../owner-tax-settings/owner-tax-settings.service';
 import { RebookingService } from '../rebooking/rebooking.service';
@@ -299,6 +300,7 @@ export class LabAppointmentsService {
     private readonly rebooking: RebookingService,
     private readonly taxSettings: OwnerTaxSettingsService,
     private readonly bookingNotifications: BookingNotificationService,
+    private readonly rebookingNudges: RebookingNudgeService,
     private readonly stripe: StripeService,
     private readonly audit: AuditService,
   ) {
@@ -1447,6 +1449,10 @@ export class LabAppointmentsService {
       ),
     ]);
     const billing = buildBillingSummary(completedAppointment, lineItems, taxSettings);
+
+    // Schedule the per-service rebooking nudge (Wrike #4507281502). Best-effort:
+    // never blocks or rolls back completion, and is idempotent on replays.
+    await this.rebookingNudges.scheduleForCompletedAppointmentSafe(completedAppointment.id, completedAt);
 
     return {
       appointment: toBookingDetail(completedAppointment, clientMap.get(completedAppointment.client_profile_id)),

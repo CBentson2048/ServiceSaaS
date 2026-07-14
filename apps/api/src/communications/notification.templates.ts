@@ -99,11 +99,13 @@ export function renderEmail(eventKey: NotificationEventKey, ctx: NotificationCon
   const subject =
     eventKey === NotificationEventKey.BookingConfirmation
       ? `Your booking at ${ctx.locationName} is confirmed`
-      : eventKey === NotificationEventKey.Reminder1w
-        ? `Reminder: your appointment at ${ctx.locationName} next week`
-        : eventKey === NotificationEventKey.Reminder48h
-          ? `Reminder: your appointment at ${ctx.locationName} in 2 days`
-          : `Reminder: your appointment at ${ctx.locationName} tomorrow`;
+      : eventKey === NotificationEventKey.RebookingNudge
+        ? `Time to book your next appointment at ${ctx.locationName}`
+        : eventKey === NotificationEventKey.Reminder1w
+          ? `Reminder: your appointment at ${ctx.locationName} next week`
+          : eventKey === NotificationEventKey.Reminder48h
+            ? `Reminder: your appointment at ${ctx.locationName} in 2 days`
+            : `Reminder: your appointment at ${ctx.locationName} tomorrow`;
   return { subject, text: body, html: `<p>${escapeHtml(body)}</p>` };
 }
 
@@ -114,6 +116,15 @@ export function renderNotification(
   const when = formatInTimezone(ctx.scheduledStartAt, ctx.timezone);
   const services = serviceLine(ctx.serviceNames);
   const stylist = stylistLine(ctx.stylistName);
+
+  if (eventKey === NotificationEventKey.RebookingNudge) {
+    return {
+      body:
+        `${greeting(ctx.clientFirstName)} it's been a little while since your last visit to ${ctx.locationName}` +
+        `${services}. Ready for your next appointment? Reply to this message and we'll get you booked in.`,
+      preview: `Time to rebook at ${ctx.locationName}`,
+    };
+  }
 
   if (eventKey === NotificationEventKey.BookingConfirmation) {
     return {

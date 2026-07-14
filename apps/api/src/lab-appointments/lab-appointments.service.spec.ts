@@ -860,6 +860,9 @@ function createService(
     {
       syncBookingNotificationsSafe: jest.fn().mockResolvedValue(undefined),
     } as never,
+    {
+      scheduleForCompletedAppointmentSafe: jest.fn().mockResolvedValue(undefined),
+    } as never,
     stripe as never,
     {
       record: jest.fn().mockResolvedValue(undefined),

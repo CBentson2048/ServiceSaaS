@@ -55,6 +55,8 @@ interface ServiceRow {
   deposit_type: 'none' | 'fixed_amount' | 'percentage';
   deposit_value: number | string;
   requires_patch_test: boolean;
+  rebooking_nudge_enabled: boolean;
+  rebooking_nudge_interval_days: number;
   is_active: boolean;
   sort_order: number;
   created_at: string;
@@ -75,7 +77,7 @@ interface SegmentRow {
 
 const CATEGORY_COLUMNS = 'id,business_id,name,description,color_hex,is_active,sort_order,created_at,updated_at';
 const SERVICE_COLUMNS =
-  'id,business_id,location_id,name,description,service_category_id,estimated_duration_minutes,processing_time_minutes,base_price,deposit_type,deposit_value,requires_patch_test,is_active,sort_order,created_at,updated_at';
+  'id,business_id,location_id,name,description,service_category_id,estimated_duration_minutes,processing_time_minutes,base_price,deposit_type,deposit_value,requires_patch_test,rebooking_nudge_enabled,rebooking_nudge_interval_days,is_active,sort_order,created_at,updated_at';
 const SEGMENT_COLUMNS = 'id,business_id,service_id,name,duration_minutes,is_stylist_free,sort_order,created_at,updated_at';
 
 @Injectable()
@@ -647,7 +649,11 @@ function toServicePatch(dto: UpsertServiceDto): Record<string, unknown> {
     deposit_type: depositType,
     deposit_value: depositValue,
     requires_patch_test: dto.requiresPatchTest ?? false,
+    rebooking_nudge_enabled: dto.rebookingNudgeEnabled ?? false,
   };
+  if (dto.rebookingNudgeIntervalDays !== undefined) {
+    patch.rebooking_nudge_interval_days = dto.rebookingNudgeIntervalDays;
+  }
   if (dto.sortOrder !== undefined) patch.sort_order = dto.sortOrder;
   return patch;
 }
@@ -704,6 +710,8 @@ function toService(
     depositType: row.deposit_type,
     depositValue: Number(row.deposit_value),
     requiresPatchTest: row.requires_patch_test,
+    rebookingNudgeEnabled: row.rebooking_nudge_enabled,
+    rebookingNudgeIntervalDays: row.rebooking_nudge_interval_days,
     isActive: row.is_active,
     sortOrder: row.sort_order,
     currencyCode,

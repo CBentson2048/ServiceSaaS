@@ -36,6 +36,8 @@ interface ServiceForm {
   depositType: ServiceDepositType;
   depositValue: string;
   requiresPatchTest: boolean;
+  rebookingNudgeEnabled: boolean;
+  rebookingNudgeIntervalDays: string;
   isActive: boolean;
   segments: SegmentDraft[];
 }
@@ -51,6 +53,8 @@ const emptyForm: ServiceForm = {
   depositType: 'none',
   depositValue: '',
   requiresPatchTest: false,
+  rebookingNudgeEnabled: false,
+  rebookingNudgeIntervalDays: '35',
   isActive: true,
   segments: [],
 };
@@ -170,6 +174,8 @@ export function ServicesPage() {
       depositType: service.depositType,
       depositValue: service.depositValue ? String(service.depositValue) : '',
       requiresPatchTest: service.requiresPatchTest,
+      rebookingNudgeEnabled: service.rebookingNudgeEnabled,
+      rebookingNudgeIntervalDays: String(service.rebookingNudgeIntervalDays || 35),
       isActive: service.isActive,
       segments: service.segments.map((segment) => ({
         key: segment.id,
@@ -253,6 +259,13 @@ export function ServicesPage() {
         return;
       }
     }
+    const nudgeIntervalDays = Number(form.rebookingNudgeIntervalDays);
+    if (form.rebookingNudgeEnabled) {
+      if (!Number.isInteger(nudgeIntervalDays) || nudgeIntervalDays < 1 || nudgeIntervalDays > 365) {
+        setError('Rebooking nudge interval must be a whole number of days between 1 and 365.');
+        return;
+      }
+    }
     setSaving(true);
     setError(null);
     setActionMessage(null);
@@ -267,6 +280,8 @@ export function ServicesPage() {
         depositType: form.depositType,
         depositValue: form.depositType === 'none' ? 0 : form.depositValue ? Number(form.depositValue) : 0,
         requiresPatchTest: form.requiresPatchTest,
+        rebookingNudgeEnabled: form.rebookingNudgeEnabled,
+        rebookingNudgeIntervalDays: form.rebookingNudgeEnabled ? nudgeIntervalDays : undefined,
         isActive: form.isActive,
         // Always sent so the set is authoritative: an empty array clears segments
         // and lets the manual duration above apply.
@@ -505,6 +520,37 @@ export function ServicesPage() {
             />
             Active
           </label>
+
+          <div className="sm:col-span-2 rounded-lg border border-border-subtle bg-surface-subtle/40 p-3">
+            <label className="flex items-center gap-2 text-[12px] font-medium text-text-secondary">
+              <input
+                type="checkbox"
+                checked={form.rebookingNudgeEnabled}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, rebookingNudgeEnabled: event.target.checked }))
+                }
+                className="h-4 w-4 rounded border-border-strong text-primary focus:ring-primary/20"
+              />
+              Send rebooking nudge after this service
+            </label>
+            <p className="mt-1 pl-6 text-[11px] leading-relaxed text-text-tertiary">
+              After a client completes an appointment with this service, automatically message them to
+              rebook. Skipped if they've already booked their next visit.
+            </p>
+            {form.rebookingNudgeEnabled ? (
+              <div className="mt-2 pl-6">
+                <TextInput
+                  label="Send after (days)"
+                  type="number"
+                  value={form.rebookingNudgeIntervalDays}
+                  onChange={(value) =>
+                    setForm((current) => ({ ...current, rebookingNudgeIntervalDays: value }))
+                  }
+                />
+                <p className="mt-1 text-[11px] text-text-tertiary">Typically 28–42 days (4–6 weeks).</p>
+              </div>
+            ) : null}
+          </div>
 
           <div className="sm:col-span-2">
             <div className="mb-1.5 flex items-center justify-between gap-3">

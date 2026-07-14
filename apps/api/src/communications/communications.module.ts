@@ -3,6 +3,7 @@ import { EmailModule } from '../email/email.module';
 import { BookingNotificationService } from './booking-notification.service';
 import { CommunicationSettingsService } from './communication-settings.service';
 import { NotificationDispatchService } from './notification-dispatch.service';
+import { RebookingNudgeService } from './rebooking-nudge.service';
 import { EmailMessageProvider } from './providers/email-message.provider';
 import { MessageProviderRegistry } from './providers/message-provider.registry';
 import { SmsMessageProvider } from './providers/sms-message.provider';
@@ -36,9 +37,16 @@ import { WhatsAppTemplateConfig } from './whatsapp-template.config';
     MessageProviderRegistry,
     CommunicationSettingsService,
     BookingNotificationService,
+    RebookingNudgeService,
     NotificationDispatchService,
     ResendCallbackService,
   ],
-  exports: [CommunicationSettingsService, BookingNotificationService, WhatsAppService, MessageProviderRegistry],
+  exports: [
+    CommunicationSettingsService,
+    BookingNotificationService,
+    RebookingNudgeService,
+    WhatsAppService,
+    MessageProviderRegistry,
+  ],
 })
 export class CommunicationsModule {}

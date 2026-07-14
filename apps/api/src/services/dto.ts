@@ -11,6 +11,7 @@ import {
   IsString,
   IsUUID,
   Matches,
+  Max,
   MaxLength,
   Min,
   MinLength,
@@ -185,6 +186,17 @@ export class UpsertServiceDto {
   @IsOptional()
   @IsBoolean()
   requiresPatchTest?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  rebookingNudgeEnabled?: boolean;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(365)
+  rebookingNudgeIntervalDays?: number;
 
   @IsOptional()
   @IsBoolean()

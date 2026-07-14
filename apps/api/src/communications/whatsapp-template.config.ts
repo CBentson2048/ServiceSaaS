@@ -50,6 +50,10 @@ export class WhatsAppTemplateConfig {
         'TWILIO_WHATSAPP_REMINDER_1W_CONTENT_SID',
         'TWILIO_TEMPLATE_BOOKING_REMINDER_1W_SID',
       ),
+      [NotificationEventKey.RebookingNudge]: sid(
+        'TWILIO_WHATSAPP_REBOOKING_NUDGE_CONTENT_SID',
+        'TWILIO_TEMPLATE_REBOOKING_NUDGE_SID',
+      ),
     };
     const configuredCallback = config.get<string>('TWILIO_STATUS_CALLBACK_URL')?.trim() || undefined;
     this.statusCallbackUrl = publicUrlOrUndefined(configuredCallback);
