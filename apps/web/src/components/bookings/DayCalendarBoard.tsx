@@ -1722,7 +1722,7 @@ const UTILISATION_BOOKED_STATUSES: StaffBookingSummary['status'][] = [
   'accepted',
   'checked_in',
   'awaiting_payment',
-  'completed',
+  'paid',
 ];
 
 // Stylist-occupied milliseconds an appointment contributes on the given day.
