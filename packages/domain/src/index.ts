@@ -3060,6 +3060,14 @@ export interface ManagedService {
   depositType: ServiceDepositType;
   depositValue: number;
   requiresPatchTest: boolean;
+  /**
+   * When true, completing an appointment that includes this service schedules a
+   * retention "time to rebook" nudge (see Wrike #4507281502). Suppressed if the
+   * client has already rebooked.
+   */
+  rebookingNudgeEnabled: boolean;
+  /** Days after completion to send the nudge (default 35 ≈ 5 weeks). */
+  rebookingNudgeIntervalDays: number;
   isActive: boolean;
   sortOrder: number;
   currencyCode: string;
@@ -3100,6 +3108,10 @@ export interface UpsertServiceRequest {
   depositType?: ServiceDepositType;
   depositValue?: number;
   requiresPatchTest?: boolean;
+  /** Toggle the per-service rebooking nudge (Wrike #4507281502). */
+  rebookingNudgeEnabled?: boolean;
+  /** Days after completion to send the nudge (1–365, default 35). */
+  rebookingNudgeIntervalDays?: number;
   isActive?: boolean;
   sortOrder?: number;
   /**

@@ -224,6 +224,15 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
       return;
     }
 
+    // Rebooking nudge is suppressed the moment the client has rebooked. This is
+    // checked at send time (not schedule time) because a client may rebook any
+    // time in the weeks between completion and the nudge firing.
+    if (event.event_key === NotificationEventKey.RebookingNudge && (await this.clientAlreadyRebooked(event, context))) {
+      await this.cancelEvent(event.id);
+      this.logger.log(`rebooking nudge ${event.id} cancelled — client already rebooked`);
+      return;
+    }
+
     const settings = await this.settingsService.getForLocation(event.business_id, event.location_id);
     const plan = resolveChannelPlan(settings, context.communicationPreference, {
       phoneValid: Boolean(normalizeE164(context.clientPhone)),
@@ -234,6 +243,37 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
     if (event.channel === SMS_CHANNEL) return this.processSms(event, context, plan);
     if (event.channel === EMAIL_CHANNEL) return this.processEmail(event, context, plan);
     await this.cancelEvent(event.id); // unknown channel
+  }
+
+  /**
+   * True when the client already has a future active appointment — i.e. they have
+   * rebooked, so the retention nudge is no longer warranted. Excludes the source
+   * appointment itself. Fails "not suppressed" on query error so a transient DB
+   * blip doesn't silently swallow the nudge (the send path has its own guards).
+   */
+  private async clientAlreadyRebooked(
+    event: DueEventRow,
+    context: AppointmentNotificationContext,
+  ): Promise<boolean> {
+    const clientProfileId = context.appointment.client_profile_id;
+    if (!clientProfileId) return false;
+    const nowIso = new Date().toISOString();
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('appointments')
+      .select('id')
+      .eq('business_id', event.business_id)
+      .eq('client_profile_id', clientProfileId)
+      .neq('id', context.appointment.id)
+      .gt('scheduled_start_at', nowIso)
+      .not('status', 'in', '("cancelled","no_show","rejected")')
+      .limit(1)
+      .returns<{ id: string }[]>();
+    if (error) {
+      this.logger.error(`clientAlreadyRebooked check failed for event ${event.id}: ${error.message}`);
+      return false;
+    }
+    return (data?.length ?? 0) > 0;
   }
 
   /** Cancellation/reschedule/passed checks that apply to every channel. */
