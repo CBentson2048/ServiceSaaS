@@ -451,6 +451,7 @@ export function ClientBookingServicePage() {
                     }
                     accent={stylist.bio}
                     colorHex={stylist.colorHex}
+                    photoUrl={stylist.photoUrl}
                   />
                 ))}
               </div>
@@ -580,6 +581,7 @@ function ChoiceCard({
   subtitle,
   accent,
   colorHex,
+  photoUrl,
 }: {
   selected: boolean;
   onSelect: () => void;
@@ -588,6 +590,7 @@ function ChoiceCard({
   subtitle: string;
   accent?: string;
   colorHex?: string;
+  photoUrl?: string;
 }) {
   return (
     <button type="button" onClick={onSelect} className="block w-full text-left">
@@ -599,12 +602,21 @@ function ChoiceCard({
           selected ? 'border-primary bg-primary/5' : 'border-border bg-surface',
         )}
       >
-        <div
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[12px] font-semibold text-white"
-          style={{ backgroundColor: colorHex || '#A67CF5' }}
-        >
-          {avatarLabel}
-        </div>
+        {photoUrl ? (
+          <img
+            src={photoUrl}
+            alt={title}
+            className="h-9 w-9 shrink-0 rounded-full object-cover"
+            loading="lazy"
+          />
+        ) : (
+          <div
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[12px] font-semibold text-white"
+            style={{ backgroundColor: colorHex || '#A67CF5' }}
+          >
+            {avatarLabel}
+          </div>
+        )}
         <div className="min-w-0">
           <div className="truncate text-[13px] font-semibold">{title}</div>
           <div className="truncate text-[11px] text-text-secondary">{subtitle}</div>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Redirect, router } from 'expo-router';
 import type {
@@ -422,9 +422,13 @@ function StylistRow({
       onPress={onPress}
       style={({ pressed }) => [styles.stylistCard, selected && styles.stylistCardSelected, pressed && styles.pressed]}
     >
-      <View style={[styles.stylistAvatar, { backgroundColor: stylist.colorHex ?? palette.brand[500] }]}>
-        <Text style={styles.stylistAvatarText}>{initials(stylist.displayName)}</Text>
-      </View>
+      {stylist.photoUrl ? (
+        <Image source={{ uri: stylist.photoUrl }} style={styles.stylistAvatar} resizeMode="cover" />
+      ) : (
+        <View style={[styles.stylistAvatar, { backgroundColor: stylist.colorHex ?? palette.brand[500] }]}>
+          <Text style={styles.stylistAvatarText}>{initials(stylist.displayName)}</Text>
+        </View>
+      )}
       <View style={styles.flex}>
         <Text style={styles.stylistName}>{stylist.displayName}</Text>
         <Text style={styles.stylistMeta}>

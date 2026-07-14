@@ -126,6 +126,7 @@ interface StaffRow {
   display_name: string;
   color_hex: string | null;
   bio: string | null;
+  photo_url: string | null;
 }
 
 interface ServiceRequirementRuleRow {
@@ -250,7 +251,7 @@ const LOCATION_COLUMNS =
 const SERVICE_FIELDS =
   'id,business_id,location_id,name,description,service_category_id,estimated_duration_minutes,base_price,deposit_type,deposit_value,is_active,sort_order,service_categories(id,name,color_hex,sort_order),service_segments(name,duration_minutes,is_stylist_free,sort_order)';
 const SERVICE_COLUMNS = SERVICE_FIELDS;
-const STAFF_COLUMNS = 'id,display_name,color_hex,bio';
+const STAFF_COLUMNS = 'id,display_name,color_hex,bio,photo_url';
 const REQUIREMENT_RULE_COLUMNS = `id,trigger_service_id,title,description,service_requirement_options(service_id,services(${SERVICE_FIELDS}))`;
 const UPGRADE_SUGGESTION_COLUMNS = `id,trigger_service_id,suggested_service_id,title,description,suggested_service:services!service_upgrade_suggestions_suggested_service_id_fkey(${SERVICE_FIELDS})`;
 const SHIFT_COLUMNS = 'id,staff_profile_id,scheduled_start_at,scheduled_end_at';
@@ -359,6 +360,7 @@ export class PublicBookingService {
         displayName: row.display_name,
         colorHex: row.color_hex ?? undefined,
         bio: row.bio ?? undefined,
+        photoUrl: row.photo_url ?? undefined,
         nextAvailableAt: nextAvailableByStaff.get(row.id)?.[0],
         servicePrices,
         totalPriceAmount: servicePrices.reduce((sum, price) => sum + price.priceAmount, 0),
@@ -469,6 +471,7 @@ export class PublicBookingService {
           displayName: staffRow.display_name,
           colorHex: staffRow.color_hex ?? undefined,
           bio: staffRow.bio ?? undefined,
+          photoUrl: staffRow.photo_url ?? undefined,
           servicePrices,
           totalPriceAmount: servicePrices.reduce((sum, price) => sum + price.priceAmount, 0),
         };
