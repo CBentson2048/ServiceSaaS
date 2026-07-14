@@ -3203,6 +3203,13 @@ export interface PublicBookingStylistSummary {
   displayName: string;
   colorHex?: string;
   bio?: string;
+  /**
+   * Public URL of the provider's photo, when set. The same
+   * `staff_profiles.photo_url` field surfaced internally (Team Module) — reused
+   * here for the client-facing stylist picker, no duplicate storage. See Wrike
+   * #4507281523.
+   */
+  photoUrl?: string;
   nextAvailableAt?: string;
   /**
    * This stylist's effective price for each selected service — the per-stylist
