@@ -38,7 +38,7 @@ const NAV: NavItem[] = [
   { to: '/services', label: 'Service management', icon: ScissorsIcon, allowedRoles: ['owner', 'manager'], permission: 'services.manage' },
   { to: '/crm', label: 'Client Hub', icon: CrmIcon, permission: 'crm.view' },
   { to: '/inventory', label: 'Product management', icon: BoxIcon, allowedRoles: ['owner', 'manager'], permission: 'inventory.manage' },
-  { to: '/sheer-lab', label: 'Sheer Lab', icon: BeakerIcon, permission: 'report.lab_analytics.view' },
+  { to: '/sheer-lab', label: 'Qlooqo Lab', icon: BeakerIcon, permission: 'report.lab_analytics.view' },
   {
     group: 'Team Hub',
     icon: TeamIcon,

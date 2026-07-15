@@ -927,11 +927,11 @@ function toAuthUserFromLabSession(session: LabRuntimeSession): AuthUser {
     businessId: session.businessId,
     allowedLocationIds: [session.locationId],
     locationScope: { kind: 'locations', locationIds: [session.locationId] },
-    locations: [{ id: session.locationId, name: 'Sheer Lab location' }],
+    locations: [{ id: session.locationId, name: 'Qlooqo Lab location' }],
     profile: {
       id: session.userProfileId,
       email: 'sheer-lab-session@local',
-      fullName: 'Sheer Lab session',
+      fullName: 'Qlooqo Lab session',
     },
     staffProfileId: session.staffProfileId,
     permissions: session.permissions,

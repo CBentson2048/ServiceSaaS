@@ -357,7 +357,7 @@ export const dashboardSnapshotMock = {
     },
     {
       id: 'sheer-lab',
-      title: 'Sheer Lab',
+      title: 'Qlooqo Lab',
       subtitle: 'Colour revenue vs waste today',
       rows: [
         { label: 'Colour revenue', value: '£284', valueTone: 'purple', caption: 'all salons' },

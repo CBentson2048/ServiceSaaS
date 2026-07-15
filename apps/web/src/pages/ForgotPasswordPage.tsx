@@ -59,7 +59,7 @@ export function ForgotPasswordPage() {
             Reset your password
           </AppText>
           <AppText as="p" variant="body" tone="secondary" className="mt-1">
-            Enter the email associated with your Sheer account. We&apos;ll send a link to set
+            Enter the email associated with your Qlooqo account. We&apos;ll send a link to set
             a new password.
           </AppText>
         </header>

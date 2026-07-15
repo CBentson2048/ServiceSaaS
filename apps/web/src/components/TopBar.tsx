@@ -15,7 +15,7 @@ export function TopBar() {
   // All displayed times honour the user's profile timezone setting.
   const timezone = resolveTimezone(user?.timezone);
 
-  const fullName = user?.profile.fullName ?? 'Sheer user';
+  const fullName = user?.profile.fullName ?? 'Qlooqo user';
   const avatarUrl = user?.profile.avatarUrl;
   const initials =
     fullName

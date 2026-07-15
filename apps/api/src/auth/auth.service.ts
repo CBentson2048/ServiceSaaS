@@ -745,7 +745,7 @@ export class AuthService {
     }
 
     if (surface === 'sheer_lab' && !userHasAnyRole(user, ['owner', 'manager', 'stylist'])) {
-      throw new ForbiddenException('Sheer Lab access is limited to staff accounts');
+      throw new ForbiddenException('Qlooqo Lab access is limited to staff accounts');
     }
   }
 

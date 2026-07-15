@@ -50,7 +50,7 @@ export function useSheerLabAnalytics(
         );
         if (!cancelled) setData(response);
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err : new Error('Unable to load Sheer Lab analytics'));
+        if (!cancelled) setError(err instanceof Error ? err : new Error('Unable to load Qlooqo Lab analytics'));
       } finally {
         if (!cancelled) setIsLoading(false);
       }

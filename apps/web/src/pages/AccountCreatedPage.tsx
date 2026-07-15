@@ -72,7 +72,7 @@ export function AccountCreatedPage() {
               window.location.href = sheerAppDeepLink;
             }}
           >
-            Open Sheer App
+            Open Qlooqo App
           </AppButton>
           <AppButton
             variant="secondary"
@@ -82,7 +82,7 @@ export function AccountCreatedPage() {
               window.location.href = storeUrl;
             }}
           >
-            Download Sheer App
+            Download Qlooqo App
           </AppButton>
         </div>
 
@@ -115,23 +115,23 @@ function roleCopy(role: NormalizedRole): RoleCopy {
       return {
         title: 'Account created successfully',
         subtitle:
-          'Your stylist account is ready. Continue in the Sheer App to view your schedule, clients, and formulas.',
+          'Your stylist account is ready. Continue in the Qlooqo App to view your schedule, clients, and formulas.',
         helpText:
-          'You can close this page after opening the Sheer App on your phone or tablet.',
+          'You can close this page after opening the Qlooqo App on your phone or tablet.',
       };
     case 'client':
       return {
         title: 'Account created successfully',
         subtitle:
-          'Your account is ready. Use the Sheer App to book appointments and stay in touch with your salon.',
-        helpText: 'You can close this page after opening the Sheer App.',
+          'Your account is ready. Use the Qlooqo App to book appointments and stay in touch with your salon.',
+        helpText: 'You can close this page after opening the Qlooqo App.',
       };
     default:
       return {
         title: 'Account created successfully',
         subtitle:
-          'Your account is ready. Continue in the Sheer App to pick up where you left off.',
-        helpText: 'You can close this page after opening the Sheer App.',
+          'Your account is ready. Continue in the Qlooqo App to pick up where you left off.',
+        helpText: 'You can close this page after opening the Qlooqo App.',
       };
   }
 }
