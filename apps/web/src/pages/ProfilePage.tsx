@@ -145,7 +145,7 @@ export function ProfilePage() {
         </p>
         <h1 className="mt-1 text-[26px] font-semibold leading-8 text-text-primary">My profile</h1>
         <p className="mt-1.5 max-w-2xl text-[13px] leading-5 text-text-secondary">
-          Manage your shared identity across Sheer. Fields controlled by your business are shown as
+          Manage your shared identity across Qlooqo. Fields controlled by your business are shown as
           read-only.
         </p>
       </header>

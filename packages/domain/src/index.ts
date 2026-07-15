@@ -265,7 +265,7 @@ export const PERMISSION_CATALOG: readonly PermissionDefinition[] = [
   { key: 'report.performance.view', label: 'Team performance', description: 'View stylist performance reports.', kind: 'report', group: 'Reports & financials' },
   { key: 'report.commission.view', label: 'Commission', description: 'View commission figures and readiness.', kind: 'report', group: 'Reports & financials' },
   { key: 'report.financials.view', label: 'Financials (revenue, P&L)', description: 'View revenue, retail sales and P&L figures.', kind: 'report', group: 'Reports & financials' },
-  { key: 'report.lab_analytics.view', label: 'Colour lab analytics', description: 'View Sheer Lab analytics and margins.', kind: 'report', group: 'Reports & financials' },
+  { key: 'report.lab_analytics.view', label: 'Colour lab analytics', description: 'View Qlooqo Lab analytics and margins.', kind: 'report', group: 'Reports & financials' },
   { key: 'crm.view', label: 'View clients', description: 'View client records.', kind: 'feature', group: 'Front of house' },
   { key: 'crm.manage', label: 'Manage clients', description: 'Create and edit client records.', kind: 'feature', group: 'Front of house', requires: ['crm.view'] },
   { key: 'services.view', label: 'View services', description: 'View the service catalogue without changing it.', kind: 'feature', group: 'Operations' },

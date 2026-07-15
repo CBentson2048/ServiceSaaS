@@ -99,7 +99,7 @@ export function CreateAccountPage() {
           <p className="mt-1 text-sm text-[#776A82]">
             {bookingMode
               ? 'Create an account to continue your booking.'
-              : 'Start as the owner of a new Sheer business workspace.'}
+              : 'Start as the owner of a new Qlooqo business workspace.'}
           </p>
         </div>
 

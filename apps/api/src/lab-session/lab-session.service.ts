@@ -119,7 +119,7 @@ export class LabSessionService {
 
     if (error || !session) {
       this.logger.error(`unlock create session failed: ${error?.message ?? 'no row'}`);
-      throw new InternalServerErrorException('Unable to start Sheer Lab session');
+      throw new InternalServerErrorException('Unable to start Qlooqo Lab session');
     }
 
     await Promise.all([
@@ -158,7 +158,7 @@ export class LabSessionService {
 
     if (error) {
       this.logger.error(`heartbeat failed: ${error.message}`);
-      throw new InternalServerErrorException('Unable to refresh Sheer Lab session');
+      throw new InternalServerErrorException('Unable to refresh Qlooqo Lab session');
     }
 
     return {
@@ -189,7 +189,7 @@ export class LabSessionService {
 
     if (error) {
       this.logger.error(`logout failed: ${error.message}`);
-      throw new InternalServerErrorException('Unable to end Sheer Lab session');
+      throw new InternalServerErrorException('Unable to end Qlooqo Lab session');
     }
 
     if (session) {
@@ -225,23 +225,23 @@ export class LabSessionService {
 
     if (error) {
       this.logger.error(`assertActiveSession failed: ${error.message}`);
-      throw new InternalServerErrorException('Unable to validate Sheer Lab session');
+      throw new InternalServerErrorException('Unable to validate Qlooqo Lab session');
     }
-    if (!data) throw new UnauthorizedException('Sheer Lab session was not found');
+    if (!data) throw new UnauthorizedException('Qlooqo Lab session was not found');
 
-    if (data.status !== 'active') throw new UnauthorizedException('Sheer Lab session is not active');
+    if (data.status !== 'active') throw new UnauthorizedException('Qlooqo Lab session is not active');
     if (new Date(data.expires_at).getTime() <= Date.now()) {
       await this.admin
         .schema('lab')
         .from('formula_sessions')
         .update({ status: 'expired', ended_at: new Date().toISOString(), end_reason: 'inactivity_timeout' })
         .eq('id', sessionId);
-      throw new UnauthorizedException('Sheer Lab session expired');
+      throw new UnauthorizedException('Qlooqo Lab session expired');
     }
 
     const actor = await this.auth.resolveAuthUser(data.user_profile_id);
     if (actor.businessId !== data.business_id) {
-      throw new UnauthorizedException('Sheer Lab session no longer matches the user business');
+      throw new UnauthorizedException('Qlooqo Lab session no longer matches the user business');
     }
 
     return {

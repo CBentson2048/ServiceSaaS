@@ -83,7 +83,7 @@ export class LabDeviceService {
 
     if (error || !data) {
       this.logger.error(`register failed: ${error?.message ?? 'no row'}`);
-      throw new InternalServerErrorException('Unable to register Sheer Lab device');
+      throw new InternalServerErrorException('Unable to register Qlooqo Lab device');
     }
 
     await this.writeAuditEvent(data, 'device_registered');
@@ -112,7 +112,7 @@ export class LabDeviceService {
     const { data, error } = await query.returns<SharedDeviceWithLocationRow[]>();
     if (error) {
       this.logger.error(`list failed: ${error.message}`);
-      throw new InternalServerErrorException('Unable to load Sheer Lab devices');
+      throw new InternalServerErrorException('Unable to load Qlooqo Lab devices');
     }
 
     return {
@@ -135,9 +135,9 @@ export class LabDeviceService {
 
     if (lookupError) {
       this.logger.error(`revoke lookup failed: ${lookupError.message}`);
-      throw new InternalServerErrorException('Unable to revoke Sheer Lab device');
+      throw new InternalServerErrorException('Unable to revoke Qlooqo Lab device');
     }
-    if (!existing) throw new NotFoundException('Sheer Lab device not found');
+    if (!existing) throw new NotFoundException('Qlooqo Lab device not found');
     if (userHasRole(actor, 'manager') && !actor.allowedLocationIds.includes(existing.location_id)) {
       throw new ForbiddenException('Cannot revoke a device outside your location scope');
     }
@@ -157,7 +157,7 @@ export class LabDeviceService {
 
     if (error || !data) {
       this.logger.error(`revoke failed: ${error?.message ?? 'no row'}`);
-      throw new InternalServerErrorException('Unable to revoke Sheer Lab device');
+      throw new InternalServerErrorException('Unable to revoke Qlooqo Lab device');
     }
 
     await this.writeAuditEvent(data, 'device_revoked', { revokedBy: actor.id });
@@ -177,12 +177,12 @@ export class LabDeviceService {
 
     if (error) {
       this.logger.error(`resolve failed: ${error.message}`);
-      throw new InternalServerErrorException('Unable to resolve Sheer Lab device');
+      throw new InternalServerErrorException('Unable to resolve Qlooqo Lab device');
     }
     if (!data) throw new UnauthorizedException('Invalid device session token');
     if (data.status === 'revoked' || data.status === 'inactive') {
       await this.writeAuditEvent(data, 'device_resolve_blocked', { status: data.status });
-      throw new UnauthorizedException(`Sheer Lab device is ${data.status}`);
+      throw new UnauthorizedException(`Qlooqo Lab device is ${data.status}`);
     }
 
     const location = await this.fetchLocation(data.business_id, data.location_id);
@@ -227,13 +227,13 @@ export class LabDeviceService {
 
   private assertCanManage(actor: AuthUser): void {
     if (!userHasAnyRole(actor, ['owner', 'manager'])) {
-      throw new ForbiddenException('Role is not allowed to manage Sheer Lab devices');
+      throw new ForbiddenException('Role is not allowed to manage Qlooqo Lab devices');
     }
   }
 
   private assertCanManageDevice(actor: AuthUser, businessId: string, locationId: string): void {
     if (!userHasAnyRole(actor, ['owner', 'manager'])) {
-      throw new ForbiddenException('Role is not allowed to register Sheer Lab devices');
+      throw new ForbiddenException('Role is not allowed to register Qlooqo Lab devices');
     }
     if (actor.businessId !== businessId) {
       throw new ForbiddenException('Cannot register a device outside your business');
@@ -257,9 +257,9 @@ export class LabDeviceService {
 
     if (error) {
       this.logger.error(`fetchLocation failed: ${error.message}`);
-      throw new InternalServerErrorException('Unable to resolve Sheer Lab location');
+      throw new InternalServerErrorException('Unable to resolve Qlooqo Lab location');
     }
-    if (!data) throw new UnauthorizedException('Sheer Lab device location is no longer valid');
+    if (!data) throw new UnauthorizedException('Qlooqo Lab device location is no longer valid');
     return data;
   }
 

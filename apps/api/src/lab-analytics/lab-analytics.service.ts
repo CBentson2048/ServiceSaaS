@@ -132,7 +132,7 @@ export class LabAnalyticsService {
     to?: string,
   ): Promise<SheerLabAnalyticsResponse> {
     if (!session.permissions.includes('report.lab_analytics.view')) {
-      throw new ForbiddenException('You do not have permission to view Sheer Lab analytics');
+      throw new ForbiddenException('You do not have permission to view Qlooqo Lab analytics');
     }
     const customWindow = resolveCustomWindow(from, to);
     const normalizedRange: SheerLabAnalyticsRange = customWindow ? 'custom' : normalizeRange(range);
@@ -201,7 +201,7 @@ export class LabAnalyticsService {
     // exclusion check on ['stylist','client'] wrongly 403s a legitimate owner.
     // Mirror the dashboard's inclusion check instead.
     if (!userHasAnyRole(actor, ['owner', 'manager'])) {
-      throw new ForbiddenException('Sheer Lab analytics are limited to owners and managers');
+      throw new ForbiddenException('Qlooqo Lab analytics are limited to owners and managers');
     }
 
     if (!userHasRole(actor, 'owner') && requestedLocationId && !actor.allowedLocationIds.includes(requestedLocationId)) {
@@ -322,7 +322,7 @@ export class LabAnalyticsService {
 
   private throwQueryError(operation: string, message: string): never {
     this.logger.error(`${operation} failed: ${message}`);
-    throw new InternalServerErrorException('Unable to load Sheer Lab analytics');
+    throw new InternalServerErrorException('Unable to load Qlooqo Lab analytics');
   }
 }
 
