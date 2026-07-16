@@ -111,6 +111,87 @@ interface ProductBillingRulesRow {
   product_round_up_increment: number | null;
 }
 
+/**
+ * A durably-stored saved formula, enriched with the stylist who mixed it. The
+ * stylist is resolved from the owning visit/appointment (there is no stylist
+ * column on lab.formulas), keeping every saved formula "linked to the
+ * stylist/client" without a schema change.
+ */
+export interface LabClientFormulaHistoryRecord extends FormulaHistoryRecord {
+  staffProfileId?: string;
+  stylistName?: string;
+}
+
+/** Resolved stylist/service context for a saved formula, keyed by formula row id. */
+interface FormulaStylistContext {
+  staffProfileId?: string;
+  stylistName?: string;
+  serviceType?: string;
+}
+
+interface SavedFormulaItemRow {
+  id: string;
+  external_item_id: string | null;
+  product_id: string | null;
+  product_name: string;
+  brand: string | null;
+  shade: string | null;
+  developer: string | null;
+  ratio: string | null;
+  processing_time_minutes: number | null;
+  captured_grams: number | string;
+  waste_grams: number | string;
+  entry_mode: 'ble_scale' | 'manual';
+  captured_at: string | null;
+  cost_per_gram_cents: number | null;
+  cost_cents: number;
+  waste_cost_cents: number;
+  notes: string | null;
+}
+
+interface SavedFormulaRow {
+  id: string;
+  external_formula_id: string | null;
+  lab_session_id: string | null;
+  appointment_id: string | null;
+  visit_id: string | null;
+  business_id: string;
+  location_id: string;
+  client_profile_id: string;
+  source_formula_id: string | null;
+  actual_cost_cents: number;
+  waste_cost_cents: number;
+  billable_charge_cents: number;
+  currency_code: string;
+  saved_at: string;
+  created_at: string;
+  updated_at: string;
+  formula_items: SavedFormulaItemRow[] | null;
+}
+
+interface VisitStylistRow {
+  id: string;
+  primary_staff_profile_id: string | null;
+  service_summary: string | null;
+}
+
+interface AppointmentStylistRow {
+  id: string;
+  assigned_staff_profile_id: string | null;
+  appointment_services?: { service_name_snapshot: string }[] | { service_name_snapshot: string } | null;
+}
+
+interface StaffDisplayNameRow {
+  id: string;
+  display_name: string | null;
+}
+
+/** Upper bound on how many saved formulas a single client-history read returns. */
+const FORMULA_HISTORY_LIMIT = 100;
+
+const SAVED_FORMULA_COLUMNS =
+  'id,external_formula_id,lab_session_id,appointment_id,visit_id,business_id,location_id,client_profile_id,source_formula_id,actual_cost_cents,waste_cost_cents,billable_charge_cents,currency_code,saved_at,created_at,updated_at,formula_items(id,external_item_id,product_id,product_name,brand,shade,developer,ratio,processing_time_minutes,captured_grams,waste_grams,entry_mode,captured_at,cost_per_gram_cents,cost_cents,waste_cost_cents,notes)';
+
 @Injectable()
 export class LabFormulaService {
   private readonly logger = new Logger(LabFormulaService.name);
@@ -425,35 +506,179 @@ export class LabFormulaService {
     );
   }
 
-  latestForClient(actor: AuthUser, clientProfileId: string): FormulaHistoryRecord | null {
-    return this.historyForClient(actor, clientProfileId)[0] ?? null;
+  async latestForClient(
+    actor: AuthUser,
+    clientProfileId: string,
+  ): Promise<LabClientFormulaHistoryRecord | null> {
+    return (await this.historyForClient(actor, clientProfileId))[0] ?? null;
   }
 
   // A customer's own saved formulas, stripped of cost/waste/billing data before
   // it ever leaves the API. Reuses historyForClient (which already scopes a
   // client to their own clientProfileId) and maps to the client-safe shape.
-  historyForSelf(actor: AuthUser): ClientLabHistoryResponse {
+  async historyForSelf(actor: AuthUser): Promise<ClientLabHistoryResponse> {
     if (!userHasRole(actor, 'client') || !actor.clientProfileId) {
       throw new ForbiddenException('Lab history requires a client account');
     }
-    const records = this.historyForClient(actor, actor.clientProfileId);
+    const records = await this.historyForClient(actor, actor.clientProfileId);
     return { formulas: records.map(toClientLabFormulaSummary) };
   }
 
-  historyForClient(actor: AuthUser, clientProfileId: string): FormulaHistoryRecord[] {
+  /**
+   * A client's saved colour-formula history over time, read from the durable
+   * `lab.formulas` table (not the in-process draft cache) so it persists across
+   * restarts, deploys and visits. Each record is enriched with the stylist who
+   * mixed it, resolved from the owning visit/appointment. Ordered newest-first.
+   *
+   * Scope mirrors {@link canReadFormula}: owners see the whole business, a
+   * client sees only their own profile, and managers/stylists are bounded to
+   * their allowed locations — a DB read can never widen visibility.
+   */
+  async historyForClient(
+    actor: AuthUser,
+    clientProfileId: string,
+  ): Promise<LabClientFormulaHistoryRecord[]> {
     if (userHasRole(actor, 'client') && actor.clientProfileId !== clientProfileId) {
       throw new ForbiddenException('Client formula history is outside your scope');
     }
-    return Array.from(this.formulas.values())
-      .filter(
-        (formula): formula is FormulaHistoryRecord =>
-          formula.status === 'saved' &&
-          formula.clientProfileId === clientProfileId &&
-          formula.businessId === actor.businessId &&
-          this.canReadFormula(actor, formula) &&
-          Boolean(formula.savedAt),
-      )
-      .sort((a, b) => b.savedAt.localeCompare(a.savedAt));
+
+    let query = this.admin
+      .schema('lab')
+      .from('formulas')
+      .select(SAVED_FORMULA_COLUMNS)
+      .eq('business_id', actor.businessId)
+      .eq('client_profile_id', clientProfileId)
+      .eq('status', 'saved')
+      .not('saved_at', 'is', null)
+      .order('saved_at', { ascending: false })
+      .limit(FORMULA_HISTORY_LIMIT);
+
+    if (!userHasRole(actor, 'owner') && !userHasRole(actor, 'client')) {
+      query = query.in('location_id', actor.allowedLocationIds);
+    }
+
+    const { data, error } = await query.returns<SavedFormulaRow[]>();
+    if (error) {
+      this.logger.error(`historyForClient failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load formula history');
+    }
+
+    const rows = data ?? [];
+    if (rows.length === 0) return [];
+
+    const stylists = await this.resolveFormulaStylists(actor.businessId, rows);
+    return rows.map((row) => toHistoryRecord(row, stylists));
+  }
+
+  /**
+   * Resolves the stylist (and a service label) for each saved formula by joining
+   * back to its visit (`primary_staff_profile_id`) or appointment
+   * (`assigned_staff_profile_id`) — there is no stylist column on the formula
+   * itself. Returned map is keyed by the formula row id.
+   */
+  private async resolveFormulaStylists(
+    businessId: string,
+    rows: SavedFormulaRow[],
+  ): Promise<Map<string, FormulaStylistContext>> {
+    const visitIds = [...new Set(rows.map((row) => row.visit_id).filter((id): id is string => Boolean(id)))];
+    const appointmentIds = [
+      ...new Set(rows.map((row) => row.appointment_id).filter((id): id is string => Boolean(id))),
+    ];
+
+    const [visitRows, appointmentRows] = await Promise.all([
+      this.fetchVisitStylists(businessId, visitIds),
+      this.fetchAppointmentStylists(businessId, appointmentIds),
+    ]);
+
+    const visitById = new Map(visitRows.map((row) => [row.id, row]));
+    const appointmentById = new Map(appointmentRows.map((row) => [row.id, row]));
+
+    const staffNames = await this.fetchStaffDisplayNames(businessId, [
+      ...visitRows.map((row) => row.primary_staff_profile_id),
+      ...appointmentRows.map((row) => row.assigned_staff_profile_id),
+    ]);
+
+    const contextByFormula = new Map<string, FormulaStylistContext>();
+    for (const row of rows) {
+      const visit = row.visit_id ? visitById.get(row.visit_id) : undefined;
+      const appointment = row.appointment_id ? appointmentById.get(row.appointment_id) : undefined;
+      const staffProfileId =
+        visit?.primary_staff_profile_id ?? appointment?.assigned_staff_profile_id ?? undefined;
+      const serviceType =
+        visit?.service_summary?.trim() ||
+        summarizeAppointmentServices(appointment?.appointment_services) ||
+        undefined;
+      contextByFormula.set(row.id, {
+        staffProfileId,
+        stylistName: staffProfileId ? staffNames.get(staffProfileId) : undefined,
+        serviceType,
+      });
+    }
+    return contextByFormula;
+  }
+
+  private async fetchVisitStylists(businessId: string, visitIds: string[]): Promise<VisitStylistRow[]> {
+    if (visitIds.length === 0) return [];
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('visits')
+      .select('id,primary_staff_profile_id,service_summary')
+      .eq('business_id', businessId)
+      .in('id', visitIds)
+      .returns<VisitStylistRow[]>();
+
+    if (error) {
+      this.logger.error(`fetchVisitStylists failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to resolve formula stylists');
+    }
+    return data ?? [];
+  }
+
+  private async fetchAppointmentStylists(
+    businessId: string,
+    appointmentIds: string[],
+  ): Promise<AppointmentStylistRow[]> {
+    if (appointmentIds.length === 0) return [];
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('appointments')
+      .select('id,assigned_staff_profile_id,appointment_services(service_name_snapshot)')
+      .eq('business_id', businessId)
+      .in('id', appointmentIds)
+      .returns<AppointmentStylistRow[]>();
+
+    if (error) {
+      this.logger.error(`fetchAppointmentStylists failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to resolve formula stylists');
+    }
+    return data ?? [];
+  }
+
+  private async fetchStaffDisplayNames(
+    businessId: string,
+    staffProfileIds: Array<string | null>,
+  ): Promise<Map<string, string>> {
+    const uniqueIds = [...new Set(staffProfileIds.filter((id): id is string => Boolean(id)))];
+    const names = new Map<string, string>();
+    if (uniqueIds.length === 0) return names;
+
+    const { data, error } = await this.admin
+      .schema('core')
+      .from('staff_profiles')
+      .select('id,display_name')
+      .eq('business_id', businessId)
+      .in('id', uniqueIds)
+      .returns<StaffDisplayNameRow[]>();
+
+    if (error) {
+      // Non-fatal: history is still useful without the stylist's display name.
+      this.logger.error(`fetchStaffDisplayNames failed: ${error.message}`);
+      return names;
+    }
+    for (const row of data ?? []) {
+      if (row.display_name) names.set(row.id, row.display_name);
+    }
+    return names;
   }
 
   async duplicate(actor: AuthUser, id: string, dto: DuplicateFormulaDto): Promise<FormulaDraft> {
@@ -844,6 +1069,63 @@ export class LabFormulaService {
       this.logger.error(`applyProductBillingLineItem failed: ${error.message}`);
     }
   }
+}
+
+// Rebuilds a durable saved formula (+ its resolved stylist) from a DB row so the
+// history read matches the in-memory FormulaHistoryRecord shape callers expect.
+function toHistoryRecord(
+  row: SavedFormulaRow,
+  stylists: Map<string, FormulaStylistContext>,
+): LabClientFormulaHistoryRecord {
+  const stylist = stylists.get(row.id) ?? {};
+  return {
+    id: row.external_formula_id ?? row.id,
+    labSessionId: row.lab_session_id ?? '',
+    appointmentId: row.appointment_id ?? undefined,
+    visitId: row.visit_id ?? undefined,
+    businessId: row.business_id,
+    locationId: row.location_id,
+    clientProfileId: row.client_profile_id,
+    sourceFormulaId: row.source_formula_id ?? undefined,
+    status: 'saved',
+    items: (row.formula_items ?? []).map(toFormulaItemFromRow),
+    totalCostCents: row.actual_cost_cents,
+    totalWasteCostCents: row.waste_cost_cents,
+    billableChargeCents: row.billable_charge_cents,
+    chargePreviewCents: row.billable_charge_cents,
+    currencyCode: row.currency_code,
+    visit: {
+      appointmentId: row.appointment_id ?? undefined,
+      visitId: row.visit_id ?? undefined,
+      serviceType: stylist.serviceType,
+    },
+    savedAt: row.saved_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    staffProfileId: stylist.staffProfileId,
+    stylistName: stylist.stylistName,
+  };
+}
+
+function toFormulaItemFromRow(row: SavedFormulaItemRow): FormulaItem {
+  return {
+    id: row.external_item_id ?? row.id,
+    productId: row.product_id ?? undefined,
+    productName: row.product_name,
+    brand: row.brand ?? undefined,
+    shade: row.shade ?? undefined,
+    developer: row.developer ?? undefined,
+    ratio: row.ratio ?? undefined,
+    processingTimeMinutes: row.processing_time_minutes ?? undefined,
+    capturedGrams: toNumber(row.captured_grams),
+    wasteGrams: toNumber(row.waste_grams),
+    entryMode: row.entry_mode,
+    capturedAt: row.captured_at ?? undefined,
+    costPerGramCents: row.cost_per_gram_cents ?? undefined,
+    costCents: row.cost_cents,
+    wasteCostCents: row.waste_cost_cents,
+    notes: row.notes ?? undefined,
+  };
 }
 
 function normalizeItems(items: unknown[] | undefined): FormulaItem[] {

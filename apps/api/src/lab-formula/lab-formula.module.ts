@@ -8,5 +8,6 @@ import { LabFormulaService } from './lab-formula.service';
   imports: [AuthModule, LabSessionModule],
   controllers: [LabFormulaController, LabSessionFormulaController],
   providers: [LabFormulaService],
+  exports: [LabFormulaService],
 })
 export class LabFormulaModule {}

@@ -3800,10 +3800,38 @@ export interface CrmVisitPhoto {
   createdAt: string;
 }
 
+/** A single ingredient row of a saved colour formula, as shown on the client profile. */
+export interface CrmClientFormulaItem {
+  productName: string;
+  brand?: string;
+  shade?: string;
+  developer?: string;
+  ratio?: string;
+  processingTimeMinutes?: number;
+}
+
+/**
+ * A saved colour formula surfaced on a client's staff-facing profile: the recipe
+ * plus when it was mixed and by which stylist. Deliberately omits product costs,
+ * waste and billing — those stay in the Sheer Lab billing views, not the CRM.
+ */
+export interface CrmClientFormula {
+  id: string;
+  savedAt: string;
+  appointmentId?: string;
+  visitId?: string;
+  staffProfileId?: string;
+  stylistName?: string;
+  serviceType?: string;
+  items: CrmClientFormulaItem[];
+}
+
 export interface CrmClientDetailResponse {
   profile: CrmClientProfile;
   notes: CrmClientNote[];
   visits: CrmVisitSummary[];
+  /** Saved colour-formula history for the client, newest first. */
+  formulas: CrmClientFormula[];
   allergies: CrmAllergyRecord[];
   patchTests: CrmPatchTestRecord[];
   messages: CrmMessageLog[];

@@ -28,7 +28,7 @@ export class LabFormulaController {
   // Method-level role overrides the controller's staff-only default.
   @Get('me/history')
   @RequireRoles('client')
-  myHistory(@CurrentUser() actor: AuthUser): ClientLabHistoryResponse {
+  myHistory(@CurrentUser() actor: AuthUser): Promise<ClientLabHistoryResponse> {
     return this.labFormulaService.historyForSelf(actor);
   }
 

@@ -11,6 +11,7 @@ import type { ConfigService } from '@nestjs/config';
 import { createClient } from '@supabase/supabase-js';
 import type { AuthUser } from '@sheer/domain';
 import { CrmService } from './crm.service';
+import type { LabFormulaService } from '../lab-formula/lab-formula.service';
 
 jest.mock('@supabase/supabase-js', () => ({
   createClient: jest.fn(),
@@ -68,7 +69,13 @@ function createService(existingByEmail: Record<string, unknown> | null = null) {
   const mock = createMockAdmin(existingByEmail);
   mockedCreateClient.mockReturnValue(mock.query as never);
   const config = { getOrThrow: jest.fn(() => 'test') } as unknown as ConfigService;
-  return { service: new CrmService(config), captured: mock.captured };
+  // CrmService reuses LabFormulaService only for the client-detail formula panel,
+  // which none of these create-path tests exercise; a no-op stub keeps the
+  // constructor satisfied without a second Supabase client.
+  const labFormulas = {
+    historyForClient: jest.fn(async () => []),
+  } as unknown as LabFormulaService;
+  return { service: new CrmService(config, labFormulas), captured: mock.captured };
 }
 
 describe('CrmService — permissions and search', () => {

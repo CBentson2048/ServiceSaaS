@@ -18,6 +18,7 @@ import type {
   CreateCrmVisitPhotoRequest,
   CrmAllergyRecord,
   CrmClientDetailResponse,
+  CrmClientFormula,
   CrmClientNote,
   CrmClientProfile,
   CrmClientsPagination,
@@ -37,6 +38,10 @@ import type {
 } from '@sheer/domain';
 import { userHasRole, userHasAnyRole } from '@sheer/domain';
 import type { ListCrmClientsQueryDto } from './dto';
+import {
+  LabFormulaService,
+  type LabClientFormulaHistoryRecord,
+} from '../lab-formula/lab-formula.service';
 
 interface ClientProfileRow {
   id: string;
@@ -231,7 +236,10 @@ export class CrmService {
   private readonly logger = new Logger(CrmService.name);
   private readonly admin: SupabaseClient;
 
-  constructor(config: ConfigService) {
+  constructor(
+    config: ConfigService,
+    private readonly labFormulas: LabFormulaService,
+  ) {
     const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
     this.admin = createClient(supabaseUrl, serviceRoleKey, {
@@ -405,6 +413,7 @@ export class CrmService {
     const [
       notes,
       visits,
+      formulas,
       allergies,
       patchTests,
       messages,
@@ -416,6 +425,7 @@ export class CrmService {
     ] = await Promise.all([
       this.fetchNotes(actor.businessId, client.id),
       this.fetchVisitsForClient(actor.businessId, client.id),
+      this.fetchClientFormulas(actor, client.id),
       this.fetchAllergies(actor.businessId, client.id),
       this.fetchPatchTests(actor.businessId, client.id),
       this.fetchMessages(actor.businessId, client.id),
@@ -435,11 +445,33 @@ export class CrmService {
       }),
       notes,
       visits,
+      formulas,
       allergies,
       patchTests,
       messages,
       photos,
     };
+  }
+
+  /**
+   * A client's saved colour-formula history for their staff-facing profile.
+   * Reuses the durable, DB-backed {@link LabFormulaService.historyForClient}
+   * (same actor scoping) and projects it to the lean CRM shape — recipe +
+   * stylist only, no product cost/waste/billing. Best-effort: a lab read hiccup
+   * degrades to an empty list rather than blanking the whole profile.
+   */
+  private async fetchClientFormulas(actor: AuthUser, clientId: string): Promise<CrmClientFormula[]> {
+    try {
+      const records = await this.labFormulas.historyForClient(actor, clientId);
+      return records.map(toCrmClientFormula);
+    } catch (error) {
+      this.logger.error(
+        `fetchClientFormulas failed for client ${clientId}: ${
+          error instanceof Error ? error.message : 'unknown error'
+        }`,
+      );
+      return [];
+    }
   }
 
   async updateClient(
@@ -1358,6 +1390,30 @@ function toAppointmentVisitSummary(
     clientVisibleSummary: serviceSummary || undefined,
     priceAmount: priceAmount > 0 ? priceAmount : undefined,
     currencyCode: 'GBP',
+  };
+}
+
+// Projects a durable lab formula-history record down to the staff-facing CRM
+// profile shape: the recipe, when it was mixed and by which stylist. Product
+// cost, waste and billing are deliberately dropped — they belong to the Lab
+// billing views, not the client profile.
+function toCrmClientFormula(record: LabClientFormulaHistoryRecord): CrmClientFormula {
+  return {
+    id: record.id,
+    savedAt: record.savedAt,
+    appointmentId: record.appointmentId,
+    visitId: record.visitId,
+    staffProfileId: record.staffProfileId,
+    stylistName: record.stylistName,
+    serviceType: record.visit?.serviceType,
+    items: record.items.map((item) => ({
+      productName: item.productName,
+      brand: item.brand,
+      shade: item.shade,
+      developer: item.developer,
+      ratio: item.ratio,
+      processingTimeMinutes: item.processingTimeMinutes,
+    })),
   };
 }
 
