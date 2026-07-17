@@ -91,6 +91,127 @@ export function suggestTierUpgrade(
   return null;
 }
 
+/**
+ * Customer-facing pricing tier — the public plan names shown on the pricing page
+ * and in-account.
+ *
+ * Distinct from {@link BusinessTier}: `BusinessTier` is the internal entitlement
+ * engine (it gates locations + messaging caps), whereas `PlanTier` is the
+ * marketing/pricing segmentation, sliced primarily by team size. The two are
+ * intentionally decoupled — reconciling pricing onto entitlement limits is a
+ * separate commercial decision, not encoded here.
+ *
+ * Definitions (Wrike 4507695392):
+ * - `spark`    — independent professionals and businesses with 1 team member.
+ * - `flow`     — businesses with 2–5 team members.
+ * - `pulse`    — businesses with 6–20 team members.
+ * - `orbit`    — multi-location businesses, or those with 21+ team members.
+ * - `infinity` — enterprise organisations: unlimited locations and custom
+ *                requirements. Assigned via sales, never auto-derived from usage.
+ */
+export type PlanTier = 'spark' | 'flow' | 'pulse' | 'orbit' | 'infinity';
+
+/** Lowest → highest plan tier. */
+export const PLAN_TIER_ORDER: readonly PlanTier[] = [
+  'spark',
+  'flow',
+  'pulse',
+  'orbit',
+  'infinity',
+];
+
+export interface PlanTierDefinition {
+  tier: PlanTier;
+  /** Public plan name. */
+  name: string;
+  /** One-line "who it's for" positioning, verbatim from the pricing definition. */
+  tagline: string;
+  /** Team members this tier is aimed at (inclusive lower bound). */
+  minTeamMembers: number;
+  /** Inclusive upper bound on team members, or `null` for unlimited. */
+  maxTeamMembers: number | null;
+  /** Positioned for businesses running more than one location. */
+  multiLocation: boolean;
+  /** Enterprise tier — assigned via sales, never auto-derived from usage. */
+  enterprise: boolean;
+}
+
+/**
+ * The plan catalogue — the single source of truth for the public pricing tiers.
+ * Consumed by pricing/onboarding surfaces and by {@link resolvePlanTier}.
+ */
+export const PLAN_TIERS: Record<PlanTier, PlanTierDefinition> = {
+  spark: {
+    tier: 'spark',
+    name: 'Spark',
+    tagline: 'For independent professionals and businesses with 1 team member.',
+    minTeamMembers: 1,
+    maxTeamMembers: 1,
+    multiLocation: false,
+    enterprise: false,
+  },
+  flow: {
+    tier: 'flow',
+    name: 'Flow',
+    tagline: 'For businesses with 2–5 team members.',
+    minTeamMembers: 2,
+    maxTeamMembers: 5,
+    multiLocation: false,
+    enterprise: false,
+  },
+  pulse: {
+    tier: 'pulse',
+    name: 'Pulse',
+    tagline: 'For businesses with 6–20 team members.',
+    minTeamMembers: 6,
+    maxTeamMembers: 20,
+    multiLocation: false,
+    enterprise: false,
+  },
+  orbit: {
+    tier: 'orbit',
+    name: 'Orbit',
+    tagline: 'For multi-location businesses or those with 21+ team members.',
+    minTeamMembers: 21,
+    maxTeamMembers: null,
+    multiLocation: true,
+    enterprise: false,
+  },
+  infinity: {
+    tier: 'infinity',
+    name: 'Infinity',
+    tagline: 'For enterprise organisations with unlimited locations and custom requirements.',
+    minTeamMembers: 21,
+    maxTeamMembers: null,
+    multiLocation: true,
+    enterprise: true,
+  },
+};
+
+/** Definition for a plan tier, defaulting to Spark for unknown values. */
+export function getPlanTierDefinition(tier: PlanTier | null | undefined): PlanTierDefinition {
+  return (tier && PLAN_TIERS[tier]) || PLAN_TIERS.spark;
+}
+
+/**
+ * Resolve the self-serve plan tier a business falls into from its live usage.
+ *
+ * Rules (Wrike 4507695392): multi-location → Orbit; otherwise by team size —
+ * 1 → Spark, 2–5 → Flow, 6–20 → Pulse, 21+ → Orbit. Never returns `infinity`:
+ * Infinity is an enterprise tier assigned via sales, not derived from usage.
+ */
+export function resolvePlanTier(usage: {
+  teamMemberCount: number;
+  locationCount: number;
+}): PlanTier {
+  if (usage.locationCount > 1) return 'orbit';
+  const team = usage.teamMemberCount;
+  if (team >= 21) return 'orbit';
+  if (team >= 6) return 'pulse';
+  if (team >= 2) return 'flow';
+  return 'spark';
+}
+
 export type AllowedLocationScope =
   | { kind: 'all'; locationIds: string[] }
   | { kind: 'locations'; locationIds: string[] }
@@ -648,6 +769,13 @@ export interface AccountTierUpgradeSuggestion {
 
 export interface AccountTierState {
   tier: BusinessTier;
+  /**
+   * Customer-facing pricing tier derived from live usage (see
+   * {@link resolvePlanTier}). Presentation only — entitlements are driven by
+   * `tier`/`limits`, not this. Never `infinity` when derived (that is assigned
+   * via sales).
+   */
+  planTier: PlanTier;
   limits: BusinessTierLimits;
   usage: AccountTierUsage;
   /** Set when current usage is at/over a limit and an upgrade is recommended. */

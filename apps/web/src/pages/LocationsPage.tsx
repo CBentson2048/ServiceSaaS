@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import type { AccountTierState, BusinessLocation, BusinessTier } from '@sheer/domain';
-import { BUSINESS_TIER_LABELS, BUSINESS_TIER_ORDER, userHasPermission } from '@sheer/domain';
+import {
+  BUSINESS_TIER_LABELS,
+  BUSINESS_TIER_ORDER,
+  PLAN_TIERS,
+  userHasPermission,
+} from '@sheer/domain';
 import {
   ApiRequestError,
   deactivateLocation,
@@ -389,8 +394,16 @@ function PlanCard({ accessToken }: { accessToken: string }) {
           <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-text-secondary">
             Account plan
           </p>
-          <p className="mt-1 text-[15px] font-semibold text-text-primary">
-            {BUSINESS_TIER_LABELS[state.tier]}
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <p className="text-[15px] font-semibold text-text-primary">
+              {BUSINESS_TIER_LABELS[state.tier]}
+            </p>
+            <span className="rounded-full border border-border bg-surface-alt px-2 py-0.5 text-[11px] font-medium text-text-secondary">
+              {PLAN_TIERS[state.planTier].name} plan
+            </span>
+          </div>
+          <p className="mt-1 text-[12px] text-text-secondary">
+            {PLAN_TIERS[state.planTier].tagline}
           </p>
           <p className="mt-1 text-[12px] text-text-secondary">
             Locations {formatLimit(state.usage.locationCount, state.limits.maxLocations)}

@@ -11,6 +11,7 @@ import type { AccountTierState, AuthUser, BusinessTier } from '@sheer/domain';
 import {
   BUSINESS_TIER_LABELS,
   getBusinessTierLimits,
+  resolvePlanTier,
   suggestTierUpgrade,
   userHasRole,
 } from '@sheer/domain';
@@ -118,7 +119,9 @@ export class AccountService {
       if (toTier) upgradeSuggestion = { toTier, reason: 'locations' };
     }
 
-    return { tier, limits, usage, upgradeSuggestion };
+    const planTier = resolvePlanTier(usage);
+
+    return { tier, planTier, limits, usage, upgradeSuggestion };
   }
 
   private async fetchTier(businessId: string): Promise<BusinessTier> {
