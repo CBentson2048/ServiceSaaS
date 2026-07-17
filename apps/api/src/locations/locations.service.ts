@@ -338,7 +338,7 @@ export class LocationsService {
    * surface an upgrade prompt (Solo/Studio → Salon → Group).
    */
   private async assertLocationTierLimit(actor: AuthUser): Promise<void> {
-    const tier = actor.businessTier ?? 'solo';
+    const tier = actor.businessTier ?? 'spark';
     const { maxLocations } = getBusinessTierLimits(tier);
     if (maxLocations === null) return;
 

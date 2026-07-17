@@ -4,7 +4,7 @@ import type { AccountTierState, BusinessLocation, BusinessTier } from '@sheer/do
 import {
   BUSINESS_TIER_LABELS,
   BUSINESS_TIER_ORDER,
-  PLAN_TIERS,
+  BUSINESS_TIER_TAGLINES,
   userHasPermission,
 } from '@sheer/domain';
 import {
@@ -394,21 +394,20 @@ function PlanCard({ accessToken }: { accessToken: string }) {
           <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-text-secondary">
             Account plan
           </p>
-          <div className="mt-1 flex flex-wrap items-center gap-2">
-            <p className="text-[15px] font-semibold text-text-primary">
-              {BUSINESS_TIER_LABELS[state.tier]}
-            </p>
-            <span className="rounded-full border border-border bg-surface-alt px-2 py-0.5 text-[11px] font-medium text-text-secondary">
-              {PLAN_TIERS[state.planTier].name} plan
-            </span>
-          </div>
+          <p className="mt-1 text-[15px] font-semibold text-text-primary">
+            {BUSINESS_TIER_LABELS[state.tier]}
+          </p>
           <p className="mt-1 text-[12px] text-text-secondary">
-            {PLAN_TIERS[state.planTier].tagline}
+            {BUSINESS_TIER_TAGLINES[state.tier]}
           </p>
           <p className="mt-1 text-[12px] text-text-secondary">
             Locations {formatLimit(state.usage.locationCount, state.limits.maxLocations)}
             {' · '}
-            Team {formatLimit(state.usage.teamMemberCount, state.limits.maxTeamMembers)}
+            Bookable columns{' '}
+            {formatLimit(
+              state.usage.bookableColumnCount,
+              state.limits.includedBookableColumnsPerLocation,
+            )}
           </p>
         </div>
         <label className="flex items-center gap-2 text-[12px] text-text-secondary">
@@ -430,8 +429,9 @@ function PlanCard({ accessToken }: { accessToken: string }) {
 
       {state.upgradeSuggestion ? (
         <p className="mt-3 rounded-input-lg border border-warning-border bg-warning-soft px-3 py-2 text-[12px] text-warning">
-          You&apos;ve reached your {state.upgradeSuggestion.reason === 'team' ? 'team' : 'location'}{' '}
-          limit. Upgrade to {BUSINESS_TIER_LABELS[state.upgradeSuggestion.toTier]} to add more.
+          You&apos;ve reached your{' '}
+          {state.upgradeSuggestion.reason === 'columns' ? 'bookable column' : 'location'} limit.
+          Upgrade to {BUSINESS_TIER_LABELS[state.upgradeSuggestion.toTier]} to add more.
         </p>
       ) : null}
 

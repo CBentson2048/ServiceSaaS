@@ -184,7 +184,7 @@ export class StaffService {
     if (input.role !== 'manager' && input.role !== 'stylist') {
       throw new BadRequestException('Invitable roles are limited to manager and stylist');
     }
-    await this.assertTeamTierLimit(actor);
+    await this.assertBookableColumnTierLimit(actor, input.role === 'stylist');
     await this.assertLocationInBusiness(actor.businessId, input.locationId);
 
     const email = input.email.trim().toLowerCase();
@@ -914,50 +914,57 @@ export class StaffService {
   }
 
   /**
-   * Block inviting another team member when the account tier's team cap is
-   * already reached. Team size = distinct active owner/manager/stylist members
-   * plus pending invitations. On Solo (cap 1) this triggers the "invite a 2nd
-   * user → upgrade to Studio" prompt.
+   * Block adding another *bookable column* (bookable service provider) when the
+   * tier hard-caps them. Only Spark is hard-capped (1 column); on Pulse/Infinity
+   * extra columns are permitted and billed separately, so this is a no-op there.
+   * Non-bookable invites (managers/reception) never count and are always allowed.
+   * Bookable columns = active bookable staff profiles + pending stylist invites.
    */
-  private async assertTeamTierLimit(actor: AuthUser): Promise<void> {
-    const tier = actor.businessTier ?? 'solo';
-    const { maxTeamMembers } = getBusinessTierLimits(tier);
-    if (maxTeamMembers === null) return;
+  private async assertBookableColumnTierLimit(
+    actor: AuthUser,
+    willBeBookable: boolean,
+  ): Promise<void> {
+    if (!willBeBookable) return;
 
-    const [members, invitations] = await Promise.all([
+    const tier = actor.businessTier ?? 'spark';
+    const limits = getBusinessTierLimits(tier);
+    if (!limits.bookableColumnsHardCapped || limits.includedBookableColumnsPerLocation === null) {
+      return;
+    }
+    const included = limits.includedBookableColumnsPerLocation;
+
+    const [bookable, invitations] = await Promise.all([
       this.admin
         .schema('core')
-        .from('user_memberships')
-        .select('user_profile_id')
+        .from('staff_profiles')
+        .select('id', { count: 'exact', head: true })
         .eq('business_id', actor.businessId)
-        .eq('status', 'active')
-        .in('role', ['owner', 'manager', 'stylist'])
-        .returns<{ user_profile_id: string }[]>(),
+        .eq('is_bookable', true)
+        .eq('employment_status', 'active'),
       this.admin
         .schema('core')
         .from('staff_invitations')
         .select('id', { count: 'exact', head: true })
         .eq('business_id', actor.businessId)
-        .eq('status', 'pending'),
+        .eq('status', 'pending')
+        .eq('role', 'stylist'),
     ]);
 
-    if (members.error || invitations.error) {
+    if (bookable.error || invitations.error) {
       this.logger.error(
-        `assertTeamTierLimit count failed: ${members.error?.message ?? invitations.error?.message}`,
+        `assertBookableColumnTierLimit count failed: ${bookable.error?.message ?? invitations.error?.message}`,
       );
-      throw new InternalServerErrorException('Unable to verify team limit');
+      throw new InternalServerErrorException('Unable to verify bookable column limit');
     }
 
-    const distinctMembers = new Set((members.data ?? []).map((m) => m.user_profile_id)).size;
-    const teamSize = distinctMembers + (invitations.count ?? 0);
-
-    if (teamSize >= maxTeamMembers) {
-      const upgradeTo = suggestTierUpgrade(tier, 'team');
+    const bookableColumns = (bookable.count ?? 0) + (invitations.count ?? 0);
+    if (bookableColumns >= included) {
+      const upgradeTo = suggestTierUpgrade(tier, 'columns');
       const suffix = upgradeTo
-        ? ` Upgrade to ${BUSINESS_TIER_LABELS[upgradeTo]} to add your team.`
+        ? ` Upgrade to ${BUSINESS_TIER_LABELS[upgradeTo]} to add more of your team.`
         : '';
       throw new ForbiddenException(
-        `Your ${BUSINESS_TIER_LABELS[tier]} plan is limited to ${maxTeamMembers} team member(s).${suffix}`,
+        `Your ${BUSINESS_TIER_LABELS[tier]} plan includes ${included} bookable column(s).${suffix}`,
       );
     }
   }
