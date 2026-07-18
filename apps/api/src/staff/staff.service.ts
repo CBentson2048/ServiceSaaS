@@ -862,23 +862,27 @@ export class StaffService {
       throw new BadRequestException('Photo must be 5 MB or smaller');
     }
 
-    // Confirm the target has a staff profile in this business before uploading.
-    const { data: profile, error: profileError } = await this.admin
+    // Confirm the target user belongs to this business before uploading. We check
+    // business membership rather than an existing staff_profile row: the photo can
+    // be uploaded while a stylist role is still being created (e.g. an owner taking
+    // the stylist role, or a member being made bookable), where the profile row is
+    // only written on the subsequent save. The returned URL is persisted as
+    // photoUrl by that save, so an unsaved upload never orphans a profile.
+    const { count, error: membershipError } = await this.admin
       .schema('core')
-      .from('staff_profiles')
-      .select('id')
+      .from('user_memberships')
+      .select('id', { count: 'exact', head: true })
       .eq('business_id', actor.businessId)
-      .eq('user_profile_id', targetUserId)
-      .maybeSingle<{ id: string }>();
-    if (profileError) {
-      this.logger.error(`load staff profile for photo failed: ${profileError.message}`);
-      throw new InternalServerErrorException('Unable to load staff profile');
+      .eq('user_profile_id', targetUserId);
+    if (membershipError) {
+      this.logger.error(`load membership for photo failed: ${membershipError.message}`);
+      throw new InternalServerErrorException('Unable to verify staff member');
     }
-    if (!profile) {
-      throw new NotFoundException('Staff profile not found');
+    if (!count) {
+      throw new NotFoundException('Staff member not found');
     }
 
-    const path = `${actor.businessId}/${profile.id}/${Date.now()}.${ext}`;
+    const path = `${actor.businessId}/${targetUserId}/${Date.now()}.${ext}`;
     const { error: uploadError } = await this.admin.storage
       .from(PROVIDER_PHOTO_BUCKET)
       .upload(path, file.buffer, { contentType, upsert: true });
