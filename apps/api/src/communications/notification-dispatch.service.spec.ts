@@ -68,6 +68,7 @@ function settings(overrides: Partial<LocationCommunicationSettings> = {}): Locat
     enabled: true,
     enabledChannels: ['whatsapp'],
     sendBookingConfirmation: true,
+    reminder2hEnabled: false,
     reminder24hEnabled: false,
     reminder48hEnabled: false,
     reminder1wEnabled: false,

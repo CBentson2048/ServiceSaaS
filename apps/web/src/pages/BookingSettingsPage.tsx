@@ -307,6 +307,7 @@ function NotificationsSection({
     enabled: false,
     enabledChannels: ['whatsapp'],
     sendBookingConfirmation: false,
+    reminder2hEnabled: false,
     reminder24hEnabled: false,
     reminder48hEnabled: false,
     reminder1wEnabled: false,
@@ -331,6 +332,7 @@ function NotificationsSection({
         locationId,
         enabled: form.enabled,
         sendBookingConfirmation: form.sendBookingConfirmation,
+        reminder2hEnabled: form.reminder2hEnabled,
         reminder24hEnabled: form.reminder24hEnabled,
         reminder48hEnabled: form.reminder48hEnabled,
         reminder1wEnabled: form.reminder1wEnabled,
@@ -388,6 +390,12 @@ function NotificationsSection({
             label="24 hours before"
             checked={form.reminder24hEnabled}
             onChange={(value) => set('reminder24hEnabled', value)}
+            disabled={remindersDisabled}
+          />
+          <Checkbox
+            label="2 hours before"
+            checked={form.reminder2hEnabled}
+            onChange={(value) => set('reminder2hEnabled', value)}
             disabled={remindersDisabled}
           />
           <div className="text-[12px] font-medium text-text-secondary pt-1">Fallback channels (in order)</div>

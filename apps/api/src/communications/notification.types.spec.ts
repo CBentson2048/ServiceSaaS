@@ -22,8 +22,22 @@ describe('metadataToSettings', () => {
     expect(s.reminder1wEnabled).toBe(true);
     expect(s.reminder24hEnabled).toBe(true);
     expect(s.reminder48hEnabled).toBe(false);
+    expect(s.reminder2hEnabled).toBe(false);
     expect(s.sendBookingConfirmation).toBe(true);
     expect(s.enabled).toBe(true);
+  });
+
+  it('derives the 2-hour reminder toggle from a 2h offset (Wrike 4507281442)', () => {
+    const s = metadataToSettings('loc-1', {
+      enabled: true,
+      enabledChannels: ['whatsapp'],
+      reminderOffsetsHours: [48, 2],
+    });
+    expect(s.reminder2hEnabled).toBe(true);
+    expect(s.reminder48hEnabled).toBe(true);
+    expect(s.reminder24hEnabled).toBe(false);
+    // Round-trips back to the same offsets.
+    expect(new Set(settingsToMetadata(s, null).reminderOffsetsHours)).toEqual(new Set([48, 2]));
   });
 });
 
@@ -35,6 +49,7 @@ describe('settingsToMetadata', () => {
         enabled: true,
         enabledChannels: ['whatsapp'],
         sendBookingConfirmation: true,
+        reminder2hEnabled: false,
         reminder24hEnabled: true,
         reminder48hEnabled: false,
         reminder1wEnabled: true,
@@ -58,6 +73,7 @@ describe('settingsToMetadata', () => {
         enabled: true,
         enabledChannels: ['whatsapp'],
         sendBookingConfirmation: false,
+        reminder2hEnabled: false,
         reminder24hEnabled: false,
         reminder48hEnabled: false,
         reminder1wEnabled: false,

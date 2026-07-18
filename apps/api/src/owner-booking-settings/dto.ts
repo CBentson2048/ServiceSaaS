@@ -24,6 +24,10 @@ export class UpdateLocationCommunicationSettingsDto {
 
   @IsOptional()
   @IsBoolean()
+  reminder2hEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
   reminder24hEnabled?: boolean;
 
   @IsOptional()

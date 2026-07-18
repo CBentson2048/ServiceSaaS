@@ -1188,6 +1188,8 @@ export interface LocationCommunicationSettings {
   enabledChannels: CommunicationPreference[];
   /** Send a confirmation immediately after a successful booking (WhatsApp first). */
   sendBookingConfirmation: boolean;
+  /** Short-notice reminder 2 hours before the appointment (Wrike 4507281442). */
+  reminder2hEnabled: boolean;
   reminder24hEnabled: boolean;
   reminder48hEnabled: boolean;
   reminder1wEnabled: boolean;
@@ -1209,6 +1211,7 @@ export interface UpdateLocationCommunicationSettingsRequest {
   locationId: string;
   enabled?: boolean;
   sendBookingConfirmation?: boolean;
+  reminder2hEnabled?: boolean;
   reminder24hEnabled?: boolean;
   reminder48hEnabled?: boolean;
   reminder1wEnabled?: boolean;

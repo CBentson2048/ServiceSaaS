@@ -10,6 +10,7 @@ function settings(overrides: Partial<LocationCommunicationSettings> = {}): Locat
     enabled: true,
     enabledChannels: ['whatsapp'],
     sendBookingConfirmation: false,
+    reminder2hEnabled: false,
     reminder24hEnabled: false,
     reminder48hEnabled: false,
     reminder1wEnabled: false,
@@ -53,14 +54,37 @@ describe('computeDesiredEvents (scheduling logic)', () => {
   it('computes reminder times as absolute offsets before the appointment', () => {
     const start = new Date('2026-06-10T15:00:00.000Z');
     const desired = computeDesiredEvents(
-      settings({ reminder24hEnabled: true, reminder48hEnabled: true, reminder1wEnabled: true }),
+      settings({
+        reminder2hEnabled: true,
+        reminder24hEnabled: true,
+        reminder48hEnabled: true,
+        reminder1wEnabled: true,
+      }),
       start,
       NOW,
     );
     const byKey = new Map(desired.map((d) => [d.eventKey, d.scheduledFor.toISOString()]));
+    expect(byKey.get(NotificationEventKey.Reminder2h)).toBe('2026-06-10T13:00:00.000Z');
     expect(byKey.get(NotificationEventKey.Reminder24h)).toBe('2026-06-09T15:00:00.000Z');
     expect(byKey.get(NotificationEventKey.Reminder48h)).toBe('2026-06-08T15:00:00.000Z');
     expect(byKey.get(NotificationEventKey.Reminder1w)).toBe('2026-06-03T15:00:00.000Z');
+  });
+
+  it('schedules the 2h reminder for a same-day booking after the 24h/48h/1w windows have passed', () => {
+    // Appointment in 3 hours: only the 2-hour reminder is still in the future.
+    const start = new Date(NOW.getTime() + 3 * HOUR);
+    const desired = computeDesiredEvents(
+      settings({
+        reminder2hEnabled: true,
+        reminder24hEnabled: true,
+        reminder48hEnabled: true,
+        reminder1wEnabled: true,
+      }),
+      start,
+      NOW,
+    );
+    expect(desired.map((d) => d.eventKey)).toEqual([NotificationEventKey.Reminder2h]);
+    expect(desired[0].scheduledFor.toISOString()).toBe(new Date(NOW.getTime() + 1 * HOUR).toISOString());
   });
 
   it('skips reminders whose window has already passed (no "next week" reminder for a near booking)', () => {
