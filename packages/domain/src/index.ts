@@ -8,30 +8,43 @@ export type AppSurface = 'sheer_app' | 'sheer_lab' | 'web_dashboard' | 'api';
 
 /**
  * Account product tier. The single account-level flag that drives every
- * downstream feature limit and upgrade prompt.
+ * downstream feature limit and upgrade prompt. Sliced by BOOKABLE COLUMNS
+ * (bookable service providers); non-bookable staff (reception, managers,
+ * assistants, apprentices) never count.
  *
- * - `solo`   — one independent stylist, single location, single user.
- * - `studio` — a small team at a single location.
- * - `salon`  — a salon with a team across a handful of locations.
- * - `group`  — a multi-site group with unlimited locations.
+ * - `spark`    — independent professional. 1 location, 1 bookable column (hard
+ *                cap: a 2nd column means upgrading to Pulse).
+ * - `pulse`    — single-location salon. 1 location, 5 included bookable columns
+ *                (extra columns are billable, not blocked).
+ * - `infinity` — multi-location / enterprise. Unlimited locations, 10 included
+ *                bookable columns per location (extras billable).
  *
- * Tiers NEVER gate inventory or colour tracking — those are core product at
- * every tier from day one.
+ * All three are chosen explicitly at sign-up (there is no automatic usage-based
+ * upgrade). Tiers NEVER gate inventory or colour tracking — those are core
+ * product at every tier from day one.
  */
-export type BusinessTier = 'solo' | 'studio' | 'salon' | 'group';
+export type BusinessTier = 'spark' | 'pulse' | 'infinity';
 
 /** Lowest → highest tier. Used to compare and order tiers. */
-export const BUSINESS_TIER_ORDER: readonly BusinessTier[] = ['solo', 'studio', 'salon', 'group'];
+export const BUSINESS_TIER_ORDER: readonly BusinessTier[] = ['spark', 'pulse', 'infinity'];
 
 export interface BusinessTierLimits {
   tier: BusinessTier;
   /** Max active locations, or `null` for unlimited. */
   maxLocations: number | null;
   /**
-   * Max team members counted as owner + manager + stylist (active memberships
-   * plus pending invitations); `null` for unlimited. Clients never count.
+   * Included bookable columns (bookable service providers) per location. `null`
+   * means unbounded. Where {@link bookableColumnsHardCapped} is false, columns
+   * beyond this are allowed and billed separately (billing is a separate ticket);
+   * where true, the included count is a hard cap.
    */
-  maxTeamMembers: number | null;
+  includedBookableColumnsPerLocation: number | null;
+  /**
+   * When true, {@link includedBookableColumnsPerLocation} is a HARD cap — adding
+   * another bookable column requires a tier upgrade. When false, extra columns
+   * are permitted (billable). Only Spark is hard-capped.
+   */
+  bookableColumnsHardCapped: boolean;
   /**
    * Included outbound billable messages (WhatsApp/SMS) per location per calendar
    * month before overage. `null` for unlimited. Enforcement (counters + overage)
@@ -45,28 +58,51 @@ export interface BusinessTierLimits {
  * enforcing limits and by the web/mobile clients when rendering plan usage.
  */
 export const BUSINESS_TIER_LIMITS: Record<BusinessTier, BusinessTierLimits> = {
-  solo: { tier: 'solo', maxLocations: 1, maxTeamMembers: 1, messagingMonthlyCapPerLocation: 100 },
-  studio: { tier: 'studio', maxLocations: 1, maxTeamMembers: null, messagingMonthlyCapPerLocation: 300 },
-  salon: { tier: 'salon', maxLocations: 5, maxTeamMembers: null, messagingMonthlyCapPerLocation: 600 },
-  group: { tier: 'group', maxLocations: null, maxTeamMembers: null, messagingMonthlyCapPerLocation: 1000 },
+  spark: {
+    tier: 'spark',
+    maxLocations: 1,
+    includedBookableColumnsPerLocation: 1,
+    bookableColumnsHardCapped: true,
+    messagingMonthlyCapPerLocation: 100,
+  },
+  pulse: {
+    tier: 'pulse',
+    maxLocations: 1,
+    includedBookableColumnsPerLocation: 5,
+    bookableColumnsHardCapped: false,
+    messagingMonthlyCapPerLocation: 600,
+  },
+  infinity: {
+    tier: 'infinity',
+    maxLocations: null,
+    includedBookableColumnsPerLocation: 10,
+    bookableColumnsHardCapped: false,
+    messagingMonthlyCapPerLocation: 1000,
+  },
 };
 
 /** Human-friendly tier labels for UI. */
 export const BUSINESS_TIER_LABELS: Record<BusinessTier, string> = {
-  solo: 'Solo',
-  studio: 'Studio',
-  salon: 'Salon',
-  group: 'Group',
+  spark: 'Spark',
+  pulse: 'Pulse',
+  infinity: 'Infinity',
 };
 
-/** Limits for a tier, defaulting to the safest (solo) for unknown values. */
+/** One-line "who it's for" positioning per tier, for pricing/onboarding UIs. */
+export const BUSINESS_TIER_TAGLINES: Record<BusinessTier, string> = {
+  spark: 'For independent professionals — 1 bookable column.',
+  pulse: 'For single-location salons — 5 bookable columns included.',
+  infinity: 'For multi-location businesses — 10 bookable columns per location.',
+};
+
+/** Limits for a tier, defaulting to the safest (spark) for unknown values. */
 export function getBusinessTierLimits(tier: BusinessTier | null | undefined): BusinessTierLimits {
-  return (tier && BUSINESS_TIER_LIMITS[tier]) || BUSINESS_TIER_LIMITS.solo;
+  return (tier && BUSINESS_TIER_LIMITS[tier]) || BUSINESS_TIER_LIMITS.spark;
 }
 
 /**
  * Included monthly messaging allowance (billable channels) per location for a
- * tier; `null` means unlimited. Defaults to the solo cap for unknown tiers.
+ * tier; `null` means unlimited. Defaults to the spark cap for unknown tiers.
  */
 export function getMessagingMonthlyCap(tier: BusinessTier | null | undefined): number | null {
   return getBusinessTierLimits(tier).messagingMonthlyCapPerLocation;
@@ -76,19 +112,19 @@ export function getMessagingMonthlyCap(tier: BusinessTier | null | undefined): n
  * The tier to recommend upgrading to when a limit is hit, or `null` if the
  * current tier already covers the need.
  *
- * - `team`      — needs more people. Solo → Studio (Studio+ already unlimited).
- * - `locations` — needs more locations. Solo/Studio → Salon, Salon → Group.
+ * - `columns`   — needs another bookable column. Only Spark is hard-capped, so
+ *                 Spark → Pulse; Pulse/Infinity permit extra (billable) columns.
+ * - `locations` — needs more than one location → Infinity (Spark and Pulse are
+ *                 single-location).
  */
 export function suggestTierUpgrade(
   current: BusinessTier,
-  reason: 'team' | 'locations',
+  reason: 'columns' | 'locations',
 ): BusinessTier | null {
-  if (reason === 'team') {
-    return current === 'solo' ? 'studio' : null;
+  if (reason === 'columns') {
+    return current === 'spark' ? 'pulse' : null;
   }
-  if (current === 'solo' || current === 'studio') return 'salon';
-  if (current === 'salon') return 'group';
-  return null;
+  return current === 'infinity' ? null : 'infinity';
 }
 
 export type AllowedLocationScope =
@@ -637,13 +673,17 @@ export interface OwnerOnboardingRequest {
 export interface AccountTierUsage {
   /** Active locations in the business. */
   locationCount: number;
-  /** Team members (owner + manager + stylist, active + pending invitations). */
-  teamMemberCount: number;
+  /**
+   * Bookable columns in use — active staff profiles flagged bookable (service
+   * providers). Non-bookable staff (reception, managers, assistants) never
+   * count. This is the metric the tier limits are sliced by.
+   */
+  bookableColumnCount: number;
 }
 
 export interface AccountTierUpgradeSuggestion {
   toTier: BusinessTier;
-  reason: 'team' | 'locations';
+  reason: 'columns' | 'locations';
 }
 
 export interface AccountTierState {
@@ -1148,6 +1188,8 @@ export interface LocationCommunicationSettings {
   enabledChannels: CommunicationPreference[];
   /** Send a confirmation immediately after a successful booking (WhatsApp first). */
   sendBookingConfirmation: boolean;
+  /** Short-notice reminder 2 hours before the appointment (Wrike 4507281442). */
+  reminder2hEnabled: boolean;
   reminder24hEnabled: boolean;
   reminder48hEnabled: boolean;
   reminder1wEnabled: boolean;
@@ -1169,6 +1211,7 @@ export interface UpdateLocationCommunicationSettingsRequest {
   locationId: string;
   enabled?: boolean;
   sendBookingConfirmation?: boolean;
+  reminder2hEnabled?: boolean;
   reminder24hEnabled?: boolean;
   reminder48hEnabled?: boolean;
   reminder1wEnabled?: boolean;

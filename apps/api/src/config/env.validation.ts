@@ -162,6 +162,11 @@ export class EnvConfig {
   @IsString()
   TWILIO_WHATSAPP_CONFIRMATION_CONTENT_SID?: string;
 
+  /** Approved Twilio Content template SID (`HXxx...`) for the 2-hour reminder WhatsApp. */
+  @IsOptional()
+  @IsString()
+  TWILIO_WHATSAPP_REMINDER_2H_CONTENT_SID?: string;
+
   /** Approved Twilio Content template SID (`HXxx...`) for the 24-hour reminder WhatsApp. */
   @IsOptional()
   @IsString()
@@ -182,6 +187,10 @@ export class EnvConfig {
   @IsOptional()
   @IsString()
   TWILIO_TEMPLATE_BOOKING_CONFIRMATION_SID?: string;
+
+  @IsOptional()
+  @IsString()
+  TWILIO_TEMPLATE_BOOKING_REMINDER_2H_SID?: string;
 
   @IsOptional()
   @IsString()

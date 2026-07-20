@@ -1,6 +1,6 @@
 import { useState, type ReactElement, type ReactNode, type SVGProps } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import type { AuthUser, Permission, UserRole } from '@sheer/domain';
+import type { AuthUser, BusinessTier, Permission, UserRole } from '@sheer/domain';
 import { userHasAnyRole, userHasPermission } from '@sheer/domain';
 import { cn } from '@sheer/utils';
 import { useAuth } from '../auth/AuthProvider';
@@ -17,6 +17,9 @@ interface NavEntry {
   end?: boolean;
   allowedRoles?: UserRole[];
   permission?: Permission;
+  /** Tiers for which this entry is hidden (e.g. Locations is hidden on Spark — a
+   *  single-location Solo plan — where multi-location management is unnecessary). */
+  hideForTiers?: BusinessTier[];
 }
 
 interface NavGroup {
@@ -51,7 +54,8 @@ const NAV: NavItem[] = [
       { to: '/commission', label: 'Commission', icon: PercentIcon, permission: 'report.commission.view' },
     ],
   },
-  { to: '/locations', label: 'Locations', icon: PinIcon, allowedRoles: ['owner', 'manager'], permission: 'settings.location.manage' },
+  { to: '/locations', label: 'Locations', icon: PinIcon, allowedRoles: ['owner', 'manager'], permission: 'settings.location.manage', hideForTiers: ['spark'] },
+  { to: '/settings/plan', label: 'Account & plan', icon: TagIcon, allowedRoles: ['owner', 'manager'], permission: 'account.manage' },
   { to: '/settings/booking', label: 'Booking settings', icon: GearIcon, allowedRoles: ['owner', 'manager'], permission: 'settings.booking.manage' },
   { to: '/audit-log', label: 'Audit log', icon: ShieldIcon, allowedRoles: ['owner', 'manager'], permission: 'audit.read' },
 ];
@@ -60,7 +64,8 @@ const NAV: NavItem[] = [
 function filterNav(items: NavItem[], user?: AuthUser | null): NavItem[] {
   const allowed = (entry: NavEntry) =>
     (!entry.allowedRoles || (!!user && userHasAnyRole(user, entry.allowedRoles))) &&
-    (!entry.permission || userHasPermission(user, entry.permission));
+    (!entry.permission || userHasPermission(user, entry.permission)) &&
+    (!entry.hideForTiers || !user?.businessTier || !entry.hideForTiers.includes(user.businessTier));
   return items.reduce<NavItem[]>((acc, item) => {
     if (isGroup(item)) {
       const children = item.children.filter(allowed);
@@ -142,7 +147,7 @@ export function Sidebar() {
         </button>
       </div>
 
-      <nav className={cn('min-h-0 flex-1 overflow-y-auto py-2', collapsed ? 'px-2' : 'px-3')}>
+      <nav className={cn('scroll-area-dark min-h-0 flex-1 py-2', collapsed ? 'px-2' : 'px-3')}>
         <ul className="space-y-1">
           {visible.map((item) =>
             isGroup(item) ? (
@@ -492,6 +497,15 @@ function PinIcon(props: SVGProps<SVGSVGElement>) {
     <Svg {...props}>
       <path d="M10 17.5s5.5-4.8 5.5-9a5.5 5.5 0 1 0-11 0c0 4.2 5.5 9 5.5 9Z" />
       <circle cx="10" cy="8.5" r="2" />
+    </Svg>
+  );
+}
+
+function TagIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Svg {...props}>
+      <path d="M10.5 3H4v6.5l7 7 6.5-6.5-7-7Z" />
+      <circle cx="7.2" cy="6.2" r="1.1" />
     </Svg>
   );
 }

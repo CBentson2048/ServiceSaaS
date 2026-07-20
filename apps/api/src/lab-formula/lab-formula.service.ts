@@ -300,6 +300,9 @@ export class LabFormulaService {
       businessId: context.businessId,
       locationId: context.locationId,
       clientProfileId: context.clientProfileId ?? dto.clientProfileId,
+      // Audit identity for the durable formula record (who created/last modified
+      // it). Undefined for actors without a staff profile (e.g. some owners).
+      actingStaffProfileId: actor.staffProfileId,
       items,
       totalCostCents,
       totalWasteCostCents,

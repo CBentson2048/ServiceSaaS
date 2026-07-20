@@ -11,11 +11,13 @@ describe('WhatsAppTemplateConfig', () => {
     const cfg = new WhatsAppTemplateConfig(
       configFrom({
         TWILIO_WHATSAPP_CONFIRMATION_CONTENT_SID: 'HXconfirm',
+        TWILIO_WHATSAPP_REMINDER_2H_CONTENT_SID: 'HX2h',
         TWILIO_WHATSAPP_REMINDER_24H_CONTENT_SID: 'HX24',
         TWILIO_STATUS_CALLBACK_URL: 'https://cb',
       }),
     );
     expect(cfg.contentSidFor(NotificationEventKey.BookingConfirmation)).toBe('HXconfirm');
+    expect(cfg.contentSidFor(NotificationEventKey.Reminder2h)).toBe('HX2h');
     expect(cfg.contentSidFor(NotificationEventKey.Reminder24h)).toBe('HX24');
     expect(cfg.statusCallbackUrl).toBe('https://cb');
   });

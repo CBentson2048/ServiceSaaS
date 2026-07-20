@@ -8,6 +8,7 @@ import type { CommunicationPreference, LocationCommunicationSettings } from '@sh
  */
 export const NotificationEventKey = {
   BookingConfirmation: 'booking_confirmation',
+  Reminder2h: 'appointment_reminder_2h',
   Reminder24h: 'appointment_reminder_24h',
   Reminder48h: 'appointment_reminder_48h',
   Reminder1w: 'appointment_reminder_1w',
@@ -24,6 +25,7 @@ export type NotificationEventKey = (typeof NotificationEventKey)[keyof typeof No
 
 /** Reminder offsets, in hours before `scheduled_start_at`. 1 week === 168h. */
 export const REMINDER_OFFSET_HOURS = {
+  [NotificationEventKey.Reminder2h]: 2,
   [NotificationEventKey.Reminder24h]: 24,
   [NotificationEventKey.Reminder48h]: 48,
   [NotificationEventKey.Reminder1w]: 168,
@@ -38,6 +40,7 @@ export const EMAIL_CHANNEL = 'email' as const;
 
 /** Reminder event keys (everything except the booking confirmation). Shared scheduling/dispatch guard. */
 export const REMINDER_EVENT_KEYS = new Set<string>([
+  NotificationEventKey.Reminder2h,
   NotificationEventKey.Reminder24h,
   NotificationEventKey.Reminder48h,
   NotificationEventKey.Reminder1w,
@@ -47,6 +50,7 @@ export const DEFAULT_COMMUNICATION_SETTINGS: Omit<LocationCommunicationSettings,
   enabled: false,
   enabledChannels: ['whatsapp'],
   sendBookingConfirmation: false,
+  reminder2hEnabled: false,
   reminder24hEnabled: false,
   reminder48hEnabled: false,
   reminder1wEnabled: false,
@@ -85,6 +89,7 @@ export function metadataToSettings(
         : [...DEFAULT_COMMUNICATION_SETTINGS.enabledChannels],
     sendBookingConfirmation:
       metadata?.sendBookingConfirmation ?? DEFAULT_COMMUNICATION_SETTINGS.sendBookingConfirmation,
+    reminder2hEnabled: offsets.has(REMINDER_OFFSET_HOURS[NotificationEventKey.Reminder2h]),
     reminder24hEnabled: offsets.has(REMINDER_OFFSET_HOURS[NotificationEventKey.Reminder24h]),
     reminder48hEnabled: offsets.has(REMINDER_OFFSET_HOURS[NotificationEventKey.Reminder48h]),
     reminder1wEnabled: offsets.has(REMINDER_OFFSET_HOURS[NotificationEventKey.Reminder1w]),
@@ -102,6 +107,7 @@ export function settingsToMetadata(
   if (settings.reminder1wEnabled) offsets.push(REMINDER_OFFSET_HOURS[NotificationEventKey.Reminder1w]);
   if (settings.reminder48hEnabled) offsets.push(REMINDER_OFFSET_HOURS[NotificationEventKey.Reminder48h]);
   if (settings.reminder24hEnabled) offsets.push(REMINDER_OFFSET_HOURS[NotificationEventKey.Reminder24h]);
+  if (settings.reminder2hEnabled) offsets.push(REMINDER_OFFSET_HOURS[NotificationEventKey.Reminder2h]);
 
   return {
     ...(existing ?? {}),
@@ -114,11 +120,12 @@ export function settingsToMetadata(
   };
 }
 
-/** Enabled reminder event keys for the given settings, ordered earliest-first (1w → 24h). */
+/** Enabled reminder event keys for the given settings, ordered earliest-first (1w → 2h). */
 export function enabledReminderKeys(settings: LocationCommunicationSettings): NotificationEventKey[] {
   const keys: NotificationEventKey[] = [];
   if (settings.reminder1wEnabled) keys.push(NotificationEventKey.Reminder1w);
   if (settings.reminder48hEnabled) keys.push(NotificationEventKey.Reminder48h);
   if (settings.reminder24hEnabled) keys.push(NotificationEventKey.Reminder24h);
+  if (settings.reminder2hEnabled) keys.push(NotificationEventKey.Reminder2h);
   return keys;
 }

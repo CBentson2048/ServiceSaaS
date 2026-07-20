@@ -34,6 +34,41 @@
   .scroll-area::-webkit-scrollbar-thumb:hover {
     background-color: #b3aecb;
   }
+
+  /*
+   * Dark-surface variant of .scroll-area for the app sidebar (bg-surface-ink-deep).
+   * Same thin, rounded, overflow-only behaviour, but with a low-contrast light
+   * thumb that reads cleanly on the dark chrome instead of the default OS
+   * scrollbar. The thumb sits inside a transparent border so it appears slim and
+   * inset, and it lifts on hover.
+   */
+  .scroll-area-dark {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+  }
+
+  .scroll-area-dark::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  .scroll-area-dark::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scroll-area-dark::-webkit-scrollbar-thumb {
+    background-color: rgba(255, 255, 255, 0.18);
+    background-clip: content-box;
+    border: 3px solid transparent;
+    border-radius: 9999px;
+    transition: background-color 150ms ease;
+  }
+
+  .scroll-area-dark::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(255, 255, 255, 0.32);
+  }
 }
 
 html,

@@ -16,7 +16,7 @@ import {
 } from '@sheer/domain';
 import { AuditService } from '../audit/audit.service';
 
-const VALID_TIERS: readonly BusinessTier[] = ['solo', 'studio', 'salon', 'group'];
+const VALID_TIERS: readonly BusinessTier[] = ['spark', 'pulse', 'infinity'];
 
 @Injectable()
 export class AccountService {
@@ -64,9 +64,15 @@ export class AccountService {
         `Cannot switch to ${BUSINESS_TIER_LABELS[nextTier]}: it allows ${limits.maxLocations} location(s) but you have ${usage.locationCount}. Remove locations first.`,
       );
     }
-    if (limits.maxTeamMembers !== null && usage.teamMemberCount > limits.maxTeamMembers) {
+    // Only hard-capped tiers (Spark) block on bookable columns; on Pulse/Infinity
+    // extra columns are permitted and billed separately, so a switch never strands.
+    if (
+      limits.bookableColumnsHardCapped &&
+      limits.includedBookableColumnsPerLocation !== null &&
+      usage.bookableColumnCount > limits.includedBookableColumnsPerLocation
+    ) {
       throw new ConflictException(
-        `Cannot switch to ${BUSINESS_TIER_LABELS[nextTier]}: it allows ${limits.maxTeamMembers} team member(s) but you have ${usage.teamMemberCount}. Remove team members first.`,
+        `Cannot switch to ${BUSINESS_TIER_LABELS[nextTier]}: it includes ${limits.includedBookableColumnsPerLocation} bookable column(s) but you have ${usage.bookableColumnCount}. Reduce bookable team members first.`,
       );
     }
 
@@ -99,15 +105,19 @@ export class AccountService {
   private async buildState(
     businessId: string,
     tier: BusinessTier,
-    usageInput?: { locationCount: number; teamMemberCount: number },
+    usageInput?: { locationCount: number; bookableColumnCount: number },
   ): Promise<AccountTierState> {
     const usage = usageInput ?? (await this.fetchUsage(businessId));
     const limits = getBusinessTierLimits(tier);
 
     let upgradeSuggestion: AccountTierState['upgradeSuggestion'] = null;
-    if (limits.maxTeamMembers !== null && usage.teamMemberCount >= limits.maxTeamMembers) {
-      const toTier = suggestTierUpgrade(tier, 'team');
-      if (toTier) upgradeSuggestion = { toTier, reason: 'team' };
+    if (
+      limits.bookableColumnsHardCapped &&
+      limits.includedBookableColumnsPerLocation !== null &&
+      usage.bookableColumnCount >= limits.includedBookableColumnsPerLocation
+    ) {
+      const toTier = suggestTierUpgrade(tier, 'columns');
+      if (toTier) upgradeSuggestion = { toTier, reason: 'columns' };
     }
     if (
       !upgradeSuggestion &&
@@ -133,13 +143,15 @@ export class AccountService {
       this.logger.error(`fetchTier failed: ${error?.message ?? 'no row'}`);
       throw new InternalServerErrorException('Unable to load account tier');
     }
-    return data.tier ?? 'solo';
+    return data.tier ?? 'spark';
   }
 
   private async fetchUsage(
     businessId: string,
-  ): Promise<{ locationCount: number; teamMemberCount: number }> {
-    const [locations, memberships, invitations] = await Promise.all([
+  ): Promise<{ locationCount: number; bookableColumnCount: number }> {
+    // Bookable columns = active staff profiles flagged bookable (service
+    // providers). Non-bookable staff (reception/managers/assistants) never count.
+    const [locations, bookableColumns] = await Promise.all([
       this.admin
         .schema('core')
         .from('locations')
@@ -148,33 +160,23 @@ export class AccountService {
         .eq('is_active', true),
       this.admin
         .schema('core')
-        .from('user_memberships')
-        .select('user_profile_id')
-        .eq('business_id', businessId)
-        .eq('status', 'active')
-        .in('role', ['owner', 'manager', 'stylist'])
-        .returns<{ user_profile_id: string }[]>(),
-      this.admin
-        .schema('core')
-        .from('staff_invitations')
+        .from('staff_profiles')
         .select('id', { count: 'exact', head: true })
         .eq('business_id', businessId)
-        .eq('status', 'pending'),
+        .eq('is_bookable', true)
+        .eq('employment_status', 'active'),
     ]);
 
-    if (locations.error || memberships.error || invitations.error) {
+    if (locations.error || bookableColumns.error) {
       this.logger.error(
-        `fetchUsage failed: ${
-          locations.error?.message ?? memberships.error?.message ?? invitations.error?.message
-        }`,
+        `fetchUsage failed: ${locations.error?.message ?? bookableColumns.error?.message}`,
       );
       throw new InternalServerErrorException('Unable to load account usage');
     }
 
-    const distinctMembers = new Set((memberships.data ?? []).map((m) => m.user_profile_id)).size;
     return {
       locationCount: locations.count ?? 0,
-      teamMemberCount: distinctMembers + (invitations.count ?? 0),
+      bookableColumnCount: bookableColumns.count ?? 0,
     };
   }
 

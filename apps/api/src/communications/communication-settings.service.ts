@@ -64,6 +64,7 @@ export class CommunicationSettingsService {
       ...current,
       enabled: input.enabled ?? current.enabled,
       sendBookingConfirmation: input.sendBookingConfirmation ?? current.sendBookingConfirmation,
+      reminder2hEnabled: input.reminder2hEnabled ?? current.reminder2hEnabled,
       reminder24hEnabled: input.reminder24hEnabled ?? current.reminder24hEnabled,
       reminder48hEnabled: input.reminder48hEnabled ?? current.reminder48hEnabled,
       reminder1wEnabled: input.reminder1wEnabled ?? current.reminder1wEnabled,

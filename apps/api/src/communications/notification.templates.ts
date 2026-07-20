@@ -105,7 +105,9 @@ export function renderEmail(eventKey: NotificationEventKey, ctx: NotificationCon
           ? `Reminder: your appointment at ${ctx.locationName} next week`
           : eventKey === NotificationEventKey.Reminder48h
             ? `Reminder: your appointment at ${ctx.locationName} in 2 days`
-            : `Reminder: your appointment at ${ctx.locationName} tomorrow`;
+            : eventKey === NotificationEventKey.Reminder2h
+              ? `Reminder: your appointment at ${ctx.locationName} in 2 hours`
+              : `Reminder: your appointment at ${ctx.locationName} tomorrow`;
   return { subject, text: body, html: `<p>${escapeHtml(body)}</p>` };
 }
 
@@ -140,7 +142,9 @@ export function renderNotification(
       ? 'This is a reminder that you have an appointment coming up next week'
       : eventKey === NotificationEventKey.Reminder48h
         ? 'This is a reminder that your appointment is in 2 days'
-        : 'This is a reminder that your appointment is tomorrow';
+        : eventKey === NotificationEventKey.Reminder2h
+          ? 'This is a reminder that your appointment is in 2 hours'
+          : 'This is a reminder that your appointment is tomorrow';
 
   return {
     body:

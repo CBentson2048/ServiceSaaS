@@ -46,6 +46,7 @@ export function computeDesiredEvents(
     NotificationEventKey.Reminder1w,
     NotificationEventKey.Reminder48h,
     NotificationEventKey.Reminder24h,
+    NotificationEventKey.Reminder2h,
   ] as const) {
     if (!enabled.has(key)) continue;
     const offsetMs = REMINDER_OFFSET_HOURS[key] * 60 * 60 * 1000;

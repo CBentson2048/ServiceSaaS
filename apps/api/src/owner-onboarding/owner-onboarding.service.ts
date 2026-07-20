@@ -406,7 +406,7 @@ function sanitizeOwner(input: OwnerOnboardingRequest['owner']): SanitizedOwner {
   };
 }
 
-const VALID_TIERS: readonly BusinessTier[] = ['solo', 'studio', 'salon', 'group'];
+const VALID_TIERS: readonly BusinessTier[] = ['spark', 'pulse', 'infinity'];
 
 function sanitizeBusiness(input: OwnerOnboardingRequest['business']): SanitizedBusiness {
   return {
@@ -415,7 +415,7 @@ function sanitizeBusiness(input: OwnerOnboardingRequest['business']): SanitizedB
     defaultCurrency: input.defaultCurrency.trim().toUpperCase(),
     defaultTimezone: input.defaultTimezone.trim(),
     countryCode: input.countryCode.trim().toUpperCase(),
-    tier: input.tier && VALID_TIERS.includes(input.tier) ? input.tier : 'solo',
+    tier: input.tier && VALID_TIERS.includes(input.tier) ? input.tier : 'spark',
   };
 }
 

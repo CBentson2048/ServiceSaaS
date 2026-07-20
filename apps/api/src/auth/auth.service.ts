@@ -412,7 +412,7 @@ export class AuthService {
       businessId: business.id,
       businessName: business.name,
       businessSlug: business.slug,
-      businessTier: business.tier ?? 'solo',
+      businessTier: business.tier ?? 'spark',
       allowedLocationIds,
       // Scope kind follows the highest-privilege role: owner sees everything,
       // a manager (anywhere in the set) gets multi-location scope, otherwise

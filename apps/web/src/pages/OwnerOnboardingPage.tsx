@@ -39,7 +39,7 @@ interface BusinessForm {
   defaultCurrency: string;
   defaultTimezone: string;
   countryCode: string;
-  /** Account tier from the sign-up fork: solo (independent) or salon (team). */
+  /** Account tier chosen at sign-up: spark, pulse or infinity. */
   tier: BusinessTier;
 }
 
@@ -49,14 +49,19 @@ const ACCOUNT_TYPE_OPTIONS: {
   description: string;
 }[] = [
   {
-    tier: 'solo',
-    title: 'Independent stylist',
-    description: 'Just you, one chair. Upgrade to a team plan anytime.',
+    tier: 'spark',
+    title: 'Spark',
+    description: 'Independent professional — just you, one bookable column.',
   },
   {
-    tier: 'salon',
-    title: 'Salon or team',
-    description: 'A team across one or more locations.',
+    tier: 'pulse',
+    title: 'Pulse',
+    description: 'Single-location salon — 5 bookable columns included, add more anytime.',
+  },
+  {
+    tier: 'infinity',
+    title: 'Infinity',
+    description: 'Multiple locations or enterprise — 10 bookable columns per location.',
   },
 ];
 
@@ -119,7 +124,7 @@ function emptyBusiness(): BusinessForm {
     defaultCurrency: 'GBP',
     defaultTimezone: 'Europe/London',
     countryCode: 'GB',
-    tier: 'solo',
+    tier: 'spark',
   };
 }
 
