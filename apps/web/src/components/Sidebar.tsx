@@ -147,7 +147,7 @@ export function Sidebar() {
         </button>
       </div>
 
-      <nav className={cn('min-h-0 flex-1 overflow-y-auto py-2', collapsed ? 'px-2' : 'px-3')}>
+      <nav className={cn('scroll-area-dark min-h-0 flex-1 py-2', collapsed ? 'px-2' : 'px-3')}>
         <ul className="space-y-1">
           {visible.map((item) =>
             isGroup(item) ? (

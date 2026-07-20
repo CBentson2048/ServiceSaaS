@@ -38,6 +38,10 @@ export class WhatsAppTemplateConfig {
         'TWILIO_WHATSAPP_CONFIRMATION_CONTENT_SID',
         'TWILIO_TEMPLATE_BOOKING_CONFIRMATION_SID',
       ),
+      [NotificationEventKey.Reminder2h]: sid(
+        'TWILIO_WHATSAPP_REMINDER_2H_CONTENT_SID',
+        'TWILIO_TEMPLATE_BOOKING_REMINDER_2H_SID',
+      ),
       [NotificationEventKey.Reminder24h]: sid(
         'TWILIO_WHATSAPP_REMINDER_24H_CONTENT_SID',
         'TWILIO_TEMPLATE_BOOKING_REMINDER_24H_SID',

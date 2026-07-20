@@ -2015,7 +2015,16 @@ export class RotaService {
       throw new InternalServerErrorException('Unable to load location staff');
     }
 
-    const staff = (staffRows ?? []).filter((s) => s.employment_status !== 'terminated');
+    // Exclude terminated (staff-profile) and deactivated (membership) staff. A
+    // deactivated staff member has their membership suspended/revoked (see
+    // staff.service.deactivateStaff) while the staff_profile stays bookable, so
+    // without the membership check they would still appear on the rota.
+    const notTerminated = (staffRows ?? []).filter((s) => s.employment_status !== 'terminated');
+    const activeUserIds = await this.fetchActiveMembershipUserIds(
+      businessId,
+      notTerminated.map((s) => s.user_profile_id),
+    );
+    const staff = notTerminated.filter((s) => activeUserIds.has(s.user_profile_id));
     const userIds = staff.map((s) => s.user_profile_id);
     const staffIds = staff.map((s) => s.id);
 
@@ -2060,6 +2069,32 @@ export class RotaService {
       throw new InternalServerErrorException('Unable to load user profiles');
     }
     return data ?? [];
+  }
+
+  /**
+   * The subset of `userIds` that hold at least one active membership in the
+   * business. Mirrors {@link aggregateMembershipStatus} (active if ANY membership
+   * is active); users whose memberships are all suspended/revoked (deactivated)
+   * are excluded so they drop off the rota roster.
+   */
+  private async fetchActiveMembershipUserIds(
+    businessId: string,
+    userIds: string[],
+  ): Promise<Set<string>> {
+    if (userIds.length === 0) return new Set();
+    const { data, error } = await this.admin
+      .schema('core')
+      .from('user_memberships')
+      .select('user_profile_id')
+      .eq('business_id', businessId)
+      .eq('status', 'active')
+      .in('user_profile_id', userIds)
+      .returns<{ user_profile_id: string }[]>();
+    if (error) {
+      this.logger.error(`fetchActiveMembershipUserIds failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load staff memberships');
+    }
+    return new Set((data ?? []).map((m) => m.user_profile_id));
   }
 
   private async fetchBreakDefaults(staffIds: string[]): Promise<BreakDefaultsRow[]> {

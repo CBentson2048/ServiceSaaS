@@ -42,6 +42,7 @@ describe('renderNotification', () => {
   });
 
   it('uses distinct lead copy per reminder window', () => {
+    expect(renderNotification(NotificationEventKey.Reminder2h, ctx).body).toContain('2 hours');
     expect(renderNotification(NotificationEventKey.Reminder24h, ctx).body).toContain('tomorrow');
     expect(renderNotification(NotificationEventKey.Reminder48h, ctx).body).toContain('2 days');
     expect(renderNotification(NotificationEventKey.Reminder1w, ctx).body).toContain('next week');
