@@ -134,6 +134,7 @@ import type {
   BookOutTypeMutationResponse,
   CreateBookOutTypeRequest,
   ListBookOutTypesResponse,
+  UpdateAbsenceRequest,
   UpdateBookOutTypeRequest,
   GetCancellationPolicyResponse,
   GetLocationProductBillingSettingsResponse,
@@ -1830,6 +1831,28 @@ export async function markRotaAbsence(
   return request<AbsenceMutationResponse>('/rota/absence-events', {
     method: 'POST',
     body: payload,
+    accessToken,
+  });
+}
+
+export async function updateRotaAbsence(
+  accessToken: string,
+  id: string,
+  payload: UpdateAbsenceRequest,
+): Promise<AbsenceMutationResponse> {
+  return request<AbsenceMutationResponse>(`/rota/absence-events/${id}`, {
+    method: 'PATCH',
+    body: payload,
+    accessToken,
+  });
+}
+
+export async function deleteRotaAbsence(
+  accessToken: string,
+  id: string,
+): Promise<{ success: true }> {
+  return request<{ success: true }>(`/rota/absence-events/${id}`, {
+    method: 'DELETE',
     accessToken,
   });
 }

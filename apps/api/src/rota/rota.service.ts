@@ -41,6 +41,7 @@ import type {
   ShiftMutationResponse,
   ShiftStatus,
   StylistMyWeekResponse,
+  UpdateAbsenceRequest,
   UpdateBookOutTypeRequest,
   UpdateBreakRequest,
   UpdateShiftRequest,
@@ -1096,6 +1097,126 @@ export class RotaService {
     return { absence: toRotaAbsenceIndicator(data, typesById) };
   }
 
+  /**
+   * Move / resize / reassign a placed bookout (drag on the appointment book).
+   * All fields are optional: `startsAt`+`endsAt` change the time/duration,
+   * `staffProfileId` drops it onto another stylist (kept within the same
+   * location). The book-out type link and notes are left untouched.
+   */
+  async updateAbsence(
+    actor: AuthUser,
+    absenceId: string,
+    input: UpdateAbsenceRequest,
+  ): Promise<AbsenceMutationResponse> {
+    this.assertManagerOrOwner(actor);
+    const existing = await this.fetchAbsence(actor.businessId, absenceId);
+    this.assertLocationScope(actor, existing.location_id);
+
+    const start = input.startsAt ? new Date(input.startsAt) : new Date(existing.starts_at);
+    if (Number.isNaN(start.getTime())) {
+      throw new BadRequestException('startsAt must be a valid ISO timestamp');
+    }
+    // endsAt: undefined = keep existing, null = clear (open-ended), string = set.
+    let end: Date | null;
+    if (input.endsAt === undefined) {
+      end = existing.ends_at ? new Date(existing.ends_at) : null;
+    } else if (input.endsAt === null) {
+      end = null;
+    } else {
+      end = new Date(input.endsAt);
+      if (Number.isNaN(end.getTime())) {
+        throw new BadRequestException('endsAt must be a valid ISO timestamp');
+      }
+    }
+    if (end && end.getTime() <= start.getTime()) {
+      throw new BadRequestException('Bookout end must be strictly after start');
+    }
+
+    // Reassigning to another stylist must stay inside the same location.
+    const staffProfileId = input.staffProfileId ?? existing.staff_profile_id;
+    if (staffProfileId !== existing.staff_profile_id) {
+      await this.assertStaffInLocation(actor.businessId, staffProfileId, existing.location_id);
+    }
+
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (input.startsAt !== undefined) patch.starts_at = start.toISOString();
+    if (input.endsAt !== undefined) patch.ends_at = end?.toISOString() ?? null;
+    if (input.staffProfileId !== undefined) patch.staff_profile_id = staffProfileId;
+
+    const { data, error } = await this.admin
+      .schema('rota')
+      .from('absence_events')
+      .update(patch)
+      .eq('id', absenceId)
+      .eq('business_id', actor.businessId)
+      .select(ABSENCE_COLUMNS)
+      .single<AbsenceRow>();
+
+    if (error || !data) {
+      this.logger.error(`updateAbsence failed: ${error?.message ?? 'no row'}`);
+      throw new InternalServerErrorException('Unable to update bookout');
+    }
+
+    await this.recordAudit(actor, {
+      entity: 'absence_event',
+      entityId: data.id,
+      locationId: data.location_id,
+      action: 'update',
+      metadata: {
+        previous: {
+          staff_profile_id: existing.staff_profile_id,
+          starts_at: existing.starts_at,
+          ends_at: existing.ends_at,
+        },
+        next: {
+          staff_profile_id: data.staff_profile_id,
+          starts_at: data.starts_at,
+          ends_at: data.ends_at,
+        },
+      },
+    });
+
+    const typesById = data.book_out_type_id
+      ? await this.fetchBookOutTypesMap(actor.businessId)
+      : undefined;
+    return { absence: toRotaAbsenceIndicator(data, typesById) };
+  }
+
+  /** Permanently remove a placed bookout (rota absence). Hard delete — the row
+   *  has no soft-delete flag; the audit trail records what was removed. */
+  async deleteAbsence(actor: AuthUser, absenceId: string): Promise<{ success: true }> {
+    this.assertManagerOrOwner(actor);
+    const existing = await this.fetchAbsence(actor.businessId, absenceId);
+    this.assertLocationScope(actor, existing.location_id);
+
+    const { error } = await this.admin
+      .schema('rota')
+      .from('absence_events')
+      .delete()
+      .eq('id', absenceId)
+      .eq('business_id', actor.businessId);
+
+    if (error) {
+      this.logger.error(`deleteAbsence failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to delete bookout');
+    }
+
+    await this.recordAudit(actor, {
+      entity: 'absence_event',
+      entityId: absenceId,
+      locationId: existing.location_id,
+      action: 'delete',
+      metadata: {
+        absence_type: existing.absence_type,
+        book_out_type_id: existing.book_out_type_id,
+        starts_at: existing.starts_at,
+        ends_at: existing.ends_at,
+      },
+    });
+
+    return { success: true };
+  }
+
   // -------------------------------------------------------------------------
   // Book Out Types — per-business configurable calendar block-out reasons.
   // The three flags (blocks appointments / reduces available hours / counts as
@@ -1833,6 +1954,22 @@ export class RotaService {
       throw new InternalServerErrorException('Unable to load shift');
     }
     if (!data) throw new NotFoundException('Shift not found');
+    return data;
+  }
+
+  private async fetchAbsence(businessId: string, absenceId: string): Promise<AbsenceRow> {
+    const { data, error } = await this.admin
+      .schema('rota')
+      .from('absence_events')
+      .select(ABSENCE_COLUMNS)
+      .eq('id', absenceId)
+      .eq('business_id', businessId)
+      .maybeSingle<AbsenceRow>();
+    if (error) {
+      this.logger.error(`fetchAbsence failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load bookout');
+    }
+    if (!data) throw new NotFoundException('Bookout not found');
     return data;
   }
 

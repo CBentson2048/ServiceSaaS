@@ -23,6 +23,35 @@ export class CreateAccountDto {
   surface?: Extract<AppSurface, 'api' | 'web_dashboard'>;
 }
 
+// Self-service customer sign-up from the QLOOQO app. Unlike CreateAccountDto
+// (owner + business) and ClientBookingAccountDto (client scoped to a salon),
+// this creates a salon-agnostic customer account with no locationId — the
+// customer joins salons lazily on their first booking at each.
+export class CreateCustomerAccountDto {
+  @IsEmail()
+  email!: string;
+
+  @IsString()
+  @MinLength(8)
+  password!: string;
+
+  @IsString()
+  @MinLength(1)
+  @MaxLength(80)
+  firstName!: string;
+
+  @IsString()
+  @MinLength(1)
+  @MaxLength(80)
+  lastName!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  @IsPhoneField()
+  phone?: string;
+}
+
 export class LoginDto {
   @IsEmail()
   email!: string;

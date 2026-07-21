@@ -31,7 +31,6 @@ interface ServiceForm {
   description: string;
   serviceCategoryId: string;
   estimatedDurationMinutes: string;
-  processingTimeMinutes: string;
   basePrice: string;
   depositType: ServiceDepositType;
   depositValue: string;
@@ -48,7 +47,6 @@ const emptyForm: ServiceForm = {
   description: '',
   serviceCategoryId: '',
   estimatedDurationMinutes: '30',
-  processingTimeMinutes: '',
   basePrice: '',
   depositType: 'none',
   depositValue: '',
@@ -169,7 +167,6 @@ export function ServicesPage() {
       description: service.description ?? '',
       serviceCategoryId: service.serviceCategoryId ?? '',
       estimatedDurationMinutes: String(service.estimatedDurationMinutes),
-      processingTimeMinutes: service.processingTimeMinutes ? String(service.processingTimeMinutes) : '',
       basePrice: service.basePrice ? String(service.basePrice) : '',
       depositType: service.depositType,
       depositValue: service.depositValue ? String(service.depositValue) : '',
@@ -275,7 +272,6 @@ export function ServicesPage() {
         description: form.description.trim() || null,
         serviceCategoryId: form.serviceCategoryId || null,
         estimatedDurationMinutes: durationMinutes,
-        processingTimeMinutes: form.processingTimeMinutes ? Number(form.processingTimeMinutes) : undefined,
         basePrice: form.basePrice ? Number(form.basePrice) : 0,
         depositType: form.depositType,
         depositValue: form.depositType === 'none' ? 0 : form.depositValue ? Number(form.depositValue) : 0,
@@ -468,12 +464,6 @@ export function ServicesPage() {
               required
             />
           )}
-          <TextInput
-            label="Processing time (minutes)"
-            type="number"
-            value={form.processingTimeMinutes}
-            onChange={(value) => setForm((current) => ({ ...current, processingTimeMinutes: value }))}
-          />
           <TextInput
             label="Price"
             type="number"

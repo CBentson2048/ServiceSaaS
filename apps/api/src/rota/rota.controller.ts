@@ -43,6 +43,7 @@ import {
   PreviewNewWeekDto,
   RejectLeaveRequestDto,
   SaveWeeklyRotaDto,
+  UpdateAbsenceDto,
   UpdateBookOutTypeDto,
   UpdateBreakDto,
   UpdateShiftDto,
@@ -173,6 +174,24 @@ export class RotaController {
     @Body() body: CreateAbsenceDto,
   ): Promise<AbsenceMutationResponse> {
     return this.rota.markAbsence(actor, body);
+  }
+
+  @Patch('absence-events/:id')
+  updateAbsence(
+    @CurrentUser() actor: AuthUser,
+    @Param('id') id: string,
+    @Body() body: UpdateAbsenceDto,
+  ): Promise<AbsenceMutationResponse> {
+    return this.rota.updateAbsence(actor, id, body);
+  }
+
+  @Delete('absence-events/:id')
+  @HttpCode(200)
+  deleteAbsence(
+    @CurrentUser() actor: AuthUser,
+    @Param('id') id: string,
+  ): Promise<{ success: true }> {
+    return this.rota.deleteAbsence(actor, id);
   }
 
   // -------------------- Book Out Types (configurable block-out reasons) -----

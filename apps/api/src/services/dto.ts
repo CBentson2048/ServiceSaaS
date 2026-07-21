@@ -163,12 +163,6 @@ export class UpsertServiceDto {
 
   @IsOptional()
   @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  processingTimeMinutes?: number;
-
-  @IsOptional()
-  @Type(() => Number)
   @IsNumber()
   @Min(0)
   basePrice?: number;

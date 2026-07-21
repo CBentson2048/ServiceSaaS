@@ -23,6 +23,7 @@ import {
   ClientBookingAccountDto,
   ClientBookingLoginDto,
   CreateAccountDto,
+  CreateCustomerAccountDto,
   LoginDto,
   LogoutDto,
   PasswordResetCompleteDto,
@@ -49,6 +50,14 @@ export class AuthController {
   @Post('client-booking/register')
   async registerClientForBooking(@Body() body: ClientBookingAccountDto): Promise<LoginResponse> {
     return this.auth.createClientBookingAccount(body);
+  }
+
+  // Salon-agnostic customer sign-up (QLOOQO app). Creates a global account with
+  // no salon membership yet and returns a `sheer_app` session, exactly like
+  // login. The customer joins salons lazily on their first booking.
+  @Post('register-customer')
+  async registerCustomer(@Body() body: CreateCustomerAccountDto): Promise<LoginResponse> {
+    return this.auth.createCustomerAccount(body);
   }
 
   @Post('client-booking/login')

@@ -109,8 +109,11 @@ export class SalonDirectoryService {
     const query = (rawQuery ?? '').trim();
     if (query.length < 2) return [];
 
+    // Exact-identifier fast path. Salon Codes and provider Q Codes are both
+    // 8 chars (Salon Code widened in 0065, Q Code in 0056); 6 is kept so any
+    // legacy 6-char Salon Code still resolves exactly during rollout.
     const code = normalizeCode(query);
-    if (code.length === 6) {
+    if (code.length === 6 || code.length === 8) {
       const [salonCodeMatch, qCodeMatch] = await Promise.all([
         this.lookupByCode(code),
         code.startsWith('Q') ? this.lookupByQCode(code) : Promise.resolve(null),

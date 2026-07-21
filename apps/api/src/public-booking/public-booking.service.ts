@@ -46,6 +46,7 @@ import type {
   StartPublicBookingCheckoutResponse,
 } from '@sheer/domain';
 import { depositForServicePrice, userHasRole } from '@sheer/domain';
+import { AuthService } from '../auth/auth.service';
 import { BookingNotificationService } from '../communications/booking-notification.service';
 import { RebookingService } from '../rebooking/rebooking.service';
 import { StripeService, type StripePaymentIntent } from '../stripe/stripe.service';
@@ -277,6 +278,7 @@ export class PublicBookingService {
     private readonly stripe: StripeService,
     private readonly rebooking: RebookingService,
     private readonly bookingNotifications: BookingNotificationService,
+    private readonly auth: AuthService,
   ) {
     const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
@@ -558,11 +560,13 @@ export class PublicBookingService {
   }
 
   async getMobileBookingAttempt(actor: AuthUser, id: string): Promise<PublicBookingAttemptResponse> {
-    this.assertClientActor(actor);
+    this.assertClientUser(actor);
     const response = await this.getBookingAttempt(id);
     if (response.bookingAttempt.clientDisplayName !== actor.profile.fullName) {
       const attempt = await this.fetchBookingAttemptById(id);
-      if (attempt.client_profile_id !== actor.clientProfileId || attempt.user_profile_id !== actor.id) {
+      // Scope by the owning user account — a customer's client_profile differs
+      // per salon, so ownership is the user_profile that started the attempt.
+      if (attempt.user_profile_id !== actor.id) {
         throw new ForbiddenException('Booking attempt is outside your account scope');
       }
     }
@@ -1330,25 +1334,43 @@ export class PublicBookingService {
     actor: AuthUser,
     input: MobileBookingConfirmRequest,
   ): Promise<CreatePublicBookingRequest> {
-    this.assertClientActor(actor);
-    const client = await this.fetchClientById(actor.businessId, actor.clientProfileId);
+    this.assertClientUser(actor);
+
+    // A customer books against a specific salon (the location), which may not be
+    // one they belong to yet — their account is salon-agnostic. Resolve that
+    // salon's business and lazily create the client membership + profile there
+    // (assigning a fresh client code) so they "join" the salon on first booking.
+    const location = await this.resolveLocation({ locationId: input.locationId });
+    const firstName = actor.profile.firstName?.trim() || firstNameFromFullName(actor.profile.fullName);
+    const lastName = actor.profile.lastName?.trim() || lastNameFromFullName(actor.profile.fullName);
+    const communicationPreference =
+      input.communicationPreference ?? actor.clientCommunicationPreference ?? 'email';
+
+    const client = await this.auth.ensureClientForBusiness(location.businessId, location.id, actor.id, {
+      firstName,
+      lastName,
+      email: actor.profile.email,
+      phone: actor.profile.phone,
+      communicationPreference,
+    });
+
     return {
       ...input,
       client: {
-        firstName: client.first_name,
-        lastName: client.last_name,
-        email: client.email ?? undefined,
-        phone: client.phone ?? actor.profile.phone,
+        firstName,
+        lastName,
+        email: actor.profile.email,
+        phone: actor.profile.phone,
       },
-      communicationPreference: input.communicationPreference ?? client.communication_preference ?? 'email',
-      clientProfileId: actor.clientProfileId,
+      communicationPreference,
+      clientProfileId: client.id,
       bookedByUserProfileId: actor.id,
       source: 'mobile_app',
     };
   }
 
-  private assertClientActor(actor: AuthUser): asserts actor is AuthUser & { clientProfileId: string } {
-    if (!userHasRole(actor, 'client') || !actor.clientProfileId) {
+  private assertClientUser(actor: AuthUser): void {
+    if (!userHasRole(actor, 'client')) {
       throw new ForbiddenException('Mobile booking requires a signed-in client account');
     }
   }
@@ -2586,4 +2608,18 @@ function arrayOf<T>(value: T | T[] | null | undefined): T[] {
 
 function unique(values: string[]): string[] {
   return [...new Set(values)];
+}
+
+// Fallbacks for deriving first/last name from a stored full name, used only when
+// a customer's profile somehow lacks the (normally NOT-NULL) split name columns.
+function firstNameFromFullName(fullName: string): string {
+  const trimmed = fullName.trim();
+  if (!trimmed) return 'Client';
+  return trimmed.split(/\s+/)[0] ?? 'Client';
+}
+
+function lastNameFromFullName(fullName: string): string {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  if (parts.length <= 1) return 'Client';
+  return parts.slice(1).join(' ');
 }

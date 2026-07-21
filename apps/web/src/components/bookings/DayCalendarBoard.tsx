@@ -139,6 +139,15 @@ interface DayCalendarBoardProps {
    * rostered working hours (they're not scheduled then, or the appointment can't fit).
    */
   onDragBlocked?: (staffName: string) => void;
+  /**
+   * Drag a bookout (rota absence) tile to a new time, resize it, or drop it onto
+   * another stylist column. Fired on drop with a 15-minute-snapped start/end;
+   * `staffProfileId` is set only when it lands on a different stylist. Enables
+   * drag-to-move / drag-to-resize / drag-to-reassign for bookouts.
+   */
+  onUpdateBookout?: (absence: RotaAbsenceIndicator, input: UpdateBookoutInput) => void;
+  /** Bookout tile action menu: permanently delete the bookout. */
+  onDeleteBookout?: (absence: RotaAbsenceIndicator) => void;
 }
 
 export interface MoveBookingInput {
@@ -156,6 +165,16 @@ export interface ResizeBookingInput {
    * duration is a multiple of 15 only when the start already sits on the grid.
    */
   durationMinutes: number;
+}
+
+export interface UpdateBookoutInput {
+  /** ISO start of the drop position (snapped to 15 minutes). */
+  startAt: string;
+  /** ISO end (snapped to 15 minutes). Always sent so move + resize share one path. */
+  endsAt: string;
+  /** Target stylist when the tile is dropped on a different column; omit to keep. */
+  staffProfileId?: string;
+  staffName?: string;
 }
 
 interface BookingMenuState {
@@ -194,6 +213,34 @@ interface DragState {
   valid: boolean;
   /** True once the pointer has moved past the click/drag threshold. */
   moved: boolean;
+}
+
+// Live state while a bookout (absence) tile is being dragged. Simpler than an
+// appointment drag: a bookout is a single block with no services/lanes, and it
+// is NOT clamped to working hours (a bookout is what blocks that time), so it can
+// move anywhere in the day window. All times are minutes from the window start.
+interface AbsenceDragState {
+  absence: RotaAbsenceIndicator;
+  mode: 'move' | 'resize';
+  grabOffsetMin: number;
+  originStartMin: number;
+  originDurationMin: number;
+  previewStartMin: number;
+  previewDurationMin: number;
+  targetColKey: string;
+  targetStaffProfileId?: string;
+  targetStaffName: string;
+  originStaffProfileId: string;
+  moved: boolean;
+}
+
+interface BookoutMenuState {
+  absence: RotaAbsenceIndicator;
+  /** Click position relative to the board's positioned container. */
+  x: number;
+  y: number;
+  boardWidth: number;
+  boardHeight: number;
 }
 
 const DRAG_THRESHOLD_PX = 4;
@@ -236,6 +283,8 @@ export function DayCalendarBoard({
   onMoveBooking,
   onResizeBooking,
   onDragBlocked,
+  onUpdateBookout,
+  onDeleteBookout,
 }: DayCalendarBoardProps) {
   // A live clock so the "now" line tracks the current time. Updates once a
   // minute — fine for a calendar ruled in 15-minute gridlines.
@@ -260,6 +309,12 @@ export function DayCalendarBoard({
   // listeners always read the latest without being re-bound each frame.
   const [drag, setDrag] = useState<DragState | null>(null);
   const dragRef = useRef<DragState | null>(null);
+  // Bookout (absence) drag runs on its own lightweight state so it never
+  // interferes with the appointment drag machinery.
+  const [absenceDrag, setAbsenceDrag] = useState<AbsenceDragState | null>(null);
+  const absenceDragRef = useRef<AbsenceDragState | null>(null);
+  // Click a bookout tile → a small action menu (Delete bookout) opens at the tile.
+  const [bookoutMenu, setBookoutMenu] = useState<BookoutMenuState | null>(null);
   // Set right after a drag so the synthetic click that follows pointerup does not
   // also open the tile's action menu.
   const suppressClickRef = useRef(false);
@@ -592,6 +647,157 @@ export function DayCalendarBoard({
     setDrag(initial);
   }
 
+  function openBookoutMenuAt(clientX: number, clientY: number, absence: RotaAbsenceIndicator) {
+    const board = boardRef.current;
+    if (!board || !onDeleteBookout) return;
+    const boardRect = board.getBoundingClientRect();
+    setSlotMenu(null);
+    setBookingMenu(null);
+    setBookoutMenu({
+      absence,
+      x: clientX - boardRect.left,
+      y: clientY - boardRect.top,
+      boardWidth: boardRect.width,
+      boardHeight: boardRect.height,
+    });
+  }
+
+  // Drag a bookout tile: move it in time, resize its bottom edge, or drop it on
+  // another stylist column. Unlike appointments, a bookout is not clamped to
+  // working hours — it is the thing that blocks time — so it snaps freely inside
+  // the day window.
+  function beginAbsenceDrag(
+    event: React.PointerEvent<HTMLElement>,
+    absence: RotaAbsenceIndicator,
+    column: ColumnModel,
+    mode: AbsenceDragState['mode'],
+  ) {
+    if (!onUpdateBookout) return;
+    if (event.button !== 0 && event.pointerType === 'mouse') return;
+
+    const originStartMin = clamp(minutesFromWindowStart(absence.startsAt, startHour), 0, windowMinutes);
+    let originEndMin = absence.endsAt
+      ? minutesFromWindowStart(absence.endsAt, startHour)
+      : originStartMin + 30;
+    if (originEndMin <= originStartMin) originEndMin = originStartMin + 30;
+    originEndMin = clamp(originEndMin, originStartMin + SLOT_SNAP_MINUTES, windowMinutes);
+    const originDurationMin = Math.max(SLOT_SNAP_MINUTES, originEndMin - originStartMin);
+    const grabOffsetMin = pointerToMinutes(event.clientY) - originStartMin;
+
+    const initial: AbsenceDragState = {
+      absence,
+      mode,
+      grabOffsetMin,
+      originStartMin,
+      originDurationMin,
+      previewStartMin: originStartMin,
+      previewDurationMin: originDurationMin,
+      targetColKey: column.key,
+      targetStaffProfileId: column.staffProfileId,
+      targetStaffName: column.name,
+      originStaffProfileId: absence.staffProfileId,
+      moved: false,
+    };
+    absenceDragRef.current = initial;
+
+    const startClientX = event.clientX;
+    const startClientY = event.clientY;
+
+    const handleMove = (moveEvent: PointerEvent) => {
+      const current = absenceDragRef.current;
+      if (!current) return;
+      if (!current.moved) {
+        const dx = moveEvent.clientX - startClientX;
+        const dy = moveEvent.clientY - startClientY;
+        if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
+        current.moved = true;
+      }
+      moveEvent.preventDefault();
+      if (current.mode === 'move') {
+        const deltaMin = pointerToMinutes(moveEvent.clientY) - current.grabOffsetMin - current.originStartMin;
+        const maxStart = Math.max(0, windowMinutes - current.originDurationMin);
+        const nextStart = clamp(current.originStartMin + snap(deltaMin), 0, maxStart);
+        // Bookouts may reassign to ANY stylist column (they block that stylist's time).
+        const hovered = columnAtPoint(moveEvent.clientX, moveEvent.clientY);
+        const targetColumn =
+          hovered && hovered.staffProfileId
+            ? hovered
+            : columns.find((col) => col.key === current.targetColKey) ?? null;
+        const next: AbsenceDragState = {
+          ...current,
+          previewStartMin: nextStart,
+          ...(targetColumn && targetColumn.staffProfileId
+            ? {
+                targetColKey: targetColumn.key,
+                targetStaffProfileId: targetColumn.staffProfileId,
+                targetStaffName: targetColumn.name,
+              }
+            : {}),
+        };
+        absenceDragRef.current = next;
+        setAbsenceDrag(next);
+      } else {
+        const rawEnd = pointerToMinutes(moveEvent.clientY);
+        const minEnd = current.originStartMin + SLOT_SNAP_MINUTES;
+        const snappedEnd = clamp(snap(rawEnd), minEnd, windowMinutes);
+        const next: AbsenceDragState = { ...current, previewDurationMin: snappedEnd - current.originStartMin };
+        absenceDragRef.current = next;
+        setAbsenceDrag(next);
+      }
+    };
+
+    const detachListeners = () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+      window.removeEventListener('pointercancel', handleCancel);
+    };
+
+    const handleUp = () => {
+      detachListeners();
+      const current = absenceDragRef.current;
+      absenceDragRef.current = null;
+      setAbsenceDrag(null);
+      if (!current || !current.moved) return; // treat as a click — let onClick handle it
+      const suppressClick = () => {
+        suppressClickRef.current = true;
+        window.setTimeout(() => {
+          suppressClickRef.current = false;
+        }, 0);
+      };
+      if (current.mode === 'move') {
+        const staffChanged =
+          current.targetStaffProfileId != null && current.targetStaffProfileId !== current.originStaffProfileId;
+        const timeChanged = current.previewStartMin !== current.originStartMin;
+        if (!staffChanged && !timeChanged) return;
+        suppressClick();
+        onUpdateBookout?.(current.absence, {
+          startAt: minutesToIso(current.previewStartMin),
+          endsAt: minutesToIso(current.previewStartMin + current.originDurationMin),
+          staffProfileId: staffChanged ? current.targetStaffProfileId : undefined,
+          staffName: staffChanged ? current.targetStaffName : undefined,
+        });
+      } else {
+        if (current.previewDurationMin === current.originDurationMin) return;
+        suppressClick();
+        onUpdateBookout?.(current.absence, {
+          startAt: minutesToIso(current.originStartMin),
+          endsAt: minutesToIso(current.originStartMin + current.previewDurationMin),
+        });
+      }
+    };
+
+    const handleCancel = () => {
+      detachListeners();
+      absenceDragRef.current = null;
+      setAbsenceDrag(null);
+    };
+
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp);
+    window.addEventListener('pointercancel', handleCancel);
+    setAbsenceDrag(initial);
+  }
+
   // Position of the current-time line within the visible window.
   const isToday = isSameDayLocal(now, day);
   const nowMinutes = now.getHours() * 60 + now.getMinutes() - startHour * 60;
@@ -673,7 +879,11 @@ export function DayCalendarBoard({
               data-col-key={column.key}
               data-staff-id={column.staffProfileId ?? ''}
               className={`relative ${createEnabled && column.staffProfileId ? 'cursor-pointer' : ''} ${
-                drag && drag.mode === 'move' && column.staffProfileId && drag.targetColKey === column.key
+                (drag && drag.mode === 'move' && column.staffProfileId && drag.targetColKey === column.key) ||
+                (absenceDrag &&
+                  absenceDrag.mode === 'move' &&
+                  column.staffProfileId &&
+                  absenceDrag.targetColKey === column.key)
                   ? 'bg-primary/[0.04] ring-2 ring-inset ring-primary/30'
                   : ''
               }`}
@@ -727,18 +937,71 @@ export function DayCalendarBoard({
                 </div>
               ) : null}
 
-              {/* Absences. */}
+              {/* Bookouts (rota absences). Labelled by the configured book-out
+                  reason (falling back to the note, then the legacy absence type)
+                  and tinted by the reason's colour. Draggable to move / resize /
+                  reassign, and clickable to open the delete menu. */}
               {column.absences.map((absence) => {
                 const top = offsetPx(absence.startsAt, startHour, totalHeight);
                 const bottom = absence.endsAt ? offsetPx(absence.endsAt, startHour, totalHeight) : totalHeight;
+                const height = Math.max(MIN_BLOCK_PX, bottom - top);
+                const label =
+                  absence.bookOutTypeName || absence.notes || absenceLabel(absence.absenceType);
+                const tint = absence.bookOutTypeColorHex;
+                const onDark = tint ? hexLuminance(tint) < 0.55 : false;
+                const canDragAbsence = Boolean(onUpdateBookout);
+                const clickable = canDragAbsence || Boolean(onDeleteBookout);
+                const isDraggingThis = absenceDrag?.absence.id === absence.id && absenceDrag.moved;
                 return (
-                  <div
+                  <button
+                    type="button"
                     key={`absence-${absence.id}`}
-                    className="absolute inset-x-1.5 flex items-center justify-center rounded-lg bg-danger-soft text-[11px] font-semibold text-danger"
-                    style={{ top, height: Math.max(MIN_BLOCK_PX, bottom - top) }}
+                    onPointerDown={
+                      canDragAbsence
+                        ? (event) => beginAbsenceDrag(event, absence, column, 'move')
+                        : undefined
+                    }
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (suppressClickRef.current) return;
+                      openBookoutMenuAt(event.clientX, event.clientY, absence);
+                    }}
+                    style={{
+                      top,
+                      height,
+                      ...(tint
+                        ? { backgroundColor: tint, color: onDark ? '#FFFFFF' : '#101828', borderColor: 'transparent' }
+                        : {}),
+                    }}
+                    className={`absolute inset-x-1.5 flex flex-col items-center justify-center overflow-hidden rounded-lg border text-[11px] font-semibold shadow-sm transition-all ${
+                      tint ? '' : 'border-danger-border/60 bg-danger-soft text-danger'
+                    } ${canDragAbsence ? 'cursor-grab touch-none active:cursor-grabbing' : clickable ? 'cursor-pointer' : ''} ${
+                      isDraggingThis ? 'opacity-40' : 'hover:shadow-md'
+                    }`}
+                    title={label}
                   >
-                    {absenceLabel(absence.absenceType)}
-                  </div>
+                    <span className="max-w-full truncate px-1.5">{label}</span>
+                    {height >= MIN_BLOCK_PX + 12 ? (
+                      <span className="max-w-full truncate px-1.5 text-[9px] font-medium opacity-80">
+                        {formatTime(absence.startsAt)}
+                        {absence.endsAt ? `–${formatTime(absence.endsAt)}` : ''}
+                      </span>
+                    ) : null}
+                    {canDragAbsence ? (
+                      <span
+                        role="separator"
+                        aria-label="Drag to change duration"
+                        onPointerDown={(event) => {
+                          event.stopPropagation();
+                          beginAbsenceDrag(event, absence, column, 'resize');
+                        }}
+                        onClick={(event) => event.stopPropagation()}
+                        className="absolute inset-x-0 bottom-0 z-[2] flex h-2.5 cursor-ns-resize touch-none items-end justify-center opacity-0 transition-opacity hover:opacity-100"
+                      >
+                        <span className="mb-0.5 h-1 w-6 rounded-full bg-black/30" aria-hidden />
+                      </span>
+                    ) : null}
+                  </button>
                 );
               })}
 
@@ -965,6 +1228,48 @@ export function DayCalendarBoard({
                     );
                   })()
                 : null}
+
+              {/* Bookout drag preview — a dashed ghost in the target column showing
+                  where the bookout will land (move: new start; resize: new end). */}
+              {absenceDrag && absenceDrag.moved && absenceDrag.targetColKey === column.key
+                ? (() => {
+                    let ghostStartMin: number;
+                    let ghostEndMin: number;
+                    if (absenceDrag.mode === 'move') {
+                      ghostStartMin = absenceDrag.previewStartMin;
+                      ghostEndMin = absenceDrag.previewStartMin + absenceDrag.originDurationMin;
+                    } else {
+                      ghostStartMin = absenceDrag.originStartMin;
+                      ghostEndMin = absenceDrag.originStartMin + absenceDrag.previewDurationMin;
+                    }
+                    const ghostTop = (ghostStartMin / 60) * HOUR_PX;
+                    const ghostHeight = Math.max(SPLIT_BLOCK_MIN_PX, ((ghostEndMin - ghostStartMin) / 60) * HOUR_PX);
+                    const reassigning =
+                      absenceDrag.mode === 'move' &&
+                      absenceDrag.targetStaffProfileId !== absenceDrag.originStaffProfileId;
+                    const ghostLabel =
+                      absenceDrag.absence.bookOutTypeName ||
+                      absenceDrag.absence.notes ||
+                      absenceLabel(absenceDrag.absence.absenceType);
+                    return (
+                      <div
+                        className="pointer-events-none absolute inset-x-0 z-30 px-[3px]"
+                        style={{ top: ghostTop, height: ghostHeight }}
+                        aria-hidden
+                      >
+                        <div className="flex h-full w-full flex-col overflow-hidden rounded-lg border-2 border-dashed border-danger bg-danger-soft px-2 py-1 shadow-lg">
+                          <span className="truncate text-[11px] font-semibold text-danger">
+                            {formatTime(minutesToIso(ghostStartMin))}
+                            {absenceDrag.mode === 'resize' ? `–${formatTime(minutesToIso(ghostEndMin))}` : ''}
+                          </span>
+                          <span className="truncate text-[10px] text-danger/80">
+                            {reassigning ? `→ ${absenceDrag.targetStaffName}` : ghostLabel}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })()
+                : null}
             </div>
           </div>
         ))}
@@ -997,6 +1302,21 @@ export function DayCalendarBoard({
             onCheckOut={onCheckOut ? () => { onCheckOut(bookingMenu.booking); setBookingMenu(null); } : undefined}
             onEdit={onEditBooking ? () => { onEditBooking(bookingMenu.booking); setBookingMenu(null); } : undefined}
             onCancel={onCancelBooking ? () => { onCancelBooking(bookingMenu.booking); setBookingMenu(null); } : undefined}
+          />
+        ) : null}
+
+        {bookoutMenu ? (
+          <BookoutActionMenu
+            state={bookoutMenu}
+            onClose={() => setBookoutMenu(null)}
+            onDelete={
+              onDeleteBookout
+                ? () => {
+                    onDeleteBookout(bookoutMenu.absence);
+                    setBookoutMenu(null);
+                  }
+                : undefined
+            }
           />
         ) : null}
 
@@ -1311,6 +1631,69 @@ function BookingActionMenu({
   );
 }
 
+// Action menu anchored at a clicked bookout tile. Mirrors BookingActionMenu's
+// click-away + clamped positioning. Delete asks for confirmation (in the page
+// handler) before the row is permanently removed.
+function BookoutActionMenu({
+  state,
+  onClose,
+  onDelete,
+}: {
+  state: BookoutMenuState;
+  onClose: () => void;
+  onDelete?: () => void;
+}) {
+  const { absence } = state;
+  const label = absence.bookOutTypeName || absence.notes || absenceLabel(absence.absenceType);
+
+  const PANEL_WIDTH = 240;
+  const PANEL_HEIGHT = 150;
+  const left = Math.max(8, Math.min(state.x, state.boardWidth - PANEL_WIDTH - 8));
+  const top = Math.max(8, Math.min(state.y, state.boardHeight - PANEL_HEIGHT - 8));
+
+  return (
+    <>
+      {/* Click-away backdrop */}
+      <div className="absolute inset-0 z-40" onClick={onClose} aria-hidden />
+      <div
+        className="absolute z-50 rounded-card-lg border border-border bg-surface p-3 shadow-lg"
+        style={{ top, left, width: PANEL_WIDTH }}
+        role="dialog"
+        aria-label="Bookout actions"
+      >
+        <div className="mb-2 flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="truncate text-[13px] font-semibold text-text-primary">{label}</div>
+            <div className="truncate text-[11px] text-text-secondary">
+              {formatTime(absence.startsAt)}
+              {absence.endsAt ? `–${formatTime(absence.endsAt)}` : ''}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-text-secondary transition hover:bg-surface-alt hover:text-text-primary"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          {onDelete ? (
+            <BookingMenuButton
+              label="Delete bookout"
+              onClick={onDelete}
+              variant="danger"
+              icon={<TrashIcon className="h-4 w-4" />}
+            />
+          ) : null}
+        </div>
+      </div>
+    </>
+  );
+}
+
 function BookingMenuButton({
   label,
   onClick,
@@ -1373,6 +1756,14 @@ function BanIcon(props: SVGProps<SVGSVGElement>) {
     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.6} aria-hidden {...props}>
       <circle cx="10" cy="10" r="6.5" />
       <path d="m5.5 5.5 9 9" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function TrashIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.6} aria-hidden {...props}>
+      <path d="M4 6h12M8 6V4h4v2M6 6l.7 9.5a1 1 0 0 0 1 .9h4.6a1 1 0 0 0 1-.9L15 6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -1802,12 +2193,11 @@ function columnUtilisation(
   }).utilisationPercent;
 }
 
-// Colour the utilisation badge: red when under-booked, amber mid, green when
-// healthily busy. Thresholds mirror common salon utilisation targets.
-function utilisationTone(percent: number): string {
-  if (percent >= 75) return 'bg-success-soft text-success';
-  if (percent >= 45) return 'bg-warning-soft text-warning';
-  return 'bg-danger-soft text-danger';
+// Colour the utilisation badge in the brand purple regardless of how busy the
+// day is. A traffic-light scale (red when quiet) reads as a judgement and can be
+// disheartening on a naturally slow day, so we keep a single neutral brand tone.
+function utilisationTone(_percent: number): string {
+  return 'bg-primary-soft text-primary-deep';
 }
 
 function subtitleForStaff(member: RotaStaffSummary, onLeave: boolean, shiftsForDay: RotaShift[]): string {

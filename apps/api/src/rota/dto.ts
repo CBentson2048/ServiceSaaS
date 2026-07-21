@@ -217,6 +217,20 @@ export class CreateAbsenceDto {
   bookOutTypeId?: string;
 }
 
+export class UpdateAbsenceDto {
+  @IsOptional()
+  @IsISO8601()
+  startsAt?: string;
+
+  @IsOptional()
+  @IsISO8601()
+  endsAt?: string | null;
+
+  @IsOptional()
+  @IsUUID()
+  staffProfileId?: string;
+}
+
 const HEX_COLOR = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
 export class CreateBookOutTypeDto {

@@ -14,6 +14,9 @@ import type {
   AuthUser,
   ClientProfileDetails,
   CommunicationPreference,
+  CustomerSalonDetailResponse,
+  CustomerSalonSummary,
+  CustomerSalonsResponse,
   ListProfilesResponse,
   StaffProfileDetails,
   UpdateCurrentProfileRequest,
@@ -22,7 +25,9 @@ import type {
   UserProfileResponse,
   UserRole,
 } from '@sheer/domain';
-import { userHasRole, userHasAnyRole } from '@sheer/domain';
+import { userHasRole, userHasAnyRole, userHasJoinedSalon } from '@sheer/domain';
+import { LabFormulaService } from '../lab-formula/lab-formula.service';
+import { MobileDashboardService } from '../mobile-dashboard/mobile-dashboard.service';
 import type { ListProfilesQueryDto } from './dto';
 
 interface UserProfileRow {
@@ -105,7 +110,11 @@ export class ProfileService {
   private readonly logger = new Logger(ProfileService.name);
   private readonly admin: SupabaseClient;
 
-  constructor(config: ConfigService) {
+  constructor(
+    config: ConfigService,
+    private readonly dashboards: MobileDashboardService,
+    private readonly labFormulas: LabFormulaService,
+  ) {
     const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
     this.admin = createClient(supabaseUrl, serviceRoleKey, {
@@ -115,6 +124,33 @@ export class ProfileService {
 
   async getCurrentProfile(actor: AuthUser): Promise<UserProfileResponse> {
     return this.buildProfileForUser(actor, actor.id, { allowAdminFields: true });
+  }
+
+  /**
+   * The salons a customer belongs to — one tile per per-salon client profile,
+   * across every business. Powers the customer self-profile home. Most-recently
+   * visited first.
+   */
+  async listMySalons(actor: AuthUser): Promise<CustomerSalonsResponse> {
+    const profiles = await this.fetchMyClientProfiles(actor.id);
+    const salons = await Promise.all(profiles.map((profile) => this.toCustomerSalonSummary(profile)));
+    salons.sort((a, b) => (b.lastVisitAt ?? '').localeCompare(a.lastVisitAt ?? ''));
+    return { salons };
+  }
+
+  /**
+   * The customer's information at one specific salon they belong to: their
+   * per-salon client code + preference, recent visits, and colour formulas.
+   * Authorizes by ownership (the client profile must be linked to this account).
+   */
+  async getMySalonDetail(actor: AuthUser, clientProfileId: string): Promise<CustomerSalonDetailResponse> {
+    const profile = await this.fetchMyClientProfileById(actor.id, clientProfileId);
+    const [salon, visits, formulas] = await Promise.all([
+      this.toCustomerSalonSummary(profile),
+      this.dashboards.getClientVisitHistory(profile.business_id, profile.id, 20),
+      this.labFormulas.clientSafeHistoryForProfile(profile.business_id, profile.id),
+    ]);
+    return { salon, visits, formulas };
   }
 
   async updateCurrentProfile(
@@ -309,11 +345,25 @@ export class ProfileService {
     userProfileId: string,
     options: { clientRow?: ClientProfileRow; staffRow?: StaffProfileRow; allowAdminFields?: boolean } = {},
   ): Promise<UserProfileResponse> {
+    // A salon-less customer (registered, not yet joined any salon) has no
+    // business context — actor.businessId is ''. Client/staff profiles are
+    // business-scoped, so there is nothing to look up, and querying a uuid
+    // column with '' would error. Skip those lookups; they return their own
+    // identity only. The normal (joined) path is unchanged.
+    const canQueryBusiness = userHasJoinedSalon(actor);
     const [profile, memberships, client, staff] = await Promise.all([
       this.fetchUserProfile(userProfileId),
       this.fetchMemberships(userProfileId),
-      options.clientRow !== undefined ? Promise.resolve(options.clientRow) : this.fetchClientByUser(actor.businessId, userProfileId),
-      options.staffRow !== undefined ? Promise.resolve(options.staffRow) : this.fetchStaffByUser(actor.businessId, userProfileId),
+      options.clientRow !== undefined
+        ? Promise.resolve(options.clientRow)
+        : canQueryBusiness
+          ? this.fetchClientByUser(actor.businessId, userProfileId)
+          : Promise.resolve(undefined),
+      options.staffRow !== undefined
+        ? Promise.resolve(options.staffRow)
+        : canQueryBusiness
+          ? this.fetchStaffByUser(actor.businessId, userProfileId)
+          : Promise.resolve(undefined),
     ]);
     const businessMemberships = memberships.filter((m) => m.business_id === actor.businessId && m.status === 'active');
     const role = this.primaryRole(businessMemberships) ?? actor.primaryRole;
@@ -710,6 +760,87 @@ export class ProfileService {
       code: location.code ?? undefined,
       slug: location.slug ?? undefined,
     }));
+  }
+
+  // ── Customer self-profile: salon tiles ──────────────────────────────────
+
+  private async fetchMyClientProfiles(userProfileId: string): Promise<ClientProfileRow[]> {
+    const { data, error } = await this.admin
+      .schema('core')
+      .from('client_profiles')
+      .select(CLIENT_COLUMNS)
+      .eq('user_profile_id', userProfileId)
+      .order('updated_at', { ascending: false })
+      .returns<ClientProfileRow[]>();
+    if (error) {
+      this.logger.error(`fetchMyClientProfiles failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load your salons');
+    }
+    return data ?? [];
+  }
+
+  private async fetchMyClientProfileById(
+    userProfileId: string,
+    clientProfileId: string,
+  ): Promise<ClientProfileRow> {
+    const { data, error } = await this.admin
+      .schema('core')
+      .from('client_profiles')
+      .select(CLIENT_COLUMNS)
+      .eq('id', clientProfileId)
+      .eq('user_profile_id', userProfileId)
+      .maybeSingle<ClientProfileRow>();
+    if (error) {
+      this.logger.error(`fetchMyClientProfileById failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load salon');
+    }
+    if (!data) throw new NotFoundException('Salon not found for your account');
+    return data;
+  }
+
+  private async toCustomerSalonSummary(row: ClientProfileRow): Promise<CustomerSalonSummary> {
+    const [business, location, visitCount, lastVisitAt] = await Promise.all([
+      this.fetchBusinessName(row.business_id),
+      row.primary_location_id
+        ? this.fetchLocationBrief(row.primary_location_id)
+        : Promise.resolve(undefined),
+      this.countRows('booking', 'visits', 'client_profile_id', row.id),
+      this.latestVisitAt(row.id),
+    ]);
+    return {
+      clientProfileId: row.id,
+      businessId: row.business_id,
+      businessName: business ?? 'Salon',
+      locationId: row.primary_location_id ?? undefined,
+      locationName: location?.name,
+      city: location?.city ?? undefined,
+      clientCode: row.client_code,
+      communicationPreference: row.communication_preference ?? undefined,
+      visitCount,
+      lastVisitAt,
+    };
+  }
+
+  private async fetchBusinessName(businessId: string): Promise<string | undefined> {
+    const { data } = await this.admin
+      .schema('core')
+      .from('businesses')
+      .select('name')
+      .eq('id', businessId)
+      .maybeSingle<{ name: string }>();
+    return data?.name;
+  }
+
+  private async fetchLocationBrief(
+    locationId: string,
+  ): Promise<{ name: string; city: string | null } | undefined> {
+    const { data } = await this.admin
+      .schema('core')
+      .from('locations')
+      .select('name,city')
+      .eq('id', locationId)
+      .maybeSingle<{ name: string; city: string | null }>();
+    return data ?? undefined;
   }
 
   private editableFields(

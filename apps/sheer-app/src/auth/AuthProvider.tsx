@@ -19,6 +19,10 @@ interface AuthState {
   user: AuthUser | null;
   session: AuthSession | null;
   signIn: (email: string, password: string) => Promise<AuthUser>;
+  // Register a new salon-agnostic customer account and sign straight in — the
+  // backend returns the same session shape as login. The customer joins a salon
+  // lazily on their first booking.
+  signUp: (payload: authApi.RegisterCustomerRequest) => Promise<AuthUser>;
   signOut: () => Promise<void>;
   // Patch the in-memory auth user so surfaces that read auth.user (e.g. the
   // booking review's communication preference) reflect a just-saved profile
@@ -106,6 +110,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [persistSession],
   );
 
+  const signUp = useCallback(
+    async (payload: authApi.RegisterCustomerRequest) => {
+      const response = await authApi.registerCustomer(payload);
+      await persistSession(response.session, response.user);
+      return response.user;
+    },
+    [persistSession],
+  );
+
   const signOut = useCallback(async () => {
     const currentSession = session;
     await clearSession();
@@ -117,8 +130,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<AuthState>(
-    () => ({ status, user, session, signIn, signOut, updateUser }),
-    [session, signIn, signOut, status, updateUser, user],
+    () => ({ status, user, session, signIn, signUp, signOut, updateUser }),
+    [session, signIn, signUp, signOut, status, updateUser, user],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

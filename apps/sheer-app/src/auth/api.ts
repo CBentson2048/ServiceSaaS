@@ -9,6 +9,8 @@ import type {
   CreateStylistRebookingRequest,
   CrmClientSummary,
   CurrentUserResponse,
+  CustomerSalonDetailResponse,
+  CustomerSalonsResponse,
   RescheduleAppointmentResponse,
   ListCrmClientsResponse,
   AppointmentCompletionResponse,
@@ -32,6 +34,7 @@ import type {
   PublicBookingServiceSelectionResponse,
   PublicBookingStylistsResponse,
   CreatePublicBookingResponse,
+  SalonSearchResponse,
   StartPublicBookingCheckoutResponse,
   StaffBookingDetail,
   StylistKpiResponse,
@@ -67,6 +70,27 @@ export async function login(email: string, password: string): Promise<LoginRespo
   return request<LoginResponse>('/auth/login', {
     method: 'POST',
     body: { email, password, surface: 'sheer_app' },
+    suppressAuthRedirect: true,
+  });
+}
+
+// Self-service customer sign-up. A QLOOQO customer account is salon-agnostic —
+// no salon is chosen here; the backend creates a global account and returns a
+// full `sheer_app` session, exactly like login. The customer joins a salon
+// lazily on their first booking. Unauthenticated; a 401 here is a real failure
+// the caller surfaces, so we suppress the global session-timeout redirect.
+export interface RegisterCustomerRequest {
+  email: string;
+  password: string;
+  firstName: string;
+  lastName: string;
+  phone?: string;
+}
+
+export async function registerCustomer(payload: RegisterCustomerRequest): Promise<LoginResponse> {
+  return request<LoginResponse>('/auth/register-customer', {
+    method: 'POST',
+    body: payload,
     suppressAuthRedirect: true,
   });
 }
@@ -116,6 +140,22 @@ export async function deleteMyAccount(accessToken: string): Promise<void> {
 // The caller's own colour/formula history — a cost-stripped view for clients.
 export async function getMyLabHistory(accessToken: string): Promise<ClientLabHistoryResponse> {
   return request<ClientLabHistoryResponse>('/lab/formulas/me/history', { accessToken });
+}
+
+// The salons this customer belongs to (one tile per salon on their profile).
+export async function getMySalons(accessToken: string): Promise<CustomerSalonsResponse> {
+  return request<CustomerSalonsResponse>('/profiles/me/salons', { accessToken });
+}
+
+// The customer's information at one specific salon (code, preference, visits, formulas).
+export async function getMySalonDetail(
+  accessToken: string,
+  clientProfileId: string,
+): Promise<CustomerSalonDetailResponse> {
+  return request<CustomerSalonDetailResponse>(
+    `/profiles/me/salons/${encodeURIComponent(clientProfileId)}`,
+    { accessToken },
+  );
 }
 
 export async function getMyVisitDetail(accessToken: string, visitId: string): Promise<ClientVisitDetail> {
@@ -258,6 +298,14 @@ export async function getMobileDashboard(
 
 export async function getMobileBookingLocations(accessToken: string): Promise<PublicBookingLocationsResponse> {
   return request<PublicBookingLocationsResponse>('/mobile/booking/locations', { accessToken });
+}
+
+// Public, unauthenticated salon directory search — find a salon by name, Salon
+// Code, or a stylist's Q Code before booking. No access token required.
+export async function searchPublicSalons(query: string): Promise<SalonSearchResponse> {
+  const search = new URLSearchParams();
+  search.set('query', query.trim());
+  return request<SalonSearchResponse>(`/public/salons?${search.toString()}`);
 }
 
 export async function getMobileBookingSelection(

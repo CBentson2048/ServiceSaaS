@@ -1,8 +1,15 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Redirect, router } from 'expo-router';
-import { StyleSheet, Text, TextInput, View } from 'react-native';
-import { palette, radius, spacing } from '@sheer/design-tokens';
-import { AppButton, Card, Screen, SectionHeader } from '@sheer/ui-mobile';
+import { StyleSheet, View, type TextInput } from 'react-native';
+import { spacing } from '@sheer/design-tokens';
+import {
+  AuthField,
+  AuthLayout,
+  AuthSwitch,
+  BrandMark,
+  FormMessage,
+  PrimaryButton,
+} from '../src/auth/AuthUi';
 import { useAuth } from '../src/auth/AuthProvider';
 
 export default function LoginScreen() {
@@ -11,78 +18,86 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const passwordRef = useRef<TextInput>(null);
 
   if (auth.user) {
     return <Redirect href={auth.user.primaryRole === 'stylist' ? '/performance' : '/dashboard'} />;
   }
 
+  const canSubmit = email.trim().length > 0 && password.length > 0 && !isSubmitting;
+
   async function onSubmit() {
+    if (!canSubmit) return;
     setError(null);
     setIsSubmitting(true);
 
     try {
-      const signedInUser = await auth.signIn(email, password);
+      const signedInUser = await auth.signIn(email.trim(), password);
       router.replace(signedInUser.primaryRole === 'stylist' ? '/performance' : '/dashboard');
     } catch {
-      setError('Sign in failed. Use an active QLOOQO account for this app.');
+      setError('Sign in failed. Check your details, or use an active QLOOQO account for this app.');
     } finally {
       setIsSubmitting(false);
     }
   }
 
   return (
-    <Screen>
-      <Card>
-        <SectionHeader
-          title="Welcome back"
-          subtitle="Sign in with your personal QLOOQO credentials."
+    <AuthLayout
+      footer={
+        <AuthSwitch
+          prompt="New to QLOOQO?"
+          actionLabel="Create an account"
+          onPress={() => router.push('/signup')}
         />
-        <View style={styles.form}>
-          <TextInput
-            autoCapitalize="none"
-            autoComplete="email"
-            inputMode="email"
-            onChangeText={setEmail}
-            placeholder="Email"
-            placeholderTextColor="rgba(255,255,255,0.4)"
-            style={styles.input}
-            value={email}
-          />
-          <TextInput
-            autoCapitalize="none"
-            onChangeText={setPassword}
-            placeholder="Password"
-            placeholderTextColor="rgba(255,255,255,0.4)"
-            secureTextEntry
-            style={styles.input}
-            value={password}
-          />
-          {error ? <Text style={styles.error}>{error}</Text> : null}
-        </View>
-        <AppButton
-          label={isSubmitting ? 'Signing in...' : 'Sign in'}
-          disabled={isSubmitting}
+      }
+    >
+      <BrandMark title="Welcome back" subtitle="Sign in with your personal QLOOQO credentials." />
+
+      <View style={styles.form}>
+        <AuthField
+          label="Email"
+          icon="mail-outline"
+          value={email}
+          onChangeText={setEmail}
+          placeholder="you@email.com"
+          autoCapitalize="none"
+          autoComplete="email"
+          inputMode="email"
+          keyboardType="email-address"
+          returnKeyType="next"
+          onSubmitEditing={() => passwordRef.current?.focus()}
+          editable={!isSubmitting}
+        />
+        <AuthField
+          ref={passwordRef}
+          label="Password"
+          icon="lock-closed-outline"
+          value={password}
+          onChangeText={setPassword}
+          placeholder="Your password"
+          autoCapitalize="none"
+          autoComplete="password"
+          isPassword
+          returnKeyType="go"
+          onSubmitEditing={onSubmit}
+          editable={!isSubmitting}
+        />
+
+        {error ? <FormMessage tone="error">{error}</FormMessage> : null}
+
+        <PrimaryButton
+          label="Sign in"
+          loading={isSubmitting}
+          disabled={!canSubmit}
           onPress={onSubmit}
         />
-      </Card>
-    </Screen>
+      </View>
+    </AuthLayout>
   );
 }
 
 const styles = StyleSheet.create({
   form: {
-    gap: spacing.sm,
-  },
-  input: {
-    minHeight: 52,
-    borderRadius: radius.input,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.16)',
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    color: palette.white,
-    paddingHorizontal: spacing.base,
-  },
-  error: {
-    color: '#FCA5A5',
+    gap: spacing.base,
   },
 });

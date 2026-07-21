@@ -36,7 +36,7 @@ import {
   userHasAnyRole,
   userHasRole,
 } from '@sheer/domain';
-import type { ClientBookingAccountDto, ClientBookingLoginDto } from './dto';
+import type { ClientBookingAccountDto, ClientBookingLoginDto, CreateCustomerAccountDto } from './dto';
 import { EmailService } from '../email/email.service';
 import { renderPasswordResetEmail } from '../email/templates/password-reset.template';
 
@@ -53,6 +53,7 @@ interface ProfileRow {
   avatar_url: string | null;
   is_active?: boolean | null;
   timezone?: string | null;
+  is_customer?: boolean | null;
 }
 
 interface MembershipRow {
@@ -253,6 +254,99 @@ export class AuthService {
     }
   }
 
+  /**
+   * Salon-agnostic customer sign-up (QLOOQO app). Creates the auth user + a
+   * user_profile flagged `is_customer`, with NO membership or client profile —
+   * those are created lazily on the customer's first booking at each salon
+   * (see PublicBookingService). Returns a `sheer_app` session, like login.
+   */
+  async createCustomerAccount(input: CreateCustomerAccountDto): Promise<LoginResponse> {
+    const email = input.email.trim().toLowerCase();
+    const firstName = input.firstName.trim();
+    const lastName = input.lastName.trim();
+    const fullName = `${firstName} ${lastName}`.trim();
+    let createdUserId: string | undefined;
+
+    const existingProfile = await this.findProfileByEmail(email);
+    if (existingProfile) {
+      throw new ConflictException('An account already exists for this email. Sign in to continue.');
+    }
+
+    try {
+      const { data: createdUser, error: createUserError } = await this.admin.auth.admin.createUser({
+        email,
+        password: input.password,
+        email_confirm: true,
+        user_metadata: {
+          full_name: fullName,
+        },
+      });
+
+      if (createUserError || !createdUser.user) {
+        throw new ConflictException(createUserError?.message ?? 'Unable to create account');
+      }
+
+      createdUserId = createdUser.user.id;
+      await this.createUserProfile(createdUserId, email, fullName, input.phone, true);
+
+      return this.login(email, input.password, 'sheer_app');
+    } catch (error) {
+      if (createdUserId) {
+        await this.rollbackCreatedCustomerAccount(createdUserId);
+      }
+      if (error instanceof ConflictException) {
+        throw error;
+      }
+      this.logger.error(
+        `createCustomerAccount failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      throw new InternalServerErrorException('Unable to create customer account');
+    }
+  }
+
+  /**
+   * Ensure a customer holds a client membership + client profile at the given
+   * salon, creating them (with a fresh, auto-assigned client code) if this is
+   * their first interaction with that business. Idempotent — returns the
+   * existing profile on repeat calls. Used by the booking flow to lazily join a
+   * customer to each salon they book. Returns the client profile id + code.
+   */
+  async ensureClientForBusiness(
+    businessId: string,
+    locationId: string,
+    userId: string,
+    input: {
+      firstName: string;
+      lastName: string;
+      email: string;
+      phone?: string;
+      communicationPreference?: 'whatsapp' | 'sms' | 'email';
+    },
+  ): Promise<{ id: string; clientCode?: string }> {
+    await this.ensureClientMembership(businessId, userId);
+    await this.ensureClientProfile(businessId, locationId, userId, input);
+
+    const { data, error } = await this.admin
+      .schema('core')
+      .from('client_profiles')
+      .select('id,client_code')
+      .eq('business_id', businessId)
+      .eq('user_profile_id', userId)
+      .maybeSingle<{ id: string; client_code?: string }>();
+
+    if (error || !data) {
+      this.logger.error(`ensureClientForBusiness lookup failed: ${error?.message ?? 'not found'}`);
+      throw new InternalServerErrorException('Unable to resolve client profile');
+    }
+
+    return { id: data.id, clientCode: data.client_code };
+  }
+
+  private async rollbackCreatedCustomerAccount(userId: string): Promise<void> {
+    await this.admin.schema('core').from('user_profiles').delete().eq('id', userId);
+    await this.admin.auth.admin.deleteUser(userId);
+  }
+
   async loginClientForBooking(input: ClientBookingLoginDto): Promise<LoginResponse> {
     const location = await this.fetchBookingLocation(input.locationId);
     const email = input.email.trim().toLowerCase();
@@ -359,6 +453,13 @@ export class AuthService {
 
     const activeMemberships = memberships.filter((m) => m.status === 'active');
     if (activeMemberships.length === 0) {
+      // A self-registered customer holds no salon membership until their first
+      // booking creates one. Resolve them to a salon-less `client` identity so
+      // they can sign in and browse. Everyone else with no active membership
+      // (e.g. a deactivated staff member) is still denied.
+      if (profile.is_customer) {
+        return this.buildSalonlessCustomer(profile);
+      }
       throw new ForbiddenException('User has no active business membership');
     }
 
@@ -446,6 +547,45 @@ export class AuthService {
       clientCommunicationPreference: clientProfile?.communication_preference ?? undefined,
       timezone: profile.timezone ?? undefined,
       permissions,
+    };
+  }
+
+  /**
+   * Build the AuthUser for a self-registered customer who has not joined any
+   * salon yet (no membership). They get a `client` identity with no business
+   * context — `businessId` is '' and there is no clientProfile/clientCode until
+   * their first booking. Business-scoped endpoints are unreachable for them;
+   * app surfaces branch on {@link userHasJoinedSalon}.
+   */
+  private buildSalonlessCustomer(profile: ProfileRow): AuthUser {
+    void this.admin
+      .schema('core')
+      .from('user_profiles')
+      .update({ last_seen_at: new Date().toISOString() })
+      .eq('id', profile.id)
+      .then(undefined, () => undefined);
+
+    return {
+      id: profile.id,
+      roles: ['client'],
+      primaryRole: 'client',
+      businessId: '',
+      allowedLocationIds: [],
+      locationScope: { kind: 'self', locationIds: [] },
+      locations: [],
+      profile: {
+        id: profile.id,
+        email: profile.email,
+        firstName: profile.first_name ?? undefined,
+        lastName: profile.last_name ?? undefined,
+        fullName: profile.full_name,
+        displayName: profile.display_name ?? profile.full_name,
+        phone: profile.phone ?? undefined,
+        avatarUrl: profile.avatar_url ?? undefined,
+        isActive: profile.is_active ?? true,
+      },
+      timezone: profile.timezone ?? undefined,
+      permissions: [],
     };
   }
 
@@ -774,7 +914,7 @@ export class AuthService {
     const { data, error } = await this.admin
       .schema('core')
       .from('user_profiles')
-      .select('id,email,first_name,last_name,full_name,display_name,phone,avatar_url,is_active,timezone')
+      .select('id,email,first_name,last_name,full_name,display_name,phone,avatar_url,is_active,timezone,is_customer')
       .eq('id', userId)
       .single<ProfileRow>();
 
@@ -789,7 +929,7 @@ export class AuthService {
     const { data, error } = await this.admin
       .schema('core')
       .from('user_profiles')
-      .select('id,email,first_name,last_name,full_name,display_name,phone,avatar_url,is_active,timezone')
+      .select('id,email,first_name,last_name,full_name,display_name,phone,avatar_url,is_active,timezone,is_customer')
       .eq('email', email)
       .maybeSingle<ProfileRow>();
 
@@ -829,6 +969,7 @@ export class AuthService {
     email: string,
     fullName: string,
     phone?: string,
+    isCustomer = false,
   ): Promise<void> {
     const { error } = await this.admin.schema('core').from('user_profiles').insert({
       id: userId,
@@ -838,6 +979,7 @@ export class AuthService {
       full_name: fullName,
       display_name: fullName,
       phone: phone?.trim() || null,
+      is_customer: isCustomer,
     });
 
     if (error) {

@@ -3,8 +3,6 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
-  // eslint-disable-next-line deprecation/deprecation
-  Clipboard,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -15,7 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import type { ClientLabFormulaSummary, CrmVisitSummary, UserProfileResponse } from '@sheer/domain';
+import type { CustomerSalonSummary, UserProfileResponse } from '@sheer/domain';
 import { userHasRole } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
@@ -23,7 +21,6 @@ import { StylistTabBar } from '../src/navigation/StylistTabBar';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
 
-type ProfileTab = 'profile' | 'visits' | 'lab';
 type CommPref = 'email' | 'sms' | 'whatsapp';
 
 interface EditForm {
@@ -57,10 +54,6 @@ export default function ProfileScreen() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
-
-  // UI state
-  const [tab, setTab] = useState<ProfileTab>('profile');
-  const [copied, setCopied] = useState(false);
 
   // Fade-in animation for success banner
   const successOpacity = useRef(new Animated.Value(0)).current;
@@ -144,13 +137,6 @@ export default function ProfileScreen() {
     }
   }
 
-  function copyCode(code: string) {
-    // eslint-disable-next-line deprecation/deprecation
-    Clipboard.setString(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }
-
   async function performSignOut() {
     setSigningOut(true);
     try {
@@ -208,7 +194,6 @@ export default function ProfileScreen() {
     );
   }
 
-  const client = profile?.clientProfile;
   const identity = profile?.identity;
 
   return (
@@ -269,67 +254,35 @@ export default function ProfileScreen() {
                 </View>
                 <View style={s.heroInfo}>
                   <Text style={s.heroName}>{identity?.displayName ?? '—'}</Text>
-                  {client ? (
-                    <Pressable
-                      onPress={() => copyCode(client.clientCode)}
-                      style={({ pressed }) => [s.codeRow, pressed && s.pressed]}
-                    >
-                      <Text style={s.codeText}>{client.clientCode}</Text>
-                      <Text style={s.copyHint}>{copied ? '✓ copied' : '@ copy'}</Text>
-                    </Pressable>
-                  ) : null}
                 </View>
               </View>
 
-              {/* ── Status pills ── */}
-              {client ? (
-                <View style={s.pillRow}>
-                  {client.tags.length > 0
-                    ? client.tags.map((tag) => <TagPill key={tag} label={tag} tone="neutral" />)
-                    : <TagPill label="Regular client" tone="neutral" />}
-                  {client.expiredPatchTests > 0 ? (
-                    <TagPill label="⚠ Patch test due" tone="warning" />
-                  ) : null}
-                  {client.primaryLocationId ? (
-                    <TagPill label="Deposit on file" tone="success" />
-                  ) : null}
-                  {client.visitCount > 0 ? (
-                    <TagPill label={`${client.visitCount} visit${client.visitCount === 1 ? '' : 's'}`} tone="neutral" />
-                  ) : null}
-                </View>
-              ) : null}
-
-              {/* ── Profile tabs (clients only — stylists have no visit/lab history) ── */}
               {isClient ? (
-                <View style={s.tabBar}>
-                  {(['profile', 'visits', 'lab'] as ProfileTab[]).map((t) => (
-                    <Pressable key={t} onPress={() => setTab(t)} style={s.tabItem}>
-                      <Text style={[s.tabText, tab === t && s.tabTextActive]}>
-                        {t.charAt(0).toUpperCase() + t.slice(1)}
-                      </Text>
-                      {tab === t ? <View style={s.tabUnderline} /> : null}
-                    </Pressable>
-                  ))}
-                </View>
-              ) : null}
-
-              {!isClient || tab === 'profile' ? (
+                <CustomerProfileBody
+                  profile={profile}
+                  editing={editing}
+                  form={form}
+                  saving={saving}
+                  saveError={saveError}
+                  accessToken={accessToken}
+                  onStartEdit={() => startEdit(profile)}
+                  onCancelEdit={cancelEdit}
+                  onSave={() => void save()}
+                  onChangeForm={(patch) => setForm((f) => (f ? { ...f, ...patch } : f))}
+                />
+              ) : (
                 <ContactSection
                   profile={profile}
                   editing={editing}
                   form={form}
                   saving={saving}
                   saveError={saveError}
-                  isClient={isClient}
+                  isClient={false}
                   onStartEdit={() => startEdit(profile)}
                   onCancelEdit={cancelEdit}
                   onSave={() => void save()}
-                  onChangeForm={(patch) => setForm((f) => f ? { ...f, ...patch } : f)}
+                  onChangeForm={(patch) => setForm((f) => (f ? { ...f, ...patch } : f))}
                 />
-              ) : tab === 'visits' ? (
-                <VisitsTab accessToken={accessToken} />
-              ) : (
-                <LabTab accessToken={accessToken} />
               )}
 
               {/* ── Account actions ── */}
@@ -379,6 +332,200 @@ export default function ProfileScreen() {
         {showStylistTabs ? <StylistTabBar /> : null}
       </SafeAreaView>
     </ProtectedScreen>
+  );
+}
+
+// ── Customer profile body (identity + salon tiles) ────────────────────────────
+
+function CustomerProfileBody({
+  profile,
+  editing,
+  form,
+  saving,
+  saveError,
+  accessToken,
+  onStartEdit,
+  onCancelEdit,
+  onSave,
+  onChangeForm,
+}: {
+  profile: UserProfileResponse;
+  editing: boolean;
+  form: EditForm | null;
+  saving: boolean;
+  saveError: string | null;
+  accessToken: string;
+  onStartEdit: () => void;
+  onCancelEdit: () => void;
+  onSave: () => void;
+  onChangeForm: (patch: Partial<EditForm>) => void;
+}) {
+  const { identity } = profile;
+  return (
+    <>
+      {/* ── My details (global identity — shared across every salon) ── */}
+      <View style={s.section}>
+        <View style={s.sectionHeaderRow}>
+          <Text style={s.sectionLabel}>MY DETAILS</Text>
+          {!editing ? (
+            <Pressable onPress={onStartEdit} style={({ pressed }) => [s.editBtn, pressed && s.pressed]}>
+              <Text style={s.editBtnIcon}>✎</Text>
+              <Text style={s.editBtnText}>Edit</Text>
+            </Pressable>
+          ) : (
+            <View style={s.saveRow}>
+              <Pressable
+                onPress={onCancelEdit}
+                style={({ pressed }) => [s.cancelBtn, pressed && s.pressed]}
+                disabled={saving}
+              >
+                <Text style={s.cancelBtnText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={onSave}
+                style={({ pressed }) => [s.saveBtn, pressed && s.pressed, saving && s.saveBtnDisabled]}
+                disabled={saving}
+              >
+                {saving ? (
+                  <ActivityIndicator color={palette.white} size="small" />
+                ) : (
+                  <Text style={s.saveBtnText}>Save</Text>
+                )}
+              </Pressable>
+            </View>
+          )}
+        </View>
+
+        {saveError ? (
+          <View style={s.inlineError}>
+            <Text style={s.inlineErrorText}>{saveError}</Text>
+          </View>
+        ) : null}
+
+        <View style={s.sectionCard}>
+          {editing && form ? (
+            <>
+              <EditField
+                label="First name"
+                value={form.firstName}
+                onChangeText={(v) => onChangeForm({ firstName: v })}
+                autoFocus
+              />
+              <EditField
+                label="Last name"
+                value={form.lastName}
+                onChangeText={(v) => onChangeForm({ lastName: v })}
+              />
+              <EditField
+                label="Phone"
+                value={form.phone}
+                onChangeText={(v) => onChangeForm({ phone: v })}
+                keyboardType="phone-pad"
+              />
+              <ReadOnlyRow label="Email" value={identity.email} accent isLast />
+            </>
+          ) : (
+            <>
+              <ReadOnlyRow label="Full name" value={identity.fullName} />
+              <ReadOnlyRow label="Phone" value={identity.phone ?? '—'} accent />
+              <ReadOnlyRow label="Email" value={identity.email} accent isLast />
+            </>
+          )}
+        </View>
+      </View>
+
+      {/* ── Salons the customer has joined ── */}
+      <SalonsSection accessToken={accessToken} />
+    </>
+  );
+}
+
+function SalonsSection({ accessToken }: { accessToken: string }) {
+  const [salons, setSalons] = useState<CustomerSalonSummary[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    if (!accessToken) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await api.getMySalons(accessToken);
+      setSalons(result.salons);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load your salons');
+    } finally {
+      setLoading(false);
+    }
+  }, [accessToken]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  return (
+    <View style={s.section}>
+      <Text style={s.sectionLabel}>YOUR SALONS</Text>
+      {loading ? (
+        <TabLoading label="Loading your salons…" />
+      ) : error ? (
+        <TabError message={error} onRetry={() => void load()} />
+      ) : !salons || salons.length === 0 ? (
+        <View style={s.salonEmpty}>
+          <Text style={s.salonEmptyTitle}>No salons yet</Text>
+          <Text style={s.mutedSm}>Book an appointment to join a salon — it’ll appear here.</Text>
+          <Pressable
+            onPress={() => router.push('/booking/location')}
+            style={({ pressed }) => [s.salonBookBtn, pressed && s.pressed]}
+          >
+            <Text style={s.salonBookBtnText}>Book an appointment</Text>
+          </Pressable>
+        </View>
+      ) : (
+        <View style={s.salonList}>
+          {salons.map((salon) => (
+            <SalonTile key={salon.clientProfileId} salon={salon} />
+          ))}
+        </View>
+      )}
+    </View>
+  );
+}
+
+function SalonTile({ salon }: { salon: CustomerSalonSummary }) {
+  const locationLine = [salon.locationName, salon.city].filter(Boolean).join(' · ');
+  return (
+    <Pressable
+      onPress={() =>
+        router.push(`/salon-detail?clientProfileId=${encodeURIComponent(salon.clientProfileId)}`)
+      }
+      style={({ pressed }) => [s.salonTile, pressed && s.pressed]}
+    >
+      <View style={s.salonTileIcon}>
+        <Text style={s.salonTileIconText}>{initials(salon.businessName)}</Text>
+      </View>
+      <View style={s.salonTileBody}>
+        <Text style={s.salonTileName} numberOfLines={1}>
+          {salon.businessName}
+        </Text>
+        {locationLine ? (
+          <Text style={s.salonTileMeta} numberOfLines={1}>
+            {locationLine}
+          </Text>
+        ) : null}
+        <View style={s.salonTileStats}>
+          <Text style={s.salonTileCode}>{salon.clientCode}</Text>
+          <Text style={s.salonTileDot}>·</Text>
+          <Text style={s.salonTileStat}>
+            {salon.visitCount} visit{salon.visitCount === 1 ? '' : 's'}
+          </Text>
+        </View>
+      </View>
+      <Text style={s.salonTileChevron}>›</Text>
+    </Pressable>
   );
 }
 
@@ -603,174 +750,7 @@ function ContactSection({
   );
 }
 
-// ── Visits tab ──────────────────────────────────────────────────────────────
-
-function VisitsTab({ accessToken }: { accessToken: string }) {
-  const [visits, setVisits] = useState<CrmVisitSummary[] | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    if (!accessToken) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      // visitHistory is already scoped server-side to completed services.
-      const result = await api.getMobileDashboard(accessToken, 'client');
-      if (result.role === 'client') setVisits(result.visitHistory);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not load visit history');
-    } finally {
-      setLoading(false);
-    }
-  }, [accessToken]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  if (loading) return <TabLoading label="Loading visits…" />;
-  if (error) return <TabError message={error} onRetry={() => void load()} />;
-  if (!visits || visits.length === 0) {
-    return <EmptyTab icon="📋" title="No visits yet" body="Completed visits will appear here." />;
-  }
-
-  return (
-    <View style={s.tabList}>
-      {visits.map((visit, idx) => (
-        <ProfileVisitRow key={visit.id} visit={visit} isLast={idx === visits.length - 1} />
-      ))}
-    </View>
-  );
-}
-
-function ProfileVisitRow({ visit, isLast }: { visit: CrmVisitSummary; isLast: boolean }) {
-  const tone = visitTone(visit.status);
-  return (
-    <Pressable
-      onPress={() => router.push(`/client/visit-detail?id=${encodeURIComponent(visit.id)}`)}
-      style={({ pressed }) => [s.recordRow, isLast && s.recordRowLast, pressed && s.pressed]}
-    >
-      <View style={[s.recordAccent, tone === 'success' ? s.accentGreen : tone === 'warning' ? s.accentAmber : s.accentGray]} />
-      <View style={s.recordBody}>
-        <View style={s.recordTitleRow}>
-          <Text style={s.recordTitle} numberOfLines={1}>
-            {visit.serviceSummary ?? visit.clientVisibleSummary ?? 'Visit'}
-          </Text>
-          <View style={[s.statusPill, tone === 'success' ? s.statusGreen : tone === 'warning' ? s.statusAmber : s.statusGray]}>
-            <Text style={[s.statusPillText, tone === 'success' ? s.statusTextGreen : tone === 'warning' ? s.statusTextAmber : s.statusTextGray]}>
-              {formatStatus(visit.status)}
-            </Text>
-          </View>
-        </View>
-        <View style={s.recordMeta}>
-          <Text style={s.recordMetaText}>{formatDateTime(visit.occurredAt)}</Text>
-          {visit.stylistName ? (
-            <>
-              <View style={s.recordMetaDot} />
-              <Text style={s.recordMetaText}>with {visit.stylistName}</Text>
-            </>
-          ) : null}
-        </View>
-      </View>
-      <Text style={s.recordChevron}>›</Text>
-    </Pressable>
-  );
-}
-
-// ── Lab tab ───────────────────────────────────────────────────────────────────
-
-function LabTab({ accessToken }: { accessToken: string }) {
-  const [formulas, setFormulas] = useState<ClientLabFormulaSummary[] | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    if (!accessToken) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await api.getMyLabHistory(accessToken);
-      setFormulas(result.formulas);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not load lab history');
-    } finally {
-      setLoading(false);
-    }
-  }, [accessToken]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  if (loading) return <TabLoading label="Loading lab history…" />;
-  if (error) return <TabError message={error} onRetry={() => void load()} />;
-  if (!formulas || formulas.length === 0) {
-    return (
-      <EmptyTab icon="🧪" title="No lab records" body="Formula and colour records will appear here." />
-    );
-  }
-
-  return (
-    <View style={s.labList}>
-      {formulas.map((formula) => (
-        <LabFormulaCard key={formula.id} formula={formula} />
-      ))}
-    </View>
-  );
-}
-
-function LabFormulaCard({ formula }: { formula: ClientLabFormulaSummary }) {
-  return (
-    <View style={s.labCard}>
-      <View style={s.labCardHeader}>
-        <Text style={s.labCardTitle}>{formula.serviceType ?? 'Colour formula'}</Text>
-        <Text style={s.labCardDate}>{formatDate(formula.savedAt)}</Text>
-      </View>
-      {formula.items.length === 0 ? (
-        <Text style={s.mutedSm}>No product details recorded.</Text>
-      ) : (
-        formula.items.map((item, idx) => (
-          <View
-            key={`${formula.id}-${idx}`}
-            style={[s.labItemRow, idx === formula.items.length - 1 && s.labItemRowLast]}
-          >
-            <Text style={s.labItemName} numberOfLines={1}>
-              {[item.brand, item.shade].filter(Boolean).join(' ') || item.productName}
-            </Text>
-            <Text style={s.labItemDetail} numberOfLines={1}>
-              {[
-                item.developer,
-                item.ratio,
-                item.processingTimeMinutes != null ? `${item.processingTimeMinutes} min` : null,
-              ]
-                .filter(Boolean)
-                .join(' · ') || item.productName}
-            </Text>
-          </View>
-        ))
-      )}
-    </View>
-  );
-}
-
-// ── Tab state helpers ─────────────────────────────────────────────────────────
-
-function EmptyTab({ icon, title, body }: { icon: string; title: string; body: string }) {
-  return (
-    <View style={s.emptyTab}>
-      <Text style={s.emptyTabIcon}>{icon}</Text>
-      <Text style={s.emptyTabTitle}>{title}</Text>
-      <Text style={s.mutedSm}>{body}</Text>
-    </View>
-  );
-}
+// ── Section state helpers ─────────────────────────────────────────────────────
 
 function TabLoading({ label }: { label: string }) {
   return (
@@ -916,30 +896,6 @@ function AllergyRow({
   );
 }
 
-function TagPill({ label, tone }: { label: string; tone: 'neutral' | 'warning' | 'success' }) {
-  return (
-    <View
-      style={[
-        s.pill,
-        tone === 'warning' ? s.pillWarning : tone === 'success' ? s.pillSuccess : s.pillNeutral,
-      ]}
-    >
-      <Text
-        style={[
-          s.pillText,
-          tone === 'warning'
-            ? s.pillTextWarning
-            : tone === 'success'
-              ? s.pillTextSuccess
-              : s.pillTextNeutral,
-        ]}
-      >
-        {label}
-      </Text>
-    </View>
-  );
-}
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function initials(name: string): string {
@@ -962,31 +918,6 @@ function homeSalonLabel(profile: UserProfileResponse): string {
 
 function clientSince(): string {
   return 'March 2023';
-}
-
-function visitTone(status: string): 'success' | 'warning' | 'neutral' {
-  if (status === 'completed' || status === 'paid') return 'success';
-  if (status === 'cancelled' || status === 'no_show') return 'warning';
-  return 'neutral';
-}
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
-}
-
-function formatDateTime(iso: string): string {
-  const d = new Date(iso);
-  const date = d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
-  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-  return `${date} · ${time}`;
-}
-
-function formatStatus(value: string): string {
-  return value.split('_').map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
 }
 
 function formatHours(hours: number): string {
@@ -1204,6 +1135,56 @@ const s = StyleSheet.create({
     borderColor: BORDER_MED,
     overflow: 'hidden',
   },
+
+  // ── Salon tiles (customer self-profile)
+  salonList: { gap: spacing.sm },
+  salonTile: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    padding: spacing.base,
+    borderRadius: radius.cardLg,
+    backgroundColor: CARD_BG,
+    borderWidth: 1,
+    borderColor: BORDER_MED,
+  },
+  salonTileIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: radius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(196,160,245,0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(196,160,245,0.3)',
+  },
+  salonTileIconText: { color: palette.white, fontSize: 14, fontWeight: '800' },
+  salonTileBody: { flex: 1, gap: 3 },
+  salonTileName: { color: palette.white, fontSize: 15, fontWeight: '800' },
+  salonTileMeta: { color: 'rgba(255,255,255,0.5)', fontSize: 12 },
+  salonTileStats: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 },
+  salonTileCode: { color: BRAND_LIGHT, fontSize: 12, fontWeight: '700', letterSpacing: 0.3 },
+  salonTileDot: { color: 'rgba(255,255,255,0.3)', fontSize: 12 },
+  salonTileStat: { color: 'rgba(255,255,255,0.5)', fontSize: 12 },
+  salonTileChevron: { color: BRAND_LIGHT, fontSize: 22, fontWeight: '300' },
+  salonEmpty: {
+    padding: spacing.lg,
+    borderRadius: radius.cardLg,
+    backgroundColor: CARD_BG,
+    borderWidth: 1,
+    borderColor: BORDER,
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  salonEmptyTitle: { color: palette.white, fontSize: 15, fontWeight: '700' },
+  salonBookBtn: {
+    marginTop: spacing.xs,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.pill,
+    backgroundColor: BRAND,
+  },
+  salonBookBtnText: { color: palette.white, fontSize: 14, fontWeight: '800' },
 
   // ── Edit / Save / Cancel buttons
   saveRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },

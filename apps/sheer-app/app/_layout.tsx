@@ -37,11 +37,14 @@ export default function RootLayout() {
             }}
           >
             <Stack.Screen name="index" options={{ headerShown: false }} />
-            <Stack.Screen name="login" options={{ title: 'Sign in' }} />
+            {/* Auth screens own their immersive, branded canvas + back control. */}
+            <Stack.Screen name="login" options={{ headerShown: false }} />
+            <Stack.Screen name="signup" options={{ headerShown: false }} />
             <Stack.Screen name="dashboard" options={{ headerShown: false }} />
             <Stack.Screen name="client/visits" options={{ headerShown: false }} />
             <Stack.Screen name="client/visit-detail" options={{ headerShown: false }} />
             <Stack.Screen name="profile" options={{ headerShown: false }} />
+            <Stack.Screen name="salon-detail" options={{ headerShown: false }} />
             <Stack.Screen name="manage-appointment" options={{ headerShown: false }} />
             <Stack.Screen name="reschedule" options={{ headerShown: false }} />
             <Stack.Screen name="bookings" options={{ title: 'Bookings' }} />

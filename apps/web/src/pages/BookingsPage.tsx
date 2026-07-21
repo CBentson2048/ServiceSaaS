@@ -7,6 +7,7 @@ import type {
   CreateStylistRebookingRequest,
   PublicBookingServiceSummary,
   RescheduleAppointmentRequest,
+  RotaAbsenceIndicator,
   RotaStaffSummary,
   StaffBookingServiceLine,
   StaffBookingSummary,
@@ -31,6 +32,8 @@ import {
   markRotaAbsence,
   rejectBooking,
   rescheduleBooking,
+  updateRotaAbsence,
+  deleteRotaAbsence,
 } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
 import { useLocationScope } from '../components/LocationScopeContext';
@@ -40,6 +43,7 @@ import {
   type AddBookoutInput,
   type MoveBookingInput,
   type ResizeBookingInput,
+  type UpdateBookoutInput,
 } from '../components/bookings/DayCalendarBoard';
 import { WeekStrip } from '../components/bookings/WeekStrip';
 import { ClientProfileModal } from '../components/bookings/ClientProfileModal';
@@ -468,6 +472,87 @@ export function BookingsPage() {
     [accessToken, selectedLocationId],
   );
 
+  // Drag a bookout (move / resize / reassign). Optimistically patches the rota
+  // absences so the tile lands instantly, reconciles with the server response,
+  // and reverts to the pre-drag state on failure.
+  const handleUpdateBookout = useCallback(
+    async (absence: RotaAbsenceIndicator, input: UpdateBookoutInput) => {
+      if (!accessToken) return;
+      setError(null);
+      const optimistic: RotaAbsenceIndicator = {
+        ...absence,
+        startsAt: input.startAt,
+        endsAt: input.endsAt,
+        staffProfileId: input.staffProfileId ?? absence.staffProfileId,
+      };
+      setRota((current) =>
+        current
+          ? { ...current, absences: current.absences.map((entry) => (entry.id === absence.id ? optimistic : entry)) }
+          : current,
+      );
+      try {
+        const result = await updateRotaAbsence(accessToken, absence.id, {
+          startsAt: input.startAt,
+          endsAt: input.endsAt,
+          staffProfileId: input.staffProfileId,
+        });
+        setRota((current) =>
+          current
+            ? {
+                ...current,
+                absences: current.absences.map((entry) => (entry.id === absence.id ? result.absence : entry)),
+              }
+            : current,
+        );
+        setCheckoutMessage(
+          input.staffName
+            ? `Moved bookout to ${input.staffName} at ${formatTime(input.startAt)}.`
+            : `Updated bookout to ${formatTime(input.startAt)}.`,
+        );
+      } catch (err: unknown) {
+        // Roll the tile back to exactly where it was before the drag.
+        setRota((current) =>
+          current
+            ? { ...current, absences: current.absences.map((entry) => (entry.id === absence.id ? absence : entry)) }
+            : current,
+        );
+        if (err instanceof ApiRequestError) setError(err.message);
+        else if (err instanceof Error) setError(err.message);
+        else setError('Could not update the bookout');
+      }
+    },
+    [accessToken],
+  );
+
+  // Delete a bookout (confirm → hard delete). Optimistically removes the tile and
+  // restores it if the server rejects the delete.
+  const handleDeleteBookout = useCallback(
+    async (absence: RotaAbsenceIndicator) => {
+      if (!accessToken) return;
+      const label = absence.bookOutTypeName || absence.notes || 'this bookout';
+      if (!window.confirm(`Delete ${label}? This can't be undone.`)) return;
+      setError(null);
+      setRota((current) =>
+        current ? { ...current, absences: current.absences.filter((entry) => entry.id !== absence.id) } : current,
+      );
+      try {
+        await deleteRotaAbsence(accessToken, absence.id);
+        setCheckoutMessage('Bookout deleted.');
+      } catch (err: unknown) {
+        // Restore the removed bookout on failure.
+        setRota((current) =>
+          current && !current.absences.some((entry) => entry.id === absence.id)
+            ? { ...current, absences: [...current.absences, absence] }
+            : current,
+        );
+        if (err instanceof ApiRequestError) setError(err.message);
+        else if (err instanceof Error) setError(err.message);
+        else setError('Could not delete the bookout');
+      }
+    },
+    [accessToken],
+  );
+
   useEffect(() => {
     void reload();
   }, [reload]);
@@ -754,6 +839,9 @@ export function BookingsPage() {
             onDragBlocked={(staffName) =>
               setError(`Can’t place the appointment outside ${staffName}’s working hours.`)
             }
+            // Moving / deleting a bookout are owner/manager actions (mirrors cancel).
+            onUpdateBookout={isReviewer ? (absence, input) => void handleUpdateBookout(absence, input) : undefined}
+            onDeleteBookout={isReviewer ? (absence) => void handleDeleteBookout(absence) : undefined}
           />
         )}
       </div>

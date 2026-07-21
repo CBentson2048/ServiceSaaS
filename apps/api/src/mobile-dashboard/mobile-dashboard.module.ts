@@ -8,5 +8,6 @@ import { MobileDashboardService } from './mobile-dashboard.service';
   imports: [AuthModule, OwnerTaxSettingsModule],
   controllers: [MobileDashboardController],
   providers: [MobileDashboardService],
+  exports: [MobileDashboardService],
 })
 export class MobileDashboardModule {}

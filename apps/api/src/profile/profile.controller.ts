@@ -1,5 +1,12 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Query, UseGuards } from '@nestjs/common';
-import type { AuthUser, ListProfilesResponse, UpdateProfileResponse, UserProfileResponse } from '@sheer/domain';
+import type {
+  AuthUser,
+  CustomerSalonDetailResponse,
+  CustomerSalonsResponse,
+  ListProfilesResponse,
+  UpdateProfileResponse,
+  UserProfileResponse,
+} from '@sheer/domain';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { RequireRoles, RolesGuard } from '../auth/roles.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
@@ -28,6 +35,21 @@ export class ProfileController {
   @HttpCode(204)
   deleteMe(@CurrentUser() actor: AuthUser): Promise<void> {
     return this.profiles.deleteCurrentAccount(actor);
+  }
+
+  // The customer's own salons (tiles on their profile home). Declared before the
+  // parameterised admin routes below so 'me' + 'salons' never match a :param.
+  @Get('me/salons')
+  getMySalons(@CurrentUser() actor: AuthUser): Promise<CustomerSalonsResponse> {
+    return this.profiles.listMySalons(actor);
+  }
+
+  @Get('me/salons/:clientProfileId')
+  getMySalonDetail(
+    @CurrentUser() actor: AuthUser,
+    @Param('clientProfileId') clientProfileId: string,
+  ): Promise<CustomerSalonDetailResponse> {
+    return this.profiles.getMySalonDetail(actor, clientProfileId);
   }
 
   @Get()

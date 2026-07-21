@@ -50,7 +50,6 @@ interface ServiceRow {
   description: string | null;
   service_category_id: string | null;
   estimated_duration_minutes: number;
-  processing_time_minutes: number;
   base_price: number | string;
   deposit_type: 'none' | 'fixed_amount' | 'percentage';
   deposit_value: number | string;
@@ -77,7 +76,7 @@ interface SegmentRow {
 
 const CATEGORY_COLUMNS = 'id,business_id,name,description,color_hex,is_active,sort_order,created_at,updated_at';
 const SERVICE_COLUMNS =
-  'id,business_id,location_id,name,description,service_category_id,estimated_duration_minutes,processing_time_minutes,base_price,deposit_type,deposit_value,requires_patch_test,rebooking_nudge_enabled,rebooking_nudge_interval_days,is_active,sort_order,created_at,updated_at';
+  'id,business_id,location_id,name,description,service_category_id,estimated_duration_minutes,base_price,deposit_type,deposit_value,requires_patch_test,rebooking_nudge_enabled,rebooking_nudge_interval_days,is_active,sort_order,created_at,updated_at';
 const SEGMENT_COLUMNS = 'id,business_id,service_id,name,duration_minutes,is_stylist_free,sort_order,created_at,updated_at';
 
 @Injectable()
@@ -644,7 +643,6 @@ function toServicePatch(dto: UpsertServiceDto): Record<string, unknown> {
     description: clean(dto.description),
     service_category_id: dto.serviceCategoryId ?? null,
     estimated_duration_minutes: dto.estimatedDurationMinutes,
-    processing_time_minutes: dto.processingTimeMinutes ?? 0,
     base_price: dto.basePrice ?? 0,
     deposit_type: depositType,
     deposit_value: depositValue,
@@ -705,7 +703,6 @@ function toService(
     serviceCategoryId: row.service_category_id ?? undefined,
     category: row.service_category_id ? categoryNames?.get(row.service_category_id) : undefined,
     estimatedDurationMinutes: row.estimated_duration_minutes,
-    processingTimeMinutes: row.processing_time_minutes,
     basePrice: Number(row.base_price),
     depositType: row.deposit_type,
     depositValue: Number(row.deposit_value),

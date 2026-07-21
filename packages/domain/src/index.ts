@@ -167,6 +167,13 @@ export interface AuthUser {
    * grants, or a multi-role user silently loses access to it.
    */
   primaryRole: UserRole;
+  /**
+   * The business this session is resolved against. Empty string ('') for a
+   * customer who has registered but not yet joined any salon — they hold no
+   * membership until their first booking creates one (see {@link userHasJoinedSalon}).
+   * Business-scoped API endpoints are unreachable for such a user; never query
+   * with an empty businessId — branch on `userHasJoinedSalon` first.
+   */
   businessId: string;
   businessName?: string;
   businessSlug?: string;
@@ -228,6 +235,17 @@ export function userHasAnyRole(
   roles: readonly UserRole[],
 ): boolean {
   return !!user && user.roles.some((role) => roles.includes(role));
+}
+
+/**
+ * True once the user belongs to at least one salon — i.e. they hold a resolved
+ * business context. False for a freshly-registered customer who has not booked
+ * anywhere yet ({@link AuthUser.businessId} is ''). Use this, not a truthy check
+ * on businessId, to gate salon-scoped UI (dashboards, bookings) vs. the
+ * "find a salon & book your first appointment" onboarding state.
+ */
+export function userHasJoinedSalon(user: Pick<AuthUser, 'businessId'> | null | undefined): boolean {
+  return !!user && user.businessId !== '';
 }
 
 // ===========================================================================
@@ -2688,6 +2706,42 @@ export interface MobileClientDashboardResponse {
   visitHistory: CrmVisitSummary[];
 }
 
+// ---------------------------------------------------------------------------
+// Customer self-profile: salons the customer has joined.
+//
+// A QLOOQO customer account is a single global identity (name/phone) that can
+// belong to many salons — one `client_profile` per salon, each with its own
+// immutable client code and communication preference. The customer's own
+// profile lists these as tiles (see {@link CustomerSalonsResponse}); tapping a
+// tile opens the per-salon detail (see {@link CustomerSalonDetailResponse}).
+// ---------------------------------------------------------------------------
+export interface CustomerSalonSummary {
+  /** The customer's client-profile id at this salon (their per-salon record). */
+  clientProfileId: string;
+  businessId: string;
+  businessName: string;
+  locationId?: string;
+  locationName?: string;
+  city?: string;
+  /** Per-salon client code (globally unique, immutable). */
+  clientCode: string;
+  communicationPreference?: CommunicationPreference;
+  visitCount: number;
+  lastVisitAt?: string;
+}
+
+export interface CustomerSalonsResponse {
+  salons: CustomerSalonSummary[];
+}
+
+export interface CustomerSalonDetailResponse {
+  salon: CustomerSalonSummary;
+  /** Recent visits at this salon (most recent first). */
+  visits: CrmVisitSummary[];
+  /** The customer's colour formulas recorded at this salon (client-safe view). */
+  formulas: ClientLabFormulaSummary[];
+}
+
 // Client-facing lab/colour history: a cost-stripped view of a customer's own
 // saved formulas so they can see what colour and products were used on them.
 // Salon cost, waste, billing and inventory data are intentionally omitted — the
@@ -3097,7 +3151,6 @@ export interface ManagedService {
   /** Resolved category name for display; undefined when uncategorised. */
   category?: string;
   estimatedDurationMinutes: number;
-  processingTimeMinutes: number;
   /** Price in major currency units (e.g. pounds), matching numeric(12,2). */
   basePrice: number;
   depositType: ServiceDepositType;
@@ -3146,7 +3199,6 @@ export interface UpsertServiceRequest {
   serviceCategoryId?: string | null;
   locationId?: string | null;
   estimatedDurationMinutes: number;
-  processingTimeMinutes?: number;
   basePrice?: number;
   depositType?: ServiceDepositType;
   depositValue?: number;
@@ -4292,6 +4344,17 @@ export interface CreateAbsenceRequest {
   notes?: string;
   /** Optional configurable book-out type driving availability/utilisation. */
   bookOutTypeId?: string;
+}
+
+/**
+ * Move / reschedule / reassign a placed bookout (rota absence). All fields are
+ * optional so the calendar can send only what a drag changed: `startsAt` +
+ * `endsAt` for a move or resize, `staffProfileId` to drop it on another stylist.
+ */
+export interface UpdateAbsenceRequest {
+  startsAt?: string;
+  endsAt?: string | null;
+  staffProfileId?: string;
 }
 
 export interface AbsenceMutationResponse {

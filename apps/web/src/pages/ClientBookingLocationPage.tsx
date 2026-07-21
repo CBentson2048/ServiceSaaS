@@ -233,6 +233,11 @@ export function ClientBookingLocationPage() {
                 <div className="mt-1 text-[12px] text-text-secondary">
                   Online booking available
                 </div>
+                {location.salonCode ? (
+                  <div className="mt-2 font-mono text-[11px] tracking-wide text-text-muted">
+                    Salon Code: {location.salonCode}
+                  </div>
+                ) : null}
               </AppCard>
             </button>
           ))}

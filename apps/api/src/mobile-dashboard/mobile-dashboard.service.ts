@@ -169,15 +169,31 @@ export class MobileDashboardService {
   }
 
   async client(actor: AuthUser): Promise<MobileClientDashboardResponse> {
-    if (!userHasRole(actor, 'client') || !actor.clientProfileId) {
+    if (!userHasRole(actor, 'client')) {
       throw new ForbiddenException('Client dashboard requires a client account');
+    }
+
+    // A customer who has registered but not yet joined any salon has no client
+    // profile. Return an empty dashboard so the app shows the "find a salon &
+    // book your first appointment" home instead of erroring.
+    if (!actor.clientProfileId) {
+      return {
+        role: 'client',
+        profile: {
+          id: actor.id,
+          displayName: actor.profile.fullName,
+          communicationPreference: actor.clientCommunicationPreference ?? undefined,
+        },
+        upcomingAppointments: [],
+        visitHistory: [],
+      };
     }
 
     const now = new Date().toISOString();
     const [profile, upcomingAppointments, visitHistory] = await Promise.all([
       this.fetchClientProfile(actor.businessId, actor.clientProfileId),
       this.fetchClientUpcomingAppointments(actor.businessId, actor.clientProfileId, now),
-      this.fetchClientVisitHistory(actor.businessId, actor.clientProfileId),
+      this.getClientVisitHistory(actor.businessId, actor.clientProfileId),
     ]);
 
     return {
@@ -336,7 +352,14 @@ export class MobileDashboardService {
     return map;
   }
 
-  private async fetchClientVisitHistory(businessId: string, clientProfileId: string): Promise<CrmVisitSummary[]> {
+  // Completed visit history for a (business, client_profile) pair. Public so the
+  // customer self-profile can reuse it per salon — callers must already have
+  // authorized access to the client profile.
+  async getClientVisitHistory(
+    businessId: string,
+    clientProfileId: string,
+    limit = 5,
+  ): Promise<CrmVisitSummary[]> {
     const { data, error } = await this.admin
       .schema('booking')
       .from('visits')
@@ -348,9 +371,9 @@ export class MobileDashboardService {
       // "completed visit" definition used by KPI and rebooking services.
       .in('status', ['completed', 'awaiting_payment', 'paid'])
       .order('created_at', { ascending: false })
-      .limit(5)
+      .limit(limit)
       .returns<VisitRow[]>();
-    if (error) this.throwQueryError('fetchClientVisitHistory', error.message);
+    if (error) this.throwQueryError('getClientVisitHistory', error.message);
 
     const visits = (data ?? []).map(toVisitSummary);
     const staffNames = await this.fetchStaffNames(

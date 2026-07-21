@@ -1,8 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Linking,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import type { PublicBookingLocationSummary } from '@sheer/domain';
+import type { PublicBookingLocationSummary, PublicSalonSummary } from '@sheer/domain';
 import { palette, spacing } from '@sheer/design-tokens';
 import { AppButton, Card, EmptyState, SectionHeader } from '@sheer/ui-mobile';
 import { ProtectedScreen } from '../../src/auth/ProtectedScreen';
@@ -18,6 +27,10 @@ export default function BookingLocationScreen() {
   const [locations, setLocations] = useState<PublicBookingLocationSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<PublicSalonSummary[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [resolvingSalon, setResolvingSalon] = useState(false);
 
   const load = useCallback(async () => {
     if (!accessToken) return;
@@ -44,9 +57,63 @@ export default function BookingLocationScreen() {
     void load();
   }, [load]);
 
+  // Debounced salon-directory search (name / Salon Code / stylist Q Code). The
+  // dropdown list below is hidden while a query is active so the two don't clash.
+  useEffect(() => {
+    const normalized = query.trim();
+    if (normalized.length < 2) {
+      setSearchResults([]);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      setError(null);
+      api
+        .searchPublicSalons(normalized)
+        .then((result) => {
+          if (!cancelled) setSearchResults(result.salons);
+        })
+        .catch((err) => {
+          if (!cancelled) setError(err instanceof Error ? err.message : 'Could not search salons');
+        })
+        .finally(() => {
+          if (!cancelled) setSearching(false);
+        });
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [query]);
+
+  // A searched salon comes back as a directory summary; resolve it into a full
+  // bookable location (same shape as the dropdown) before selecting it.
+  const chooseSalon = useCallback(
+    async (salon: PublicSalonSummary) => {
+      if (!accessToken) return;
+      setResolvingSalon(true);
+      setError(null);
+      try {
+        const result = await api.getMobileBookingSelection(accessToken, {
+          locationId: salon.locationId,
+        });
+        updateDraft({ location: result.location });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Could not open this salon');
+      } finally {
+        setResolvingSalon(false);
+      }
+    },
+    [accessToken, updateDraft],
+  );
+
   function continueToServices() {
     if (draft.location) router.push('/booking/services');
   }
+
+  const hasQuery = query.trim().length >= 2;
 
   return (
     <ProtectedScreen allowedRoles={['client']}>
@@ -77,32 +144,73 @@ export default function BookingLocationScreen() {
           <View style={styles.hero}>
             <Text style={styles.heroTitle}>Choose your salon</Text>
             <Text style={styles.heroBody}>
-              Select the salon that works best for your appointment. Availability, services, and stylists are tailored to this location.
+              Search by salon name, Salon Code, or your stylist&apos;s Q Code — or pick from the list below.
             </Text>
+          </View>
+
+          {/* ── Find a salon (search) ── */}
+          <View style={s.searchBlock}>
+            <Text style={s.searchLabel}>Find your salon</Text>
+            <TextInput
+              value={query}
+              onChangeText={setQuery}
+              placeholder="Salon name, Salon Code, or Q Code"
+              placeholderTextColor="rgba(255,255,255,0.4)"
+              autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType="search"
+              style={s.searchInput}
+            />
           </View>
 
           {error ? <ErrorCard message={error} onRetry={() => void load()} /> : null}
 
-          {loading ? (
-            <LoadingCard label="Loading locations..." />
-          ) : locations.length === 0 ? (
-            <EmptyState title="No salons available" body="Online booking is not available right now." />
-          ) : (
+          {searching ? <InfoNote text="Searching salons…" /> : null}
+
+          {hasQuery && !searching && searchResults.length === 0 && !error ? (
+            <InfoNote text="No matching salon found. Check the name or code and try again." />
+          ) : null}
+
+          {searchResults.length > 0 ? (
             <View style={styles.list}>
               <SectionHeader
-                title="Available salons"
-                subtitle={`${locations.length} location${locations.length === 1 ? '' : 's'} ready for booking.`}
+                title="Search results"
+                subtitle={`${searchResults.length} salon${searchResults.length === 1 ? '' : 's'} matched.`}
               />
-              {locations.map((location) => (
-                <SalonCard
-                  key={location.id}
-                  location={location}
-                  selected={draft.location?.id === location.id}
-                  onPress={() => updateDraft({ location })}
+              {searchResults.map((salon) => (
+                <SalonSearchResultCard
+                  key={salon.locationId}
+                  salon={salon}
+                  selected={draft.location?.id === salon.locationId}
+                  onPress={() => void chooseSalon(salon)}
                 />
               ))}
             </View>
-          )}
+          ) : null}
+
+          {/* ── Full list (hidden while searching) ── */}
+          {!hasQuery ? (
+            loading ? (
+              <LoadingCard label="Loading locations..." />
+            ) : locations.length === 0 ? (
+              <EmptyState title="No salons available" body="Online booking is not available right now." />
+            ) : (
+              <View style={styles.list}>
+                <SectionHeader
+                  title="Available salons"
+                  subtitle={`${locations.length} location${locations.length === 1 ? '' : 's'} ready for booking.`}
+                />
+                {locations.map((location) => (
+                  <SalonCard
+                    key={location.id}
+                    location={location}
+                    selected={draft.location?.id === location.id}
+                    onPress={() => updateDraft({ location })}
+                  />
+                ))}
+              </View>
+            )
+          ) : null}
         </ScrollView>
 
         {/* ── Pinned footer: Continue always visible, no scroll needed ── */}
@@ -114,7 +222,11 @@ export default function BookingLocationScreen() {
           ) : (
             <Text style={s.footerHintMuted}>Select a salon to continue</Text>
           )}
-          <AppButton label="Continue" disabled={!draft.location} onPress={continueToServices} />
+          <AppButton
+            label={resolvingSalon ? 'Opening salon…' : 'Continue'}
+            disabled={!draft.location || resolvingSalon}
+            onPress={continueToServices}
+          />
         </SafeAreaView>
       </SafeAreaView>
     </ProtectedScreen>
@@ -135,6 +247,14 @@ function LoadingCard({ label }: { label: string }) {
   );
 }
 
+function InfoNote({ text }: { text: string }) {
+  return (
+    <Card>
+      <Text style={styles.subtitle}>{text}</Text>
+    </Card>
+  );
+}
+
 function ErrorCard({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <Card>
@@ -142,6 +262,49 @@ function ErrorCard({ message, onRetry }: { message: string; onRetry: () => void 
       <Text style={styles.error}>{message}</Text>
       <AppButton label="Try again" variant="secondary" onPress={onRetry} />
     </Card>
+  );
+}
+
+function SalonSearchResultCard({
+  salon,
+  selected,
+  onPress,
+}: {
+  salon: PublicSalonSummary;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  const metaLine = [salon.businessName !== salon.name ? salon.businessName : null, salon.city]
+    .filter(Boolean)
+    .join(' · ');
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [styles.pressable, pressed && styles.pressed]}
+    >
+      <View style={[styles.panel, selected && styles.panelSelected]}>
+        <View style={styles.cardTop}>
+          <View style={styles.iconBadge}>
+            <Text style={styles.iconText}>{salon.name.charAt(0).toUpperCase()}</Text>
+          </View>
+          <View style={styles.flex}>
+            <Text style={styles.title}>{salon.name}</Text>
+            <Text style={styles.subtitle}>{metaLine || 'Online booking available'}</Text>
+          </View>
+          <View style={[styles.pill, selected && styles.pillSelected]}>
+            <Text style={[styles.pillText, selected && styles.pillTextSelected]}>
+              {selected ? 'Selected' : 'Choose'}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.divider} />
+
+        <Text style={s.salonCode}>Salon Code · {salon.salonCode}</Text>
+      </View>
+    </Pressable>
   );
 }
 
@@ -175,6 +338,9 @@ function SalonCard({
           <View style={styles.flex}>
             <Text style={styles.title}>{location.name}</Text>
             <Text style={styles.subtitle}>Professional booking · {location.currencyCode}</Text>
+            {location.salonCode ? (
+              <Text style={s.salonCode}>Salon Code · {location.salonCode}</Text>
+            ) : null}
           </View>
           <View style={[styles.pill, selected && styles.pillSelected]}>
             <Text style={[styles.pillText, selected && styles.pillTextSelected]}>
@@ -300,6 +466,34 @@ const s = StyleSheet.create({
     gap: spacing.base,
     padding: spacing.lg,
     paddingBottom: spacing.xl,
+  },
+
+  // ── Search
+  searchBlock: {
+    gap: spacing.sm,
+  },
+  searchLabel: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  searchInput: {
+    minHeight: 48,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: BORDER_MED,
+    paddingHorizontal: spacing.base,
+    paddingVertical: spacing.md,
+    color: palette.white,
+    fontSize: 15,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  salonCode: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    fontVariant: ['tabular-nums'],
   },
 
   // ── Pinned footer

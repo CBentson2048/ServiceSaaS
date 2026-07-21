@@ -520,8 +520,13 @@ export class LabFormulaService {
   // it ever leaves the API. Reuses historyForClient (which already scopes a
   // client to their own clientProfileId) and maps to the client-safe shape.
   async historyForSelf(actor: AuthUser): Promise<ClientLabHistoryResponse> {
-    if (!userHasRole(actor, 'client') || !actor.clientProfileId) {
+    if (!userHasRole(actor, 'client')) {
       throw new ForbiddenException('Lab history requires a client account');
+    }
+    // A salon-less customer has no client profile (and no formulas) yet — return
+    // an empty history so the profile's Lab tab renders instead of erroring.
+    if (!actor.clientProfileId) {
+      return { formulas: [] };
     }
     const records = await this.historyForClient(actor, actor.clientProfileId);
     return { formulas: records.map(toClientLabFormulaSummary) };
@@ -571,6 +576,39 @@ export class LabFormulaService {
 
     const stylists = await this.resolveFormulaStylists(actor.businessId, rows);
     return rows.map((row) => toHistoryRecord(row, stylists));
+  }
+
+  /**
+   * Client-safe (cost/waste/billing-stripped) saved formulas for a specific
+   * (business, client_profile) pair. The CALLER must have already authorized
+   * that the requester owns this client profile — this method does no scope
+   * check of its own. Used by the customer self-profile to show a customer their
+   * colour history at a chosen salon (which may differ from the single salon
+   * their session resolved to).
+   */
+  async clientSafeHistoryForProfile(
+    businessId: string,
+    clientProfileId: string,
+  ): Promise<ClientLabFormulaSummary[]> {
+    const { data, error } = await this.admin
+      .schema('lab')
+      .from('formulas')
+      .select(SAVED_FORMULA_COLUMNS)
+      .eq('business_id', businessId)
+      .eq('client_profile_id', clientProfileId)
+      .eq('status', 'saved')
+      .not('saved_at', 'is', null)
+      .order('saved_at', { ascending: false })
+      .limit(FORMULA_HISTORY_LIMIT)
+      .returns<SavedFormulaRow[]>();
+    if (error) {
+      this.logger.error(`clientSafeHistoryForProfile failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load formula history');
+    }
+    const rows = data ?? [];
+    if (rows.length === 0) return [];
+    const stylists = await this.resolveFormulaStylists(businessId, rows);
+    return rows.map((row) => toClientLabFormulaSummary(toHistoryRecord(row, stylists)));
   }
 
   /**
