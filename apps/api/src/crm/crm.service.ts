@@ -462,7 +462,8 @@ export class CrmService {
    */
   private async fetchClientFormulas(actor: AuthUser, clientId: string): Promise<CrmClientFormula[]> {
     try {
-      const records = await this.labFormulas.historyForClient(actor, clientId);
+      // Staff-facing profile: include durable drafts (badged via isDraft).
+      const records = await this.labFormulas.historyForClient(actor, clientId, { includeDrafts: true });
       return records.map(toCrmClientFormula);
     } catch (error) {
       this.logger.error(
@@ -1406,6 +1407,8 @@ function toCrmClientFormula(record: LabClientFormulaHistoryRecord): CrmClientFor
     staffProfileId: record.staffProfileId,
     stylistName: record.stylistName,
     serviceType: record.visit?.serviceType,
+    notes: record.notes,
+    isDraft: record.isDraft || undefined,
     items: record.items.map((item) => ({
       productName: item.productName,
       brand: item.brand,

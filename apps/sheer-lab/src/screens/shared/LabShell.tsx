@@ -21,6 +21,7 @@ import type { BleConnectionStatus } from '../../features/ble/types';
 import { logoutLabSession } from '../../features/sheer-lab/labSession';
 import { labLightTheme } from '../../theme/labTheme';
 import { BrandMark } from './BrandMark';
+import { BrandWordmark } from './BrandWordmark';
 
 export const t = labLightTheme;
 export const c = t.colors;
@@ -228,7 +229,7 @@ export function TopBar({
       <View style={styles.brandBlock}>
         <View style={styles.brandRow}>
           <BrandMark size={30} />
-          <Text style={styles.brandText}>QLOOQO LAB</Text>
+          <BrandWordmark height={20} />
         </View>
         <Pill label={scale.label} tone={scale.tone} subtle />
       </View>
@@ -459,7 +460,6 @@ const styles = StyleSheet.create({
   // Left stack: title row on top, scale-state badge beneath it.
   brandBlock: { alignItems: 'flex-start', gap: 4 },
   brandRow: { flexDirection: 'row', alignItems: 'center', gap: t.spacing.sm },
-  brandText: { color: c.textPrimary, fontSize: t.typography.fontSize.subtitle, fontWeight: '700', letterSpacing: 1 },
   // Right controls: reload, settings, then the avatar at the far end.
   topActions: { flexDirection: 'row', alignItems: 'center', gap: t.spacing.sm },
   iconButton: {

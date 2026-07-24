@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode, type SVGProps } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import type {
-  AppointmentCompletionLineItem,
   AppointmentCompletionResponse,
+  AppointmentPaymentConfirmationResponse,
+  AppointmentPaymentTender,
   BookOutType,
   CreateStylistRebookingRequest,
   PublicBookingServiceSummary,
   RescheduleAppointmentRequest,
   RotaAbsenceIndicator,
   RotaStaffSummary,
+  SalonPaymentMethod,
   StaffBookingServiceLine,
   StaffBookingSummary,
   WeeklyRotaResponse,
@@ -48,6 +50,7 @@ import {
 import { WeekStrip } from '../components/bookings/WeekStrip';
 import { ClientProfileModal } from '../components/bookings/ClientProfileModal';
 import type { CalendarToolbarKey, CalendarToolbarState } from '../components/bookings/CalendarToolbar';
+import { BillPayments, ItemisedBill, formatMoney, formatPaymentMethod } from '../components/bookings/ItemisedBill';
 import { isSameLocalDay, snapToMonday, toIsoDate } from '../components/rota/dateUtils';
 
 export function BookingsPage() {
@@ -72,7 +75,6 @@ export function BookingsPage() {
   const [completionLoadingId, setCompletionLoadingId] = useState<string | null>(null);
   const [paymentLoadingId, setPaymentLoadingId] = useState<string | null>(null);
   const [checkoutSummary, setCheckoutSummary] = useState<AppointmentCompletionResponse | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card_reader'>('card_reader');
   const [checkoutMessage, setCheckoutMessage] = useState<string | null>(null);
   const [rebookingLoading, setRebookingLoading] = useState(false);
   const [rebookingSkipped, setRebookingSkipped] = useState<Record<string, boolean>>({});
@@ -317,25 +319,23 @@ export function BookingsPage() {
   );
 
   const handleConfirmPayment = useCallback(
-    async (summary: AppointmentCompletionResponse) => {
+    async (summary: AppointmentCompletionResponse, payments: AppointmentPaymentTender[]) => {
       if (!accessToken) return;
       setPaymentLoadingId(summary.appointment.id);
       setError(null);
       try {
-        const result = await confirmBookingPayment(accessToken, summary.appointment.id, {
-          paymentMethod,
-          amountCents: summary.billing.balanceDueCents,
-        });
+        const result = await confirmBookingPayment(accessToken, summary.appointment.id, { payments });
         setBookings((current) =>
           current.map((entry) => (entry.id === result.appointment.id ? { ...entry, ...result.appointment } : entry)),
         );
         setCheckoutSummary(result);
-        setCheckoutMessage(
-          `Payment confirmed for ${result.appointment.clientDisplayName}: ${formatMoney(
-            result.payment.amountCents,
-            result.payment.currencyCode,
-          )} by ${formatPaymentMethod(result.payment.paymentMethod)}.`,
-        );
+        const settled = result.payments
+          .map(
+            (payment) =>
+              `${formatMoney(payment.amountCents, payment.currencyCode)} ${formatPaymentMethod(payment.paymentMethod).toLowerCase()}`,
+          )
+          .join(' + ');
+        setCheckoutMessage(`Payment confirmed for ${result.appointment.clientDisplayName}: ${settled}.`);
       } catch (err: unknown) {
         if (err instanceof ApiRequestError) setError(err.message);
         else if (err instanceof Error) setError(err.message);
@@ -344,7 +344,7 @@ export function BookingsPage() {
         setPaymentLoadingId(null);
       }
     },
-    [accessToken, paymentMethod],
+    [accessToken],
   );
 
   const handleCreateRebooking = useCallback(
@@ -729,10 +729,8 @@ export function BookingsPage() {
         <ModalScrim onClose={handleCloseCheckout} label="Checkout">
           <CheckoutPanel
             summary={checkoutSummary}
-            paymentMethod={paymentMethod}
             paymentLoading={paymentLoadingId === checkoutSummary.appointment.id}
-            onPaymentMethodChange={setPaymentMethod}
-            onConfirmPayment={() => void handleConfirmPayment(checkoutSummary)}
+            onConfirmPayment={(payments) => void handleConfirmPayment(checkoutSummary, payments)}
             rebookingLoading={rebookingLoading}
             rebookingSkipped={Boolean(rebookingSkipped[checkoutSummary.appointment.id])}
             onSkipRebooking={() =>
@@ -1281,28 +1279,86 @@ function formatServicePrice(amount: number, currencyCode: string): string {
 
 function CheckoutPanel({
   summary,
-  paymentMethod,
   paymentLoading,
   rebookingLoading,
   rebookingSkipped,
-  onPaymentMethodChange,
   onConfirmPayment,
   onSkipRebooking,
   onCreateRebooking,
   onClose,
 }: {
   summary: AppointmentCompletionResponse;
-  paymentMethod: 'cash' | 'card_reader';
   paymentLoading: boolean;
   rebookingLoading: boolean;
   rebookingSkipped: boolean;
-  onPaymentMethodChange: (method: 'cash' | 'card_reader') => void;
-  onConfirmPayment: () => void;
+  onConfirmPayment: (payments: AppointmentPaymentTender[]) => void;
   onSkipRebooking: () => void;
   onCreateRebooking: (payload: CreateStylistRebookingRequest) => void;
   onClose: () => void;
 }) {
   const isPaid = summary.checkout.status === 'paid';
+  // Tenders recorded by a just-confirmed payment. Absent when reopening an
+  // already-settled checkout — the bill page keeps the full breakdown.
+  const paidTenders = (summary as Partial<AppointmentPaymentConfirmationResponse>).payments ?? [];
+  const balanceCents = summary.billing.balanceDueCents;
+  const currencyCode = summary.billing.currencyCode;
+
+  const [method, setMethod] = useState<SalonPaymentMethod>('card_reader');
+  const [split, setSplit] = useState(false);
+  const [cashText, setCashText] = useState('');
+  const [cardText, setCardText] = useState('');
+
+  const cashCents = parsePoundsToCents(cashText);
+  const cardCents = parsePoundsToCents(cardText);
+  const splitValid = cashCents !== null && cardCents !== null;
+  const remainingCents = splitValid ? balanceCents - cashCents - cardCents : null;
+  const canConfirmSplit = splitValid && remainingCents === 0 && !paymentLoading;
+
+  // Start the split from "all on card" so the tally already foots; typing a
+  // cash amount pulls the card share down in real time (and vice versa).
+  function beginSplit() {
+    setSplit(true);
+    setCashText('');
+    setCardText(centsToPoundsText(balanceCents));
+  }
+
+  function handleCashChange(text: string) {
+    setCashText(text);
+    const cents = parsePoundsToCents(text);
+    if (cents !== null) setCardText(centsToPoundsText(Math.max(0, balanceCents - cents)));
+  }
+
+  function handleCardChange(text: string) {
+    setCardText(text);
+    const cents = parsePoundsToCents(text);
+    if (cents !== null) setCashText(centsToPoundsText(Math.max(0, balanceCents - cents)));
+  }
+
+  function confirm() {
+    if (!split) {
+      onConfirmPayment([{ paymentMethod: method, amountCents: balanceCents }]);
+      return;
+    }
+    if (!splitValid || remainingCents !== 0) return;
+    const tenders: AppointmentPaymentTender[] = [];
+    if (cashCents > 0) tenders.push({ paymentMethod: 'cash', amountCents: cashCents });
+    if (cardCents > 0) tenders.push({ paymentMethod: 'card_reader', amountCents: cardCents });
+    // A fully deposit-covered bill has nothing to split; settle it as a single
+    // zero tender exactly like the non-split path would.
+    if (tenders.length === 0) tenders.push({ paymentMethod: method, amountCents: 0 });
+    onConfirmPayment(tenders);
+  }
+
+  const tallyLabel =
+    remainingCents === null
+      ? 'Enter valid amounts'
+      : remainingCents === 0
+        ? `Left to collect: ${formatMoney(0, currencyCode)}`
+        : remainingCents > 0
+          ? `Left to collect: ${formatMoney(remainingCents, currencyCode)}`
+          : `${formatMoney(-remainingCents, currencyCode)} over the bill`;
+  const tallyTone =
+    remainingCents === 0 ? 'text-success' : remainingCents !== null && remainingCents > 0 ? 'text-warning' : 'text-danger';
   return (
     <AppCard elevation="hero" padding="lg" className="rounded-card-lg">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -1337,26 +1393,92 @@ function CheckoutPanel({
         onCreate={onCreateRebooking}
       />
 
-      {!isPaid ? (
+      {!isPaid && !split ? (
         <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-col gap-1.5">
             <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-text-muted">Payment method</span>
-            <div className="flex gap-2">
-              {(['card_reader', 'cash'] as const).map((method) => (
+            <div className="flex items-center gap-2">
+              {(['card_reader', 'cash'] as const).map((option) => (
                 <Pill
-                  key={method}
-                  label={formatPaymentMethod(method)}
-                  active={paymentMethod === method}
+                  key={option}
+                  label={formatPaymentMethod(option)}
+                  active={method === option}
                   tone="ink"
-                  onClick={() => onPaymentMethodChange(method)}
+                  onClick={() => setMethod(option)}
                 />
               ))}
+              {balanceCents > 0 ? (
+                <button
+                  type="button"
+                  onClick={beginSplit}
+                  className="text-[12px] font-medium text-primary transition hover:underline"
+                >
+                  Split cash &amp; card
+                </button>
+              ) : null}
             </div>
           </div>
-          <AppButton variant="primary" loading={paymentLoading} onClick={onConfirmPayment}>
+          <AppButton variant="primary" loading={paymentLoading} onClick={confirm}>
             Confirm in-salon payment
           </AppButton>
         </div>
+      ) : null}
+
+      {!isPaid && split ? (
+        <div className="mt-4 rounded-input-lg border border-border bg-surface-alt p-3">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-text-muted">Split payment</span>
+            <button
+              type="button"
+              onClick={() => setSplit(false)}
+              className="text-[12px] font-medium text-primary transition hover:underline"
+            >
+              Single payment
+            </button>
+          </div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <label className="block text-[12px] font-medium text-text-secondary">
+              Cash
+              <input
+                inputMode="decimal"
+                value={cashText}
+                onChange={(event) => handleCashChange(event.target.value)}
+                placeholder="0.00"
+                className="mt-1 h-10 w-full rounded-input border border-border bg-surface px-3 text-[13px] text-text-primary outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+              />
+            </label>
+            <label className="block text-[12px] font-medium text-text-secondary">
+              Card reader
+              <input
+                inputMode="decimal"
+                value={cardText}
+                onChange={(event) => handleCardChange(event.target.value)}
+                placeholder="0.00"
+                className="mt-1 h-10 w-full rounded-input border border-border bg-surface px-3 text-[13px] text-text-primary outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+              />
+            </label>
+          </div>
+          <div className="mt-3 flex flex-col gap-3 border-t border-border/60 pt-3 sm:flex-row sm:items-center sm:justify-between">
+            <span className={`text-[13px] font-semibold tabular-nums ${tallyTone}`}>{tallyLabel}</span>
+            <AppButton variant="primary" loading={paymentLoading} disabled={!canConfirmSplit} onClick={confirm}>
+              Confirm in-salon payment
+            </AppButton>
+          </div>
+        </div>
+      ) : null}
+
+      {isPaid ? (
+        <>
+          {paidTenders.length > 0 ? <BillPayments payments={paidTenders} /> : null}
+          <div className="mt-4 flex justify-end">
+            <Link
+              to={summary.checkout.route ?? `/checkout/visits/${summary.visit.id}`}
+              className="inline-flex h-9 items-center rounded-pill border border-border-strong px-4 text-[13px] font-medium text-text-primary transition hover:bg-surface-alt"
+            >
+              View bill
+            </Link>
+          </div>
+        </>
       ) : null}
     </AppCard>
   );
@@ -1445,146 +1567,6 @@ function RebookingPanel({
           </AppButton>
         </div>
       ) : null}
-    </div>
-  );
-}
-
-// Itemised checkout bill — a clean, receipt-style summary of what the salon
-// collects at the till. Each service and each colour charge is its own line; a
-// deposit already taken shows as a credit with a running subtotal, then the
-// balance to collect stands alone in the footer.
-//
-// VAT is handled automatically server-side: the API still computes the tax
-// rollup in billing.tax for records/reporting, but it is intentionally not shown
-// here — staff and clients see clean, all-in prices, never a tax breakdown. The
-// headline stays exactly billing.balanceDueCents, the only amount the
-// confirm-payment endpoint accepts, so the bill and the charge can never diverge.
-function ItemisedBill({ billing }: { billing: AppointmentCompletionResponse['billing'] }) {
-  const cc = billing.currencyCode;
-  const hasDeposit = billing.depositPaidCents > 0;
-
-  // Group the API line items into the bill's sections. Anything that isn't a
-  // service or colour charge is bucketed into "Other" so no line silently drops.
-  const serviceLines = billing.lineItems.filter((line) => line.lineType === 'service');
-  const colourLines = billing.lineItems.filter((line) => line.lineType === 'product_usage');
-  const otherLines = billing.lineItems.filter(
-    (line) => line.lineType !== 'service' && line.lineType !== 'product_usage',
-  );
-
-  return (
-    <div className="mt-4 overflow-hidden rounded-input-lg border border-border bg-surface-alt/40">
-      <div className="flex flex-col gap-5 px-5 py-4">
-        <BillGroup
-          title="Services"
-          lines={serviceLines}
-          fallbackLabel="Services"
-          fallbackCents={billing.serviceTotalCents}
-          currencyCode={cc}
-        />
-
-        <BillGroup
-          title="Colour charge"
-          note="Includes the salon's colour pricing policy."
-          lines={colourLines}
-          fallbackLabel="Colour charges"
-          fallbackCents={billing.productUsageTotalCents}
-          currencyCode={cc}
-          hideWhenEmpty
-        />
-
-        {otherLines.length > 0 ? (
-          <BillGroup title="Other charges" lines={otherLines} currencyCode={cc} />
-        ) : null}
-
-        {/* With a deposit taken, show the running subtotal and the credit so the
-            arithmetic down to the balance stays transparent. */}
-        {hasDeposit ? (
-          <dl className="flex flex-col gap-1.5 border-t border-border/60 pt-3 text-[13px]">
-            <BillRow label="Subtotal" value={formatMoney(billing.totalCents, cc)} />
-            <BillRow label="Deposit paid" value={`− ${formatMoney(billing.depositPaidCents, cc)}`} />
-          </dl>
-        ) : null}
-      </div>
-
-      {/* The single figure the salon charges — exactly what confirm-payment expects. */}
-      <div className="flex items-center justify-between gap-3 border-t border-border px-5 py-3.5">
-        <span className="text-[13px] font-medium text-text-secondary">Total to collect</span>
-        <span className="text-[22px] font-semibold text-text-primary tabular-nums">
-          {formatMoney(billing.balanceDueCents, cc)}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-// One labelled group of bill lines (Services / Colour charge / Other). Prefers the
-// API's itemised lines; when a completion predates line items it falls back to the
-// rolled-up category total so the figure is never lost. An optional group with no
-// lines and a zero total is hidden rather than shown empty.
-function BillGroup({
-  title,
-  note,
-  lines,
-  fallbackLabel,
-  fallbackCents = 0,
-  currencyCode,
-  hideWhenEmpty = false,
-}: {
-  title: string;
-  note?: string;
-  lines: AppointmentCompletionLineItem[];
-  fallbackLabel?: string;
-  fallbackCents?: number;
-  currencyCode: string;
-  hideWhenEmpty?: boolean;
-}) {
-  const hasLines = lines.length > 0;
-  if (!hasLines && (hideWhenEmpty || fallbackLabel === undefined) && fallbackCents <= 0) {
-    return null;
-  }
-  return (
-    <div>
-      <span className="text-[12px] font-semibold uppercase tracking-[0.06em] text-text-secondary">{title}</span>
-      {note ? <p className="mt-0.5 text-[11px] text-text-muted">{note}</p> : null}
-      <dl className="mt-1.5 flex flex-col gap-1.5 text-[13px]">
-        {hasLines ? (
-          lines.map((line, index) => (
-            <BillRow
-              key={`${line.lineType}-${index}`}
-              label={line.description}
-              value={formatMoney(line.amountCents, currencyCode)}
-            />
-          ))
-        ) : (
-          <BillRow label={fallbackLabel ?? title} value={formatMoney(fallbackCents, currencyCode)} />
-        )}
-      </dl>
-    </div>
-  );
-}
-
-function BillRow({
-  label,
-  value,
-  strong = false,
-  muted = false,
-  hint,
-}: {
-  label: string;
-  value: string;
-  strong?: boolean;
-  muted?: boolean;
-  hint?: string;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <dt className={muted ? 'text-text-muted' : strong ? 'font-semibold text-text-primary' : 'text-text-secondary'}>
-        {label}
-        {hint ? <span className="ml-1.5 text-[11px] text-text-muted">· {hint}</span> : null}
-      </dt>
-      <dd className={`tabular-nums ${muted ? 'text-text-muted' : strong ? 'font-semibold text-text-primary' : 'text-text-primary'}`}>
-        {value}
-      </dd>
     </div>
   );
 }
@@ -1785,15 +1767,17 @@ function isCompletionLocked(status: StaffBookingSummary['status']): boolean {
   );
 }
 
-function formatPaymentMethod(method: 'cash' | 'card_reader'): string {
-  return method === 'card_reader' ? 'Card reader' : 'Cash';
+// "30" / "30.5" / "30.50" → cents for the split-payment inputs; empty counts as
+// zero so an untouched field never blocks the tally. Anything else is invalid.
+function parsePoundsToCents(text: string): number | null {
+  const trimmed = text.trim();
+  if (trimmed === '') return 0;
+  if (!/^\d{1,7}(\.\d{1,2})?$/.test(trimmed)) return null;
+  return Math.round(Number(trimmed) * 100);
 }
 
-function formatMoney(amountCents: number, currencyCode: string): string {
-  return new Intl.NumberFormat(undefined, {
-    style: 'currency',
-    currency: currencyCode,
-  }).format(amountCents / 100);
+function centsToPoundsText(cents: number): string {
+  return (cents / 100).toFixed(2);
 }
 
 function defaultRebookingInputValue(): string {

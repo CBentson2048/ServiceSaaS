@@ -72,6 +72,14 @@ export const formulaDraftStore = {
     currentDraft = recalculateDraft(currentDraft);
     emit();
   },
+  /**
+   * Whether the location's billing settings have loaded. Until they have, the
+   * draft's billableChargeCents degrades to raw cost, so stylist-facing money
+   * displays must fail CLOSED (show no figure) rather than render it.
+   */
+  isProductBillingReady(): boolean {
+    return productBilling !== null;
+  },
   addRow(): FormulaIngredientRow {
     const row = createEmptyIngredientRow();
 
@@ -257,6 +265,7 @@ export const formulaDraftStore = {
     visit: FormulaVisitContext;
     patchTest?: FormulaPatchTestContext;
     items: BuiltFormulaItemInput[];
+    notes?: string;
   }): FormulaDraftSession {
     const createdAt = new Date().toISOString();
     const rows =
@@ -272,6 +281,7 @@ export const formulaDraftStore = {
       visit: input.visit,
       patchTest: input.patchTest ?? { status: 'unknown' },
       rows,
+      notes: input.notes?.trim() || undefined,
       activeIngredientId: rows[0]?.id,
       status: input.items.length > 0 ? 'mixing' : 'draft',
       createdAt,
@@ -563,7 +573,11 @@ function findSavedFormula(formulaId: string): SavedFormulaRecord | undefined {
 
 function createDraftId(): string {
   draftSequence += 1;
-  return `local-formula-draft-${draftSequence}`;
+  // Globally unique: this id becomes lab.formulas.external_formula_id, the
+  // server's upsert key. A plain per-launch counter ("local-formula-draft-1")
+  // repeats on every station/app restart, so a later mix would silently
+  // OVERWRITE an earlier formula row instead of creating its own.
+  return `local-draft-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}-${draftSequence}`;
 }
 
 function sortNewestFirst(a: SavedFormulaRecord, b: SavedFormulaRecord): number {

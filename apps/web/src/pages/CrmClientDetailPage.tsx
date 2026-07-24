@@ -277,7 +277,17 @@ function VisitHistory({ visits }: { visits: CrmVisitSummary[] }) {
                       ) : null}
                     </div>
                   </div>
-                  <StatusPill status={visit.status} />
+                  <div className="flex shrink-0 items-center gap-2">
+                    {visit.status === 'paid' || visit.status === 'awaiting_payment' ? (
+                      <Link
+                        to={`/checkout/visits/${visit.id}`}
+                        className="text-[12px] font-medium text-primary transition hover:underline"
+                      >
+                        View bill
+                      </Link>
+                    ) : null}
+                    <StatusPill status={visit.status} />
+                  </div>
                 </div>
               </li>
             ))}
@@ -309,8 +319,15 @@ function ColourFormulas({ formulas }: { formulas: CrmClientFormula[] }) {
               <li key={formula.id} className="rounded-input-lg border border-border bg-surface-alt/40 p-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="truncate font-medium text-text-primary">
-                      {formula.serviceType ?? 'Colour formula'}
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="truncate font-medium text-text-primary">
+                        {formula.serviceType ?? 'Colour formula'}
+                      </span>
+                      {formula.isDraft ? (
+                        <span className="shrink-0 rounded-pill bg-surface px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-text-secondary ring-1 ring-inset ring-border">
+                          Draft
+                        </span>
+                      ) : null}
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] text-text-secondary">
                       <span>{formatDateTime(formula.savedAt)}</span>
@@ -338,6 +355,12 @@ function ColourFormulas({ formulas }: { formulas: CrmClientFormula[] }) {
                       </li>
                     ))}
                   </ul>
+                ) : null}
+                {formula.notes ? (
+                  <p className="mt-2 whitespace-pre-line border-t border-border-divider pt-2 text-[12px] text-text-secondary">
+                    <span className="font-medium text-text-primary">Notes: </span>
+                    {formula.notes}
+                  </p>
                 ) : null}
               </li>
             ))}

@@ -39,7 +39,8 @@ export class LabFormulaController {
 
   @Get('client/:clientProfileId/history')
   historyForClient(@CurrentUser() actor: AuthUser, @Param('clientProfileId') clientProfileId: string) {
-    return this.labFormulaService.historyForClient(actor, clientProfileId);
+    // Staff view: durable drafts are included (flagged via isDraft).
+    return this.labFormulaService.historyForClient(actor, clientProfileId, { includeDrafts: true });
   }
 
   @Get(':id')
@@ -98,6 +99,19 @@ export class LabSessionFormulaController {
   ) {
     const session = await this.labSessionService.assertActiveSession(sessionId);
     return this.labFormulaService.getBillingBreakdownForLabSession(session, appointmentId);
+  }
+
+  // Durable draft save: persists the recipe on the client's record without
+  // billing handoff or inventory deduction (both happen at finalize, which
+  // upserts the same formula row).
+  @Post(':sessionId/:id/save-draft')
+  async saveDraft(
+    @Param('sessionId') sessionId: string,
+    @Param('id') id: string,
+    @Body() dto: SaveFormulaDto,
+  ) {
+    const session = await this.labSessionService.assertActiveSession(sessionId);
+    return this.labFormulaService.saveDraftForLabSession(session, id, dto);
   }
 
   @Post(':sessionId/:id/finalize')

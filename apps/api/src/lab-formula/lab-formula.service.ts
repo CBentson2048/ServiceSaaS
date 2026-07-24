@@ -120,6 +120,8 @@ interface ProductBillingRulesRow {
 export interface LabClientFormulaHistoryRecord extends FormulaHistoryRecord {
   staffProfileId?: string;
   stylistName?: string;
+  /** True for a durably-saved draft (recipe persisted, billing/stock not yet reconciled). */
+  isDraft?: boolean;
 }
 
 /** Resolved stylist/service context for a saved formula, keyed by formula row id. */
@@ -159,6 +161,8 @@ interface SavedFormulaRow {
   location_id: string;
   client_profile_id: string;
   source_formula_id: string | null;
+  notes: string | null;
+  status: string;
   actual_cost_cents: number;
   waste_cost_cents: number;
   billable_charge_cents: number;
@@ -190,7 +194,7 @@ interface StaffDisplayNameRow {
 const FORMULA_HISTORY_LIMIT = 100;
 
 const SAVED_FORMULA_COLUMNS =
-  'id,external_formula_id,lab_session_id,appointment_id,visit_id,business_id,location_id,client_profile_id,source_formula_id,actual_cost_cents,waste_cost_cents,billable_charge_cents,currency_code,saved_at,created_at,updated_at,formula_items(id,external_item_id,product_id,product_name,brand,shade,developer,ratio,processing_time_minutes,captured_grams,waste_grams,entry_mode,captured_at,cost_per_gram_cents,cost_cents,waste_cost_cents,notes)';
+  'id,external_formula_id,lab_session_id,appointment_id,visit_id,business_id,location_id,client_profile_id,source_formula_id,notes,status,actual_cost_cents,waste_cost_cents,billable_charge_cents,currency_code,saved_at,created_at,updated_at,formula_items(id,external_item_id,product_id,product_name,brand,shade,developer,ratio,processing_time_minutes,captured_grams,waste_grams,entry_mode,captured_at,cost_per_gram_cents,cost_cents,waste_cost_cents,notes)';
 
 @Injectable()
 export class LabFormulaService {
@@ -257,7 +261,11 @@ export class LabFormulaService {
   }
 
   async save(actor: AuthUser, id: string, dto: SaveFormulaDto): Promise<FormulaSaveResult> {
-    const context = await this.resolveFormulaContext(actor, dto);
+    // A draft save must not fabricate a checked_in visit for a client who may
+    // not have arrived yet — the visit is created at finalize instead.
+    const context = await this.resolveFormulaContext(actor, dto, {
+      createVisitIfMissing: dto.finalizeRequested !== false,
+    });
     const savedAt = new Date().toISOString();
     const items = normalizeItems(dto.items);
     const totalCostCents = dto.totalCostCents ?? sumItemCostCents(normalizeItems(dto.items));
@@ -279,6 +287,7 @@ export class LabFormulaService {
       locationId: context.locationId,
       clientProfileId: context.clientProfileId ?? dto.clientProfileId,
       sourceFormulaId: dto.sourceFormulaId,
+      notes: dto.notes,
       status: 'saved',
       items,
       totalCostCents,
@@ -321,7 +330,9 @@ export class LabFormulaService {
     const result = await this.buildFormulaSaveResult(formula, data, context.locationId);
     this.formulas.set(formula.id, result);
 
-    if (result.visitId && totalCostCents > 0) {
+    // Billing is only handed off when requested: a draft save persists the
+    // recipe without putting a product-usage charge on the client's visit.
+    if (result.visitId && totalCostCents > 0 && dto.billingHandoffRequested) {
       await this.applyProductBillingLineItem(
         context.businessId,
         context.locationId,
@@ -347,6 +358,40 @@ export class LabFormulaService {
 
   async saveForLabSession(session: LabRuntimeSession, id: string, dto: SaveFormulaDto): Promise<FormulaSaveResult> {
     return this.finalizeForLabSession(session, id, dto);
+  }
+
+  /**
+   * Durably saves an in-progress (draft) formula from a lab station WITHOUT
+   * touching billing or stock: no product-usage line item is written and no
+   * inventory is deducted — both reconcile when the mix is finalized, which
+   * upserts the same lab.formulas row via external_formula_id. Validation is
+   * looser than finalize: the draft must belong to a real appointment/visit
+   * (that link is what lands it on the client's durable colour record) and
+   * name at least one ingredient, but rows may be unweighed or missing cost.
+   */
+  async saveDraftForLabSession(
+    session: LabRuntimeSession,
+    id: string,
+    dto: SaveFormulaDto,
+  ): Promise<FormulaSaveResult> {
+    this.validateDraftSavePayload(dto);
+    this.logger.log(
+      JSON.stringify({
+        event: 'formula_draft_save_requested',
+        formulaId: id,
+        labSessionId: session.sessionId,
+        itemCount: Array.isArray(dto.items) ? dto.items.length : 0,
+      }),
+    );
+    return this.save(toAuthUserFromLabSession(session), id, {
+      ...dto,
+      labSessionId: session.sessionId,
+      businessId: session.businessId,
+      locationId: session.locationId,
+      billingHandoffRequested: false,
+      inventoryDeductionRequested: false,
+      finalizeRequested: false,
+    });
   }
 
   async finalizeForLabSession(session: LabRuntimeSession, id: string, dto: SaveFormulaDto): Promise<FormulaSaveResult> {
@@ -545,6 +590,7 @@ export class LabFormulaService {
   async historyForClient(
     actor: AuthUser,
     clientProfileId: string,
+    options: { includeDrafts?: boolean } = {},
   ): Promise<LabClientFormulaHistoryRecord[]> {
     if (userHasRole(actor, 'client') && actor.clientProfileId !== clientProfileId) {
       throw new ForbiddenException('Client formula history is outside your scope');
@@ -556,7 +602,9 @@ export class LabFormulaService {
       .select(SAVED_FORMULA_COLUMNS)
       .eq('business_id', actor.businessId)
       .eq('client_profile_id', clientProfileId)
-      .eq('status', 'saved')
+      // Staff views may include durable drafts (badged); customer-facing and
+      // billing-adjacent reads stay finalized-only.
+      .in('status', options.includeDrafts ? ['draft', 'saved'] : ['saved'])
       .not('saved_at', 'is', null)
       .order('saved_at', { ascending: false })
       .limit(FORMULA_HISTORY_LIMIT);
@@ -747,6 +795,22 @@ export class LabFormulaService {
     };
   }
 
+  private validateDraftSavePayload(dto: SaveFormulaDto): void {
+    if (!dto.appointmentId && !dto.visitId) {
+      throw new BadRequestException('Draft save requires appointment or visit context');
+    }
+
+    const items = normalizeItems(dto.items);
+    if (items.length === 0) throw new BadRequestException('Draft save requires at least one ingredient');
+
+    for (const item of items) {
+      if (!item.productName?.trim()) throw new BadRequestException('Every draft ingredient requires a product name');
+      if ((item.capturedGrams ?? 0) < 0 || (item.wasteGrams ?? 0) < 0) {
+        throw new BadRequestException('Draft ingredient grams cannot be negative');
+      }
+    }
+  }
+
   private validateFinalSavePayload(dto: SaveFormulaDto): void {
     if (!dto.appointmentId && !dto.visitId) {
       throw new BadRequestException('Final save requires appointment or visit context');
@@ -774,13 +838,21 @@ export class LabFormulaService {
   private async resolveFormulaContext(
     actor: AuthUser,
     dto: Pick<StartFormulaDto & SaveFormulaDto & DuplicateFormulaDto, 'appointmentId' | 'visitId' | 'businessId' | 'locationId' | 'clientProfileId'>,
+    options: { createVisitIfMissing?: boolean } = {},
   ): Promise<FormulaContext> {
     if (dto.businessId && dto.businessId !== actor.businessId) {
       throw new ForbiddenException('Formula business scope does not match the signed-in user');
     }
 
     if (dto.visitId) return this.resolveVisitFormulaContext(actor, dto.visitId, dto.clientProfileId);
-    if (dto.appointmentId) return this.resolveAppointmentFormulaContext(actor, dto.appointmentId, dto.clientProfileId);
+    if (dto.appointmentId) {
+      return this.resolveAppointmentFormulaContext(
+        actor,
+        dto.appointmentId,
+        dto.clientProfileId,
+        options.createVisitIfMissing ?? true,
+      );
+    }
 
     const locationId = dto.locationId ?? actor.allowedLocationIds[0] ?? actor.locations[0]?.id;
     if (!locationId) throw new BadRequestException('locationId is required for formula operations');
@@ -803,6 +875,7 @@ export class LabFormulaService {
     actor: AuthUser,
     appointmentId: string,
     requestedClientProfileId?: string,
+    createVisitIfMissing = true,
   ): Promise<FormulaContext> {
     const { data, error } = await this.admin
       .schema('booking')
@@ -828,7 +901,7 @@ export class LabFormulaService {
       throw new ForbiddenException('Appointment is outside your client scope');
     }
 
-    const visitId = await this.ensureVisitForAppointment(data);
+    const visitId = await this.ensureVisitForAppointment(data, createVisitIfMissing);
 
     return {
       businessId: data.business_id,
@@ -877,7 +950,10 @@ export class LabFormulaService {
     };
   }
 
-  private async ensureVisitForAppointment(appointment: AppointmentFormulaContextRow): Promise<string> {
+  private async ensureVisitForAppointment(
+    appointment: AppointmentFormulaContextRow,
+    createIfMissing = true,
+  ): Promise<string | undefined> {
     const { data: existing, error: existingError } = await this.admin
       .schema('booking')
       .from('visits')
@@ -890,6 +966,7 @@ export class LabFormulaService {
       throw new InternalServerErrorException('Unable to resolve appointment visit');
     }
     if (existing) return existing.id;
+    if (!createIfMissing) return undefined;
 
     const { data: created, error: createError } = await this.admin
       .schema('booking')
@@ -1128,7 +1205,9 @@ function toHistoryRecord(
     locationId: row.location_id,
     clientProfileId: row.client_profile_id,
     sourceFormulaId: row.source_formula_id ?? undefined,
+    notes: row.notes ?? undefined,
     status: 'saved',
+    isDraft: row.status === 'draft',
     items: (row.formula_items ?? []).map(toFormulaItemFromRow),
     totalCostCents: row.actual_cost_cents,
     totalWasteCostCents: row.waste_cost_cents,

@@ -22,7 +22,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { RootStackParamList } from '../../app/navigation/routes';
 import { useBleScale } from '../../features/ble/hooks/useBleScale';
-import { calculateBillableChargeCents } from '../../features/formulas/formulaCosting';
+import {
+  calculateBillableChargeCents,
+  formatUnitMoney,
+  unitBillingFactor,
+} from '../../features/formulas/formulaCosting';
 import type { BuiltFormulaItemInput } from '../../features/formulas/formulaDraftStore';
 import { formulaDraftStore } from '../../features/formulas/formulaDraftStore';
 import { getLabProductBillingSettings } from '../../features/formulas/formulasApi';
@@ -246,10 +250,25 @@ export function BuildFormulaScreen({ navigation, route }: BuildFormulaScreenProp
     const materialCents = lines.reduce((sum, line) => sum + (line.totalCents ?? 0), 0);
     const billableCents =
       materialCents > 0 ? calculateBillableChargeCents(materialCents, billing) : materialCents;
-    const markupCents = billableCents - materialCents;
     const hasMissingCost = lines.some((line) => line.costPerGramCents == null && line.grams > 0);
-    return { totalGrams, materialCents, billableCents, markupCents, hasMissingCost };
+    return { totalGrams, materialCents, billableCents, hasMissingCost };
   }, [lines, billing]);
+
+  // Stylist-facing prices bake the location's billing rule in: raw material
+  // cost and the markup split are internal (owner/manager) figures, so every
+  // unit price and line total shown on this screen is the billable value.
+  // unitFactor is the constant per-gram scaling (null when no per-gram price
+  // may be shown — flat uplift, or billing settings not loaded — unit columns
+  // then show "—" instead of leaking raw cost); lineFactor scales line totals,
+  // distributing mix-level rules proportionally so the lines match the
+  // Estimated Billing figure (within per-line rounding).
+  // pricesReady fails CLOSED: until the location's billing settings load, no
+  // £ amount is shown at all — a raw material total presented as a price is
+  // exactly the leak this screen must prevent.
+  const pricesReady = billing != null;
+  const unitFactor = unitBillingFactor(billing);
+  const lineFactor =
+    unitFactor ?? (totals.materialCents > 0 ? totals.billableCents / totals.materialCents : 1);
 
   const canStartWeighing = selection.length > 0;
 
@@ -318,18 +337,20 @@ export function BuildFormulaScreen({ navigation, route }: BuildFormulaScreenProp
       },
       patchTest: entryContext.patchTest ?? { status: 'unknown' },
       items,
+      notes,
     });
 
     // Navigate without an entryContext so the capture screen keeps the seeded
     // draft instead of resetting it.
     navigation.navigate('Formula');
-  }, [canStartWeighing, entryContext, lines, navigation, sessionId]);
+  }, [canStartWeighing, entryContext, lines, navigation, notes, sessionId]);
 
   const productGrid = (
     <ProductCatalogue
       products={products}
       stockByProductId={stockByProductId}
       selectedIds={selectedIds}
+      unitFactor={unitFactor}
       loading={loading}
       searching={searching}
       error={error}
@@ -343,16 +364,17 @@ export function BuildFormulaScreen({ navigation, route }: BuildFormulaScreenProp
     <View style={[styles.railColumn, { gap: layout.gap }]}>
       <CurrentSelectionCard
         lines={lines}
+        unitFactor={unitFactor}
+        lineFactor={lineFactor}
+        pricesReady={pricesReady}
         totalGrams={totals.totalGrams}
         onGramsChange={updateGrams}
         onRemove={removeProduct}
       />
       <StylistNotesCard value={notes} onChange={setNotes} />
       <PricingBreakdownCard
-        materialCents={totals.materialCents}
-        markupCents={totals.markupCents}
         billableCents={totals.billableCents}
-        markupLabel={markupLabel(billing)}
+        pricesReady={pricesReady}
         hasMissingCost={totals.hasMissingCost}
       />
     </View>
@@ -417,6 +439,7 @@ export function BuildFormulaScreen({ navigation, route }: BuildFormulaScreenProp
           <BottomBar
             totalGrams={totals.totalGrams}
             chargeCents={totals.billableCents}
+            pricesReady={pricesReady}
             ready={canStartWeighing}
             onStart={handleStartWeighing}
           />
@@ -580,6 +603,7 @@ function ProductCatalogue({
   products,
   stockByProductId,
   selectedIds,
+  unitFactor,
   loading,
   searching,
   error,
@@ -590,6 +614,7 @@ function ProductCatalogue({
   products: InventoryProduct[];
   stockByProductId: Map<string, InventoryLocationStock>;
   selectedIds: Set<string>;
+  unitFactor: number | null;
   loading: boolean;
   searching: boolean;
   error?: string;
@@ -633,6 +658,7 @@ function ProductCatalogue({
               product={product}
               stock={stockByProductId.get(product.id)}
               selected={selectedIds.has(product.id)}
+              unitFactor={unitFactor}
               onPress={() => onToggle(product)}
             />
           ))}
@@ -646,18 +672,26 @@ function ProductCard({
   product,
   stock,
   selected,
+  unitFactor,
   onPress,
 }: {
   product: InventoryProduct;
   stock?: InventoryLocationStock;
   selected: boolean;
+  unitFactor: number | null;
   onPress: () => void;
 }): React.JSX.Element {
   const code = productCode(product);
   const tier = stock ? getInventoryTier(stock) : undefined;
   const lowStock = tier ? tier.tone === 'warning' || tier.tone === 'danger' : false;
+  // Billable price per gram; a rule with no per-gram price (fixed uplift)
+  // shows no figure at all rather than leaking the raw cost.
   const costLabel =
-    product.defaultCostPerGramCents == null ? 'No cost' : `${formatMoney(product.defaultCostPerGramCents)}/g`;
+    product.defaultCostPerGramCents == null
+      ? 'No cost'
+      : unitFactor == null
+        ? null
+        : `${formatUnitMoney(product.defaultCostPerGramCents * unitFactor)}/g`;
 
   return (
     <Pressable
@@ -685,9 +719,11 @@ function ProductCard({
         </Text>
         {selected ? <Text style={styles.addedTag}>✓ Added</Text> : null}
       </View>
-      <Text style={[styles.productCost, product.defaultCostPerGramCents == null && styles.productCostMissing]}>
-        {costLabel}
-      </Text>
+      {costLabel != null ? (
+        <Text style={[styles.productCost, product.defaultCostPerGramCents == null && styles.productCostMissing]}>
+          {costLabel}
+        </Text>
+      ) : null}
     </Pressable>
   );
 }
@@ -698,11 +734,17 @@ function ProductCard({
 
 function CurrentSelectionCard({
   lines,
+  unitFactor,
+  lineFactor,
+  pricesReady,
   totalGrams,
   onGramsChange,
   onRemove,
 }: {
   lines: SelectionLine[];
+  unitFactor: number | null;
+  lineFactor: number;
+  pricesReady: boolean;
   totalGrams: number;
   onGramsChange: (productId: string, value: string) => void;
   onRemove: (productId: string) => void;
@@ -756,13 +798,20 @@ function CurrentSelectionCard({
                 />
               </View>
               <Text style={[styles.td, styles.colUnit]} numberOfLines={1}>
-                {line.costPerGramCents == null ? '—' : formatMoney(line.costPerGramCents)}
+                {line.costPerGramCents == null || unitFactor == null
+                  ? '—'
+                  : formatUnitMoney(line.costPerGramCents * unitFactor)}
               </Text>
               <Text
                 style={[styles.tdStrong, styles.colTotal, line.costPerGramCents == null && styles.tdMissing]}
                 numberOfLines={1}
               >
-                {line.totalCents == null ? 'No cost' : formatMoney(line.totalCents)}
+                {/* Fail closed: no £ figure until billing settings load. */}
+                {!pricesReady
+                  ? '—'
+                  : line.totalCents == null
+                    ? 'No cost'
+                    : formatMoney(Math.round(line.totalCents * lineFactor))}
               </Text>
               <Pressable
                 accessibilityRole="button"
@@ -802,40 +851,30 @@ function StylistNotesCard({
   );
 }
 
+// The material-cost/markup split is internal (owner/manager) data — the
+// stylist-facing card shows only the final billable estimate, and nothing at
+// all until the billing settings have loaded (fail closed).
 function PricingBreakdownCard({
-  materialCents,
-  markupCents,
   billableCents,
-  markupLabel: markupLabelText,
+  pricesReady,
   hasMissingCost,
 }: {
-  materialCents: number;
-  markupCents: number;
   billableCents: number;
-  markupLabel: string | null;
+  pricesReady: boolean;
   hasMissingCost: boolean;
 }): React.JSX.Element {
   return (
     <View style={styles.card}>
       <Text style={styles.cardEyebrow}>Pricing Breakdown</Text>
       <View style={styles.pricingRow}>
-        <Text style={styles.pricingLabel}>Material Cost</Text>
-        <Text style={styles.pricingValue}>{formatMoney(materialCents)}</Text>
-      </View>
-      {markupLabelText && markupCents !== 0 ? (
-        <View style={styles.pricingRow}>
-          <Text style={styles.pricingLabel}>{markupLabelText}</Text>
-          <Text style={[styles.pricingValue, styles.pricingValueBrand]}>+{formatMoney(markupCents)}</Text>
-        </View>
-      ) : null}
-      <View style={styles.pricingDivider} />
-      <View style={styles.pricingRow}>
         <Text style={styles.pricingTotalLabel}>Estimated Billing</Text>
-        <Text style={styles.pricingTotalValue}>{formatMoney(billableCents)}</Text>
+        <Text style={styles.pricingTotalValue}>{pricesReady ? formatMoney(billableCents) : '—'}</Text>
       </View>
-      {hasMissingCost ? (
+      {!pricesReady ? (
+        <Text style={styles.pricingWarning}>Loading location pricing…</Text>
+      ) : hasMissingCost ? (
         <Text style={styles.pricingWarning}>
-          Some products have no cost on record — their material cost is excluded until set.
+          Some products have no cost on record — they are excluded from the estimate until set.
         </Text>
       ) : null}
     </View>
@@ -849,11 +888,13 @@ function PricingBreakdownCard({
 function BottomBar({
   totalGrams,
   chargeCents,
+  pricesReady,
   ready,
   onStart,
 }: {
   totalGrams: number;
   chargeCents: number;
+  pricesReady: boolean;
   ready: boolean;
   onStart: () => void;
 }): React.JSX.Element {
@@ -867,7 +908,7 @@ function BottomBar({
       </View>
       <View style={styles.bottomCharge}>
         <Text style={styles.bottomChargeLabel}>CHARGE TOTAL</Text>
-        <Text style={styles.bottomChargeValue}>{formatMoney(chargeCents)}</Text>
+        <Text style={styles.bottomChargeValue}>{pricesReady ? formatMoney(chargeCents) : '—'}</Text>
       </View>
       <Pressable
         accessibilityRole="button"
@@ -902,19 +943,8 @@ function productCode(product: InventoryProduct): string | undefined {
   return undefined;
 }
 
-function markupLabel(billing: LocationProductBillingSettings | null): string | null {
-  if (!billing || !billing.productBillingEnabled) return null;
-  switch (billing.productBillingRule) {
-    case 'cost_plus_markup_percent':
-      return billing.productMarkupPercent == null ? null : `Markup (+${billing.productMarkupPercent}%)`;
-    case 'fixed_uplift':
-      return billing.productFixedUpliftAmount == null
-        ? null
-        : `Uplift (+${formatMoney(Math.round(billing.productFixedUpliftAmount * 100))})`;
-    default:
-      return null;
-  }
-}
+// unitBillingFactor / formatUnitMoney are shared from formulaCosting so every
+// stylist-facing screen prices consistently.
 
 // ---------------------------------------------------------------------------
 // Styles
@@ -1183,10 +1213,6 @@ const styles = StyleSheet.create({
 
   // Pricing
   pricingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  pricingLabel: { color: C.textSecondary, fontSize: 14, fontWeight: '600' },
-  pricingValue: { color: C.textPrimary, fontSize: 14, fontWeight: '700' },
-  pricingValueBrand: { color: C.primary },
-  pricingDivider: { height: 1, backgroundColor: C.border },
   pricingTotalLabel: { color: C.textPrimary, fontSize: 15, fontWeight: '800' },
   pricingTotalValue: { color: C.textPrimary, fontSize: 24, fontWeight: '900', letterSpacing: -0.5 },
   pricingWarning: { color: C.warning.text, fontSize: 12, lineHeight: 17 },

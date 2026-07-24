@@ -504,15 +504,25 @@ export class MobileDashboardService {
     return new Map((data ?? []).map((row) => [row.id, row.display_name]));
   }
 
+  // A visit settled with a split bill has one salon_payments row per method
+  // (e.g. cash + card), so the receipt's paid figure is the sum of all rows.
   private async fetchVisitPayment(visitId: string): Promise<SalonPaymentRow | undefined> {
     const { data, error } = await this.admin
       .schema('billing')
       .from('salon_payments')
       .select('amount_cents,currency_code,payment_method,paid_at')
       .eq('visit_id', visitId)
-      .maybeSingle<SalonPaymentRow>();
+      .order('amount_cents', { ascending: false })
+      .returns<SalonPaymentRow[]>();
     if (error) this.throwQueryError('fetchVisitPayment', error.message);
-    return data ?? undefined;
+    const rows = data ?? [];
+    if (rows.length === 0) return undefined;
+    if (rows.length === 1) return rows[0];
+    return {
+      ...rows[0],
+      amount_cents: rows.reduce((sum, row) => sum + Number(row.amount_cents ?? 0), 0),
+      payment_method: 'split',
+    };
   }
 
   private async fetchVisitColourFormulas(visitId: string): Promise<RawColourFormula[]> {

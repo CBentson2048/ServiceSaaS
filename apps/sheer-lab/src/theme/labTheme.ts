@@ -1,17 +1,40 @@
 import { palette, radius, spacing, staffTheme, typography } from '@sheer/design-tokens';
 
+/**
+ * Lab-only palette for the QLAB rebrand (purple flask + infinity mark).
+ * Scoped here rather than in `@sheer/design-tokens` because the shared
+ * `palette` still drives the web and sheer-app themes — only the Lab app
+ * carries the new identity.
+ *
+ * The ink ramp keeps the violet hue family of the `#19131F` canvas. The
+ * accent ramp is sampled from the logo's gradient (`#601890` → `#9C0CC0`):
+ * `accent` is lightened for legible accent text on the canvas (5.8:1) and
+ * `accentSolid` stays deep enough to carry white text (6.5:1) — no single
+ * purple can do both on a canvas this dark.
+ */
+export const labPalette = {
+  bg: '#19131F',
+  surface: '#221A2C',
+  surfaceRaised: '#2D2338',
+  accent: '#C46BEA',
+  accentSolid: '#9C0CC0',
+  accentDeep: '#7A0F9C',
+  accentSoft: '#3A1548',
+  hero: '#431956',
+} as const;
+
 export const labTheme = {
   ...staffTheme,
   colors: {
     ...staffTheme.colors,
-    background: palette.ink[950],
-    surface: palette.ink[900],
-    card: palette.ink[700],
-    primary: palette.brand[500],
-    primaryPressed: palette.brand[700],
+    background: labPalette.bg,
+    surface: labPalette.surface,
+    card: labPalette.surfaceRaised,
+    primary: labPalette.accent,
+    primaryPressed: labPalette.accentSolid,
     // Active sidebar item: a solid, saturated brand pill with white text/glyph
-    // (the lighter `brand[500]` is too pale for legible white text).
-    sidebarActive: palette.brand[700],
+    // (the lighter `accent` is too pale for legible white text).
+    sidebarActive: labPalette.accentSolid,
     sidebarActiveText: palette.white,
     textPrimary: palette.white,
     textSecondary: palette.alpha.whiteHi,
@@ -32,46 +55,47 @@ export type LabTheme = typeof labTheme;
  * etc.). It keeps the dashboard-specific semantic keys (the `hero` and `sidebar`
  * tokens and the flat `success` / `warning` / `danger` aliases) on the dark base.
  *
- * Surfaces step up from the near-black canvas: page = `ink[950]`, cards / top bar
- * / sidebar = `ink[900]`, inner tiles = `ink[700]`. Accents stay on the purple
- * brand, tuned lighter (`brand[500]`) so they read on the dark ink.
+ * Surfaces step up from the near-black canvas: page = `labPalette.bg`, cards /
+ * top bar / sidebar = `labPalette.surface`, inner tiles = `labPalette.surfaceRaised`.
+ * Accents stay on the purple brand, tuned lighter (`labPalette.accent`) so they
+ * read on the dark ink.
  */
 export const labLightTheme = {
   ...staffTheme,
   colors: {
     ...staffTheme.colors,
-    background: palette.ink[950],
-    surface: palette.ink[900],
-    surfaceAlt: palette.ink[700],
-    card: palette.ink[900],
+    background: labPalette.bg,
+    surface: labPalette.surface,
+    surfaceAlt: labPalette.surfaceRaised,
+    card: labPalette.surface,
 
     // Side navigation rail: a subtly elevated dark panel with light text and a
     // deep-purple highlight (`primarySoft`) on the active item.
-    sidebar: palette.ink[900],
+    sidebar: labPalette.surface,
     sidebarBorder: palette.alpha.whiteLine,
     sidebarText: palette.alpha.whiteHi,
     sidebarTextMuted: palette.alpha.whiteSubtle,
     // Active item: a solid, saturated brand pill with white text/glyph (the
-    // lighter `brand[500]` primary is too pale to carry legible white text).
-    sidebarActive: palette.brand[700],
+    // lighter `accent` primary is too pale to carry legible white text).
+    sidebarActive: labPalette.accentSolid,
     sidebarActiveText: palette.white,
 
     // Hero "Welcome" panel — a deep-purple brand feature card that stands off
     // the near-black canvas; keeps the white CTA button from the mockup.
-    hero: palette.brand[900],
+    hero: labPalette.hero,
     heroSoft: palette.alpha.whiteSoft,
     heroBorder: palette.alpha.whiteLine,
     heroText: palette.white,
     heroTextMuted: palette.alpha.whiteSubtle,
     onHeroButtonBg: palette.white,
-    onHeroButtonText: palette.ink[900],
+    onHeroButtonText: labPalette.bg,
 
-    // Brand purple tuned for dark surfaces: the lighter `brand[500]` reads on
-    // near-black, and soft fills use the deep `brand[900]` for selected/active
+    // Brand purple tuned for dark surfaces: the lighter `accent` reads on
+    // near-black, and soft fills use the deep `accentSoft` for selected/active
     // surfaces (active nav, avatars, count badges).
-    primary: palette.brand[500],
-    primaryPressed: palette.brand[700],
-    primarySoft: palette.brand[900],
+    primary: labPalette.accent,
+    primaryPressed: labPalette.accentSolid,
+    primarySoft: labPalette.accentSoft,
 
     textPrimary: palette.white,
     textSecondary: palette.alpha.whiteHi,

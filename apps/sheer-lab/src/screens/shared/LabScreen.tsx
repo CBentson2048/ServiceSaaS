@@ -14,6 +14,7 @@ import { useNavigation } from '@react-navigation/native';
 
 import { labTheme } from '../../theme/labTheme';
 import { BrandMark } from './BrandMark';
+import { BrandWordmark } from './BrandWordmark';
 
 /** Width (pt) at/above which we treat the iPad as a large surface (Pro / landscape). */
 const LARGE_SCREEN_WIDTH = 1024;
@@ -63,7 +64,7 @@ export function LabScreen({
           </Pressable>
         ) : null}
         <BrandMark size={26} />
-        <Text style={styles.brandText}>QLOOQO LAB</Text>
+        <BrandWordmark height={18} />
       </View>
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView
@@ -112,12 +113,6 @@ const styles = StyleSheet.create({
     lineHeight: 30,
     fontWeight: '300',
     marginTop: -2,
-  },
-  brandText: {
-    color: labTheme.colors.textPrimary,
-    fontSize: labTheme.typography.fontSize.subtitle,
-    fontWeight: '700',
-    letterSpacing: 1,
   },
   content: {
     flexGrow: 1,

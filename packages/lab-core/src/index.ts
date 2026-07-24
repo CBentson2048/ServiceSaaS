@@ -61,6 +61,8 @@ export interface FormulaDraft {
   visit?: FormulaVisitContext;
   sourceFormulaId?: string;
   status: FormulaStatus;
+  /** Formula-level stylist notes (per-ingredient notes live on FormulaItem.notes). */
+  notes?: string;
   items: FormulaItem[];
   chargePreviewCents?: number;
   totalCostCents?: number;
@@ -89,6 +91,8 @@ export interface FormulaSavePayload {
   locationId?: string;
   clientProfileId?: string;
   sourceFormulaId?: string;
+  /** Formula-level stylist notes (per-ingredient notes live on FormulaItem.notes). */
+  notes?: string;
   items: FormulaItem[];
   manualFallbacks?: ManualEntryFallback[];
   totalCostCents?: number;

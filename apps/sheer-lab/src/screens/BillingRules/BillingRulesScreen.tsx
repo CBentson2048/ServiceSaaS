@@ -18,6 +18,7 @@ import {
   updateServiceBillingRules,
 } from '../../features/billing/serviceBillingRulesApi';
 import { getActiveLabSession } from '../../features/sheer-lab/labSession';
+import { labPalette } from '../../theme/labTheme';
 import { LabShell, Pill, c, t, useLabLayout } from '../shared/LabShell';
 import { formatMoney } from '../Home/dashboardHelpers';
 
@@ -548,8 +549,8 @@ function currencySymbol(code: string): string {
 // Styles
 // ---------------------------------------------------------------------------
 
-const PREVIEW_BG = palette.brand[900]; // deep purple
-const PREVIEW_ACCENT = palette.brand[300]; // light purple
+const PREVIEW_BG = labPalette.hero; // deep purple
+const PREVIEW_ACCENT = labPalette.accent; // light purple
 const PREVIEW_LINE = palette.alpha.whiteLine; // hairline dividers on the dark panel
 const PREVIEW_MUTED = palette.alpha.whiteSubtle; // secondary text on the dark panel
 

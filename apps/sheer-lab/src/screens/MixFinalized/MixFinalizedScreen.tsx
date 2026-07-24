@@ -16,7 +16,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import type { RootStackParamList } from '../../app/navigation/routes';
 import { useBleScale } from '../../features/ble/hooks/useBleScale';
 import type { FormulaIngredientRow, FormulaRemixBaseline } from '../../features/formulas/formulaDraftTypes';
-import { finalizeFormulaForLabSession } from '../../features/formulas/formulasApi';
+import { draftHasDurableContext } from '../../features/formulas/formulaDraftTypes';
+import { formulaDraftStore } from '../../features/formulas/formulaDraftStore';
+import { finalizeFormulaForLabSession, saveDraftFormulaForLabSession } from '../../features/formulas/formulasApi';
 import { useFormulaDraft } from '../../features/formulas/useFormulaDraft';
 import { getActiveLabSession, logoutLabSession, refreshActiveLabSession } from '../../features/sheer-lab/labSession';
 import { appConfig } from '../../config/appConfig';
@@ -122,12 +124,13 @@ export function MixFinalizedScreen({ navigation }: MixFinalizedScreenProps): Rea
   const ble = useBleScale();
   const scaleConnected = ble.status === 'connected';
 
-  const { draft, saveDraft, markFinalized, toFinalSavePayload } = useFormulaDraft();
+  const { draft, saveDraft, markFinalized, toSavePayload, toFinalSavePayload } = useFormulaDraft();
 
   const [session, setSession] = useState<PinUnlockResponse | undefined>();
   const [now] = useState<Date>(() => new Date());
 
   const [busy, setBusy] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
   const [message, setMessage] = useState<string | undefined>();
   const [completed, setCompleted] = useState<{ totalCents: number; ref: string } | undefined>();
 
@@ -185,10 +188,31 @@ export function MixFinalizedScreen({ navigation }: MixFinalizedScreenProps): Rea
     navigation.reset({ index: 0, routes: [{ name: 'Auth' }] });
   }, [draft.labSessionId, navigation, session?.sessionId]);
 
-  const handleSaveDraft = useCallback(() => {
-    const saved = saveDraft();
-    setMessage(`Draft saved locally ${formatTime(saved.savedAt)} · no billing applied yet`);
-  }, [saveDraft]);
+  const handleSaveDraft = useCallback(async () => {
+    if (savingDraft) return;
+    setSavingDraft(true);
+    setMessage('Saving draft…');
+    try {
+      const saved = saveDraft();
+      // Persist to the salon record whenever the draft belongs to a real
+      // appointment/visit — the station's local copy is temporary UI only.
+      if (draftHasDurableContext(saved)) {
+        const active = await getActiveLabSession();
+        if (active) {
+          await saveDraftFormulaForLabSession(active.sessionId, toSavePayload());
+          setMessage(`Draft saved to salon records ${formatTime(saved.savedAt)} · no billing applied yet`);
+          return;
+        }
+      }
+      setMessage(`Draft saved on this station only ${formatTime(saved.savedAt)} · no billing applied yet`);
+    } catch (err: unknown) {
+      // The local save already succeeded — only the salon-record sync failed.
+      const reason = err instanceof Error ? err.message : 'network error';
+      setMessage(`Draft kept on this station — could not sync to salon records (${reason})`);
+    } finally {
+      setSavingDraft(false);
+    }
+  }, [saveDraft, savingDraft, toSavePayload]);
 
   const handleEdit = useCallback(() => {
     navigation.goBack();
@@ -204,14 +228,24 @@ export function MixFinalizedScreen({ navigation }: MixFinalizedScreenProps): Rea
         setMessage('Qlooqo Lab session expired. Unlock Qlooqo Lab again, then send to desk.');
         return;
       }
-      const chargeCents = draft.billableChargeCents;
       const payload = {
         ...toFinalSavePayload(),
         labSessionId: active.sessionId,
       };
-      await finalizeFormulaForLabSession(active.sessionId, payload);
+      const result = (await finalizeFormulaForLabSession(active.sessionId, payload)) as {
+        billableChargeCents?: number;
+      };
       markFinalized();
-      setCompleted({ totalCents: chargeCents, ref: reportRef });
+      // Prefer the server's authoritative charge (computed from the location's
+      // billing rules) over the local preview, which degrades to raw cost when
+      // the settings fetch failed.
+      setCompleted({
+        totalCents:
+          typeof result?.billableChargeCents === 'number'
+            ? result.billableChargeCents
+            : draft.billableChargeCents,
+        ref: reportRef,
+      });
     } catch (err: unknown) {
       setMessage(err instanceof Error ? err.message : 'Could not send the mix to the front desk.');
     } finally {
@@ -229,7 +263,11 @@ export function MixFinalizedScreen({ navigation }: MixFinalizedScreenProps): Rea
       scaleName={ble.connectedDevice?.name}
       lines={lines}
       totalWeightGrams={totalWeightGrams}
-      totalCostCents={draft.totalCostCents}
+      billableChargeCents={draft.billableChargeCents}
+      priceFactor={draft.totalCostCents > 0 ? draft.billableChargeCents / draft.totalCostCents : 1}
+      // Fail closed: with billing settings unloaded, billableChargeCents is
+      // just the raw cost — show no £ figures rather than leak it.
+      pricesReady={formulaDraftStore.isProductBillingReady()}
       durationLabel={durationLabel}
       currencyCode={draft.currencyCode}
       remixBaseline={draft.remixBaseline}
@@ -240,9 +278,10 @@ export function MixFinalizedScreen({ navigation }: MixFinalizedScreenProps): Rea
     <SendToDeskActions
       hasMissingCost={draft.hasMissingCost}
       busy={busy}
+      savingDraft={savingDraft}
       message={message}
       onComplete={() => void handleComplete()}
-      onSaveDraft={handleSaveDraft}
+      onSaveDraft={() => void handleSaveDraft()}
       onEdit={handleEdit}
     />
   );
@@ -336,7 +375,9 @@ function SessionLabReport({
   scaleName,
   lines,
   totalWeightGrams,
-  totalCostCents,
+  billableChargeCents,
+  priceFactor,
+  pricesReady,
   durationLabel,
   currencyCode,
   remixBaseline,
@@ -349,7 +390,11 @@ function SessionLabReport({
   scaleName?: string;
   lines: ReportLine[];
   totalWeightGrams: number;
-  totalCostCents: number;
+  billableChargeCents: number;
+  /** Scales each line's internal cost to its billable share of the charge. */
+  priceFactor: number;
+  /** False until the location billing settings load — money renders as "—". */
+  pricesReady: boolean;
   durationLabel: string;
   currencyCode: string;
   remixBaseline?: FormulaRemixBaseline;
@@ -394,7 +439,7 @@ function SessionLabReport({
         <View style={styles.tableHeader}>
           <Text style={[styles.th, styles.colProduct]}>Product / Shade</Text>
           <Text style={[styles.th, styles.colQty]}>Actual Qty</Text>
-          <Text style={[styles.th, styles.colCost]}>Lab Cost</Text>
+          <Text style={[styles.th, styles.colCost]}>Price</Text>
         </View>
         {lines.length === 0 ? (
           <Text style={styles.emptyLine}>No weighed ingredients in this mix yet.</Text>
@@ -416,7 +461,10 @@ function SessionLabReport({
                 style={[styles.tdCost, styles.colCost, line.costCents == null && styles.tdMissing]}
                 numberOfLines={1}
               >
-                {line.costCents == null ? '—' : formatMoney(line.costCents, currencyCode)}
+                {/* Billable share, never the raw material cost. */}
+                {!pricesReady || line.costCents == null
+                  ? '—'
+                  : formatMoney(Math.round(line.costCents * priceFactor), currencyCode)}
               </Text>
             </View>
           ))
@@ -438,7 +486,12 @@ function SessionLabReport({
             caption="Total Used"
           />
         ) : null}
-        <StatTile glyph="◷" value={formatMoney(totalCostCents, currencyCode)} label="Internal product cost" caption="Lab Cost" />
+        <StatTile
+          glyph="◷"
+          value={pricesReady ? formatMoney(billableChargeCents, currencyCode) : '—'}
+          label="Colour charge for this mix"
+          caption="Colour Charge"
+        />
         <StatTile glyph="⏱" value={durationLabel} label="Total scale active time" caption="Mix Duration" />
       </View>
 
@@ -447,8 +500,8 @@ function SessionLabReport({
         <View style={styles.auditText}>
           <Text style={styles.auditTitle}>Audit policy active</Text>
           <Text style={styles.auditBody}>
-            Every mix is logged for salon transparency — weighed quantities, lab cost and timing. Manual weight
-            overrides require a manager PIN on the audit trail.
+            Every mix is logged for salon transparency — weighed quantities, product usage and timing. Manual
+            weight overrides require a manager PIN on the audit trail.
           </Text>
         </View>
       </View>
@@ -490,6 +543,7 @@ function StatTile({
 function SendToDeskActions({
   hasMissingCost,
   busy,
+  savingDraft,
   message,
   onComplete,
   onSaveDraft,
@@ -497,6 +551,7 @@ function SendToDeskActions({
 }: {
   hasMissingCost: boolean;
   busy: boolean;
+  savingDraft: boolean;
   message?: string;
   onComplete: () => void;
   onSaveDraft: () => void;
@@ -506,7 +561,7 @@ function SendToDeskActions({
     <View style={styles.actions}>
       {hasMissingCost ? (
         <Text style={styles.warning}>
-          Some ingredients have no cost on record — their lab cost is excluded from the charge.
+          Some ingredients have no cost on record — they are excluded from the charge until set.
         </Text>
       ) : null}
 
@@ -525,11 +580,11 @@ function SendToDeskActions({
 
       <Pressable
         accessibilityRole="button"
-        disabled={busy}
+        disabled={busy || savingDraft}
         onPress={onSaveDraft}
         style={({ pressed }) => [styles.secondaryButton, pressed && styles.secondaryButtonPressed]}
       >
-        <Text style={styles.secondaryButtonText}>Save Draft</Text>
+        <Text style={styles.secondaryButtonText}>{savingDraft ? 'Saving…' : 'Save Draft'}</Text>
       </Pressable>
 
       <Pressable accessibilityRole="button" disabled={busy} onPress={onEdit} style={styles.textButton}>

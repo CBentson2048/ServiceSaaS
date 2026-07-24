@@ -86,3 +86,35 @@ export function formatMoney(cents: number, currencyCode: string): string {
     currency: currencyCode,
   }).format(cents / 100);
 }
+
+/**
+ * Constant per-gram scaling implied by the location billing rule. A percent
+ * markup scales per-gram (15p/g × 1.3 = 19.5p/g); a LOADED cost-only/disabled
+ * rule charges cost, so the factor is 1. Returns null when no per-gram price
+ * may be shown: a fixed uplift (no per-gram concept) — or billing settings
+ * that are missing/not yet loaded. Unknown must fail CLOSED: rendering the
+ * raw cost as if it were the price is exactly the leak these screens exist to
+ * prevent (stylist-facing screens must never show raw material cost).
+ */
+export function unitBillingFactor(
+  billing: LocationProductBillingSettings | null | undefined,
+): number | null {
+  if (!billing) return null;
+  if (!billing.productBillingEnabled) return 1;
+  switch (billing.productBillingRule) {
+    case 'cost_plus_markup_percent':
+      return billing.productMarkupPercent == null ? 1 : 1 + billing.productMarkupPercent / 100;
+    case 'fixed_uplift':
+      return billing.productFixedUpliftAmount == null ? 1 : null;
+    default:
+      return 1;
+  }
+}
+
+// Marked-up unit prices can carry fractional pence (15p/g × 1.3 = 19.5p/g →
+// £0.195); keep the third decimal only when it is significant.
+export function formatUnitMoney(cents: number): string {
+  const pounds = cents / 100;
+  const three = pounds.toFixed(3);
+  return `£${three.endsWith('0') ? pounds.toFixed(2) : three}`;
+}

@@ -142,7 +142,7 @@ export function StockAdjustModal({ visible, item, saving, onClose, onSubmit }: S
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: 'rgba(24,20,31,0.55)',
+    backgroundColor: 'rgba(25,19,31,0.55)',
     alignItems: 'center',
     justifyContent: 'center',
     padding: t.spacing.base,

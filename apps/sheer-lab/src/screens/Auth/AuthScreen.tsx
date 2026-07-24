@@ -13,6 +13,7 @@ import { useDeviceSession } from '../../features/sheer-lab/DeviceSessionProvider
 import { useApiClient } from '../../lib/api/ApiProvider';
 import { labTheme } from '../../theme/labTheme';
 import { BrandMark } from '../shared/BrandMark';
+import { BrandWordmark } from '../shared/BrandWordmark';
 
 type AuthScreenProps = NativeStackScreenProps<RootStackParamList, 'Auth'>;
 
@@ -109,7 +110,7 @@ export function AuthScreen({ navigation }: AuthScreenProps): React.JSX.Element {
         {/* Brand header */}
         <View style={styles.header}>
           <BrandMark size={64} radius={32} />
-          <Text style={styles.wordmark}>QLOOQO LAB</Text>
+          <BrandWordmark height={30} style={styles.wordmark} />
           <Text style={styles.welcome}>Welcome back</Text>
           <View style={styles.locationChip}>
             <LockGlyph />
@@ -367,10 +368,6 @@ const styles = StyleSheet.create({
     paddingTop: labTheme.spacing.lg,
   },
   wordmark: {
-    color: labTheme.colors.textPrimary,
-    fontSize: 22,
-    fontWeight: '800',
-    letterSpacing: 3,
     marginTop: labTheme.spacing.xs,
   },
   welcome: {

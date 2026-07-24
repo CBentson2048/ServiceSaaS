@@ -11,6 +11,7 @@ import type {
   AppointmentCompletionResponse,
   AppointmentPaymentConfirmationRequest,
   AppointmentPaymentConfirmationResponse,
+  VisitBillResponse,
   ApproveLeaveRequestRequest,
   BreakMutationResponse,
   BusinessSlugAvailabilityResponse,
@@ -522,6 +523,16 @@ export async function confirmBookingPayment(
       accessToken,
       body: payload,
     },
+  );
+}
+
+export async function getVisitBill(
+  accessToken: string,
+  visitId: string,
+): Promise<VisitBillResponse> {
+  return request<VisitBillResponse>(
+    `/lab/appointments/visits/${encodeURIComponent(visitId)}/bill`,
+    { accessToken },
   );
 }
 

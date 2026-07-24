@@ -15,6 +15,7 @@ import { ClientBookingReviewPage } from './pages/ClientBookingReviewPage';
 import { ClientBookingServicePage } from './pages/ClientBookingServicePage';
 import { ClientBookingSuccessPage } from './pages/ClientBookingSuccessPage';
 import { BookingsPage } from './pages/BookingsPage';
+import { VisitBillPage } from './pages/VisitBillPage';
 import { CreateAccountPage } from './pages/CreateAccountPage';
 import { CreateLocationPage } from './pages/CreateLocationPage';
 import { CrmClientDetailPage } from './pages/CrmClientDetailPage';
@@ -111,6 +112,7 @@ export function App() {
           <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['bookings.manage']} />}>
             <Route path="/bookings" element={<BookingsPage />} />
             <Route path="/bookings/new" element={<NewBookingPage />} />
+            <Route path="/checkout/visits/:visitId" element={<VisitBillPage />} />
           </Route>
           <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['report.lab_analytics.view']} />}>
             <Route path="/sheer-lab" element={<SheerLabPage />} />

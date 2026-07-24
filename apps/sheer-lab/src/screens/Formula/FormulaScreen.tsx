@@ -1,5 +1,5 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import type { InventoryProduct, PinUnlockResponse } from '@sheer/domain';
+import type { InventoryProduct, LocationProductBillingSettings, PinUnlockResponse } from '@sheer/domain';
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { StyleProp, ViewStyle } from 'react-native';
@@ -18,8 +18,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { RootStackParamList } from '../../app/navigation/routes';
 import { useBleScale } from '../../features/ble/hooks/useBleScale';
-import { formatMoney } from '../../features/formulas/formulaCosting';
-import { getLabProductBillingSettings } from '../../features/formulas/formulasApi';
+import { formatMoney, formatUnitMoney, unitBillingFactor } from '../../features/formulas/formulaCosting';
+import { getLabProductBillingSettings, saveDraftFormulaForLabSession } from '../../features/formulas/formulasApi';
 import type {
   FormulaIngredientRow,
   FormulaRemixBaseline,
@@ -27,7 +27,7 @@ import type {
   FormulaRowMetadataUpdate,
   SavedFormulaRecord,
 } from '../../features/formulas/formulaDraftTypes';
-import { toLabCoreFormulaDraft } from '../../features/formulas/formulaDraftTypes';
+import { draftHasDurableContext, toLabCoreFormulaDraft } from '../../features/formulas/formulaDraftTypes';
 import { useFormulaDraft } from '../../features/formulas/useFormulaDraft';
 import { listLabInventoryProducts } from '../../features/inventory/productsApi';
 import { getActiveLabSession, logoutLabSession } from '../../features/sheer-lab/labSession';
@@ -149,6 +149,7 @@ export function FormulaScreen({ navigation, route }: FormulaScreenProps): React.
     applyManualWeight,
     setProductBilling,
     saveDraft,
+    toSavePayload,
     loadDraft,
     getLatestFormulaForClient,
     duplicateFormula,
@@ -166,6 +167,7 @@ export function FormulaScreen({ navigation, route }: FormulaScreenProps): React.
   const [productsLoading, setProductsLoading] = useState(false);
   const [productsError, setProductsError] = useState<string | undefined>();
   const [tareOffset, setTareOffset] = useState(0);
+  const [billingSettings, setBillingSettings] = useState<LocationProductBillingSettings | null>(null);
   const [now, setNow] = useState<Date>(() => new Date());
   const lastAppliedBleReading = useRef<string | undefined>(undefined);
 
@@ -259,7 +261,12 @@ export function FormulaScreen({ navigation, route }: FormulaScreenProps): React.
       if (!activeSession) return;
       try {
         const settings = await getLabProductBillingSettings(activeSession.sessionId);
-        if (!cancelled) setProductBilling(settings);
+        if (!cancelled) {
+          setProductBilling(settings);
+          // Kept locally too so unit-price displays (product picker) can show
+          // the billable £/g instead of the raw cost.
+          setBillingSettings(settings);
+        }
       } catch {
         // Leave the colour-charge preview at cost-only if the rule can't be loaded.
       }
@@ -386,14 +393,28 @@ export function FormulaScreen({ navigation, route }: FormulaScreenProps): React.
 
   async function handleSaveDraft(): Promise<void> {
     setSavingDraft(true);
-    setDraftMessage('Saving local draft...');
+    setDraftMessage('Saving draft...');
     try {
       const saved = saveDraft();
+      // Persist to the salon record whenever the draft belongs to a real
+      // appointment/visit — the station's local copy is temporary UI only.
+      if (draftHasDurableContext(saved)) {
+        const active = await getActiveLabSession();
+        if (active) {
+          await saveDraftFormulaForLabSession(active.sessionId, toSavePayload());
+          setDraftMessage(
+            `Draft saved to salon records ${formatTime(saved.savedAt)} · ${saved.rows.length} rows · no billing or inventory changes yet`,
+          );
+          return;
+        }
+      }
       setDraftMessage(
-        `Draft saved locally ${formatTime(saved.savedAt)} · ${saved.rows.length} rows · no billing or inventory changes yet`,
+        `Draft saved on this station only ${formatTime(saved.savedAt)} · ${saved.rows.length} rows · no billing or inventory changes yet`,
       );
     } catch (err: unknown) {
-      setDraftMessage(err instanceof Error ? err.message : 'Could not save local draft');
+      // The local save above already succeeded — only the salon-record sync failed.
+      const reason = err instanceof Error ? err.message : 'network error';
+      setDraftMessage(`Draft kept on this station — could not sync to salon records (${reason})`);
     } finally {
       setSavingDraft(false);
     }
@@ -506,15 +527,6 @@ export function FormulaScreen({ navigation, route }: FormulaScreenProps): React.
         itemCount={labCoreDraft.items.length}
         remixBaseline={draft.remixBaseline}
       />
-      <ChargeCard
-        billableChargeCents={draft.billableChargeCents}
-        totalCostCents={draft.totalCostCents}
-        totalWasteCostCents={draft.totalWasteCostCents}
-        currencyCode={draft.currencyCode}
-        hasMissingCost={draft.hasMissingCost}
-        finalized={isFinalized}
-        finalizedAt={draft.finalizedAt}
-      />
       <MixTipCard />
     </View>
   );
@@ -586,6 +598,7 @@ export function FormulaScreen({ navigation, route }: FormulaScreenProps): React.
           <BottomBar
             totalCaptured={sessionTotals.totalCaptured}
             chargeCents={draft.billableChargeCents}
+            pricesReady={billingSettings != null}
             currencyCode={draft.currencyCode}
             savingDraft={savingDraft}
             reviewDisabled={savingDraft || !hasCapturedWeight}
@@ -605,6 +618,7 @@ export function FormulaScreen({ navigation, route }: FormulaScreenProps): React.
         error={productsError}
         search={productSearch}
         row={pickerRow}
+        unitFactor={unitBillingFactor(billingSettings)}
         onSearchChange={setProductSearch}
         onClose={() => setProductPickerRowId(undefined)}
         onRetry={() => void loadProducts(productSearch)}
@@ -994,10 +1008,10 @@ function ActiveIngredientCard({
   const manualDisabled = manualValue.trim().length === 0 || Number.isNaN(Number(manualValue));
   const isManualIdentity = row.identityMode === 'custom_manual';
   const productMeta = [row.brand, row.category, row.sku ? `SKU ${row.sku}` : undefined].filter(Boolean).join(' · ');
+  // No raw figure here — material cost is internal (owner/manager) data; the
+  // stylist only needs to know whether a cost basis exists for billing.
   const costBasisLabel =
-    row.costBasis.costPerGramCents == null
-      ? 'No product cost on record'
-      : `${row.costBasis.costPerGramCents}p/g from inventory`;
+    row.costBasis.costPerGramCents == null ? 'No product cost on record' : 'Costed from inventory';
 
   return (
     <View style={styles.card}>
@@ -1268,69 +1282,6 @@ function SessionProgressCard({
   );
 }
 
-function ChargeCard({
-  billableChargeCents,
-  totalCostCents,
-  totalWasteCostCents,
-  currencyCode,
-  hasMissingCost,
-  finalized,
-  finalizedAt,
-}: {
-  billableChargeCents: number;
-  totalCostCents: number;
-  totalWasteCostCents: number;
-  currencyCode: string;
-  hasMissingCost: boolean;
-  finalized: boolean;
-  finalizedAt?: string;
-}): React.JSX.Element {
-  const markupCents = billableChargeCents - totalCostCents;
-  return (
-    <View style={styles.card}>
-      <View style={styles.cardHeadRow}>
-        <Text style={styles.cardEyebrow}>Colour charge</Text>
-        <StatusChip label={finalized ? 'Reconciled' : 'Preview'} tone={finalized ? 'success' : 'brand'} />
-      </View>
-      <Text style={styles.chargeTotal}>{formatMoney(billableChargeCents, currencyCode)}</Text>
-      <View style={styles.chargeRows}>
-        <ChargeRow label="Actual product cost" value={formatMoney(totalCostCents, currencyCode)} />
-        {totalWasteCostCents > 0 ? (
-          <ChargeRow label="Waste cost" value={formatMoney(totalWasteCostCents, currencyCode)} tone="warning" />
-        ) : null}
-        {markupCents !== 0 ? (
-          <ChargeRow label="Markup / uplift" value={`+${formatMoney(markupCents, currencyCode)}`} tone="brand" />
-        ) : null}
-      </View>
-      <Text style={styles.chargeStatus}>
-        {finalized
-          ? `Finalized ${formatTime(finalizedAt)}. Billing and inventory reconciled.`
-          : hasMissingCost
-            ? 'Some ingredients are missing a cost per gram — set them before completing.'
-            : 'Complete the mix to apply billing, inventory usage and waste.'}
-      </Text>
-    </View>
-  );
-}
-
-function ChargeRow({
-  label,
-  value,
-  tone = 'muted',
-}: {
-  label: string;
-  value: string;
-  tone?: 'muted' | 'warning' | 'brand';
-}): React.JSX.Element {
-  const color = tone === 'warning' ? C.warning.text : tone === 'brand' ? C.primary : C.textSecondary;
-  return (
-    <View style={styles.chargeRow}>
-      <Text style={styles.chargeRowLabel}>{label}</Text>
-      <Text style={[styles.chargeRowValue, { color }]}>{value}</Text>
-    </View>
-  );
-}
-
 function MixTipCard(): React.JSX.Element {
   return (
     <View style={styles.tipCard}>
@@ -1352,6 +1303,7 @@ function MixTipCard(): React.JSX.Element {
 function BottomBar({
   totalCaptured,
   chargeCents,
+  pricesReady,
   currencyCode,
   savingDraft,
   reviewDisabled,
@@ -1363,6 +1315,8 @@ function BottomBar({
 }: {
   totalCaptured: number;
   chargeCents: number;
+  /** False until the location billing settings load — money renders as "—". */
+  pricesReady: boolean;
   currencyCode: string;
   savingDraft: boolean;
   reviewDisabled: boolean;
@@ -1376,7 +1330,10 @@ function BottomBar({
     <View style={styles.bottomBar}>
       <View style={styles.bottomSummary}>
         <Text style={styles.bottomGrams}>{totalCaptured.toFixed(1)} g</Text>
-        <Text style={styles.bottomCharge}>{formatMoney(chargeCents, currencyCode)} charge</Text>
+        {/* Fail closed: with billing settings unloaded the preview is raw cost. */}
+        <Text style={styles.bottomCharge}>
+          {pricesReady ? `${formatMoney(chargeCents, currencyCode)} charge` : '— charge'}
+        </Text>
       </View>
       <View style={styles.bottomActions}>
         <BottomButton glyph="＋" label="Add product" onPress={onAddProduct} />
@@ -1438,6 +1395,7 @@ interface ProductPickerModalProps {
   error?: string;
   search: string;
   row?: FormulaIngredientRow;
+  unitFactor: number | null;
   onSearchChange: (value: string) => void;
   onClose: () => void;
   onRetry: () => void;
@@ -1451,6 +1409,7 @@ function ProductPickerModal({
   error,
   search,
   row,
+  unitFactor,
   onSearchChange,
   onClose,
   onRetry,
@@ -1490,7 +1449,12 @@ function ProductPickerModal({
           ) : null}
           <ScrollView contentContainerStyle={styles.productList} keyboardShouldPersistTaps="handled">
             {products.map((product) => (
-              <ProductResult key={product.id} product={product} onPress={() => onSelect(product)} />
+              <ProductResult
+                key={product.id}
+                product={product}
+                unitFactor={unitFactor}
+                onPress={() => onSelect(product)}
+              />
             ))}
           </ScrollView>
         </View>
@@ -1501,9 +1465,11 @@ function ProductPickerModal({
 
 function ProductResult({
   product,
+  unitFactor,
   onPress,
 }: {
   product: InventoryProduct;
+  unitFactor: number | null;
   onPress: () => void;
 }): React.JSX.Element {
   const meta = [
@@ -1515,12 +1481,21 @@ function ProductResult({
     .filter(Boolean)
     .join(' · ');
 
+  // Billable £/g (never the raw cost); a rule with no per-gram price (fixed
+  // uplift) shows neutral copy instead.
+  const priceLabel =
+    product.defaultCostPerGramCents == null
+      ? 'Missing cost basis'
+      : unitFactor == null
+        ? 'Costed from inventory'
+        : `${formatUnitMoney(product.defaultCostPerGramCents * unitFactor)}/g`;
+
   return (
     <Pressable accessibilityRole="button" onPress={onPress} style={styles.productResult}>
       <Text style={styles.productTitle}>{formatProductDisplayName(product)}</Text>
       <Text style={styles.meta}>{meta || 'Inventory product'}</Text>
       <Text style={product.defaultCostPerGramCents == null ? styles.costMissing : styles.costBasis}>
-        {product.defaultCostPerGramCents == null ? 'Missing cost basis' : `${product.defaultCostPerGramCents}p/g`}
+        {priceLabel}
       </Text>
     </Pressable>
   );
@@ -1540,7 +1515,10 @@ function PreviousFormulaCard({
           <Text style={styles.cardEyebrow}>Last formula</Text>
           <Text style={styles.modalTitle}>{new Date(formula.savedAt).toLocaleDateString()}</Text>
         </View>
-        <Text style={styles.previousTotal}>{formatMoney(formula.totalCostCents, formula.currencyCode)}</Text>
+        {/* Billable charge, not the internal material cost. */}
+        <Text style={styles.previousTotal}>
+          {formatMoney(formula.billableChargeCents ?? formula.totalCostCents, formula.currencyCode)}
+        </Text>
       </View>
       {formula.rows.slice(0, 3).map((row) => (
         <Text key={row.id} style={styles.meta}>
@@ -1991,14 +1969,6 @@ const styles = StyleSheet.create({
   sessionStatsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: T.spacing.sm, flexWrap: 'wrap' },
   sessionStat: { color: C.textMuted, fontSize: 11, fontWeight: '700', letterSpacing: 0.3, textTransform: 'uppercase' },
   sessionStatStrong: { color: C.primary, fontSize: 11, fontWeight: '800', letterSpacing: 0.3, textTransform: 'uppercase' },
-
-  // Charge
-  chargeTotal: { color: C.textPrimary, fontSize: 32, fontWeight: '800', letterSpacing: -1 },
-  chargeRows: { gap: 4, paddingTop: T.spacing.sm, borderTopWidth: 1, borderTopColor: C.border },
-  chargeRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 3 },
-  chargeRowLabel: { color: C.textMuted, fontSize: 13, fontWeight: '600' },
-  chargeRowValue: { fontSize: 13, fontWeight: '700' },
-  chargeStatus: { color: C.textMuted, fontSize: 12, lineHeight: 17 },
 
   // Mix tip
   tipCard: {

@@ -92,6 +92,8 @@ export interface FormulaDraftSession {
   patchTest: FormulaPatchTestContext;
   status: FormulaDraftStatus;
   rows: FormulaIngredientRow[];
+  /** Formula-level stylist notes (per-ingredient notes live on FormulaIngredientRow.notes). */
+  notes?: string;
   activeIngredientId?: string;
   lastLiveReading?: BleWeightReading;
   sourceFormulaId?: string;
@@ -193,8 +195,28 @@ export function toLabCoreFormulaDraft(session: FormulaDraftSession): FormulaDraf
   };
 }
 
+/**
+ * Draft-save payload: persists the recipe durably WITHOUT billing handoff or
+ * inventory deduction — both reconcile at finalize, which upserts the same
+ * formula row server-side (external_formula_id).
+ */
 export function toFormulaSavePayload(session: FormulaDraftSession): FormulaSavePayload {
-  return toFormulaFinalSavePayload(session, false);
+  return {
+    ...toFormulaFinalSavePayload(session, false),
+    billingHandoffRequested: false,
+    inventoryDeductionRequested: false,
+  };
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * True when the draft is tied to a real appointment/visit (UUIDs, not the
+ * local walk-in placeholders) — the context the server needs to land a draft
+ * on the client's durable colour record. Placeholder drafts stay device-local.
+ */
+export function draftHasDurableContext(session: FormulaDraftSession): boolean {
+  return UUID_RE.test(session.visit.appointmentId ?? '') || UUID_RE.test(session.visit.visitId ?? '');
 }
 
 export function toFormulaFinalSavePayload(
@@ -208,6 +230,7 @@ export function toFormulaFinalSavePayload(
     visitId: session.visit.visitId,
     clientProfileId: session.client.clientProfileId,
     sourceFormulaId: session.sourceFormulaId,
+    notes: session.notes?.trim() || undefined,
     items: toLabCoreFormulaItems(session.rows),
     manualFallbacks: session.rows
       .filter((row) => row.weightSource === 'manual' && row.capturedGrams != null)

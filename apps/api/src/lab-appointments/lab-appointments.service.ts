@@ -15,6 +15,7 @@ import type {
   AppointmentPaymentConfirmationRequest,
   AppointmentPaymentConfirmationResponse,
   AppointmentPaymentRecord,
+  AppointmentPaymentTender,
   AppointmentStatus,
   AuthUser,
   CancelAppointmentResponse,
@@ -32,6 +33,7 @@ import type {
   StaffBookingServiceLine,
   StaffBookingSummary,
   BookingSegmentSummary,
+  VisitBillResponse,
 } from '@sheer/domain';
 import {
   calculateAppointmentBillingTax,
@@ -289,6 +291,8 @@ const DETAIL_COLUMNS =
 const VISIT_COLUMNS =
   'id,business_id,location_id,appointment_id,client_profile_id,primary_staff_profile_id,status,checked_in_at,started_at,completed_at,completed_by_user_profile_id,completed_by_staff_profile_id,checkout_status,checkout_ready_at,paid_at,paid_by_user_profile_id,paid_by_staff_profile_id,service_summary,client_visible_summary,created_at';
 const REBOOKING_VISIT_COLUMNS = `${VISIT_COLUMNS},rebooking_outcomes(id,rebooked_appointment_id,rebook_source,rebooked_at)`;
+const SALON_PAYMENT_COLUMNS =
+  'id,appointment_id,visit_id,payment_method,amount_cents,currency_code,paid_at,confirmed_by_user_profile_id,confirmed_by_staff_profile_id,notes';
 
 @Injectable()
 export class LabAppointmentsService {
@@ -1489,18 +1493,22 @@ export class LabAppointmentsService {
       this.taxSettings.resolveLocationTaxSettings(appointment.business_id, appointment.location_id),
     ]);
     const billing = buildBillingSummary(appointment, lineItems, taxSettings);
-    if (input.amountCents !== billing.balanceDueCents) {
-      throw new ConflictException('Payment amount must match the remaining balance due');
+    const tenders = normalizeTenders(input);
+    const tenderTotalCents = tenders.reduce((sum, tender) => sum + tender.amountCents, 0);
+    if (tenderTotalCents !== billing.balanceDueCents) {
+      throw new ConflictException('Payment amounts must add up to the remaining balance due');
     }
 
-    const existingPayment = await this.fetchSalonPaymentForVisit(visit.id);
-    const paidAt = existingPayment?.paid_at ?? new Date().toISOString();
+    const existingPayments = await this.fetchSalonPaymentsForVisit(visit.id);
+    const alreadyPaid = existingPayments.length > 0;
+    const paidAt = existingPayments[0]?.paid_at ?? new Date().toISOString();
     const confirmedByStaffProfileId = actor.staffProfileId ?? appointment.assigned_staff_profile_id ?? undefined;
-    const payment = existingPayment ?? await this.insertSalonPayment(
+    const payments = alreadyPaid ? existingPayments : await this.insertSalonPayments(
       appointment,
       visit,
       actor,
-      input,
+      tenders,
+      input.notes,
       billing.currencyCode,
       paidAt,
       confirmedByStaffProfileId,
@@ -1511,31 +1519,35 @@ export class LabAppointmentsService {
     const paidVisit = visit.status === 'paid'
       ? visit
       : await this.markVisitPaid(visit, appointment.business_id, actor, paidAt, confirmedByStaffProfileId);
-    if (!existingPayment) {
-      await this.audit.record(actor, {
-        action: 'payment.recorded',
-        entityType: 'payment',
-        entityId: payment.id,
-        locationId: appointment.location_id,
-        after: {
-          amountCents: payment.amount_cents,
-          currencyCode: billing.currencyCode,
-          paymentMethod: input.paymentMethod,
-        },
-        metadata: {
-          appointmentId: appointment.id,
-          visitId: visit.id,
-          clientProfileId: appointment.client_profile_id,
-          source: 'in_salon_checkout',
-        },
-      });
+    if (!alreadyPaid) {
+      for (const payment of payments) {
+        await this.audit.record(actor, {
+          action: 'payment.recorded',
+          entityType: 'payment',
+          entityId: payment.id,
+          locationId: appointment.location_id,
+          after: {
+            amountCents: payment.amount_cents,
+            currencyCode: billing.currencyCode,
+            paymentMethod: payment.payment_method,
+          },
+          metadata: {
+            appointmentId: appointment.id,
+            visitId: visit.id,
+            clientProfileId: appointment.client_profile_id,
+            source: 'in_salon_checkout',
+          },
+        });
+      }
     }
 
     const clientsById = await this.fetchClientProfiles(actor.businessId, [paidAppointment.client_profile_id]);
+    const paidCents = payments.reduce((sum, payment) => sum + payment.amount_cents, 0);
     const responseBilling: AppointmentPaymentConfirmationResponse['billing'] = {
       ...billing,
-      balanceDueCents: Math.max(0, billing.balanceDueCents - payment.amount_cents),
+      balanceDueCents: Math.max(0, billing.balanceDueCents - paidCents),
     };
+    const paymentRecords = payments.map(toPaymentRecord);
 
     return {
       appointment: toBookingDetail(paidAppointment, clientsById.get(paidAppointment.client_profile_id)),
@@ -1547,9 +1559,54 @@ export class LabAppointmentsService {
         message: 'In-salon payment confirmed. Visit is paid and settled.',
       },
       billing: responseBilling,
-      payment: toPaymentRecord(payment),
+      // Largest tender first for the legacy single-payment field; the full
+      // list carries the split (one record per method).
+      payment: paymentRecords.reduce((largest, record) =>
+        record.amountCents > largest.amountCents ? record : largest,
+      ),
+      payments: paymentRecords,
       alreadyCompleted: true,
-      alreadyPaid: Boolean(existingPayment),
+      alreadyPaid,
+    };
+  }
+
+  /**
+   * The retrievable bill for a visit: the same itemised billing breakdown the
+   * till showed at checkout plus every payment taken against it. Backs the
+   * /checkout/visits/:visitId page linked from the book and the CRM.
+   */
+  async visitBill(actor: AuthUser, visitId: string): Promise<VisitBillResponse> {
+    const visit = await this.fetchVisitForActor(actor, visitId);
+    if (!visit.appointment_id) throw new NotFoundException('Visit has no linked appointment');
+    const appointment = await this.fetchAppointmentForActor(actor, visit.appointment_id);
+
+    const [lineItems, taxSettings, payments] = await Promise.all([
+      this.fetchVisitLineItems(visit.id),
+      this.taxSettings.resolveLocationTaxSettings(appointment.business_id, appointment.location_id),
+      this.fetchSalonPaymentsForVisit(visit.id),
+    ]);
+    const billing = buildBillingSummary(appointment, lineItems, taxSettings);
+    const paidCents = payments.reduce((sum, payment) => sum + payment.amount_cents, 0);
+    const clientsById = await this.fetchClientProfiles(actor.businessId, [appointment.client_profile_id]);
+    const client = clientsById.get(appointment.client_profile_id);
+
+    return {
+      appointment: toBookingDetail(appointment, client),
+      visit: toVisitSummary(visit, appointment, client),
+      checkout: {
+        status: visit.checkout_status ?? 'not_ready',
+        readyAt: visit.checkout_ready_at ?? visit.completed_at ?? undefined,
+        route: `/checkout/visits/${visit.id}`,
+        message: visit.checkout_status === 'paid'
+          ? 'Visit is paid and settled.'
+          : 'Service is complete. Collect the remaining balance in salon.',
+      },
+      billing: {
+        ...billing,
+        balanceDueCents: Math.max(0, billing.balanceDueCents - paidCents),
+      },
+      payments: payments.map(toPaymentRecord),
+      alreadyCompleted: Boolean(visit.completed_at),
     };
   }
 
@@ -2244,56 +2301,58 @@ export class LabAppointmentsService {
     });
   }
 
-  private async fetchSalonPaymentForVisit(visitId: string): Promise<SalonPaymentRow | undefined> {
+  private async fetchSalonPaymentsForVisit(visitId: string): Promise<SalonPaymentRow[]> {
     const { data, error } = await this.admin
       .schema('billing')
       .from('salon_payments')
-      .select('id,appointment_id,visit_id,payment_method,amount_cents,currency_code,paid_at,confirmed_by_user_profile_id,confirmed_by_staff_profile_id,notes')
+      .select(SALON_PAYMENT_COLUMNS)
       .eq('visit_id', visitId)
-      .maybeSingle<SalonPaymentRow>();
+      .order('amount_cents', { ascending: false })
+      .returns<SalonPaymentRow[]>();
     if (error) {
-      this.logger.error(`fetchSalonPaymentForVisit failed: ${error.message}`);
-      throw new InternalServerErrorException('Unable to load salon payment');
+      this.logger.error(`fetchSalonPaymentsForVisit failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load salon payments');
     }
-    return data ?? undefined;
+    return data ?? [];
   }
 
-  private async insertSalonPayment(
+  private async insertSalonPayments(
     appointment: AppointmentRow,
     visit: VisitRow,
     actor: AuthUser,
-    input: AppointmentPaymentConfirmationRequest,
+    tenders: AppointmentPaymentTender[],
+    notes: string | undefined,
     currencyCode: string,
     paidAt: string,
     confirmedByStaffProfileId: string | undefined,
-  ): Promise<SalonPaymentRow> {
-    if (input.paymentMethod !== 'cash' && input.paymentMethod !== 'card_reader') {
-      throw new ConflictException('Payment method must be cash or card reader');
-    }
-    const notes = input.notes?.trim();
+  ): Promise<SalonPaymentRow[]> {
+    const trimmedNotes = notes?.trim();
+    const rows = tenders.map((tender) => ({
+      business_id: appointment.business_id,
+      location_id: appointment.location_id,
+      appointment_id: appointment.id,
+      visit_id: visit.id,
+      payment_method: tender.paymentMethod,
+      amount_cents: tender.amountCents,
+      currency_code: currencyCode,
+      paid_at: paidAt,
+      confirmed_by_user_profile_id: actor.id,
+      confirmed_by_staff_profile_id: confirmedByStaffProfileId ?? null,
+      notes: trimmedNotes || null,
+      metadata: { source: 'in_salon_checkout' },
+    }));
     const { data, error } = await this.admin
       .schema('billing')
       .from('salon_payments')
-      .insert({
-        business_id: appointment.business_id,
-        location_id: appointment.location_id,
-        appointment_id: appointment.id,
-        visit_id: visit.id,
-        payment_method: input.paymentMethod,
-        amount_cents: input.amountCents,
-        currency_code: currencyCode,
-        paid_at: paidAt,
-        confirmed_by_user_profile_id: actor.id,
-        confirmed_by_staff_profile_id: confirmedByStaffProfileId ?? null,
-        notes: notes || null,
-        metadata: { source: 'in_salon_checkout' },
-      })
-      .select('id,appointment_id,visit_id,payment_method,amount_cents,currency_code,paid_at,confirmed_by_user_profile_id,confirmed_by_staff_profile_id,notes')
-      .single<SalonPaymentRow>();
-    if (error || !data) {
-      const replayed = await this.fetchSalonPaymentForVisit(visit.id);
-      if (replayed) return replayed;
-      this.logger.error(`insertSalonPayment failed: ${error?.message ?? 'no row'}`);
+      .insert(rows)
+      .select(SALON_PAYMENT_COLUMNS)
+      .returns<SalonPaymentRow[]>();
+    if (error || !data?.length) {
+      // A concurrent confirmation already settled this visit — the per-method
+      // unique key collides the duplicate insert; replay the recorded tenders.
+      const replayed = await this.fetchSalonPaymentsForVisit(visit.id);
+      if (replayed.length > 0) return replayed;
+      this.logger.error(`insertSalonPayments failed: ${error?.message ?? 'no rows'}`);
       throw new InternalServerErrorException('Unable to record salon payment');
     }
     return data;
@@ -2719,6 +2778,35 @@ function toVisitSummary(row: VisitRow, appointment: AppointmentRow, client?: Cli
     rebookedAppointmentId: rebooking?.rebooked_appointment_id,
     rebookedAt: rebooking?.rebooked_at,
   };
+}
+
+// Normalizes either confirm-payment request shape into validated tenders: the
+// legacy single paymentMethod/amountCents pair or the split `payments` array.
+// One tender per method with whole non-negative amounts — the sum-vs-balance
+// check happens at the call site where the bill is known.
+function normalizeTenders(input: AppointmentPaymentConfirmationRequest): AppointmentPaymentTender[] {
+  const tenders: AppointmentPaymentTender[] = input.payments?.length
+    ? input.payments.map((tender) => ({ paymentMethod: tender.paymentMethod, amountCents: tender.amountCents }))
+    : input.paymentMethod !== undefined && input.amountCents !== undefined
+      ? [{ paymentMethod: input.paymentMethod, amountCents: input.amountCents }]
+      : [];
+  if (tenders.length === 0) {
+    throw new ConflictException('At least one payment is required');
+  }
+  const seenMethods = new Set<string>();
+  for (const tender of tenders) {
+    if (tender.paymentMethod !== 'cash' && tender.paymentMethod !== 'card_reader') {
+      throw new ConflictException('Payment method must be cash or card reader');
+    }
+    if (!Number.isInteger(tender.amountCents) || tender.amountCents < 0) {
+      throw new ConflictException('Payment amounts must be whole non-negative amounts');
+    }
+    if (seenMethods.has(tender.paymentMethod)) {
+      throw new ConflictException('Each payment method can appear at most once per checkout');
+    }
+    seenMethods.add(tender.paymentMethod);
+  }
+  return tenders;
 }
 
 function toPaymentRecord(row: SalonPaymentRow): AppointmentPaymentRecord {

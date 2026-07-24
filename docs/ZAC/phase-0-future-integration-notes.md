@@ -128,4 +128,52 @@ Day 3 refines the §3 schema proposal by splitting outcome tracking into two tab
 
 ---
 
+## 8. Day 4 future integration notes
+
+Added 2026-07-21 from [`phase-0-day-4-value-created-cost-per-intelligence.md`](phase-0-day-4-value-created-cost-per-intelligence.md). For a future authorised phase — **not now.**
+
+Future implementation should:
+
+- **Implement the Value Created dashboard/report in a later phase** — the multi-section structure in Day 4 §9 (headline split into Directly Attributable / Influenced / Observed, top categories, best item, category detail, what-ZAC-learned, assumptions footer, feedback control). Not built in Phase 0/1's read path.
+- **Build separate ZAC event tables** for insights, coaching points, opportunities (the internal `zac.recommendations`), outcomes (`zac.observed_outcomes`, `zac.recommendation_outcomes`) and **cost telemetry** (`zac.cost_events`) — separate from `audit.activity_log`, mirroring only critical/compliance-relevant events into the main audit log (Day 4 §15; Day 3 §19).
+- **Build attribution logic** for Observed, Influenced and Directly Attributable value, using the Day 4 §4 decision rule and the existing `booking.rebooking_outcomes.rebook_source='zac'` / `booking.appointments.booking_channel='api'` hooks (do not invent new hooks).
+- **Add confidence levels** to value and insight outputs, derived from the Day 4 §5 drivers (data completeness, attribution strength, sample size, window fit, prior outcomes) — shown to users where it matters.
+- **Add manual feedback capture** for owners/managers ("did this help?") as an outcome/feedback signal that feeds the learning model, not merely a UI state (Day 4 §9).
+- **Integrate the ZAC value summary into Sunday evening reports later** — as a future "Value Created by ZAC" section riding the existing per-location **Sunday Night Report** (`owner-location-settings`: `sunday_report_enabled` / `sunday_report_recipients` / `sunday_report_send_hour`). Weekly/monthly/yearly content contract in Day 4 §11. **Do not wire this in Phase 0.**
+- **Add Cost per Intelligence telemetry from Phase 1** — log the Day 4 §15 cost events (`zac.cost_recorded`, `zac.report.generated`, `zac.model.escalated`, cache hit/miss, etc.) so cost-per-unit and gross margin are reconstructable (unrecoverable if not captured — Day 1 §15).
+- **Use configurable model pricing, not hardcoded provider costs** — the Day 4 §17 named constants live in per-provider config behind `model-provider.interface.ts` (Day 2 §11) and must be refreshed from official pricing pages before commercial sign-off.
+- **Enforce cost controls in the model router** — model routing, per-tenant prompt/tool caching (per-tenant only), summary memory, metadata-filtered retrieval, per-tenant budgets, report-frequency controls, background-job batching, and reasoning-model escalation only when needed (Day 4 §21).
+- **Keep the Phase 0 proof-of-architecture separate from production implementation** — Day 4 §23: no production login, real UI, migrations, LLM, live tools, live memory tables, live Sunday-report integration, or autonomous actions in Phase 0.
+
+### Where value/cost telemetry attaches (existing anchors)
+
+| Day 4 design element | Existing QLOOQO anchor | Integration note |
+|---|---|---|
+| Value baselines (`zac.kpi_snapshots`) | `apps/api/src/kpi/kpi.calc.ts` (live KPIs, no history) | Snapshot the deterministic engine's outputs periodically; existing reporting stays source of truth (Day 4 §12). |
+| Sunday "Value Created" section | `apps/api/src/owner-location-settings/` Sunday Night Report config | Extend the existing scheduled report; do not build a new scheduler (Day 4 §11). |
+| Cost events (`zac.cost_events`) | none (greenfield) + `audit.activity_log` (thin, no `agent` actor) | New high-volume table separate from audit; mirror only critical events (Day 4 §15). |
+| Attribution hooks | `booking.rebooking_outcomes.rebook_source`, `booking.appointments.booking_channel` | Reuse for Directly Attributable value; do not invent new hooks (Day 4 §4). |
+
+---
+
+## 9. Day 5 future integration notes
+
+Added 2026-07-22 from [`phase-0-day-5-final-package-acceptance-roadmap.md`](phase-0-day-5-final-package-acceptance-roadmap.md). For a future authorised phase — **not now.**
+
+Future work should:
+
+- **Build the proof-of-architecture scenario pack before Phase 1 sign-off** — the Day 5 §6 package (role scenarios, memory examples, lifecycle, attribution, sample Value Created report, First-Time Value Clarity checklist), reviewed against [`phase-0-acceptance-criteria.md`](phase-0-acceptance-criteria.md). Documentation/scenario based; a runnable demo harness only if separately agreed (Day 5 §20 Cosan 7).
+- **Build Owner/Manager/Stylist test personas** — Emma (owner), Sarah (manager), Mia/Olivia/Jade (stylists) per Day 5 §7, with role-correct permissions mirroring `DEFAULT_ROLE_PERMISSIONS`.
+- **Build a realistic test salon dataset** — "The Colour Room" metrics (Day 5 §7.2–§7.3) as mock/test data shaped like QLOOQO's real schemas (GBP `*_cents`, grams); **no real client PII, no Supabase data changes**.
+- **Later implement Manager Coaching Journey as a structured capability** — the ten-question journey (Day 5 §11), phased per Day 5 §18 (Phase 1 basic coaching points → Phase 2 structured journeys → Phase 3 policy-aware workflows → HR/internal-process integration only if approved).
+- **Add support history tracking** — record what support a manager offered and when (quieter column, pairing, check-ins), linked to the coaching journey.
+- **Add measurable improvement target tracking** — agreed targets (e.g. rebooking >50% in 4 weeks) with their measurement windows.
+- **Add review cadence tracking** — scheduled 2-week/4-week reviews and whether they happened.
+- **Add manager feedback capture** — "did this help?" and journey-outcome feedback as learning signals (Decision Log D24, D39).
+- **Keep HR/legal/company-policy decisions human-controlled** — ZAC provides evidence and structure only; no employment decisions, no disciplinary recommendations as decisions, policy reminders built into the journey outputs (Decision Log D40).
+- **Link Manager Coaching Journey to Outcome Memory and Value Created reporting** — journey outcomes recorded per Day 5 §14 and surfaced in the Staff Development / Value Created categories (Day 4 §8.10).
+- **Keep Phase 1 read-only** — the journey's Phase 1 slice is performance-data coaching points only; no write tools (Decision Log D43).
+
+---
+
 *Documentation only. This file describes how ZAC could be integrated later; it is not an instruction to integrate now. No source code, modules, migrations, permissions, env files, package manifests, or Supabase data have been created or modified.*

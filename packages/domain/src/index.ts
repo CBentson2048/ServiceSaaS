@@ -1974,9 +1974,25 @@ export interface AppointmentCompletionResponse {
   alreadyCompleted: boolean;
 }
 
-export interface AppointmentPaymentConfirmationRequest {
-  paymentMethod: 'cash' | 'card_reader';
+export type SalonPaymentMethod = 'cash' | 'card_reader';
+
+/** One way the client settles part of the bill at the till (e.g. £30 cash). */
+export interface AppointmentPaymentTender {
+  paymentMethod: SalonPaymentMethod;
   amountCents: number;
+}
+
+/**
+ * Settles the visit's full balance in one confirmation. Either shape works:
+ * the legacy single `paymentMethod` + `amountCents` pair, or `payments` with
+ * one tender per method for a split bill (£30 cash + £42 card). Tender amounts
+ * must sum to exactly `balanceDueCents` — the bill always tallies to zero.
+ */
+export interface AppointmentPaymentConfirmationRequest {
+  paymentMethod?: SalonPaymentMethod;
+  amountCents?: number;
+  /** Split-tender shape; takes precedence over the single pair when present. */
+  payments?: AppointmentPaymentTender[];
   notes?: string;
 }
 
@@ -1984,7 +2000,7 @@ export interface AppointmentPaymentRecord {
   id: string;
   appointmentId: string;
   visitId: string;
-  paymentMethod: 'cash' | 'card_reader';
+  paymentMethod: SalonPaymentMethod;
   amountCents: number;
   currencyCode: string;
   paidAt: string;
@@ -1994,8 +2010,21 @@ export interface AppointmentPaymentRecord {
 }
 
 export interface AppointmentPaymentConfirmationResponse extends AppointmentCompletionResponse {
+  /** Largest tender — kept for callers that predate split payments. */
   payment: AppointmentPaymentRecord;
+  /** Every tender recorded against the visit (one per method). */
+  payments: AppointmentPaymentRecord[];
   alreadyPaid: boolean;
+}
+
+/**
+ * A settled (or settling) visit's bill, retrievable any time after checkout:
+ * the same itemised billing breakdown the till showed plus every payment
+ * taken. Rendered at /checkout/visits/:visitId — the route `checkout.route`
+ * has always pointed at.
+ */
+export interface VisitBillResponse extends AppointmentCompletionResponse {
+  payments: AppointmentPaymentRecord[];
 }
 
 // --- Client booking acceptance (owner/manager approve or reject) ---
@@ -3918,6 +3947,10 @@ export interface CrmClientFormula {
   staffProfileId?: string;
   stylistName?: string;
   serviceType?: string;
+  /** Formula-level stylist notes. Staff-facing only — never surfaced to clients. */
+  notes?: string;
+  /** True for a durably-saved draft (recipe persisted, billing/stock reconcile at finalize). */
+  isDraft?: boolean;
   items: CrmClientFormulaItem[];
 }
 

@@ -72,6 +72,10 @@ export class SaveFormulaDto {
   sourceFormulaId?: string;
 
   @IsOptional()
+  @IsString()
+  notes?: string;
+
+  @IsOptional()
   items?: unknown[];
 
   @IsOptional()

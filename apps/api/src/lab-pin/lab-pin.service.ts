@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   InternalServerErrorException,
@@ -86,14 +87,18 @@ export class LabPinService {
     await this.assertLocationScope(actor, dto.locationId);
     const target = await this.resolveTarget(actor, dto.userProfileId, dto.locationId);
 
-    const { error: deactivateError } = await this.admin
+    // Capture what we deactivate so a failed insert can restore it — otherwise
+    // a rejected new PIN would leave the team member with NO working PIN.
+    const { data: deactivatedRows, error: deactivateError } = await this.admin
       .schema('core')
       .from('stylist_pin_credentials')
       .update({ is_active: false, status: 'rotation_required' })
       .eq('business_id', actor.businessId)
       .eq('location_id', dto.locationId)
       .eq('user_profile_id', dto.userProfileId)
-      .eq('is_active', true);
+      .eq('is_active', true)
+      .select('id')
+      .returns<Array<{ id: string }>>();
 
     if (deactivateError) {
       this.logger.error(`assign deactivate existing failed: ${deactivateError.message}`);
@@ -115,6 +120,15 @@ export class LabPinService {
 
     if (insertError) {
       this.logger.error(`assign insert failed: ${insertError.message}`);
+      await this.restoreCredentials(deactivatedRows ?? []);
+      // The PIN hash is unique per active credential at a location (that is how
+      // a shared iPad knows WHO unlocked) — a duplicate means someone else at
+      // this location already uses this PIN.
+      if (isDuplicatePinError(insertError)) {
+        throw new ConflictException(
+          'That PIN is already in use by another team member at this location — choose a different 4-digit PIN.',
+        );
+      }
       throw new InternalServerErrorException('Unable to assign Lab PIN');
     }
 
@@ -487,6 +501,26 @@ export class LabPinService {
     return data ?? undefined;
   }
 
+  /**
+   * Best-effort rollback of the credentials deactivated at the start of
+   * assign(): if the new PIN insert is rejected (e.g. PIN already in use at
+   * the location), the previous PIN must keep working.
+   */
+  private async restoreCredentials(rows: Array<{ id: string }>): Promise<void> {
+    if (rows.length === 0) return;
+    const { error } = await this.admin
+      .schema('core')
+      .from('stylist_pin_credentials')
+      .update({ is_active: true, status: 'active' })
+      .in(
+        'id',
+        rows.map((row) => row.id),
+      );
+    if (error) {
+      this.logger.error(`restoreCredentials failed: ${error.message}`);
+    }
+  }
+
   private async writeAuditEvent(
     actor: AuthUser,
     locationId: string,
@@ -515,6 +549,15 @@ export class LabPinService {
       .update(`${businessId}:${locationId}:${pin}:${this.pinPepper}`)
       .digest('hex');
   }
+}
+
+// Postgres unique_violation (23505) on the active-PIN-per-location index.
+function isDuplicatePinError(error: { code?: string; message: string }): boolean {
+  return (
+    error.code === '23505' ||
+    error.message.includes('duplicate key') ||
+    error.message.includes('idx_stylist_pin_credentials_active_location_hash')
+  );
 }
 
 function toPinStatus(entry: PinEligibleEntry, credential?: PinCredentialRow): LabPinCredentialStatus {

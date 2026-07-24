@@ -12,6 +12,7 @@ import type {
   RescheduleAppointmentResponse,
   SheerLabAnalyticsRange,
   StaffBookingDetail,
+  VisitBillResponse,
 } from '@sheer/domain';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { PermissionsGuard, RequirePermissions } from '../auth/permissions.guard';
@@ -137,6 +138,14 @@ export class LabAppointmentsController {
     @Body() body: LinkStylistRebookingDto,
   ): Promise<AppointmentCompletionResponse> {
     return this.labAppointmentsService.linkStylistRebooking(actor, id, body);
+  }
+
+  @Get('visits/:visitId/bill')
+  visitBill(
+    @CurrentUser() actor: AuthUser,
+    @Param('visitId') visitId: string,
+  ): Promise<VisitBillResponse> {
+    return this.labAppointmentsService.visitBill(actor, visitId);
   }
 }
 

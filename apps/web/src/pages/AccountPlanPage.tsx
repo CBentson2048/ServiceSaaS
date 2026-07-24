@@ -11,11 +11,12 @@ export function AccountPlanPage() {
   const accessToken = auth.session?.accessToken;
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-6 lg:px-8">
+    <div className="mx-auto w-full max-w-5xl px-4 py-6 lg:px-8">
       <header className="mb-6">
-        <h1 className="text-[22px] font-semibold leading-7 text-text-primary">Account &amp; plan</h1>
+        <h1 className="text-[22px] font-semibold leading-7 text-text-primary">Your plan</h1>
         <p className="mt-1 text-[13px] text-text-secondary">
-          Your current plan, live usage, and upgrade options.
+          See what&apos;s included, keep an eye on your usage, and upgrade the moment your business
+          is ready for more.
         </p>
       </header>
 

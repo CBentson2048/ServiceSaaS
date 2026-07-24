@@ -34,6 +34,30 @@ export async function saveFormula(payload: FormulaSavePayload) {
   return sheerApiClient.labFormulas.save(payload);
 }
 
+/**
+ * Durably saves a draft mix on the client's record (no billing handoff, no
+ * inventory deduction — those happen at finalize, which updates the same
+ * server-side formula row).
+ */
+export async function saveDraftFormulaForLabSession(sessionId: string, payload: FormulaSavePayload) {
+  const response = await fetch(
+    `${appConfig.apiBaseUrl}/lab/formulas/session/${encodeURIComponent(sessionId)}/${encodeURIComponent(payload.formulaId)}/save-draft`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(`Could not save draft (${response.status})`);
+  }
+
+  return response.json();
+}
+
 export async function finalizeFormulaForLabSession(sessionId: string, payload: FormulaSavePayload) {
   const response = await fetch(
     `${appConfig.apiBaseUrl}/lab/formulas/session/${encodeURIComponent(sessionId)}/${encodeURIComponent(payload.formulaId)}/finalize`,

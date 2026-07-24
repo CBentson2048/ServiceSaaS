@@ -385,8 +385,8 @@ describe('LabAppointmentsService — appointment completion', () => {
       { data: awaitingPayment, error: null },
       { data: visitRow(), error: null },
       { data: lineItems(), error: null },
-      { data: null, error: null },
-      { data: salonPaymentRow(), error: null },
+      { data: [], error: null },
+      { data: [salonPaymentRow()], error: null },
       { data: paid, error: null },
       { data: visitRow({ status: 'paid', checkout_status: 'paid', paid_at: '2026-05-13T10:05:00.000Z' }), error: null },
       { data: [clientProfileRow()], error: null },
@@ -401,17 +401,74 @@ describe('LabAppointmentsService — appointment completion', () => {
     expect(result.appointment.status).toBe('paid');
     expect(result.checkout.status).toBe('paid');
     expect(result.payment.paymentMethod).toBe('card_reader');
+    expect(result.payments).toHaveLength(1);
     expect(result.billing.balanceDueCents).toBe(0);
     expect(client.queries.some((query) => query.calls.some((call) => call.method === 'from' && call.args[0] === 'stock_movements'))).toBe(false);
   });
 
-  it('replays existing salon payment without inserting a duplicate payment record', async () => {
+  it('splits payment across cash and card, recording one payment row per tender', async () => {
+    const awaitingPayment = appointmentRow({ status: 'awaiting_payment', completed_at: '2026-05-13T10:01:00.000Z' });
+    const paid = appointmentRow({ status: 'paid', completed_at: '2026-05-13T10:01:00.000Z' });
+    const insertedRows = [
+      salonPaymentRow({ id: 'payment_card', payment_method: 'card_reader', amount_cents: 4200 }),
+      salonPaymentRow({ id: 'payment_cash', payment_method: 'cash', amount_cents: 800 }),
+    ];
+    const client = createMockSupabaseClient([
+      { data: awaitingPayment, error: null },
+      { data: visitRow(), error: null },
+      { data: lineItems(), error: null },
+      { data: [], error: null },
+      { data: insertedRows, error: null },
+      { data: paid, error: null },
+      { data: visitRow({ status: 'paid', checkout_status: 'paid', paid_at: '2026-05-13T10:05:00.000Z' }), error: null },
+      { data: [clientProfileRow()], error: null },
+    ]);
+    const service = createService(client);
+
+    const result = await service.confirmPayment(stylistActor(), 'appointment_1', {
+      payments: [
+        { paymentMethod: 'cash', amountCents: 800 },
+        { paymentMethod: 'card_reader', amountCents: 4200 },
+      ],
+    });
+
+    expect(result.payments).toHaveLength(2);
+    expect(result.payments.map((payment) => payment.paymentMethod).sort()).toEqual(['card_reader', 'cash']);
+    expect(result.payment.paymentMethod).toBe('card_reader');
+    expect(result.billing.balanceDueCents).toBe(0);
+    const insertCall = client.queries
+      .flatMap((query) => query.calls)
+      .find((call) => call.method === 'insert');
+    expect(insertCall).toBeDefined();
+    expect(insertCall?.args[0]).toHaveLength(2);
+  });
+
+  it('rejects tenders that do not add up to the balance due', async () => {
+    const awaitingPayment = appointmentRow({ status: 'awaiting_payment', completed_at: '2026-05-13T10:01:00.000Z' });
+    const client = createMockSupabaseClient([
+      { data: awaitingPayment, error: null },
+      { data: visitRow(), error: null },
+      { data: lineItems(), error: null },
+    ]);
+    const service = createService(client);
+
+    await expect(
+      service.confirmPayment(stylistActor(), 'appointment_1', {
+        payments: [
+          { paymentMethod: 'cash', amountCents: 1000 },
+          { paymentMethod: 'card_reader', amountCents: 1000 },
+        ],
+      }),
+    ).rejects.toThrow('Payment amounts must add up to the remaining balance due');
+  });
+
+  it('replays existing salon payments without inserting duplicate payment records', async () => {
     const paid = appointmentRow({ status: 'paid', completed_at: '2026-05-13T10:01:00.000Z' });
     const client = createMockSupabaseClient([
       { data: paid, error: null },
       { data: visitRow({ status: 'paid', checkout_status: 'paid', paid_at: '2026-05-13T10:05:00.000Z' }), error: null },
       { data: lineItems(), error: null },
-      { data: salonPaymentRow(), error: null },
+      { data: [salonPaymentRow()], error: null },
       { data: [clientProfileRow()], error: null },
     ]);
     const service = createService(client);
