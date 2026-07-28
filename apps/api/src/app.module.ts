@@ -35,6 +35,7 @@ import { ServicesModule } from './services/services.module';
 import { StaffModule } from './staff/staff.module';
 import { StaffBookingModule } from './staff-booking/staff-booking.module';
 import { TwilioModule } from './twilio/twilio.module';
+import { ZacModule } from './zac/zac.module';
 import { validateEnv } from './config/env.validation';
 
 @Module({
@@ -79,6 +80,7 @@ import { validateEnv } from './config/env.validation';
     LabAnalyticsModule,
     LabFormulaModule,
     LabBillingRulesModule,
+    ZacModule,
   ],
 })
 export class AppModule implements NestModule {

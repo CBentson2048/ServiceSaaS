@@ -12,6 +12,15 @@ const SENSITIVE_KEYS = new Set([
   'api_key',
 ]);
 
+/**
+ * Route prefixes whose request/response bodies (and query strings) must never reach
+ * the logs. ZAC prompts/answers carry free-text user content, client references and
+ * financial figures; only safe operational metadata (method, url, status, duration)
+ * is logged for these routes. Key-name redaction is not enough here — the payload
+ * shape is model-driven and cannot be enumerated.
+ */
+const BODY_SUPPRESSED_ROUTE_PREFIXES = ['/api/zac'];
+
 @Injectable()
 export class RequestResponseLoggingMiddleware implements NestMiddleware {
   private readonly logger = new Logger(RequestResponseLoggingMiddleware.name);
@@ -19,6 +28,7 @@ export class RequestResponseLoggingMiddleware implements NestMiddleware {
   use(request: Request, response: Response, next: NextFunction): void {
     const startedAt = Date.now();
     const requestId = this.getRequestId(request);
+    const suppressBodies = this.isBodySuppressedRoute(request.originalUrl);
     const originalSend = response.send.bind(response);
     let responseBody: unknown;
 
@@ -32,8 +42,8 @@ export class RequestResponseLoggingMiddleware implements NestMiddleware {
         requestId,
         method: request.method,
         url: request.originalUrl,
-        query: this.redact(request.query),
-        body: this.redact(request.body),
+        query: suppressBodies ? '[suppressed]' : this.redact(request.query),
+        body: suppressBodies ? '[suppressed]' : this.redact(request.body),
         ip: request.ip,
         userAgent: request.get('user-agent'),
       }),
@@ -47,12 +57,19 @@ export class RequestResponseLoggingMiddleware implements NestMiddleware {
           url: request.originalUrl,
           statusCode: response.statusCode,
           durationMs: Date.now() - startedAt,
-          body: this.redact(this.parseResponseBody(responseBody)),
+          body: suppressBodies ? '[suppressed]' : this.redact(this.parseResponseBody(responseBody)),
         }),
       );
     });
 
     next();
+  }
+
+  private isBodySuppressedRoute(url: string): boolean {
+    const path = url.split('?')[0];
+    return BODY_SUPPRESSED_ROUTE_PREFIXES.some(
+      (prefix) => path === prefix || path.startsWith(`${prefix}/`),
+    );
   }
 
   private getRequestId(request: Request): string {

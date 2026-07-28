@@ -243,6 +243,24 @@ export class EnvConfig {
   @IsOptional()
   @IsString()
   COMMS_DISPATCH_MAX_DRAIN_BATCHES?: string;
+
+  /**
+   * Dark-launch kill-switch for the ZAC assistant. ZAC routes only exist when this is
+   * exactly `true`; unset or any other value keeps every `/api/zac/*` route hidden (404),
+   * regardless of the `zac.access` permission. Defaults OFF.
+   */
+  @IsOptional()
+  @IsString()
+  ZAC_ENABLED?: string;
+
+  /**
+   * Optional comma-separated business-id allowlist for the ZAC controlled rollout.
+   * When set, only the listed businesses can reach ZAC (others get 404 even with
+   * `ZAC_ENABLED=true` and `zac.access`). Unset/empty = no business restriction.
+   */
+  @IsOptional()
+  @IsString()
+  ZAC_ALLOWED_BUSINESS_IDS?: string;
 }
 
 /**
