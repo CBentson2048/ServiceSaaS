@@ -12,7 +12,6 @@ import { getActiveLabSession, unlockLabSession } from '../../features/sheer-lab/
 import { useDeviceSession } from '../../features/sheer-lab/DeviceSessionProvider';
 import { useApiClient } from '../../lib/api/ApiProvider';
 import { labTheme } from '../../theme/labTheme';
-import { BrandMark } from '../shared/BrandMark';
 import { BrandWordmark } from '../shared/BrandWordmark';
 
 type AuthScreenProps = NativeStackScreenProps<RootStackParamList, 'Auth'>;
@@ -109,8 +108,7 @@ export function AuthScreen({ navigation }: AuthScreenProps): React.JSX.Element {
       >
         {/* Brand header */}
         <View style={styles.header}>
-          <BrandMark size={64} radius={32} />
-          <BrandWordmark height={30} style={styles.wordmark} />
+          <BrandWordmark height={64} style={styles.wordmark} />
           <Text style={styles.welcome}>Welcome back</Text>
           <View style={styles.locationChip}>
             <LockGlyph />

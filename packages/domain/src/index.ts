@@ -1506,14 +1506,14 @@ export type StaffEmploymentType = 'employed' | 'self_employed' | 'hybrid';
 export type StaffCommissionStructure = 'tiered' | 'flat' | 'none';
 export type StaffEmploymentStatus = 'active' | 'on_leave' | 'notice' | 'terminated';
 /**
- * How a staff member's performance target is applied.
+ * How a staff member's Service Revenue Target is applied.
  * - `flat`: the stored amount is used exactly as entered.
  * - `pro_rated`: the stored amount is a full-week basis; the pay engine scales it
  *   by the hours actually worked that week relative to the member's contracted
  *   hours, so working more/fewer hours moves the target automatically. Hours are
- *   used (not days) as the fairest basis. See {@link proRatePerformanceTarget}.
+ *   used (not days) as the fairest basis. See {@link proRateServiceRevenueTarget}.
  */
-export type StaffPerformanceTargetMode = 'flat' | 'pro_rated';
+export type StaffServiceRevenueTargetMode = 'flat' | 'pro_rated';
 
 export const STAFF_EMPLOYMENT_TYPE_LABELS: Record<StaffEmploymentType, string> = {
   employed: 'Employed',
@@ -1534,13 +1534,13 @@ export const STAFF_EMPLOYMENT_STATUS_LABELS: Record<StaffEmploymentStatus, strin
   terminated: 'Terminated',
 };
 
-export const STAFF_PERFORMANCE_TARGET_MODE_LABELS: Record<StaffPerformanceTargetMode, string> = {
+export const STAFF_SERVICE_REVENUE_TARGET_MODE_LABELS: Record<StaffServiceRevenueTargetMode, string> = {
   flat: 'Flat',
   pro_rated: 'Pro-rated (by hours worked)',
 };
 
-/** Human-readable explanation of each performance-target mode, for UI hints. */
-export const STAFF_PERFORMANCE_TARGET_MODE_DESCRIPTIONS: Record<StaffPerformanceTargetMode, string> = {
+/** Human-readable explanation of each Service Revenue Target mode, for UI hints. */
+export const STAFF_SERVICE_REVENUE_TARGET_MODE_DESCRIPTIONS: Record<StaffServiceRevenueTargetMode, string> = {
   flat: 'Target is used exactly as entered, regardless of hours worked.',
   pro_rated:
     'Target scales with hours actually worked vs contracted hours, so a shorter/longer week moves it automatically.',
@@ -1550,22 +1550,22 @@ export const STAFF_PERFORMANCE_TARGET_MODE_DESCRIPTIONS: Record<StaffPerformance
 export const DEFAULT_CONTRACTED_HOURS_PER_WEEK = 40;
 
 /**
- * Resolve the effective performance target for a period given the member's target
- * mode. For `flat` the base amount is returned unchanged; for `pro_rated` it is
- * scaled by the hours actually worked relative to the member's contracted hours,
- * so a shorter/longer week automatically moves the target. Hours (not days) are
- * used as the fairest basis (per Wrike #4507280825 review feedback).
+ * Resolve the effective Service Revenue Target for a period given the member's
+ * target mode. For `flat` the base amount is returned unchanged; for `pro_rated`
+ * it is scaled by the hours actually worked relative to the member's contracted
+ * hours, so a shorter/longer week automatically moves the target. Hours (not
+ * days) are used as the fairest basis (per Wrike #4507280825 review feedback).
  *
- * @param baseTarget            The stored `performanceTargetAmount` (major currency).
+ * @param baseTarget            The stored `serviceRevenueTargetAmount` (major currency).
  * @param hoursWorked           Hours the member worked in the period.
- * @param mode                  The member's performance target mode.
+ * @param mode                  The member's Service Revenue Target mode.
  * @param contractedHoursPerWeek The member's contracted-hours baseline; defaults to
  *                              {@link DEFAULT_CONTRACTED_HOURS_PER_WEEK} when 0/unset.
  */
-export function proRatePerformanceTarget(
+export function proRateServiceRevenueTarget(
   baseTarget: number,
   hoursWorked: number,
-  mode: StaffPerformanceTargetMode = 'flat',
+  mode: StaffServiceRevenueTargetMode = 'flat',
   contractedHoursPerWeek = DEFAULT_CONTRACTED_HOURS_PER_WEEK,
 ): number {
   if (mode !== 'pro_rated') return baseTarget;
@@ -1627,10 +1627,10 @@ export interface StaffMember {
     commissionStructure?: StaffCommissionStructure;
     /** Flat commission rate (%), applied when commissionStructure is `flat`. */
     commissionFlatRatePercent?: number;
-    /** Optional owner-set performance target (major currency). Null = computed target. */
-    performanceTargetAmount?: number | null;
-    /** Whether the performance target is a flat figure or a pro-rated basis. */
-    performanceTargetMode?: StaffPerformanceTargetMode;
+    /** Optional owner-set Service Revenue Target (major currency). Null = computed target. */
+    serviceRevenueTargetAmount?: number | null;
+    /** Whether the Service Revenue Target is a flat figure or a pro-rated basis. */
+    serviceRevenueTargetMode?: StaffServiceRevenueTargetMode;
     /** Annual paid-holiday entitlement in days. */
     holidayEntitlementDays: number;
     /** Periodic colour/product allowance (major currency). */
@@ -1707,10 +1707,10 @@ export interface UpdateStaffMemberRequest {
   commissionStructure?: StaffCommissionStructure;
   /** Flat commission rate (%) for the `flat` structure. */
   commissionFlatRatePercent?: number;
-  /** Owner-set performance target (major currency); null clears the override. */
-  performanceTargetAmount?: number | null;
-  /** Whether the performance target is a flat figure or a pro-rated basis. */
-  performanceTargetMode?: StaffPerformanceTargetMode;
+  /** Owner-set Service Revenue Target (major currency); null clears the override. */
+  serviceRevenueTargetAmount?: number | null;
+  /** Whether the Service Revenue Target is a flat figure or a pro-rated basis. */
+  serviceRevenueTargetMode?: StaffServiceRevenueTargetMode;
   /** Annual paid-holiday entitlement in days. */
   holidayEntitlementDays?: number;
   /** Periodic colour/product allowance (major currency). */
