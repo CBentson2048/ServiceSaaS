@@ -292,7 +292,9 @@ export type Permission =
   | 'settings.booking.manage'
   | 'account.manage'
   | 'security.manage'
-  | 'audit.read';
+  | 'audit.read'
+  // Intelligence (ZAC)
+  | 'zac.access';
 
 export type PermissionKind = 'report' | 'feature';
 
@@ -340,6 +342,7 @@ export const PERMISSION_CATALOG: readonly PermissionDefinition[] = [
   { key: 'account.manage', label: 'Account & plan', description: 'Change the account tier/plan.', kind: 'feature', group: 'Administration' },
   { key: 'security.manage', label: 'Security levels', description: 'Create and assign security levels.', kind: 'feature', group: 'Administration' },
   { key: 'audit.read', label: 'Audit log', description: 'View the activity/audit trail of who did what and when.', kind: 'report', group: 'Administration' },
+  { key: 'zac.access', label: 'ZAC assistant', description: 'Open and use the ZAC intelligence assistant. Grants no data access by itself — every ZAC tool independently re-checks the underlying report/feature permission it needs.', kind: 'feature', group: 'Intelligence' },
 ];
 
 export const ALL_PERMISSIONS: readonly Permission[] = PERMISSION_CATALOG.map((p) => p.key);
