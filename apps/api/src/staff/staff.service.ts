@@ -128,8 +128,8 @@ interface StaffProfileRow {
   employment_type: 'employed' | 'self_employed' | 'hybrid';
   commission_structure: 'tiered' | 'flat' | 'none';
   commission_flat_rate_percent: number | string;
-  performance_target_amount: number | string | null;
-  performance_target_mode: 'flat' | 'pro_rated';
+  service_revenue_target_amount: number | string | null;
+  service_revenue_target_mode: 'flat' | 'pro_rated';
   holiday_entitlement_days: number | string;
   colour_allowance_amount: number | string;
   photo_url: string | null;
@@ -719,10 +719,10 @@ export class StaffService {
     if (input.commissionStructure !== undefined) patch.commission_structure = input.commissionStructure;
     if (input.commissionFlatRatePercent !== undefined)
       patch.commission_flat_rate_percent = input.commissionFlatRatePercent;
-    if (input.performanceTargetAmount !== undefined)
-      patch.performance_target_amount = input.performanceTargetAmount;
-    if (input.performanceTargetMode !== undefined)
-      patch.performance_target_mode = input.performanceTargetMode;
+    if (input.serviceRevenueTargetAmount !== undefined)
+      patch.service_revenue_target_amount = input.serviceRevenueTargetAmount;
+    if (input.serviceRevenueTargetMode !== undefined)
+      patch.service_revenue_target_mode = input.serviceRevenueTargetMode;
     if (input.holidayEntitlementDays !== undefined)
       patch.holiday_entitlement_days = input.holidayEntitlementDays;
     if (input.colourAllowanceAmount !== undefined)
@@ -906,8 +906,8 @@ export class StaffService {
       input.hourlyRate !== undefined ||
       input.commissionStructure !== undefined ||
       input.commissionFlatRatePercent !== undefined ||
-      input.performanceTargetAmount !== undefined ||
-      input.performanceTargetMode !== undefined ||
+      input.serviceRevenueTargetAmount !== undefined ||
+      input.serviceRevenueTargetMode !== undefined ||
       input.colourAllowanceAmount !== undefined;
     if (changesPay && !userHasPermission(actor, 'staff.pay.manage')) {
       throw new ForbiddenException('You do not have permission to manage staff pay');
@@ -1120,7 +1120,7 @@ export class StaffService {
       .schema('core')
       .from('staff_profiles')
       .select(
-        'id,business_id,user_profile_id,primary_location_id,display_name,employment_status,hourly_rate,contracted_hours,average_bill_benchmark,sheer_lab_pin_enabled,leave_notes,is_bookable,color_hex,bio,employment_type,commission_structure,commission_flat_rate_percent,performance_target_amount,performance_target_mode,holiday_entitlement_days,colour_allowance_amount,photo_url,q_code,hire_date',
+        'id,business_id,user_profile_id,primary_location_id,display_name,employment_status,hourly_rate,contracted_hours,average_bill_benchmark,sheer_lab_pin_enabled,leave_notes,is_bookable,color_hex,bio,employment_type,commission_structure,commission_flat_rate_percent,service_revenue_target_amount,service_revenue_target_mode,holiday_entitlement_days,colour_allowance_amount,photo_url,q_code,hire_date',
       )
       .eq('business_id', businessId)
       .in('user_profile_id', ids)
@@ -1490,11 +1490,11 @@ export class StaffService {
                   hourlyRate: Number(staffProfile.hourly_rate),
                   commissionStructure: staffProfile.commission_structure,
                   commissionFlatRatePercent: Number(staffProfile.commission_flat_rate_percent),
-                  performanceTargetAmount:
-                    staffProfile.performance_target_amount === null
+                  serviceRevenueTargetAmount:
+                    staffProfile.service_revenue_target_amount === null
                       ? null
-                      : Number(staffProfile.performance_target_amount),
-                  performanceTargetMode: staffProfile.performance_target_mode,
+                      : Number(staffProfile.service_revenue_target_amount),
+                  serviceRevenueTargetMode: staffProfile.service_revenue_target_mode,
                   colourAllowanceAmount: Number(staffProfile.colour_allowance_amount),
                 }
               : {}),

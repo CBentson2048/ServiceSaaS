@@ -8,15 +8,15 @@ import type {
   StaffEmploymentStatus,
   StaffEmploymentType,
   StaffMember,
-  StaffPerformanceTargetMode,
+  StaffServiceRevenueTargetMode,
   UpdateStaffMemberRequest,
 } from '@sheer/domain';
 import {
   STAFF_COMMISSION_STRUCTURE_LABELS,
   STAFF_EMPLOYMENT_STATUS_LABELS,
   STAFF_EMPLOYMENT_TYPE_LABELS,
-  STAFF_PERFORMANCE_TARGET_MODE_DESCRIPTIONS,
-  STAFF_PERFORMANCE_TARGET_MODE_LABELS,
+  STAFF_SERVICE_REVENUE_TARGET_MODE_DESCRIPTIONS,
+  STAFF_SERVICE_REVENUE_TARGET_MODE_LABELS,
 } from '@sheer/domain';
 import {
   ApiRequestError,
@@ -57,8 +57,8 @@ interface EditForm {
   employmentStatus: StaffEmploymentStatus;
   commissionStructure: StaffCommissionStructure;
   commissionFlatRatePercent: string;
-  performanceTargetAmount: string;
-  performanceTargetMode: StaffPerformanceTargetMode;
+  serviceRevenueTargetAmount: string;
+  serviceRevenueTargetMode: StaffServiceRevenueTargetMode;
   holidayEntitlementDays: string;
   colourAllowanceAmount: string;
   photoUrl: string;
@@ -218,11 +218,11 @@ export function EditStaffModal({
         staff.staffProfile?.commissionFlatRatePercent !== undefined
           ? String(staff.staffProfile.commissionFlatRatePercent)
           : '0',
-      performanceTargetAmount:
-        staff.staffProfile?.performanceTargetAmount != null
-          ? String(staff.staffProfile.performanceTargetAmount)
+      serviceRevenueTargetAmount:
+        staff.staffProfile?.serviceRevenueTargetAmount != null
+          ? String(staff.staffProfile.serviceRevenueTargetAmount)
           : '',
-      performanceTargetMode: staff.staffProfile?.performanceTargetMode ?? 'flat',
+      serviceRevenueTargetMode: staff.staffProfile?.serviceRevenueTargetMode ?? 'flat',
       holidayEntitlementDays:
         staff.staffProfile?.holidayEntitlementDays !== undefined
           ? String(staff.staffProfile.holidayEntitlementDays)
@@ -315,10 +315,10 @@ export function EditStaffModal({
       if (Number.isNaN(Number(values.colourAllowanceAmount)) || Number(values.colourAllowanceAmount) < 0)
         next.colourAllowanceAmount = 'Use a non-negative number';
       if (
-        values.performanceTargetAmount.trim() &&
-        (Number.isNaN(Number(values.performanceTargetAmount)) || Number(values.performanceTargetAmount) < 0)
+        values.serviceRevenueTargetAmount.trim() &&
+        (Number.isNaN(Number(values.serviceRevenueTargetAmount)) || Number(values.serviceRevenueTargetAmount) < 0)
       )
-        next.performanceTargetAmount = 'Use a non-negative number or leave blank';
+        next.serviceRevenueTargetAmount = 'Use a non-negative number or leave blank';
       const badPrice = values.selectedServiceIds.some((id) => {
         const raw = values.servicePrices[id]?.trim();
         return raw ? Number.isNaN(Number(raw)) || Number(raw) < 0 : false;
@@ -386,12 +386,12 @@ export function EditStaffModal({
       commissionStructure: isStylist && canManagePay ? form.commissionStructure : undefined,
       commissionFlatRatePercent:
         isStylist && canManagePay ? Number(form.commissionFlatRatePercent) : undefined,
-      performanceTargetAmount: isStylist && canManagePay
-        ? form.performanceTargetAmount.trim()
-          ? Number(form.performanceTargetAmount)
+      serviceRevenueTargetAmount: isStylist && canManagePay
+        ? form.serviceRevenueTargetAmount.trim()
+          ? Number(form.serviceRevenueTargetAmount)
           : null
         : undefined,
-      performanceTargetMode: isStylist && canManagePay ? form.performanceTargetMode : undefined,
+      serviceRevenueTargetMode: isStylist && canManagePay ? form.serviceRevenueTargetMode : undefined,
       holidayEntitlementDays: isStylist ? Number(form.holidayEntitlementDays) : undefined,
       colourAllowanceAmount:
         isStylist && canManagePay ? Number(form.colourAllowanceAmount) : undefined,
@@ -800,24 +800,24 @@ export function EditStaffModal({
               {canManagePay ? (
                 <>
                   <TextField
-                    label="Performance target"
-                    value={form.performanceTargetAmount}
-                    onValueChange={(v) => setForm({ ...form, performanceTargetAmount: v })}
-                    error={errors.performanceTargetAmount}
+                    label="Service revenue target"
+                    value={form.serviceRevenueTargetAmount}
+                    onValueChange={(v) => setForm({ ...form, serviceRevenueTargetAmount: v })}
+                    error={errors.serviceRevenueTargetAmount}
                     hint="Leave blank to use the computed target."
                     optional
                   />
                   <SelectField
-                    label="Performance target basis"
-                    value={form.performanceTargetMode}
+                    label="Service revenue target basis"
+                    value={form.serviceRevenueTargetMode}
                     onValueChange={(v) =>
-                      setForm({ ...form, performanceTargetMode: v as StaffPerformanceTargetMode })
+                      setForm({ ...form, serviceRevenueTargetMode: v as StaffServiceRevenueTargetMode })
                     }
-                    options={Object.entries(STAFF_PERFORMANCE_TARGET_MODE_LABELS).map(([value, label]) => ({
+                    options={Object.entries(STAFF_SERVICE_REVENUE_TARGET_MODE_LABELS).map(([value, label]) => ({
                       value,
                       label,
                     }))}
-                    hint={STAFF_PERFORMANCE_TARGET_MODE_DESCRIPTIONS[form.performanceTargetMode]}
+                    hint={STAFF_SERVICE_REVENUE_TARGET_MODE_DESCRIPTIONS[form.serviceRevenueTargetMode]}
                   />
                 </>
               ) : null}
