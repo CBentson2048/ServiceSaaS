@@ -225,7 +225,7 @@ Task IDs are `ZAC-W1-<letter>`. Format per the requested template. Hours are per
 - **Owner:** Cosan
 - **Goal:** Design the `zac` schema table set as a migration plan — **authored for review, not applied**.
 - **Implementation notes:** Dedicated `zac` schema (or `public.zac_*` fallback), RLS **ENABLED + FORCED** (stronger than the dormant platform RLS). Common columns: `business_id not null`, `location_id?`, `actor_user_id`, `role_context`, `visibility_scope`, timestamps. Tables: `conversations`, `messages`(+`message_events`), `tool_calls`, `memory`, `stylist_coaching_notes` (no owner/manager SELECT), `recommendations` + `recommendation_events`, `feedback`, `observed_outcomes` + `recommendation_outcomes`, `cost_events`, `kpi_snapshots` (design). Migration numbers **`0075+`** (payroll holds `0071`–`0074`). Add `zac` to `config.toml` + each project's Exposed Schemas (else `PGRST106`). File-based; **never via MCP DDL; do not apply in Week 1**.
-- **Files likely involved (design only):** draft `supabase/migrations/0075_zac_access_permission.sql`, `0076_zac_foundation.sql` (authored for review, not applied); reference `supabase/config.toml`, `0057`/`0058` for the JSONB-append pattern.
+- **Files likely involved (design only):** draft `supabase/migrations/0076_zac_access_permission.sql`, `0077_zac_foundation.sql` (authored for review, not applied); reference `supabase/config.toml`, `0057`/`0058` for the JSONB-append pattern.
 - **Dependencies:** ZAC-W1-A, ZAC-W1-P.
 - **Acceptance criteria:** Table list + columns + indexes + RLS posture reviewed and signed off; migration numbering set to `0075+`; explicitly not applied.
 - **Risk level:** High
@@ -237,7 +237,7 @@ Task IDs are `ZAC-W1-<letter>`. Format per the requested template. Hours are per
 - **Owner:** Cosan (Joint decision on defaults)
 - **Goal:** Confirm how `zac.access` is added and granted without breaking existing guards.
 - **Implementation notes:** Add to the `Permission` union + `PERMISSION_CATALOG` (`packages/domain/src/index.ts`); add to `DEFAULT_ROLE_PERMISSIONS` (owner+manager) and `SYSTEM_SECURITY_LEVELS`; a data migration (`0075+`) appends `'zac.access'` to existing DB `core.security_levels` rows (modelled on `0057`/`0058`). Rebuild `@sheer/domain` dist. **Owners auto-hold it** via the `ALL_PERMISSIONS` short-circuit → the feature flag, not the permission, is the dark switch. `zac.access` must NOT override underlying report/CRM permissions.
-- **Files likely involved (design/skeleton):** `packages/domain/src/index.ts`; draft migration `0075_zac_access_permission.sql`.
+- **Files likely involved (design/skeleton):** `packages/domain/src/index.ts`; draft migration `0076_zac_access_permission.sql`.
 - **Dependencies:** ZAC-W1-A.
 - **Acceptance criteria:** `zac.access` addition plan approved (union + catalogue + defaults + system levels + migration + dist rebuild); per-tool re-check rule reaffirmed; owner-auto-hold implication documented.
 - **Risk level:** Medium
@@ -308,7 +308,7 @@ Task IDs are `ZAC-W1-<letter>`. Format per the requested template. Hours are per
 ### ZAC-W1-V · Week 2 readiness checklist
 - **Owner:** Joint
 - **Goal:** Produce the Week-2 entry checklist and the Week-2 tools implementation plan.
-- **Implementation notes:** Confirm the §9 entry criteria are met; list Week-2 work: apply migrations `0075/0076` after review, wire the remaining read tools, add the two QLAB/stock read tools **if the probe passed**, add persistence for the measurement/cost spine, add the web feature-flag entry (`VITE_ZAC_ENABLED` + one nav entry + one route).
+- **Implementation notes:** Confirm the §9 entry criteria are met; list Week-2 work: apply migrations `0076/0077` after review, wire the remaining read tools, add the two QLAB/stock read tools **if the probe passed**, add persistence for the measurement/cost spine, add the web feature-flag entry (`VITE_ZAC_ENABLED` + one nav entry + one route).
 - **Files likely involved:** this breakdown; a new `phase-1-week-2-*.md` (later).
 - **Dependencies:** ZAC-W1-U.
 - **Acceptance criteria:** Week-2 entry checklist complete; Week-2 task list drafted; go/no-go for Week 2 recorded.

@@ -496,7 +496,7 @@ Every model call logs one `zac.cost_events` record via `ZacCostTelemetry`, so co
 - Error/uncertainty handling: standard `HttpException` subclasses, `fail_closed` on permission/scope, `state_unavailable` on missing data.
 
 **Day 4 — logging/data-model design**
-- Design the `zac` schema tables (§13) as a **migration plan** (`0075_zac_access_permission.sql`, `0076_zac_foundation.sql` — next free numbers; `0071`–`0074` are the in-flight payroll migrations) authored **for review, not applied**.
+- Design the `zac` schema tables (§13) as a **migration plan** (`0076_zac_access_permission.sql`, `0077_zac_foundation.sql` — next free numbers; `0071`–`0075` are the merged payroll migrations) authored **for review, not applied**.
 - Define the memory/outcome/cost telemetry contracts (`ZacOutputLogger`, `ZacCostTelemetry`, `ZacOutcomeEvent`) and wire the measurement-spine events + cost event into the ask path (writing to a table if applied, else structured log).
 - Define the PII-redaction plan for the global logging middleware (exclude/redact ZAC routes) **before** any endpoint is exposed.
 
