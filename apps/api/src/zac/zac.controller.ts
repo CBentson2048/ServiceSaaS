@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Post, UseGuards } from '@nestjs/common';
 import type { AuthUser } from '@sheer/domain';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { PermissionsGuard, RequirePermissions } from '../auth/permissions.guard';
@@ -24,6 +24,7 @@ export class ZacController {
 
   /** Controlled Week 1 test response — contract-shaped, stub provider, no live business data. */
   @Post('ask')
+  @HttpCode(200)
   ask(@CurrentUser() actor: AuthUser, @Body() body: ZacAskRequestDto): Promise<ZacResponse> {
     return this.zac.ask(actor, body);
   }
