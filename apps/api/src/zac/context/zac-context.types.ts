@@ -12,6 +12,8 @@ export type ZacRequestSource = 'web_dashboard' | 'mobile_app';
  */
 export interface ZacActingContext {
   actorUserId: string;
+  /** For greeting copy only — never logged and never sent to telemetry. */
+  actorFirstName: string | null;
   businessId: string;
   /** Explicit single-location focus for the turn; null = aggregate across accessible locations. */
   locationId: string | null;

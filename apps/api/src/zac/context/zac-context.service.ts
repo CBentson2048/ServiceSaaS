@@ -21,6 +21,7 @@ export class ZacContextService {
 
     return {
       actorUserId: actor.id,
+      actorFirstName: this.resolveFirstName(actor),
       businessId: actor.businessId,
       locationId: this.resolveLocationId(actor, request.locationId),
       accessibleLocationIds: [...actor.allowedLocationIds],
@@ -32,6 +33,14 @@ export class ZacContextService {
       timezone: actor.timezone ?? 'Europe/London',
       locale: 'en-GB',
     };
+  }
+
+  /** First name for greeting copy; null (neutral greeting) when nothing safe is available. */
+  private resolveFirstName(actor: AuthUser): string | null {
+    const firstName = actor.profile.firstName?.trim();
+    if (firstName) return firstName;
+    const fromFullName = actor.profile.fullName?.trim().split(/\s+/)[0];
+    return fromFullName || null;
   }
 
   private resolveRoleContext(actor: AuthUser): ZacRoleContext {

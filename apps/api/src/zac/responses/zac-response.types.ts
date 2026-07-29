@@ -55,6 +55,21 @@ export interface ZacCostMetadata {
 }
 
 /**
+ * Debug/diagnostic block, deliberately separated from the user-facing `answer`
+ * so the primary text reads as product copy, not backend state. Safe metadata
+ * only — never prompt or answer text.
+ */
+export interface ZacTechnicalDetails {
+  foundation_mode: boolean;
+  /** Always 'enabled' on a served response — a disabled flag never reaches the builder. */
+  feature_flag_state: 'enabled';
+  connected_tools: string[];
+  disabled_tools: string[];
+  provider: string;
+  model: string;
+}
+
+/**
  * The ZAC wire contract: every /zac/ask answer is exactly this shape (snake_case
  * on the wire, matching how web/mobile will consume it). `tool_calls` carries
  * dispatch metadata only — never tool arguments or result payloads.
@@ -72,6 +87,7 @@ export interface ZacResponse {
   memory_updates: ZacMemoryUpdate[];
   tool_calls: ZacToolDispatchTrace[];
   cost_metadata: ZacCostMetadata;
+  technical_details: ZacTechnicalDetails;
   trace_id: string;
 }
 

@@ -10,6 +10,7 @@ function actorWith(roles: UserRole[], permissions: Permission[]): Pick<AuthUser,
 function contextWith(overrides: Partial<ZacActingContext> = {}): ZacActingContext {
   return {
     actorUserId: 'user-1',
+    actorFirstName: null,
     businessId: 'biz-1',
     locationId: null,
     accessibleLocationIds: ['loc-1'],
