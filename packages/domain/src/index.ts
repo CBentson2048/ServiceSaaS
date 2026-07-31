@@ -1,5 +1,7 @@
 // Tax configuration contracts + the single trusted tax logic layer.
 export * from './tax';
+// Financial Rules Engine contracts (payroll, commission, settlement).
+export * from './payroll';
 import type { AppointmentBillingTax } from './tax';
 
 export type UserRole = 'owner' | 'manager' | 'stylist' | 'client';
@@ -294,7 +296,15 @@ export type Permission =
   | 'security.manage'
   | 'audit.read'
   // Intelligence (ZAC)
-  | 'zac.access';
+  | 'zac.access'
+  // Payroll / Financial Rules Engine
+  | 'payroll.view'
+  | 'payroll.edit'
+  | 'payroll.approve'
+  | 'payroll.lock'
+  | 'payroll.export'
+  | 'payroll.email'
+  | 'payroll.self.view';
 
 export type PermissionKind = 'report' | 'feature';
 
@@ -343,6 +353,19 @@ export const PERMISSION_CATALOG: readonly PermissionDefinition[] = [
   { key: 'security.manage', label: 'Security levels', description: 'Create and assign security levels.', kind: 'feature', group: 'Administration' },
   { key: 'audit.read', label: 'Audit log', description: 'View the activity/audit trail of who did what and when.', kind: 'report', group: 'Administration' },
   { key: 'zac.access', label: 'ZAC assistant', description: 'Open and use the ZAC intelligence assistant. Grants no data access by itself — every ZAC tool independently re-checks the underlying report/feature permission it needs.', kind: 'feature', group: 'Intelligence' },
+  // Payroll. Seeded into core.security_levels by migration 0074; these entries are
+  // the follow-up that migration's header required, without which auth.service and
+  // owner-security-levels silently strip the seeded keys on read and on save.
+  { key: 'payroll.view', label: 'View payroll', description: 'View pay periods, wage and commission summaries, and settlement statements for the whole business.', kind: 'report', group: 'Payroll' },
+  { key: 'payroll.edit', label: 'Edit payroll', description: 'Create pay periods, generate and regenerate draft summaries, and record payroll adjustments.', kind: 'feature', group: 'Payroll', requires: ['payroll.view'] },
+  { key: 'payroll.approve', label: 'Approve payroll', description: 'Move a pay period from review to approved.', kind: 'feature', group: 'Payroll', requires: ['payroll.view'] },
+  { key: 'payroll.lock', label: 'Lock payroll', description: 'Lock an approved pay period and mark it paid. Locked periods can never be reopened — corrections go to the next period.', kind: 'feature', group: 'Payroll', requires: ['payroll.view'] },
+  { key: 'payroll.export', label: 'Export payroll', description: 'Export pay summaries and settlement statements.', kind: 'feature', group: 'Payroll', requires: ['payroll.view'] },
+  { key: 'payroll.email', label: 'Email payroll', description: 'Email pay summaries to staff or an accountant.', kind: 'feature', group: 'Payroll', requires: ['payroll.view'] },
+  // Deliberately has NO `requires` edge. Adding `requires: ['payroll.view']` would make
+  // expandPermissions() close every stylist's self-view over business-wide payroll
+  // visibility - the exact wage leak migration 0074 was written to prevent.
+  { key: 'payroll.self.view', label: 'View own pay', description: 'View only your own pay summaries. Grants no visibility of any colleague’s pay.', kind: 'report', group: 'Payroll' },
 ];
 
 export const ALL_PERMISSIONS: readonly Permission[] = PERMISSION_CATALOG.map((p) => p.key);
@@ -413,6 +436,13 @@ export type SystemSecurityLevelKey =
  */
 export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   owner: [...ALL_PERMISSIONS],
+  // *** DO NOT add payroll.view here. *** 'receptionist' is not a role -
+  // core.membership_role_enum is only owner/manager/stylist/client - and the
+  // receptionist system security level has base_role = 'manager'. Any membership
+  // without an explicit security_level_id falls back to DEFAULT_ROLE_PERMISSIONS[role],
+  // so a manager role default would hand wage data to every unassigned front-desk
+  // user. Managers receive payroll.view through the 'manager' security level below
+  // (matching migration 0074's seed), never through this list.
   manager: [
     'report.dashboard.view',
     'report.performance.view',
@@ -435,7 +465,20 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'settings.booking.manage',
     'audit.read',
   ],
-  stylist: ['bookings.manage', 'crm.view', 'retail.record', 'services.view', 'rota.view'],
+  // `payroll.self.view` is safe as a ROLE DEFAULT because it is scoped to the actor,
+  // not to a business: every endpoint guarded by it must resolve the staff profile
+  // server-side from the authenticated actor and must NOT accept a staffProfileId
+  // parameter. That constraint is binding on the self-view endpoints - if a future
+  // route ever takes a staff id, this key must come back out of the role default.
+  // Contrast the manager entry above, which must never carry `payroll.view`.
+  stylist: [
+    'bookings.manage',
+    'crm.view',
+    'retail.record',
+    'services.view',
+    'rota.view',
+    'payroll.self.view',
+  ],
   client: [],
 };
 
@@ -470,9 +513,13 @@ export const SYSTEM_SECURITY_LEVELS: readonly SystemSecurityLevelDefinition[] = 
   {
     key: 'manager',
     name: 'Manager',
-    description: 'Runs a location: reports, settings, rota, clients and stock. No account, security, pay or location creation.',
+    description: 'Runs a location: reports, settings, rota, clients and stock, plus read-only payroll. No account, security, pay editing or location creation.',
     baseRole: 'manager',
-    permissions: [...DEFAULT_ROLE_PERMISSIONS.manager],
+    // Read-only payroll is granted on the LEVEL, deliberately not on the manager role
+    // default (see DEFAULT_ROLE_PERMISSIONS.manager). Mirrors migration 0074, which
+    // added payroll.view to this system level only. Owners can grant the remaining
+    // payroll keys per business at /settings/security-levels.
+    permissions: [...DEFAULT_ROLE_PERMISSIONS.manager, 'payroll.view'],
   },
   {
     key: 'receptionist',
@@ -1618,14 +1665,28 @@ export interface StaffMember {
     isBookable: boolean;
     /** Hidden unless the caller can manage staff pay. */
     hourlyRate?: number;
-    contractedHours: number;
-    averageBillBenchmark: number;
+    /**
+     * Hidden unless the caller can manage staff pay. Contracted hours are a direct
+     * input to payable hours and therefore to base pay and to any
+     * `multiple_of_base_pay` commission threshold.
+     */
+    contractedHours?: number;
+    /**
+     * Hidden unless the caller can manage staff pay. Read by payroll accelerator
+     * conditions with `basis = 'staff_benchmark'`, so editing it moves a stylist
+     * between commission band rates.
+     */
+    averageBillBenchmark?: number;
     sheerLabPinEnabled: boolean;
     leaveNotes?: string;
     colorHex?: string;
     bio?: string;
-    /** Employment basis — drives wage & commission handling (Week 3 pay logic). */
-    employmentType: StaffEmploymentType;
+    /**
+     * Employment basis — drives wage & commission handling, and is snapshotted onto
+     * every pay summary as `employment_type_snapshot`. Hidden unless the caller can
+     * manage staff pay.
+     */
+    employmentType?: StaffEmploymentType;
     /** Commission model. `tiered` uses the V1 KPI engine. */
     commissionStructure?: StaffCommissionStructure;
     /** Flat commission rate (%), applied when commissionStructure is `flat`. */
@@ -1634,8 +1695,11 @@ export interface StaffMember {
     serviceRevenueTargetAmount?: number | null;
     /** Whether the Service Revenue Target is a flat figure or a pro-rated basis. */
     serviceRevenueTargetMode?: StaffServiceRevenueTargetMode;
-    /** Annual paid-holiday entitlement in days. */
-    holidayEntitlementDays: number;
+    /**
+     * Annual paid-holiday entitlement in days. Hidden unless the caller can manage
+     * staff pay — paid holiday is payable time, so this feeds base pay.
+     */
+    holidayEntitlementDays?: number;
     /** Periodic colour/product allowance (major currency). */
     colourAllowanceAmount?: number;
     /** Provider photo (internal + client-facing). Distinct from account avatarUrl. */
