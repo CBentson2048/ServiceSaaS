@@ -25,7 +25,7 @@ import type {
   UserProfileResponse,
   UserRole,
 } from '@sheer/domain';
-import { userHasRole, userHasAnyRole, userHasJoinedSalon } from '@sheer/domain';
+import { userHasRole, userHasAnyRole, userHasJoinedSalon, userHasPermission } from '@sheer/domain';
 import { LabFormulaService } from '../lab-formula/lab-formula.service';
 import { MobileDashboardService } from '../mobile-dashboard/mobile-dashboard.service';
 import type { ListProfilesQueryDto } from './dto';
@@ -374,11 +374,21 @@ export class ProfileService {
       throw new ForbiddenException('Profile is outside your scope');
     }
 
+    // Pay-determining fields are gated on the PERMISSION, not on the admin-context
+    // flag. `allowAdminFields` is passed as `true` by five call sites (own profile,
+    // the staff/client lists, the admin-update response), and one of them derived
+    // it from role alone — which meant any manager could read a stylist's hourly
+    // rate. Computed here rather than at the call sites so a new caller cannot
+    // forget it. Viewing your OWN record still shows your own pay.
+    const allowPayFields = mayViewPayFields(actor, userProfileId);
+
     const locations = await this.fetchLocationsForMemberships(businessMemberships);
     return {
       identity: this.toIdentity(profile, role),
       clientProfile: client ? await this.toClientDetails(client) : undefined,
-      staffProfile: staff ? await this.toStaffDetails(staff, options.allowAdminFields ?? false) : undefined,
+      staffProfile: staff
+        ? await this.toStaffDetails(staff, options.allowAdminFields ?? false, allowPayFields)
+        : undefined,
       locations,
       scope: actor.locationScope,
       editableFields: this.editableFields(actor, role, userProfileId === actor.id, Boolean(staff), Boolean(client)),
@@ -468,6 +478,21 @@ export class ProfileService {
     staff: StaffProfileRow,
     input: AdminUpdateProfileRequest,
   ): Promise<void> {
+    // This is the SECOND write path to the pay-determining staff columns; the
+    // first is StaffService.updateStaffMember. Until this guard existed, the
+    // route-level @RequireRoles('owner','manager') on PATCH /profiles/:id was the
+    // only check, so a manager holding just `staff.manage` could set a stylist's
+    // hourly rate — or their average bill benchmark, which payroll accelerator
+    // conditions with basis='staff_benchmark' read, moving the stylist between
+    // commission band rates. editableFields() already told clients managers may
+    // not edit these; nothing enforced it server-side.
+    if (
+      changesPayDeterminingProfileFields(input) &&
+      !userHasPermission(actor, 'staff.pay.manage')
+    ) {
+      throw new ForbiddenException('You do not have permission to manage staff pay');
+    }
+
     const patch: Record<string, unknown> = {};
     if (input.assignedLocationId !== undefined) {
       this.assertLocationScope(actor, input.assignedLocationId);
@@ -647,7 +672,28 @@ export class ProfileService {
     };
   }
 
-  private async toStaffDetails(row: StaffProfileRow, allowAdminFields: boolean): Promise<StaffProfileDetails> {
+  /**
+   * @param allowAdminFields admin/self context — governs HR fields such as leaveNotes.
+   * @param allowPayFields   caller may see pay-determining figures (own record, or
+   *                         holds `staff.pay.manage`). Redacted to 0 rather than
+   *                         omitted, because StaffProfileDetails declares these
+   *                         required and apps/sheer-app reads them directly.
+   *
+   * *** REDACTED VALUES ARE NOT SOURCE OF TRUTH. ***
+   * A redacted `hourlyRate` / `contractedHours` / `averageBillBenchmark` is
+   * indistinguishable from a genuine 0 in this response shape. The Financial
+   * Rules Engine must therefore NEVER take pay inputs from this API — nor from
+   * any other client-facing response. It must read core.staff_profiles directly,
+   * server-side, with the service-role client. Calculating pay from a redacted 0
+   * would silently produce £0 base pay, and a redacted 0 benchmark would make
+   * accelerator conditions with `basis = 'staff_benchmark'` pass trivially,
+   * promoting the stylist to the accelerator commission rate.
+   */
+  private async toStaffDetails(
+    row: StaffProfileRow,
+    allowAdminFields: boolean,
+    allowPayFields: boolean,
+  ): Promise<StaffProfileDetails> {
     const [pendingLeaveRequests, openAbsences] = await Promise.all([
       this.countRows('rota', 'leave_requests', 'staff_profile_id', row.id, { status: 'pending' }),
       this.countOpenAbsences(row.id),
@@ -662,9 +708,9 @@ export class ProfileService {
       isBookable: row.is_bookable,
       colorHex: row.color_hex ?? undefined,
       bio: row.bio ?? undefined,
-      hourlyRate: allowAdminFields ? Number(row.hourly_rate) : 0,
-      contractedHours: allowAdminFields ? Number(row.contracted_hours) : 0,
-      averageBillBenchmark: allowAdminFields ? Number(row.average_bill_benchmark) : 0,
+      hourlyRate: allowPayFields ? Number(row.hourly_rate) : 0,
+      contractedHours: allowPayFields ? Number(row.contracted_hours) : 0,
+      averageBillBenchmark: allowPayFields ? Number(row.average_bill_benchmark) : 0,
       sheerLabPinEnabled: row.sheer_lab_pin_enabled,
       leaveNotes: allowAdminFields ? row.leave_notes ?? undefined : undefined,
       pendingLeaveRequests,
@@ -867,7 +913,17 @@ export class ProfileService {
         'avatarUrl',
         ...(hasClient ? ['communicationPreference', 'clientNotes'] : []),
         ...(hasStaff
-          ? ['assignedLocationId', 'staffDisplayName', 'hourlyRate', 'contractedHours', 'averageBillBenchmark', 'leaveNotes', 'isBookable']
+          ? [
+              'assignedLocationId',
+              'staffDisplayName',
+              // Advertised only when the actor can actually write them, so the
+              // hint matches what updateStaffProfile() will accept.
+              ...(userHasPermission(actor, 'staff.pay.manage')
+                ? [...PAY_DETERMINING_PROFILE_FIELDS]
+                : []),
+              'leaveNotes',
+              'isBookable',
+            ]
           : []),
       ];
     }
@@ -940,4 +996,53 @@ function escapeLike(value: string): string {
 
 function isString(value: string | null): value is string {
   return typeof value === 'string' && value.length > 0;
+}
+
+/**
+ * Pay-determining staff fields writable through `PATCH /profiles/:userProfileId`.
+ *
+ * This endpoint is the SECOND write path to core.staff_profiles; the first is
+ * StaffService.updateStaffMember, guarded by its own
+ * `PAY_DETERMINING_STAFF_FIELDS` list. This one is narrower because
+ * AdminUpdateProfileRequest only carries these three — but each is a direct input
+ * to the Financial Rules Engine:
+ *   - `hourlyRate` is base pay, and the basis of every `multiple_of_base_pay`
+ *     commission threshold.
+ *   - `contractedHours` drives payable hours and pro-rated targets.
+ *   - `averageBillBenchmark` is read by payroll accelerator conditions with
+ *     `basis = 'staff_benchmark'` (migration 0071), so changing it can move a
+ *     stylist from the standard band rate onto the accelerator rate.
+ *
+ * If AdminUpdateProfileRequest ever gains `employmentType` or
+ * `holidayEntitlementDays`, add them here too.
+ */
+export const PAY_DETERMINING_PROFILE_FIELDS = [
+  'hourlyRate',
+  'contractedHours',
+  'averageBillBenchmark',
+] as const satisfies ReadonlyArray<keyof AdminUpdateProfileRequest>;
+
+/**
+ * Whether an admin profile update touches any pay-determining field. Exported as
+ * a pure guard so the protection is unit-tested directly rather than only through
+ * the service, matching StaffService.changesPayDeterminingFields.
+ */
+export function changesPayDeterminingProfileFields(input: AdminUpdateProfileRequest): boolean {
+  return PAY_DETERMINING_PROFILE_FIELDS.some((field) => input[field] !== undefined);
+}
+
+/**
+ * Whether the actor may SEE pay-determining figures on a staff record.
+ *
+ * Two ways to qualify: it is your own record, or you hold `staff.pay.manage`.
+ * Previously this was `userHasAnyRole(actor, ['owner','manager'])` — role, not
+ * permission — so every manager could read any stylist's hourly rate, and a
+ * receptionist-level user (whose base_role is 'manager') qualified too.
+ *
+ * Exported as a pure guard so the read gate is unit-tested for real, and
+ * computed centrally in buildProfileForUser() so none of its five call sites can
+ * forget to apply it.
+ */
+export function mayViewPayFields(actor: AuthUser, targetUserProfileId: string): boolean {
+  return targetUserProfileId === actor.id || userHasPermission(actor, 'staff.pay.manage');
 }
