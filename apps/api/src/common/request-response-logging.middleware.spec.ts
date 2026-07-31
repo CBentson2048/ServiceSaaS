@@ -94,4 +94,62 @@ describe('RequestResponseLoggingMiddleware', () => {
 
     expect(lines()[0].body).toEqual({ fine: true });
   });
+
+  it('suppresses request and response bodies on /api/payroll routes', () => {
+    // Payroll responses carry wage, commission and settlement figures for named
+    // staff. Key-name redaction cannot help — the sensitive values live in
+    // ordinary keys like netPayableCents, so the whole body must be suppressed.
+    const { middleware, lines } = makeMiddleware();
+    const { response, finish } = makeResponse();
+    const next: NextFunction = jest.fn();
+
+    middleware.use(
+      makeRequest('/api/payroll/periods/abc/summaries', { periodId: 'abc' }),
+      response,
+      next,
+    );
+    response.send(
+      JSON.stringify({ summaries: [{ staffName: 'Jane Doe', netPayableCents: 68010 }] }),
+    );
+    finish();
+
+    const [requestLine, responseLine] = lines();
+    expect(requestLine.body).toBe('[suppressed]');
+    expect(requestLine.query).toBe('[suppressed]');
+    expect(responseLine.body).toBe('[suppressed]');
+    expect(JSON.stringify(lines())).not.toContain('Jane Doe');
+    expect(JSON.stringify(lines())).not.toContain('68010');
+    expect(next).toHaveBeenCalled();
+  });
+
+  it('suppresses /api/payroll routes with query strings and nested paths', () => {
+    const { middleware, lines } = makeMiddleware();
+    const { response, finish } = makeResponse();
+
+    middleware.use(makeRequest('/api/payroll/periods?status=locked', {}), response, jest.fn());
+    finish();
+
+    expect(lines()[0].body).toBe('[suppressed]');
+    expect(lines()[0].query).toBe('[suppressed]');
+  });
+
+  it('suppresses the bare /api/payroll route', () => {
+    const { middleware, lines } = makeMiddleware();
+    const { response, finish } = makeResponse();
+
+    middleware.use(makeRequest('/api/payroll', {}), response, jest.fn());
+    finish();
+
+    expect(lines()[0].body).toBe('[suppressed]');
+  });
+
+  it('does not treat a payroll-prefixed but different route as a payroll route', () => {
+    const { middleware, lines } = makeMiddleware();
+    const { response, finish } = makeResponse();
+
+    middleware.use(makeRequest('/api/payrollsomething', { fine: true }), response, jest.fn());
+    finish();
+
+    expect(lines()[0].body).toEqual({ fine: true });
+  });
 });
