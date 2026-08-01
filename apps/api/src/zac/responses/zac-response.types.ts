@@ -67,6 +67,8 @@ export interface ZacTechnicalDetails {
   disabled_tools: string[];
   provider: string;
   model: string;
+  /** Set when an intent was recognised but its tool is not connected (e.g. 'staff.members'). */
+  detected_intent?: string;
 }
 
 /**

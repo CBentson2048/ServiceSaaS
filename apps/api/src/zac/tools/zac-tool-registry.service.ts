@@ -6,15 +6,19 @@ import {
   userHasPermission,
 } from '@sheer/domain';
 import type { AuthUser } from '@sheer/domain';
+import { DashboardService } from '../../dashboard/dashboard.service';
 import type { ZacActingContext } from '../context/zac-context.types';
+import { BusinessContextSummaryTool } from './tools/business-context-summary.tool';
 import { BusinessHealthSummaryTool } from './tools/business-health.tool';
 import { InventoryStockStatusTool } from './tools/inventory-stock-status.tool';
 import { KpiSummaryTool } from './tools/kpi-summary.tool';
+import { LocationContextSummaryTool } from './tools/location-context-summary.tool';
 import { PersonalStylistCoachingTool } from './tools/personal-stylist-coaching.tool';
 import { QlabColourAnalyticsTool } from './tools/qlab-colour-analytics.tool';
 import { RebookingSummaryTool } from './tools/rebooking-summary.tool';
 import { StylistPerformanceTool } from './tools/stylist-performance.tool';
 import { UtilisationSummaryTool } from './tools/utilisation-summary.tool';
+import { ZacCapabilitySummaryTool } from './tools/zac-capability-summary.tool';
 import type {
   ZacReadOnlyTool,
   ZacToolDispatchTrace,
@@ -27,9 +31,17 @@ export class ZacToolRegistryService {
   private readonly logger = new Logger(ZacToolRegistryService.name);
   private readonly tools: readonly ZacReadOnlyTool[];
 
-  constructor() {
+  constructor(dashboard: DashboardService) {
     const tools: ZacReadOnlyTool[] = [
-      new BusinessHealthSummaryTool(),
+      // Live Week 2 tools: context tools read only the guard-resolved acting
+      // context; business health calls the existing guarded DashboardService.
+      new BusinessContextSummaryTool(),
+      new LocationContextSummaryTool(),
+      new ZacCapabilitySummaryTool((actor) =>
+        tools.filter((tool) => this.actorMayUse(actor, tool)),
+      ),
+      new BusinessHealthSummaryTool(dashboard),
+      // Skeletons for later weeks — registered but disabled.
       new KpiSummaryTool(),
       new RebookingSummaryTool(),
       new UtilisationSummaryTool(),
@@ -68,7 +80,7 @@ export class ZacToolRegistryService {
    * safe result ZAC can explain, never an exception or a data leak.
    */
   async dispatch(
-    actor: Pick<AuthUser, 'roles' | 'permissions'>,
+    actor: AuthUser,
     context: ZacActingContext,
     toolName: ZacToolName,
     input: Record<string, unknown>,
@@ -107,7 +119,7 @@ export class ZacToolRegistryService {
     }
 
     try {
-      return finish(await tool.execute(context, input));
+      return finish(await tool.execute(actor, context, input));
     } catch (error) {
       // Message only — never tool arguments, results or user content.
       this.logger.error(`zac tool ${toolName} failed: ${(error as Error).message}`);

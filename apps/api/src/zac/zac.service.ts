@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import type { AuthUser } from '@sheer/domain';
+import type { ZacToolName } from './tools/zac-tool.types';
 import { ZacContextService } from './context/zac-context.service';
 import { ZacCostTelemetryService } from './measurement/zac-cost-telemetry.service';
 import { ZAC_MODEL_PROVIDER } from './models/zac-model-provider.interface';
@@ -25,10 +26,11 @@ export class ZacService {
   ) {}
 
   /**
-   * Week 1 orchestration: rollout → acting context → role profile → visible tool
-   * set → stub completion → contract-shaped controlled response. No live tool
-   * runs, no salon records are read or written; telemetry carries safe metadata
-   * only (never the question or answer text).
+   * Week 2 orchestration: rollout → acting context → role profile → visible tool
+   * set → deterministic intent routing → ONE permission-re-checked tool dispatch
+   * → answer-first response. Routing is keyword-based on purpose — no LLM/network
+   * call decides anything; telemetry carries safe metadata only (never the
+   * question or answer text).
    */
   async ask(actor: AuthUser, request: ZacAskRequestDto): Promise<ZacResponse> {
     const startedAt = Date.now();
@@ -55,14 +57,55 @@ export class ZacService {
       availableToolNames: visibleTools.map((tool) => tool.name),
     });
 
-    const response = this.responseBuilder.buildControlledTestResponse({
-      context,
-      profile,
-      visibleTools,
-      completion,
-      toolCalls: [],
-      traceId,
-    });
+    let response: ZacResponse;
+    if (this.isStaffMembersQuestion(request.question)) {
+      // Recognised staff/team/member intent, but no read-only staff tool is
+      // connected yet: answer honestly from the service layer without touching
+      // any staff service — nothing is dispatched at all.
+      response = this.responseBuilder.buildStaffMembersUnavailableResponse({
+        context,
+        profile,
+        visibleTools,
+        completion,
+        traceId,
+      });
+    } else {
+      const intentTool = this.resolveIntent(request.question) ?? 'context.capabilities';
+      const { result, trace } = await this.toolRegistry.dispatch(actor, context, intentTool, {});
+
+      this.telemetry.recordSpineEvent('source_used', {
+        trace_id: traceId,
+        business_id: context.businessId,
+        actor_user_id: context.actorUserId,
+        role_context: context.roleContext,
+        tool: intentTool,
+        status: result.status,
+        latency_ms: trace.latency_ms,
+      });
+
+      // The capability tool is the universal fallback; if even that is denied
+      // (unexpected role/permission shape), serve the contract-complete
+      // foundation answer rather than a refusal.
+      response =
+        intentTool === 'context.capabilities' && result.status !== 'ok'
+          ? this.responseBuilder.buildControlledTestResponse({
+              context,
+              profile,
+              visibleTools,
+              completion,
+              toolCalls: [trace],
+              traceId,
+            })
+          : this.responseBuilder.buildToolBackedResponse({
+              context,
+              profile,
+              visibleTools,
+              completion,
+              result,
+              trace,
+              traceId,
+            });
+    }
 
     this.telemetry.recordCostEvent({
       trace_id: traceId,
@@ -79,7 +122,7 @@ export class ZacService {
       reasoning_tokens: completion.reasoningTokens,
       estimated_cost_usd: completion.estimatedCostUsd,
       latency_ms: Date.now() - startedAt,
-      tool_calls_used: 0,
+      tool_calls_used: response.tool_calls.length,
       cache_hit: false,
     });
 
@@ -93,6 +136,48 @@ export class ZacService {
     });
 
     return response;
+  }
+
+  /**
+   * Staff/team/member questions are recognised BEFORE tool routing so they get
+   * an honest "not connected yet" answer instead of the generic capability
+   * fallback. No staff tool exists to dispatch — the stylist/KPI skeletons stay
+   * disabled — so this intent never reaches any staff, performance or payroll
+   * service.
+   */
+  private isStaffMembersQuestion(question: string): boolean {
+    const q = question.toLowerCase();
+    return /\b(staff|team|employees?|stylists?|colleagues?)\b|\bmembers?\b|who works|\busers? (in|at|of)\b/.test(
+      q,
+    );
+  }
+
+  /**
+   * Deterministic keyword intent routing — deliberately conservative and
+   * transparent (no LLM). Unmatched questions fall back to the capability
+   * summary, which honestly says what ZAC can and cannot answer today.
+   */
+  private resolveIntent(question: string): ZacToolName | null {
+    const q = question.toLowerCase();
+    if (
+      /what can (you|zac|i ask)|help me with|what do you do|what can you do|capabilit/.test(q)
+    ) {
+      return 'context.capabilities';
+    }
+    if (/(which|what) business|business context|my (scope|role|access)|what (can|do) i see/.test(q)) {
+      return 'context.business_summary';
+    }
+    if (
+      /how('s| is| are)?\s+(my|the|our)\s+(business|salon)|business health|\bdoing\b|performing|revenue|\bbookings?\b|rebooking/.test(
+        q,
+      )
+    ) {
+      return 'report.business_health';
+    }
+    if (/\blocations?\b/.test(q)) {
+      return 'context.location_summary';
+    }
+    return null;
   }
 
   /** Operational check: reachable + which provider would answer. Makes no model call. */

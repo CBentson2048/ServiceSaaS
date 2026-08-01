@@ -15,10 +15,14 @@ export interface ZacActingContext {
   /** For greeting copy only — never logged and never sent to telemetry. */
   actorFirstName: string | null;
   businessId: string;
+  /** Display name of the business, from the resolved AuthUser (null when unset). */
+  businessName: string | null;
   /** Explicit single-location focus for the turn; null = aggregate across accessible locations. */
   locationId: string | null;
   /** Locations the actor may see; answers that aggregate must name these. */
   accessibleLocationIds: string[];
+  /** Safe id+name pairs for the accessible locations (already scope-filtered). */
+  accessibleLocations: { id: string; name: string }[];
   /** Display/framing snapshot; permission gating always uses `roles` + `permissions`. */
   roleContext: ZacRoleContext;
   roles: UserRole[];
