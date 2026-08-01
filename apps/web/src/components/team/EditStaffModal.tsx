@@ -18,6 +18,8 @@ import {
   STAFF_SERVICE_REVENUE_TARGET_MODE_DESCRIPTIONS,
   STAFF_SERVICE_REVENUE_TARGET_MODE_LABELS,
 } from '@sheer/domain';
+import type { EditForm as StaffEditForm } from './staffUpdatePayload';
+import { buildStaffUpdatePayload } from './staffUpdatePayload';
 import {
   ApiRequestError,
   listSecurityLevels,
@@ -40,35 +42,9 @@ interface EditStaffModalProps {
   canManageSecurity: boolean;
 }
 
-interface EditForm {
-  roles: InvitableRole[];
-  locationId: string;
-  managerLocationIds: string[];
-  membershipStatus: 'active' | 'suspended' | 'revoked';
-  displayName: string;
-  colorHex: string;
-  bio: string;
-  isBookable: boolean;
-  hourlyRate: string;
-  contractedHours: string;
-  averageBillBenchmark: string;
-  leaveNotes: string;
-  employmentType: StaffEmploymentType;
-  employmentStatus: StaffEmploymentStatus;
-  commissionStructure: StaffCommissionStructure;
-  commissionFlatRatePercent: string;
-  serviceRevenueTargetAmount: string;
-  serviceRevenueTargetMode: StaffServiceRevenueTargetMode;
-  holidayEntitlementDays: string;
-  colourAllowanceAmount: string;
-  photoUrl: string;
-  startDate: string;
-  qCode: string;
-  securityLevelId: string;
-  selectedServiceIds: string[];
-  // serviceId -> price text input. Absent/blank means inherit the service base price.
-  servicePrices: Record<string, string>;
-}
+// EditForm and the payload builder live in ./staffUpdatePayload so the
+// permission gating on pay-determining fields can be unit-tested.
+type EditForm = StaffEditForm;
 
 // Formats a service's base price for use as the per-stylist input placeholder
 // (the value that applies when the owner leaves the field blank). basePrice is
@@ -294,31 +270,38 @@ export function EditStaffModal({
     if (values.roles.includes('stylist')) {
       if (values.colorHex && !/^#[0-9A-Fa-f]{6}$/.test(values.colorHex.trim()))
         next.colorHex = 'Use a #RRGGBB hex colour';
-      if (Number.isNaN(Number(values.hourlyRate)) || Number(values.hourlyRate) < 0)
-        next.hourlyRate = 'Use a non-negative number';
-      if (Number.isNaN(Number(values.contractedHours)) || Number(values.contractedHours) < 0 || Number(values.contractedHours) > 168)
-        next.contractedHours = 'Use 0-168 hours';
-      if (Number.isNaN(Number(values.averageBillBenchmark)) || Number(values.averageBillBenchmark) < 0)
-        next.averageBillBenchmark = 'Use a non-negative number';
-      if (
-        Number.isNaN(Number(values.commissionFlatRatePercent)) ||
-        Number(values.commissionFlatRatePercent) < 0 ||
-        Number(values.commissionFlatRatePercent) > 100
-      )
-        next.commissionFlatRatePercent = 'Use 0-100';
-      if (
-        Number.isNaN(Number(values.holidayEntitlementDays)) ||
-        Number(values.holidayEntitlementDays) < 0 ||
-        Number(values.holidayEntitlementDays) > 366
-      )
-        next.holidayEntitlementDays = 'Use 0-366 days';
-      if (Number.isNaN(Number(values.colourAllowanceAmount)) || Number(values.colourAllowanceAmount) < 0)
-        next.colourAllowanceAmount = 'Use a non-negative number';
-      if (
-        values.serviceRevenueTargetAmount.trim() &&
-        (Number.isNaN(Number(values.serviceRevenueTargetAmount)) || Number(values.serviceRevenueTargetAmount) < 0)
-      )
-        next.serviceRevenueTargetAmount = 'Use a non-negative number or leave blank';
+      // Pay-determining fields follow the same rule as the stylist block above:
+      // they are rendered AND submitted only when the actor can manage pay, so
+      // validating them otherwise would block a save on a field the actor cannot
+      // see. Their form state is a placeholder in that case, because the API
+      // omits the real figures from the response.
+      if (canManagePay) {
+        if (Number.isNaN(Number(values.hourlyRate)) || Number(values.hourlyRate) < 0)
+          next.hourlyRate = 'Use a non-negative number';
+        if (Number.isNaN(Number(values.contractedHours)) || Number(values.contractedHours) < 0 || Number(values.contractedHours) > 168)
+          next.contractedHours = 'Use 0-168 hours';
+        if (Number.isNaN(Number(values.averageBillBenchmark)) || Number(values.averageBillBenchmark) < 0)
+          next.averageBillBenchmark = 'Use a non-negative number';
+        if (
+          Number.isNaN(Number(values.commissionFlatRatePercent)) ||
+          Number(values.commissionFlatRatePercent) < 0 ||
+          Number(values.commissionFlatRatePercent) > 100
+        )
+          next.commissionFlatRatePercent = 'Use 0-100';
+        if (
+          Number.isNaN(Number(values.holidayEntitlementDays)) ||
+          Number(values.holidayEntitlementDays) < 0 ||
+          Number(values.holidayEntitlementDays) > 366
+        )
+          next.holidayEntitlementDays = 'Use 0-366 days';
+        if (Number.isNaN(Number(values.colourAllowanceAmount)) || Number(values.colourAllowanceAmount) < 0)
+          next.colourAllowanceAmount = 'Use a non-negative number';
+        if (
+          values.serviceRevenueTargetAmount.trim() &&
+          (Number.isNaN(Number(values.serviceRevenueTargetAmount)) || Number(values.serviceRevenueTargetAmount) < 0)
+        )
+          next.serviceRevenueTargetAmount = 'Use a non-negative number or leave blank';
+      }
       const badPrice = values.selectedServiceIds.some((id) => {
         const raw = values.servicePrices[id]?.trim();
         return raw ? Number.isNaN(Number(raw)) || Number(raw) < 0 : false;
@@ -362,53 +345,10 @@ export function EditStaffModal({
 
     setIsSubmitting(true);
     setSubmitError(null);
-    const isStylist = form.roles.includes('stylist');
-    const payload: UpdateStaffMemberRequest = {
-      roles: form.roles,
-      // Omit when blank so an owner-only save (no location picked yet) doesn't
-      // trip the endpoint's UUID validation; validate() guarantees a location
-      // whenever a role is selected.
-      locationId: form.locationId || undefined,
-      // Managers may oversee several salons; send the ticked set. Omit for
-      // non-managers so the endpoint leaves manager rows untouched.
-      managerLocationIds: form.roles.includes('manager') ? form.managerLocationIds : undefined,
-      membershipStatus: form.membershipStatus,
-      displayName: isStylist ? form.displayName.trim() || undefined : undefined,
-      colorHex: isStylist ? form.colorHex.trim() || undefined : undefined,
-      bio: isStylist ? form.bio.trim() || undefined : undefined,
-      isBookable: isStylist ? form.isBookable : undefined,
-      hourlyRate: isStylist && canManagePay ? Number(form.hourlyRate) : undefined,
-      contractedHours: isStylist ? Number(form.contractedHours) : undefined,
-      averageBillBenchmark: isStylist ? Number(form.averageBillBenchmark) : undefined,
-      leaveNotes: isStylist ? form.leaveNotes.trim() || null : undefined,
-      employmentType: isStylist ? form.employmentType : undefined,
-      employmentStatus: isStylist ? form.employmentStatus : undefined,
-      commissionStructure: isStylist && canManagePay ? form.commissionStructure : undefined,
-      commissionFlatRatePercent:
-        isStylist && canManagePay ? Number(form.commissionFlatRatePercent) : undefined,
-      serviceRevenueTargetAmount: isStylist && canManagePay
-        ? form.serviceRevenueTargetAmount.trim()
-          ? Number(form.serviceRevenueTargetAmount)
-          : null
-        : undefined,
-      serviceRevenueTargetMode: isStylist && canManagePay ? form.serviceRevenueTargetMode : undefined,
-      holidayEntitlementDays: isStylist ? Number(form.holidayEntitlementDays) : undefined,
-      colourAllowanceAmount:
-        isStylist && canManagePay ? Number(form.colourAllowanceAmount) : undefined,
-      photoUrl: isStylist ? form.photoUrl.trim() || null : undefined,
-      startDate: isStylist ? form.startDate || null : undefined,
-      securityLevelId: canManageSecurity
-        ? form.securityLevelId
-          ? form.securityLevelId
-          : null
-        : undefined,
-      serviceAssignments: isStylist
-        ? form.selectedServiceIds.map((serviceId) => {
-            const raw = form.servicePrices[serviceId]?.trim();
-            return { serviceId, priceAmount: raw ? Number(raw) : null };
-          })
-        : undefined,
-    };
+    const payload: UpdateStaffMemberRequest = buildStaffUpdatePayload(form, {
+      canManagePay,
+      canManageSecurity,
+    });
     try {
       const result = await updateStaffMember(accessToken, staff.userProfileId, payload);
       onSaved(result.staff);
@@ -712,12 +652,16 @@ export function EditStaffModal({
                   <span className="text-[12px] text-text-muted">Assigned automatically · never changes</span>
                 </div>
               ) : null}
-              <SelectField
-                label="Employment type"
-                value={form.employmentType}
-                onValueChange={(v) => setForm({ ...form, employmentType: v as StaffEmploymentType })}
-                options={Object.entries(STAFF_EMPLOYMENT_TYPE_LABELS).map(([value, label]) => ({ value, label }))}
-              />
+              {/* Employment type selects the pay-stage pipeline and is snapshotted
+                  onto every pay summary, so it is editable only with pay access. */}
+              {canManagePay ? (
+                <SelectField
+                  label="Employment type"
+                  value={form.employmentType}
+                  onValueChange={(v) => setForm({ ...form, employmentType: v as StaffEmploymentType })}
+                  options={Object.entries(STAFF_EMPLOYMENT_TYPE_LABELS).map(([value, label]) => ({ value, label }))}
+                />
+              ) : null}
               <SelectField
                 label="Status"
                 value={form.employmentStatus}
@@ -732,18 +676,24 @@ export function EditStaffModal({
                 onValueChange={(v) => setForm({ ...form, startDate: v })}
                 optional
               />
-              <TextField
-                label="Contracted hours"
-                value={form.contractedHours}
-                onValueChange={(v) => setForm({ ...form, contractedHours: v })}
-                error={errors.contractedHours}
-              />
-              <TextField
-                label="Holiday entitlement (days)"
-                value={form.holidayEntitlementDays}
-                onValueChange={(v) => setForm({ ...form, holidayEntitlementDays: v })}
-                error={errors.holidayEntitlementDays}
-              />
+              {/* Contracted hours and holiday entitlement both drive payable hours,
+                  and so base pay and any multiple-of-base-pay commission threshold. */}
+              {canManagePay ? (
+                <>
+                  <TextField
+                    label="Contracted hours"
+                    value={form.contractedHours}
+                    onValueChange={(v) => setForm({ ...form, contractedHours: v })}
+                    error={errors.contractedHours}
+                  />
+                  <TextField
+                    label="Holiday entitlement (days)"
+                    value={form.holidayEntitlementDays}
+                    onValueChange={(v) => setForm({ ...form, holidayEntitlementDays: v })}
+                    error={errors.holidayEntitlementDays}
+                  />
+                </>
+              ) : null}
               <TextField
                 label="Leave / absence context"
                 value={form.leaveNotes}
@@ -791,12 +741,16 @@ export function EditStaffModal({
               title="Targets & KPIs"
               description="Benchmarks used to measure this stylist's performance."
             >
-              <TextField
-                label="Average bill benchmark"
-                value={form.averageBillBenchmark}
-                onValueChange={(v) => setForm({ ...form, averageBillBenchmark: v })}
-                error={errors.averageBillBenchmark}
-              />
+              {/* Read by payroll accelerator conditions with basis='staff_benchmark',
+                  so editing it can move a stylist onto the accelerator rate. */}
+              {canManagePay ? (
+                <TextField
+                  label="Average bill benchmark"
+                  value={form.averageBillBenchmark}
+                  onValueChange={(v) => setForm({ ...form, averageBillBenchmark: v })}
+                  error={errors.averageBillBenchmark}
+                />
+              ) : null}
               {canManagePay ? (
                 <>
                   <TextField

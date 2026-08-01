@@ -902,14 +902,7 @@ export class StaffService {
   }
 
   private assertSensitiveStaffFields(actor: AuthUser, input: UpdateStaffMemberRequest): void {
-    const changesPay =
-      input.hourlyRate !== undefined ||
-      input.commissionStructure !== undefined ||
-      input.commissionFlatRatePercent !== undefined ||
-      input.serviceRevenueTargetAmount !== undefined ||
-      input.serviceRevenueTargetMode !== undefined ||
-      input.colourAllowanceAmount !== undefined;
-    if (changesPay && !userHasPermission(actor, 'staff.pay.manage')) {
+    if (changesPayDeterminingFields(input) && !userHasPermission(actor, 'staff.pay.manage')) {
       throw new ForbiddenException('You do not have permission to manage staff pay');
     }
     if (input.securityLevelId !== undefined && !userHasPermission(actor, 'security.manage')) {
@@ -1472,22 +1465,31 @@ export class StaffService {
             displayName: staffProfile.display_name,
             employmentStatus: staffProfile.employment_status,
             isBookable: staffProfile.is_bookable,
-            contractedHours: Number(staffProfile.contracted_hours),
-            averageBillBenchmark: Number(staffProfile.average_bill_benchmark),
             sheerLabPinEnabled: staffProfile.sheer_lab_pin_enabled,
             leaveNotes: staffProfile.leave_notes ?? undefined,
             colorHex: staffProfile.color_hex ?? undefined,
             bio: staffProfile.bio ?? undefined,
-            employmentType: staffProfile.employment_type,
-            holidayEntitlementDays: Number(staffProfile.holiday_entitlement_days),
             photoUrl: staffProfile.photo_url ?? undefined,
             qCode: staffProfile.q_code,
             startDate: staffProfile.hire_date ?? undefined,
             serviceIds: (eligibilityByStaffProfile.get(staffProfile.id) ?? []).map((e) => e.serviceId),
             servicePricing: eligibilityByStaffProfile.get(staffProfile.id) ?? [],
+            // Pay-determining fields. `contractedHours`, `averageBillBenchmark`,
+            // `employmentType` and `holidayEntitlementDays` sit inside this gate
+            // because each is a direct input to the Financial Rules Engine:
+            // contracted hours and holiday entitlement drive payable hours and so
+            // base pay; employment type is snapshotted onto every pay summary; and
+            // average bill benchmark is read by accelerator conditions with
+            // `basis = 'staff_benchmark'`, so a zero or edited benchmark moves a
+            // stylist between commission band rates. Leaving them ungated let a
+            // manager holding only `staff.manage` change what a stylist is paid.
             ...(includePayFields
               ? {
                   hourlyRate: Number(staffProfile.hourly_rate),
+                  contractedHours: Number(staffProfile.contracted_hours),
+                  averageBillBenchmark: Number(staffProfile.average_bill_benchmark),
+                  employmentType: staffProfile.employment_type,
+                  holidayEntitlementDays: Number(staffProfile.holiday_entitlement_days),
                   commissionStructure: staffProfile.commission_structure,
                   commissionFlatRatePercent: Number(staffProfile.commission_flat_rate_percent),
                   serviceRevenueTargetAmount:
@@ -1721,6 +1723,42 @@ export function staleMembershipIds(
   return existing
     .filter((m) => m.role !== 'owner' && !keptIds.has(m.id))
     .map((m) => m.id);
+}
+
+/**
+ * Staff-record fields that are inputs to the Financial Rules Engine, and so may
+ * only be written by a caller holding `staff.pay.manage`.
+ *
+ * The four beyond the obvious money fields are there for concrete reasons:
+ *   - `contractedHours` and `holidayEntitlementDays` drive payable hours, and so
+ *     base pay and any `multiple_of_base_pay` commission threshold.
+ *   - `employmentType` is snapshotted onto every pay summary as
+ *     `employment_type_snapshot` and selects which stage pipeline applies.
+ *   - `averageBillBenchmark` is read by payroll accelerator conditions with
+ *     `basis = 'staff_benchmark'` (migration 0071), so editing it can move a
+ *     stylist from the standard band rate onto the accelerator rate.
+ *
+ * All four were previously writable — and readable — with only `staff.manage`.
+ */
+export const PAY_DETERMINING_STAFF_FIELDS = [
+  'hourlyRate',
+  'commissionStructure',
+  'commissionFlatRatePercent',
+  'serviceRevenueTargetAmount',
+  'serviceRevenueTargetMode',
+  'colourAllowanceAmount',
+  'contractedHours',
+  'averageBillBenchmark',
+  'employmentType',
+  'holidayEntitlementDays',
+] as const satisfies ReadonlyArray<keyof UpdateStaffMemberRequest>;
+
+/**
+ * Whether an update touches any pay-determining field. Exported as a pure guard
+ * so the protection is unit-tested for real rather than only through the service.
+ */
+export function changesPayDeterminingFields(input: UpdateStaffMemberRequest): boolean {
+  return PAY_DETERMINING_STAFF_FIELDS.some((field) => input[field] !== undefined);
 }
 
 function roleOrder(role: 'owner' | 'manager' | 'stylist' | 'client'): number {

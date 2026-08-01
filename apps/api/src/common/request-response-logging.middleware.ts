@@ -14,12 +14,18 @@ const SENSITIVE_KEYS = new Set([
 
 /**
  * Route prefixes whose request/response bodies (and query strings) must never reach
- * the logs. ZAC prompts/answers carry free-text user content, client references and
- * financial figures; only safe operational metadata (method, url, status, duration)
- * is logged for these routes. Key-name redaction is not enough here — the payload
- * shape is model-driven and cannot be enumerated.
+ * the logs. Only safe operational metadata (method, url, status, duration) is logged
+ * for these routes.
+ *
+ * - `/api/zac`: prompts/answers carry free-text user content, client references and
+ *   financial figures. Key-name redaction is not enough — the payload shape is
+ *   model-driven and cannot be enumerated.
+ * - `/api/payroll`: every response carries wage, commission and settlement figures
+ *   for named staff. These are the most sensitive values in the product and must
+ *   not be retrievable from Railway logs by anyone with log access, regardless of
+ *   whether they hold any payroll permission.
  */
-const BODY_SUPPRESSED_ROUTE_PREFIXES = ['/api/zac'];
+const BODY_SUPPRESSED_ROUTE_PREFIXES = ['/api/zac', '/api/payroll'];
 
 @Injectable()
 export class RequestResponseLoggingMiddleware implements NestMiddleware {
