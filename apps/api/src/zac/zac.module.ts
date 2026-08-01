@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
+import { DashboardModule } from '../dashboard/dashboard.module';
 import { ZacContextService } from './context/zac-context.service';
 import { ZacCostTelemetryService } from './measurement/zac-cost-telemetry.service';
 import { StubZacModelProvider } from './models/providers/stub-zac-provider';
@@ -13,13 +14,13 @@ import { ZacRolloutService } from './zac-rollout.service';
 import { ZacService } from './zac.service';
 
 /**
- * ZAC Phase 1 backend foundation (Week 1). Deliberately isolated: no business
- * modules are imported yet. Week 2 wires tools to the guarded QLOOQO services
- * (Kpi/Dashboard/…) with the resolved actor — ZAC never opens its own
- * reasoning-readable DB client for business data.
+ * ZAC Phase 1 backend (Week 2). Tools reach business data ONLY through
+ * existing guarded QLOOQO services (DashboardModule here), called with the
+ * resolved actor — ZAC never opens its own reasoning-readable DB client for
+ * business data.
  */
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, DashboardModule],
   controllers: [ZacController],
   providers: [
     ZacFeatureGuard,

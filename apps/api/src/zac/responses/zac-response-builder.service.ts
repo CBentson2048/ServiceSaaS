@@ -2,8 +2,12 @@ import { Injectable } from '@nestjs/common';
 import type { ZacActingContext } from '../context/zac-context.types';
 import type { ZacModelCompletion } from '../models/zac-model-provider.interface';
 import type { ZacRoleProfile } from '../roles/zac-role-profile.types';
-import type { ZacReadOnlyTool, ZacToolDispatchTrace } from '../tools/zac-tool.types';
-import type { ZacResponse } from './zac-response.types';
+import type {
+  ZacReadOnlyTool,
+  ZacToolDispatchTrace,
+  ZacToolResult,
+} from '../tools/zac-tool.types';
+import type { ZacResponse, ZacTechnicalDetails } from './zac-response.types';
 
 interface ControlledTestResponseInput {
   context: ZacActingContext;
@@ -11,6 +15,16 @@ interface ControlledTestResponseInput {
   visibleTools: ZacReadOnlyTool[];
   completion: ZacModelCompletion;
   toolCalls: ZacToolDispatchTrace[];
+  traceId: string;
+}
+
+interface ToolBackedResponseInput {
+  context: ZacActingContext;
+  profile: ZacRoleProfile;
+  visibleTools: ZacReadOnlyTool[];
+  completion: ZacModelCompletion;
+  result: ZacToolResult;
+  trace: ZacToolDispatchTrace;
   traceId: string;
 }
 
@@ -26,8 +40,6 @@ export class ZacResponseBuilderService {
   buildControlledTestResponse(input: ControlledTestResponseInput): ZacResponse {
     const { context, profile, visibleTools, completion, toolCalls, traceId } = input;
     const plannedTools = visibleTools.length;
-    const connectedTools = visibleTools.filter((tool) => tool.enabled).map((tool) => tool.name);
-    const disabledTools = visibleTools.filter((tool) => !tool.enabled).map((tool) => tool.name);
 
     return {
       answer: this.composeFoundationAnswer(context),
@@ -65,15 +77,142 @@ export class ZacResponseBuilderService {
         estimated_cost_usd: completion.estimatedCostUsd,
         cache_hit: false,
       },
-      technical_details: {
-        foundation_mode: true,
-        feature_flag_state: 'enabled',
-        connected_tools: connectedTools,
-        disabled_tools: disabledTools,
+      technical_details: this.technicalDetails(visibleTools, completion),
+      trace_id: traceId,
+    };
+  }
+
+  /**
+   * Response for a dispatched tool. Answer-first: a successful tool supplies its
+   * own user-facing answer, evidence, confidence, limitations and next step via
+   * its presentation block; a denied/disabled/failed dispatch becomes an honest
+   * Refusal / Insufficient Data answer — never a raw error, never invented data.
+   */
+  buildToolBackedResponse(input: ToolBackedResponseInput): ZacResponse {
+    const { context, profile, visibleTools, completion, result, trace, traceId } = input;
+    const presentation = result.status === 'ok' ? result.presentation : undefined;
+
+    const base = {
+      role_context: context.roleContext,
+      measurement_hook: null,
+      attribution_seed: null,
+      memory_updates: [],
+      tool_calls: [trace],
+      cost_metadata: {
         provider: completion.provider,
         model: completion.model,
+        input_tokens: completion.inputTokens,
+        output_tokens: completion.outputTokens,
+        reasoning_tokens: completion.reasoningTokens,
+        estimated_cost_usd: completion.estimatedCostUsd,
+        cache_hit: false,
+      },
+      technical_details: this.technicalDetails(visibleTools, completion),
+      trace_id: traceId,
+    } satisfies Partial<ZacResponse>;
+
+    if (presentation) {
+      return {
+        ...base,
+        answer: presentation.answer,
+        response_type: presentation.responseType,
+        evidence: presentation.evidence,
+        confidence: presentation.confidence,
+        limitations: presentation.limitations,
+        suggested_next_step: presentation.suggestedNextStep,
+      };
+    }
+
+    return {
+      ...base,
+      answer: `I can't answer that with your data right now. ${result.explanation}`,
+      response_type: 'Refusal / Insufficient Data',
+      evidence: [
+        {
+          source_type: 'zac.foundation',
+          source_ref: 'safe-unavailable-response',
+          as_of: null,
+          entities_used: [],
+        },
+      ],
+      confidence: 'high',
+      limitations: [result.explanation, `Data scope: ${profile.scopeDescription}`],
+      suggested_next_step: 'Ask "What can you help me with?" to see what I can answer today.',
+    };
+  }
+
+  /**
+   * Honest answer for staff/team/member questions while no read-only staff tool
+   * is connected (Luke's product direction): acknowledge the intent first, state
+   * the limitation plainly, never guess, and say what comes next. No staff
+   * service is called and no staff data of any kind exists in this response.
+   */
+  buildStaffMembersUnavailableResponse(input: {
+    context: ZacActingContext;
+    profile: ZacRoleProfile;
+    visibleTools: ZacReadOnlyTool[];
+    completion: ZacModelCompletion;
+    traceId: string;
+  }): ZacResponse {
+    const { context, profile, visibleTools, completion, traceId } = input;
+
+    return {
+      answer: [
+        "I understand you're asking about your business members or team.",
+        "Staff and team member data isn't connected to ZAC yet, so I can't list or analyse your team using live QLOOQO data — and I won't guess.",
+        'Once read-only staff tools are connected, I will be able to help owners and managers understand team members, their locations and performance context, always within your permissions.',
+        'In the meantime, try "How is my business doing?" for a live health snapshot.',
+      ].join('\n\n'),
+      role_context: context.roleContext,
+      response_type: 'Refusal / Insufficient Data',
+      evidence: [
+        {
+          source_type: 'zac.intent',
+          source_ref: 'staff-members-intent:not-connected',
+          as_of: null,
+          entities_used: [],
+        },
+      ],
+      confidence: 'high',
+      limitations: [
+        'Staff and team member data is not connected to ZAC yet.',
+        'No staff names, roles, performance or pay details were read or included.',
+        `Data scope once staff tools are connected: ${profile.scopeDescription}`,
+      ],
+      suggested_next_step:
+        'Try "How is my business doing?" for a live snapshot, or ask about your team again once read-only staff tools are connected.',
+      measurement_hook: null,
+      attribution_seed: null,
+      memory_updates: [],
+      tool_calls: [],
+      cost_metadata: {
+        provider: completion.provider,
+        model: completion.model,
+        input_tokens: completion.inputTokens,
+        output_tokens: completion.outputTokens,
+        reasoning_tokens: completion.reasoningTokens,
+        estimated_cost_usd: completion.estimatedCostUsd,
+        cache_hit: false,
+      },
+      technical_details: {
+        ...this.technicalDetails(visibleTools, completion),
+        detected_intent: 'staff.members',
       },
       trace_id: traceId,
+    };
+  }
+
+  private technicalDetails(
+    visibleTools: ZacReadOnlyTool[],
+    completion: ZacModelCompletion,
+  ): ZacTechnicalDetails {
+    return {
+      foundation_mode: true,
+      feature_flag_state: 'enabled',
+      connected_tools: visibleTools.filter((tool) => tool.enabled).map((tool) => tool.name),
+      disabled_tools: visibleTools.filter((tool) => !tool.enabled).map((tool) => tool.name),
+      provider: completion.provider,
+      model: completion.model,
     };
   }
 

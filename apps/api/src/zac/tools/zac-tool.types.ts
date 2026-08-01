@@ -1,7 +1,17 @@
-import type { Permission, UserRole } from '@sheer/domain';
+import type { AuthUser, Permission, UserRole } from '@sheer/domain';
 import type { ZacActingContext } from '../context/zac-context.types';
+// Type-only imports from the response contract (erased at compile time, so the
+// mutual type-only reference between these two files carries no runtime cycle).
+import type {
+  ZacConfidence,
+  ZacEvidenceItem,
+  ZacResponseType,
+} from '../responses/zac-response.types';
 
 export type ZacToolName =
+  | 'context.business_summary'
+  | 'context.location_summary'
+  | 'context.capabilities'
   | 'report.business_health'
   | 'report.kpi_summary'
   | 'report.rebooking_summary'
@@ -11,7 +21,7 @@ export type ZacToolName =
   | 'qlab.colour_analytics'
   | 'inventory.stock_status';
 
-export type ZacToolDomain = 'report' | 'kpi' | 'qlab' | 'inventory';
+export type ZacToolDomain = 'context' | 'report' | 'kpi' | 'qlab' | 'inventory';
 
 export type ZacToolResultStatus =
   | 'ok'
@@ -19,6 +29,21 @@ export type ZacToolResultStatus =
   | 'permission_denied'
   | 'unavailable'
   | 'error';
+
+/**
+ * Answer-first material a live tool supplies for the response builder: the
+ * user-facing answer, why/evidence, honest limitations and the next useful
+ * action. All text is PII-safe by construction. Skeleton/denied results omit
+ * this block and the builder falls back to a safe explanation.
+ */
+export interface ZacToolPresentation {
+  answer: string;
+  evidence: ZacEvidenceItem[];
+  confidence: ZacConfidence;
+  limitations: string[];
+  suggestedNextStep: string | null;
+  responseType: ZacResponseType;
+}
 
 /**
  * What a tool hands back to the orchestrator. `data` is structured and PII-safe
@@ -30,6 +55,7 @@ export interface ZacToolResult {
   data: Record<string, unknown> | null;
   explanation: string;
   rowCount: number | null;
+  presentation?: ZacToolPresentation;
 }
 
 /** Per-dispatch trace, persisted/logged as metadata only — never arguments or results. */
@@ -72,5 +98,14 @@ export interface ZacReadOnlyTool {
   readonly requiresStaffSelf: boolean;
   /** False until the tool is wired to its guarded QLOOQO service (Week 2+). */
   readonly enabled: boolean;
-  execute(context: ZacActingContext, input: Record<string, unknown>): Promise<ZacToolResult>;
+  /**
+   * `actor` is the guard-verified AuthUser, passed through unchanged so live
+   * tools can call existing guarded QLOOQO services (which re-check role and
+   * scope themselves) — ZAC never opens its own business-data DB client.
+   */
+  execute(
+    actor: AuthUser,
+    context: ZacActingContext,
+    input: Record<string, unknown>,
+  ): Promise<ZacToolResult>;
 }

@@ -23,8 +23,10 @@ export class ZacContextService {
       actorUserId: actor.id,
       actorFirstName: this.resolveFirstName(actor),
       businessId: actor.businessId,
+      businessName: actor.businessName?.trim() || null,
       locationId: this.resolveLocationId(actor, request.locationId),
       accessibleLocationIds: [...actor.allowedLocationIds],
+      accessibleLocations: this.resolveAccessibleLocations(actor),
       roleContext: this.resolveRoleContext(actor),
       roles: [...actor.roles],
       permissions: [...actor.permissions],
@@ -33,6 +35,18 @@ export class ZacContextService {
       timezone: actor.timezone ?? 'Europe/London',
       locale: 'en-GB',
     };
+  }
+
+  /**
+   * Safe id+name pairs for the locations the actor may see. Owners see the
+   * business's locations; everyone else is filtered to allowedLocationIds —
+   * other locations never enter the context, so no tool can name them.
+   */
+  private resolveAccessibleLocations(actor: AuthUser): { id: string; name: string }[] {
+    const locations = userHasRole(actor, 'owner')
+      ? actor.locations
+      : actor.locations.filter((location) => actor.allowedLocationIds.includes(location.id));
+    return locations.map((location) => ({ id: location.id, name: location.name }));
   }
 
   /** First name for greeting copy; null (neutral greeting) when nothing safe is available. */

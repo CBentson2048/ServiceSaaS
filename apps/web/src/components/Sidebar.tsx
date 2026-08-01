@@ -58,6 +58,7 @@ const NAV: NavItem[] = [
   { to: '/settings/plan', label: 'Account & plan', icon: TagIcon, allowedRoles: ['owner', 'manager'], permission: 'account.manage' },
   { to: '/settings/booking', label: 'Booking settings', icon: GearIcon, allowedRoles: ['owner', 'manager'], permission: 'settings.booking.manage' },
   { to: '/audit-log', label: 'Audit log', icon: ShieldIcon, allowedRoles: ['owner', 'manager'], permission: 'audit.read' },
+  { to: '/zac', label: 'ZAC', icon: SparkIcon, allowedRoles: ['owner', 'manager'], permission: 'zac.access' },
 ];
 
 // Keeps leaf entries and any group that still has at least one role-visible child.
@@ -515,6 +516,15 @@ function GearIcon(props: SVGProps<SVGSVGElement>) {
     <Svg {...props}>
       <circle cx="10" cy="10" r="2.5" />
       <path d="M10 2.8v2M10 15.2v2M2.8 10h2M15.2 10h2M4.9 4.9l1.4 1.4M13.7 13.7l1.4 1.4M15.1 4.9l-1.4 1.4M6.3 13.7l-1.4 1.4" />
+    </Svg>
+  );
+}
+
+function SparkIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Svg {...props}>
+      <path d="M10 3.5 11.6 8l4.4 1.6-4.4 1.6L10 15.6 8.4 11.2 4 9.6 8.4 8 10 3.5Z" />
+      <path d="M15.5 3v3M14 4.5h3" />
     </Svg>
   );
 }

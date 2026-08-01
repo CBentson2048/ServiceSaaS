@@ -4,6 +4,7 @@ import { DashboardLayout } from './layouts/DashboardLayout';
 import { AcceptInvitationPage } from './pages/AcceptInvitationPage';
 import { AccountCreatedPage } from './pages/AccountCreatedPage';
 import { AuditLogPage } from './pages/AuditLogPage';
+import { ZacPage } from './pages/ZacPage';
 import { AccountPlanPage } from './pages/AccountPlanPage';
 import { BookingSettingsPage } from './pages/BookingSettingsPage';
 import { BookOutTypesPage } from './pages/BookOutTypesPage';
@@ -151,6 +152,9 @@ export function App() {
           </Route>
           <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['audit.read']} />}>
             <Route path="/audit-log" element={<AuditLogPage />} />
+          </Route>
+          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['zac.access']} />}>
+            <Route path="/zac" element={<ZacPage />} />
           </Route>
           <Route path="/profile" element={<ProfilePage />} />
           <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['settings.location.manage']} />}>

@@ -1955,6 +1955,75 @@ export async function acceptStaffInvitation(
   });
 }
 
+// ---------------------------------------------------------------------------
+// ZAC — AI business assistant (Phase 1, read-only foundation).
+// Response mirrors the backend contract in apps/api/src/zac/responses/
+// zac-response.types.ts; these types move to @sheer/domain when ZAC leaves
+// the internal/demo phase.
+// ---------------------------------------------------------------------------
+
+export interface ZacEvidenceItem {
+  source_type: string;
+  source_ref: string;
+  as_of: string | null;
+  entities_used: string[];
+}
+
+export interface ZacToolCallTrace {
+  tool: string;
+  status: string;
+  latency_ms: number;
+  row_count: number | null;
+}
+
+export interface ZacCostMetadata {
+  provider: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  reasoning_tokens: number;
+  estimated_cost_usd: number;
+  cache_hit: boolean;
+}
+
+export interface ZacTechnicalDetails {
+  foundation_mode: boolean;
+  feature_flag_state: string;
+  connected_tools: string[];
+  disabled_tools: string[];
+  provider: string;
+  model: string;
+  detected_intent?: string;
+}
+
+export interface ZacAskResponse {
+  answer: string;
+  role_context: 'owner' | 'manager' | 'stylist';
+  response_type: string;
+  evidence: ZacEvidenceItem[];
+  confidence: 'high' | 'medium' | 'low';
+  limitations: string[];
+  suggested_next_step: string | null;
+  measurement_hook: string | null;
+  attribution_seed: unknown;
+  memory_updates: unknown[];
+  tool_calls: ZacToolCallTrace[];
+  cost_metadata: ZacCostMetadata;
+  technical_details: ZacTechnicalDetails;
+  trace_id: string;
+}
+
+export async function askZac(
+  accessToken: string,
+  payload: { question: string; locationId?: string },
+): Promise<ZacAskResponse> {
+  return request<ZacAskResponse>('/zac/ask', {
+    method: 'POST',
+    body: payload,
+    accessToken,
+  });
+}
+
 export class ApiRequestError extends Error {
   readonly status: number;
   readonly details?: unknown;

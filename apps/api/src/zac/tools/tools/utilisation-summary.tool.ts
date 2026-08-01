@@ -1,3 +1,4 @@
+import type { AuthUser } from '@sheer/domain';
 import type { ZacActingContext } from '../../context/zac-context.types';
 import type { ZacReadOnlyTool, ZacToolResult } from '../zac-tool.types';
 
@@ -39,7 +40,11 @@ export class UtilisationSummaryTool implements ZacReadOnlyTool {
   readonly requiresStaffSelf = false;
   readonly enabled = false;
 
-  async execute(_context: ZacActingContext, _input: Record<string, unknown>): Promise<ZacToolResult> {
+  async execute(
+    _actor: AuthUser,
+    _context: ZacActingContext,
+    _input: Record<string, unknown>,
+  ): Promise<ZacToolResult> {
     return {
       status: 'not_connected',
       data: null,
