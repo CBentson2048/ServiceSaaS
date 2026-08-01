@@ -12,10 +12,15 @@ import {
   searchPublicSalons,
 } from '../auth/api';
 import { AppButton, AppCard } from '../design';
+import { usePageMetadata } from '../hooks/usePageMetadata';
 import { ClientBookingShell } from './ClientBookingShell';
 import { writeClientBookingSelection } from './clientBookingFlow';
 
 export function ClientBookingLocationPage() {
+  usePageMetadata(
+    'Book a salon appointment | QLOOQO',
+    'Book a hair or beauty appointment online. Choose a salon, service, and stylist from live availability with QLOOQO.',
+  );
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const locationId = searchParams.get('locationId') ?? undefined;
@@ -23,7 +28,9 @@ export function ClientBookingLocationPage() {
   const locationSlug = searchParams.get('locationSlug') ?? undefined;
   const [data, setData] = useState<PublicBookingServiceSelectionResponse | null>(null);
   const [locations, setLocations] = useState<PublicBookingLocationSummary[]>([]);
-  const [selectedLocation, setSelectedLocation] = useState<PublicBookingLocationSummary | null>(null);
+  const [selectedLocation, setSelectedLocation] = useState<PublicBookingLocationSummary | null>(
+    null,
+  );
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState<PublicSalonSummary[]>([]);
   const [selectedSalon, setSelectedSalon] = useState<PublicSalonSummary | null>(null);
@@ -39,7 +46,11 @@ export function ClientBookingLocationPage() {
       setError(null);
       try {
         if (locationId || (businessSlug && locationSlug)) {
-          const result = await getPublicBookingSelection({ locationId, businessSlug, locationSlug });
+          const result = await getPublicBookingSelection({
+            locationId,
+            businessSlug,
+            locationSlug,
+          });
           if (cancelled) return;
           setData(result);
           setSelectedLocation(result.location);
@@ -230,9 +241,7 @@ export function ClientBookingLocationPage() {
                 }
               >
                 <div className="text-[14px] font-semibold">{location.name}</div>
-                <div className="mt-1 text-[12px] text-text-secondary">
-                  Online booking available
-                </div>
+                <div className="mt-1 text-[12px] text-text-secondary">Online booking available</div>
                 {location.salonCode ? (
                   <div className="mt-2 font-mono text-[11px] tracking-wide text-text-muted">
                     Salon Code: {location.salonCode}
@@ -262,7 +271,11 @@ function InfoCard({ text }: { text: string }) {
 }
 
 function ErrorCard({ text }: { text: string }) {
-  return <div className="mt-5 rounded-input-lg border border-danger-border bg-danger-soft px-3 py-2 text-[13px] text-danger">{text}</div>;
+  return (
+    <div className="mt-5 rounded-input-lg border border-danger-border bg-danger-soft px-3 py-2 text-[13px] text-danger">
+      {text}
+    </div>
+  );
 }
 
 function toErrorMessage(err: unknown): string {

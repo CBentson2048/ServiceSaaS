@@ -31,23 +31,20 @@ function fromEnv(key: string, fallback: string): string {
 
 export const sheerAppDeepLink = fromEnv(
   'VITE_SHEER_APP_DEEP_LINK',
-  'https://app.sheer.com/welcome',
+  'https://qlooqo.com/app/welcome',
 );
 
 export const sheerAppIosUrl = fromEnv(
   'VITE_SHEER_APP_IOS_URL',
-  'https://apps.apple.com/app/sheer-app/idTODO',
+  'https://apps.apple.com/app/qlooqo/idTODO',
 );
 
 export const sheerAppAndroidUrl = fromEnv(
   'VITE_SHEER_APP_ANDROID_URL',
-  'https://play.google.com/store/apps/details?id=com.sheer.app',
+  'https://play.google.com/store/apps/details?id=com.qlooqo.app',
 );
 
-export const sheerAppGenericUrl = fromEnv(
-  'VITE_SHEER_APP_GENERIC_URL',
-  'https://sheer.com/app',
-);
+export const sheerAppGenericUrl = fromEnv('VITE_SHEER_APP_GENERIC_URL', 'https://qlooqo.com/app');
 
 /**
  * Cheap UA sniff so we can pick the right store URL for download buttons.

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { BrandLogo } from '../components/BrandLogo';
 import { AppCard, AppText } from '../design';
+import { usePageMetadata } from '../hooks/usePageMetadata';
 
 /**
  * Public privacy policy page.
@@ -20,6 +21,10 @@ const LAST_UPDATED = '22 June 2026';
 const CONTACT_EMAIL = 'privacy@qlooqo.com';
 
 export function PrivacyPolicyPage() {
+  usePageMetadata(
+    'Privacy Policy | QLOOQO',
+    'How QLOOQO collects, uses, and protects data across salon booking, scheduling, and the QLOOQO apps.',
+  );
   return (
     <main className="min-h-screen bg-bg px-4 py-10 text-text-primary sm:py-14">
       <AppCard elevation="hero" padding="lg" className="mx-auto w-full max-w-3xl">
@@ -125,10 +130,7 @@ export function PrivacyPolicyPage() {
               Depending on where you live, you may have the right to access, correct, or delete your
               personal information, and to object to or restrict certain processing. You can delete
               your account at any time from the qlooqo app or on our{' '}
-              <Link
-                to="/delete-account"
-                className="font-medium text-primary-deep hover:underline"
-              >
+              <Link to="/delete-account" className="font-medium text-primary-deep hover:underline">
                 account deletion page
               </Link>
               . To exercise any other right, contact us using the details below.
@@ -153,9 +155,9 @@ export function PrivacyPolicyPage() {
 
           <Section title="Changes to this policy">
             <Paragraph>
-              We may update this policy from time to time. When we do, we will revise the &ldquo;Last
-              updated&rdquo; date above, and significant changes will be communicated through the
-              app where appropriate.
+              We may update this policy from time to time. When we do, we will revise the
+              &ldquo;Last updated&rdquo; date above, and significant changes will be communicated
+              through the app where appropriate.
             </Paragraph>
           </Section>
 

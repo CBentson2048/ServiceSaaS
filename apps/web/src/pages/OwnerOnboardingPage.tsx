@@ -1,7 +1,8 @@
-import type { FormEvent} from 'react';
+import type { FormEvent } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { BrandLogo } from '../components/BrandLogo';
+import { usePageMetadata } from '../hooks/usePageMetadata';
 import type {
   BusinessSlugAvailabilityResponse,
   BusinessTier,
@@ -154,6 +155,10 @@ function autoSlug(value: string): string {
 }
 
 export function OwnerOnboardingPage() {
+  usePageMetadata(
+    'Create your salon | QLOOQO',
+    'Set up your salon on QLOOQO: create a business account, add locations, invite your team, and start taking online bookings.',
+  );
   const auth = useAuth();
   const navigate = useNavigate();
   const [bootstrap, setBootstrap] = useState<OwnerOnboardingBootstrap | null>(null);
@@ -237,14 +242,11 @@ export function OwnerOnboardingPage() {
     return () => window.clearTimeout(handle);
   }, [business.slug]);
 
-  const goTo = useCallback(
-    (next: number) => {
-      setStepIndex(next);
-      setReachedStep((current) => Math.max(current, next));
-      setSubmitError(null);
-    },
-    [],
-  );
+  const goTo = useCallback((next: number) => {
+    setStepIndex(next);
+    setReachedStep((current) => Math.max(current, next));
+    setSubmitError(null);
+  }, []);
 
   const validateOwner = useCallback((): Record<string, string> => {
     const next: Record<string, string> = {};
@@ -370,7 +372,9 @@ export function OwnerOnboardingPage() {
         const response = await registerOwnerOnboarding(buildPayload());
         if (response.session && response.user) {
           auth.applyAuthenticatedSession(response.session, response.user);
-          navigate(response.redirectTo === '/' ? '/dashboard' : response.redirectTo, { replace: true });
+          navigate(response.redirectTo === '/' ? '/dashboard' : response.redirectTo, {
+            replace: true,
+          });
           return;
         }
         navigate(response.redirectTo || '/login?onboarded=1', { replace: true });
@@ -624,8 +628,12 @@ function BusinessStep({
   slugTrailing: React.ReactNode;
   slugHint: string;
 }) {
-  const currencies = bootstrap?.currencies ?? [{ code: value.defaultCurrency, label: value.defaultCurrency }];
-  const timezones = bootstrap?.timezones ?? [{ value: value.defaultTimezone, label: value.defaultTimezone }];
+  const currencies = bootstrap?.currencies ?? [
+    { code: value.defaultCurrency, label: value.defaultCurrency },
+  ];
+  const timezones = bootstrap?.timezones ?? [
+    { value: value.defaultTimezone, label: value.defaultTimezone },
+  ];
   const countries = bootstrap?.countries ?? [{ code: value.countryCode, label: value.countryCode }];
 
   return (
@@ -875,7 +883,9 @@ function ReviewCard({ title, children }: { title: string; children: React.ReactN
 function ReviewRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <div className="flex flex-col">
-      <dt className="text-[11px] font-medium uppercase tracking-[0.1em] text-text-muted">{label}</dt>
+      <dt className="text-[11px] font-medium uppercase tracking-[0.1em] text-text-muted">
+        {label}
+      </dt>
       <dd className={`mt-0.5 text-[13px] text-text-primary ${mono ? 'font-mono' : ''}`}>{value}</dd>
     </div>
   );

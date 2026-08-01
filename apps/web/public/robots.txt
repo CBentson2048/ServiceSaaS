@@ -1,0 +1,23 @@
+# QLOOQO — salon booking & management platform
+User-agent: *
+Allow: /
+
+# Keep app-internal / account areas out of search results
+Disallow: /dashboard
+Disallow: /bookings
+Disallow: /crm
+Disallow: /rota
+Disallow: /team
+Disallow: /settings
+Disallow: /locations
+Disallow: /inventory
+Disallow: /services
+Disallow: /performance
+Disallow: /commission
+Disallow: /profile
+Disallow: /audit-log
+Disallow: /sheer-lab
+Disallow: /account
+Disallow: /auth/
+
+Sitemap: https://qlooqo.com/sitemap.xml

@@ -13,7 +13,17 @@
       "Bash(echo \"EXIT:$?\")",
       "Bash(pnpm exec *)",
       "Bash(echo \"TC_EXIT:$?\")",
-      "Bash(echo \"LINT_EXIT:$?\")"
+      "Bash(echo \"LINT_EXIT:$?\")",
+      "Bash(npm -v)",
+      "Bash(echo \"npm: $\\(npm -v 2>&1\\)\")",
+      "Bash(pnpm -v)",
+      "Bash(echo \"pnpm: $\\(pnpm -v 2>&1\\)\")",
+      "Bash(corepack -v)",
+      "Read(//opt/**)",
+      "Read(//Users/administrator/.nvm/versions/**)",
+      "Read(//usr/local/bin/**)",
+      "Read(//Users/administrator/**)",
+      "Bash(sysctl -n machdep.cpu.brand_string)"
     ]
   }
 }

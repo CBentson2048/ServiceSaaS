@@ -1,4 +1,4 @@
-import type { FormEvent} from 'react';
+import type { FormEvent } from 'react';
 import { useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import type { AuthUser, LoginResponse, Permission } from '@sheer/domain';
@@ -6,12 +6,14 @@ import { userHasPermission } from '@sheer/domain';
 import { useAuth } from '../auth/AuthProvider';
 import { loginClientBookingAccount } from '../auth/api';
 import { BrandLogo } from '../components/BrandLogo';
-import {
-  readClientBookingSelection,
-  updateClientBookingSelection,
-} from './clientBookingFlow';
+import { usePageMetadata } from '../hooks/usePageMetadata';
+import { readClientBookingSelection, updateClientBookingSelection } from './clientBookingFlow';
 
 export function LoginPage() {
+  usePageMetadata(
+    'Log in | QLOOQO',
+    'Log in to QLOOQO to manage salon bookings, rota, clients, and payments.',
+  );
   const auth = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -63,9 +65,14 @@ export function LoginPage() {
         });
         completeBookingAuth(response);
         auth.applyAuthenticatedSession(response.session, response.user);
-        navigate(response.user.clientCommunicationPreference ? (from ?? '/book/review') : '/book/preference', {
-          replace: true,
-        });
+        navigate(
+          response.user.clientCommunicationPreference
+            ? (from ?? '/book/review')
+            : '/book/preference',
+          {
+            replace: true,
+          },
+        );
         return;
       } else {
         const user = await auth.signIn(email, password);
@@ -93,7 +100,9 @@ export function LoginPage() {
           </div>
           <h1 className="text-2xl font-semibold text-[#241E30]">Welcome back</h1>
           <p className="mt-1 text-sm text-[#776A82]">
-            {bookingMode ? 'Sign in to continue your booking' : 'Owner and manager dashboard access'}
+            {bookingMode
+              ? 'Sign in to continue your booking'
+              : 'Owner and manager dashboard access'}
           </p>
         </div>
 
@@ -196,7 +205,10 @@ const DEFAULT_PERMISSION_ROUTES: readonly [Permission, string][] = [
 ];
 
 function defaultRouteFor(user: AuthUser): string {
-  return DEFAULT_PERMISSION_ROUTES.find(([permission]) => userHasPermission(user, permission))?.[1] ?? '/profile';
+  return (
+    DEFAULT_PERMISSION_ROUTES.find(([permission]) => userHasPermission(user, permission))?.[1] ??
+    '/profile'
+  );
 }
 
 function completeBookingAuth(response: LoginResponse): void {
