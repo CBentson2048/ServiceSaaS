@@ -36,7 +36,7 @@ export const sheerAppDeepLink = fromEnv(
 
 export const sheerAppIosUrl = fromEnv(
   'VITE_SHEER_APP_IOS_URL',
-  'https://apps.apple.com/app/qlooqo/idTODO',
+  'https://apps.apple.com/gb/app/qlooqo/id6767536395',
 );
 
 export const sheerAppAndroidUrl = fromEnv(
