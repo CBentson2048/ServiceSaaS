@@ -5,7 +5,7 @@
 >
 > Date: 2026-07-22 (updated for Day 5 and the sign-off walkthrough) · Sources: [Day 1 Discovery Report](QLOOQO/ZAC%20Phase%200%20Discovery%20Report.md), [Day 2 Core Architecture](phase-0-day-2-core-architecture.md), [Day 3 Knowledge, Tools & Outcome Memory](phase-0-day-3-knowledge-tools-outcome-memory.md), [Day 4 Value Created & Cost per Intelligence](phase-0-day-4-value-created-cost-per-intelligence.md), [Day 5 Final Package, Acceptance & Roadmap](phase-0-day-5-final-package-acceptance-roadmap.md), [Phase 0 Sign-Off Walkthrough](phase-0-sign-off-walkthrough.md).
 
----
+--- 
 
 ## 1. Purpose
 
