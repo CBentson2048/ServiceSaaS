@@ -173,6 +173,7 @@ import type {
   RetailSalesListResponse,
   AssignPayStructureRequest,
   AssignPayStructureResponse,
+  StaffPayAssignmentDetail,
   CreatePayStructureRequest,
   ListPayStructuresResponse,
   PayStructureDetailResponse,
@@ -2240,6 +2241,17 @@ export async function createPayStructureVersion(
   return request<PayStructureDetailResponse>(
     `/payroll/structures/${encodeURIComponent(structureId)}/versions`,
     { method: 'POST', body: payload, accessToken },
+  );
+}
+
+/** The staff member's current open pay-structure assignment, or null when none. */
+export async function getStaffPayAssignment(
+  accessToken: string,
+  staffProfileId: string,
+): Promise<{ assignment: StaffPayAssignmentDetail | null }> {
+  return request<{ assignment: StaffPayAssignmentDetail | null }>(
+    `/payroll/staff/${encodeURIComponent(staffProfileId)}/assignment`,
+    { accessToken },
   );
 }
 

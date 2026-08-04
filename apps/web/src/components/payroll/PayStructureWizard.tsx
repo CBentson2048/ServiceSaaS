@@ -603,6 +603,9 @@ export function PayStructureWizard({
       ? hourRulesFromVersion(sourceVersion)
       : DEFAULT_HOUR_RULES.map((rule) => ({ ...rule })),
   );
+  // Lives at wizard level (not inside the step) so the matrix stays open when
+  // the user navigates back and forth between steps.
+  const [hoursExpanded, setHoursExpanded] = useState(false);
   const [stepError, setStepError] = useState<string | null>(null);
 
   // Step 4 — illustrative sample inputs (pounds / hours)
@@ -718,7 +721,7 @@ export function PayStructureWizard({
     }
     if (step === 'parameters') {
       if (mode === 'create' && name.trim() === '') {
-        setStepError('Give the structure a name.');
+        setStepError('Give the pay plan a name.');
         return;
       }
       if (built.error) {
@@ -754,9 +757,7 @@ export function PayStructureWizard({
       }
     } catch (err) {
       // 409s carry the close-date explanation; 400s the validation message.
-      setSubmitError(
-        err instanceof ApiRequestError ? err.message : 'Unable to save the pay structure',
-      );
+      setSubmitError(err instanceof ApiRequestError ? err.message : 'Unable to save the pay plan');
     } finally {
       setSubmitting(false);
     }
@@ -781,7 +782,7 @@ export function PayStructureWizard({
           to="/payroll/structures"
           className="text-[12px] font-medium text-primary transition hover:text-primary-deep"
         >
-          ← Pay structures
+          ← Pay plans
         </Link>
       ) : (
         <button
@@ -789,13 +790,13 @@ export function PayStructureWizard({
           onClick={onCancel}
           className="text-[12px] font-medium text-primary transition hover:text-primary-deep"
         >
-          ← Back to {structureName ?? 'the structure'}
+          ← Back to {structureName ?? 'the pay plan'}
         </button>
       )}
 
       <header className="mb-6 mt-3">
         <AppText as="h1" variant="heading" weight="medium">
-          {mode === 'create' ? 'New pay structure' : `New version — ${structureName ?? ''}`}
+          {mode === 'create' ? 'New pay plan' : `New version — ${structureName ?? ''}`}
         </AppText>
         <AppText as="p" variant="caption" tone="muted" className="mt-1">
           {mode === 'create'
@@ -890,7 +891,7 @@ export function PayStructureWizard({
                     className={INPUT_CLASSES}
                     value={description}
                     onChange={(event) => setDescription(event.target.value)}
-                    placeholder="Shown on the structure list"
+                    placeholder="Shown on the pay plan list"
                     maxLength={500}
                   />
                 </FieldShell>
@@ -939,73 +940,93 @@ export function PayStructureWizard({
             >
               Hour rules
             </AppText>
+            <AppText as="p" variant="caption" className="mt-1">
+              Standard salon defaults are applied — most salons don't need to change these.
+            </AppText>
             <AppText as="p" variant="micro" tone="muted" className="mt-1">
               For each category of time: does it count toward the service revenue target, and is it
               paid? All eight must be decided — absence is not a default.
             </AppText>
           </div>
-          <div
-            className="grid items-center bg-surface-alt px-4 py-2.5"
-            style={{ gridTemplateColumns: HOUR_COLS }}
+          <button
+            type="button"
+            onClick={() => setHoursExpanded((value) => !value)}
+            className="flex w-full items-center justify-between px-4 py-3 text-left transition hover:bg-surface-alt"
+            aria-expanded={hoursExpanded}
           >
-            {['Category', 'Counts toward target', 'Paid'].map((heading) => (
-              <AppText
-                key={heading}
-                as="div"
-                variant="micro"
-                weight="medium"
-                uppercase
-                className="text-text-subtle"
+            <AppText as="span" variant="caption" weight="medium">
+              {hoursExpanded ? 'Hide time & hours settings' : 'Show time & hours settings'}
+            </AppText>
+            <span className="text-[11px] font-medium text-primary" aria-hidden>
+              {hoursExpanded ? '▴' : '▾'}
+            </span>
+          </button>
+          {hoursExpanded ? (
+            <>
+              <div
+                className="grid items-center border-t border-border-divider bg-surface-alt px-4 py-2.5"
+                style={{ gridTemplateColumns: HOUR_COLS }}
               >
-                {heading}
-              </AppText>
-            ))}
-          </div>
-          {hourRules.map((rule) => (
-            <div
-              key={rule.category}
-              className="grid items-center border-t border-border-divider px-4 py-2.5"
-              style={{ gridTemplateColumns: HOUR_COLS }}
-            >
-              <AppText as="div" className="text-[13px]">
-                {HOUR_CATEGORY_LABELS[rule.category]}
-              </AppText>
-              <div>
-                <input
-                  type="checkbox"
-                  checked={rule.countsTowardTarget}
-                  onChange={(event) =>
-                    setHourRules((current) =>
-                      current.map((entry) =>
-                        entry.category === rule.category
-                          ? { ...entry, countsTowardTarget: event.target.checked }
-                          : entry,
-                      ),
-                    )
-                  }
-                  className="h-4 w-4 rounded border-border-strong text-primary focus:ring-primary"
-                  aria-label={`${HOUR_CATEGORY_LABELS[rule.category]} counts toward target`}
-                />
+                {['Category', 'Counts toward target', 'Paid'].map((heading) => (
+                  <AppText
+                    key={heading}
+                    as="div"
+                    variant="micro"
+                    weight="medium"
+                    uppercase
+                    className="text-text-subtle"
+                  >
+                    {heading}
+                  </AppText>
+                ))}
               </div>
-              <div>
-                <input
-                  type="checkbox"
-                  checked={rule.countsAsPaid}
-                  onChange={(event) =>
-                    setHourRules((current) =>
-                      current.map((entry) =>
-                        entry.category === rule.category
-                          ? { ...entry, countsAsPaid: event.target.checked }
-                          : entry,
-                      ),
-                    )
-                  }
-                  className="h-4 w-4 rounded border-border-strong text-primary focus:ring-primary"
-                  aria-label={`${HOUR_CATEGORY_LABELS[rule.category]} is paid`}
-                />
-              </div>
-            </div>
-          ))}
+              {hourRules.map((rule) => (
+                <div
+                  key={rule.category}
+                  className="grid items-center border-t border-border-divider px-4 py-2.5"
+                  style={{ gridTemplateColumns: HOUR_COLS }}
+                >
+                  <AppText as="div" className="text-[13px]">
+                    {HOUR_CATEGORY_LABELS[rule.category]}
+                  </AppText>
+                  <div>
+                    <input
+                      type="checkbox"
+                      checked={rule.countsTowardTarget}
+                      onChange={(event) =>
+                        setHourRules((current) =>
+                          current.map((entry) =>
+                            entry.category === rule.category
+                              ? { ...entry, countsTowardTarget: event.target.checked }
+                              : entry,
+                          ),
+                        )
+                      }
+                      className="h-4 w-4 rounded border-border-strong text-primary focus:ring-primary"
+                      aria-label={`${HOUR_CATEGORY_LABELS[rule.category]} counts toward target`}
+                    />
+                  </div>
+                  <div>
+                    <input
+                      type="checkbox"
+                      checked={rule.countsAsPaid}
+                      onChange={(event) =>
+                        setHourRules((current) =>
+                          current.map((entry) =>
+                            entry.category === rule.category
+                              ? { ...entry, countsAsPaid: event.target.checked }
+                              : entry,
+                          ),
+                        )
+                      }
+                      className="h-4 w-4 rounded border-border-strong text-primary focus:ring-primary"
+                      aria-label={`${HOUR_CATEGORY_LABELS[rule.category]} is paid`}
+                    />
+                  </div>
+                </div>
+              ))}
+            </>
+          ) : null}
         </AppCard>
       ) : null}
 
@@ -1102,7 +1123,7 @@ export function PayStructureWizard({
             loading={submitting}
             disabled={!built.rules}
           >
-            {mode === 'create' ? 'Create structure' : `Create version ${nextVersionNo ?? ''}`}
+            {mode === 'create' ? 'Create pay plan' : `Create version ${nextVersionNo ?? ''}`}
           </AppButton>
         ) : (
           <AppButton size="sm" onClick={goNext}>
@@ -1286,6 +1307,9 @@ function CommissionStageFields({
 
   return (
     <div className="mt-3 space-y-4">
+      <AppText as="p" variant="caption">
+        Commission is paid on revenue above the thresholds below.
+      </AppText>
       <AppText as="p" variant="micro" tone="muted">
         Band thresholds are {THRESHOLD_BASIS_LABELS[stage.thresholdBasis].toLowerCase()}.
       </AppText>

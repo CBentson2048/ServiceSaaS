@@ -106,7 +106,7 @@ export function PaySummaryDetailModal({
         <div className="space-y-5">
           <div className="flex items-center justify-between gap-3">
             <AppText as="div" variant="caption" tone="muted">
-              Generated {formatTimestamp(summary.generatedAt)}
+              Calculated {formatTimestamp(summary.generatedAt)}
             </AppText>
             <div className="flex items-center gap-2">
               {summary.isStale ? <StatusBadge label="Stale" tone="warning" /> : null}

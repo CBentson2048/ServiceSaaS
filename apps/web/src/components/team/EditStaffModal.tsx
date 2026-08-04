@@ -8,6 +8,7 @@ import type {
   StaffEmploymentStatus,
   StaffEmploymentType,
   StaffMember,
+  StaffPayAssignmentDetail,
   StaffServiceRevenueTargetMode,
   UpdateStaffMemberRequest,
 } from '@sheer/domain';
@@ -17,18 +18,23 @@ import {
   STAFF_EMPLOYMENT_TYPE_LABELS,
   STAFF_SERVICE_REVENUE_TARGET_MODE_DESCRIPTIONS,
   STAFF_SERVICE_REVENUE_TARGET_MODE_LABELS,
+  userHasPermission,
 } from '@sheer/domain';
 import type { EditForm as StaffEditForm } from './staffUpdatePayload';
 import { buildStaffUpdatePayload } from './staffUpdatePayload';
 import {
   ApiRequestError,
+  getStaffPayAssignment,
   listSecurityLevels,
   listServices,
   updateStaffMember,
   uploadStaffPhoto,
 } from '../../auth/api';
 import type { SecurityLevel } from '@sheer/domain';
+import { useAuth } from '../../auth/AuthProvider';
 import { SelectField, TextField } from '../onboarding/FormField';
+import { AssignStructureModal } from '../payroll/AssignStructureModal';
+import { formatLocalDate } from '../payroll/format';
 import { Modal } from './Modal';
 
 interface EditStaffModalProps {
@@ -107,6 +113,42 @@ export function EditStaffModal({
   const [photoUploading, setPhotoUploading] = useState(false);
   const [photoError, setPhotoError] = useState<string | null>(null);
 
+  // Pay-plan (payroll assignment) display. Deliberately SEPARATE from the staff
+  // PATCH payload: it is read via payroll's own endpoint and changed via the
+  // AssignStructureModal, never through the staff save.
+  const auth = useAuth();
+  const canViewPayroll = userHasPermission(auth.user, 'payroll.view');
+  const canEditPayroll = userHasPermission(auth.user, 'payroll.edit');
+  const [payAssignment, setPayAssignment] = useState<StaffPayAssignmentDetail | null>(null);
+  const [payAssignmentLoaded, setPayAssignmentLoaded] = useState(false);
+  const [assignPlanOpen, setAssignPlanOpen] = useState(false);
+  const [payAssignmentRefresh, setPayAssignmentRefresh] = useState(0);
+  const staffProfileId = staff?.staffProfile?.id ?? null;
+
+  // Load the member's current pay plan when the modal opens. Silent on error or
+  // when the actor lacks payroll.view — the row simply doesn't render.
+  useEffect(() => {
+    setPayAssignment(null);
+    setPayAssignmentLoaded(false);
+    // Keep assignPlanOpen while open: an onAssigned re-fetch must not slam the
+    // assign modal shut over its own confirmation message.
+    if (!open) setAssignPlanOpen(false);
+    if (!open || !accessToken || !canViewPayroll || !staffProfileId) return;
+    let cancelled = false;
+    getStaffPayAssignment(accessToken, staffProfileId)
+      .then((result) => {
+        if (cancelled) return;
+        setPayAssignment(result.assignment);
+        setPayAssignmentLoaded(true);
+      })
+      .catch(() => {
+        // No error surface: the pay plan row is informational only.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, accessToken, canViewPayroll, staffProfileId, payAssignmentRefresh]);
+
   // Load the business's security levels so the owner can assign one to the member.
   useEffect(() => {
     if (!open || !accessToken || !canManageSecurity) {
@@ -151,9 +193,7 @@ export function EditStaffModal({
       setForm(null);
       return;
     }
-    const roles = staff.roles.filter(
-      (r): r is InvitableRole => r === 'manager' || r === 'stylist',
-    );
+    const roles = staff.roles.filter((r): r is InvitableRole => r === 'manager' || r === 'stylist');
     // An owner editing themselves keeps owner access implicitly. Their staff
     // roles start from whatever they already hold (possibly none = owner-only),
     // and they pick which location the stylist role attaches to — auto-selected
@@ -164,7 +204,7 @@ export function EditStaffModal({
       locationId:
         staff.stylistLocationId ??
         staff.location?.id ??
-        (editingOwner && locations.length > 1 ? '' : locations[0]?.id ?? ''),
+        (editingOwner && locations.length > 1 ? '' : (locations[0]?.id ?? '')),
       managerLocationIds:
         staff.managerLocationIds && staff.managerLocationIds.length > 0
           ? staff.managerLocationIds
@@ -179,9 +219,12 @@ export function EditStaffModal({
       colorHex: staff.staffProfile?.colorHex ?? '',
       bio: staff.staffProfile?.bio ?? '',
       isBookable: staff.staffProfile?.isBookable ?? true,
-      hourlyRate: staff.staffProfile?.hourlyRate !== undefined ? String(staff.staffProfile.hourlyRate) : '0',
+      hourlyRate:
+        staff.staffProfile?.hourlyRate !== undefined ? String(staff.staffProfile.hourlyRate) : '0',
       contractedHours:
-        staff.staffProfile?.contractedHours !== undefined ? String(staff.staffProfile.contractedHours) : '0',
+        staff.staffProfile?.contractedHours !== undefined
+          ? String(staff.staffProfile.contractedHours)
+          : '0',
       averageBillBenchmark:
         staff.staffProfile?.averageBillBenchmark !== undefined
           ? String(staff.staffProfile.averageBillBenchmark)
@@ -278,9 +321,16 @@ export function EditStaffModal({
       if (canManagePay) {
         if (Number.isNaN(Number(values.hourlyRate)) || Number(values.hourlyRate) < 0)
           next.hourlyRate = 'Use a non-negative number';
-        if (Number.isNaN(Number(values.contractedHours)) || Number(values.contractedHours) < 0 || Number(values.contractedHours) > 168)
+        if (
+          Number.isNaN(Number(values.contractedHours)) ||
+          Number(values.contractedHours) < 0 ||
+          Number(values.contractedHours) > 168
+        )
           next.contractedHours = 'Use 0-168 hours';
-        if (Number.isNaN(Number(values.averageBillBenchmark)) || Number(values.averageBillBenchmark) < 0)
+        if (
+          Number.isNaN(Number(values.averageBillBenchmark)) ||
+          Number(values.averageBillBenchmark) < 0
+        )
           next.averageBillBenchmark = 'Use a non-negative number';
         if (
           Number.isNaN(Number(values.commissionFlatRatePercent)) ||
@@ -294,11 +344,15 @@ export function EditStaffModal({
           Number(values.holidayEntitlementDays) > 366
         )
           next.holidayEntitlementDays = 'Use 0-366 days';
-        if (Number.isNaN(Number(values.colourAllowanceAmount)) || Number(values.colourAllowanceAmount) < 0)
+        if (
+          Number.isNaN(Number(values.colourAllowanceAmount)) ||
+          Number(values.colourAllowanceAmount) < 0
+        )
           next.colourAllowanceAmount = 'Use a non-negative number';
         if (
           values.serviceRevenueTargetAmount.trim() &&
-          (Number.isNaN(Number(values.serviceRevenueTargetAmount)) || Number(values.serviceRevenueTargetAmount) < 0)
+          (Number.isNaN(Number(values.serviceRevenueTargetAmount)) ||
+            Number(values.serviceRevenueTargetAmount) < 0)
         )
           next.serviceRevenueTargetAmount = 'Use a non-negative number or leave blank';
       }
@@ -306,7 +360,8 @@ export function EditStaffModal({
         const raw = values.servicePrices[id]?.trim();
         return raw ? Number.isNaN(Number(raw)) || Number(raw) < 0 : false;
       });
-      if (badPrice) next.servicePrices = 'Enter valid, non-negative prices (leave blank to use the base price)';
+      if (badPrice)
+        next.servicePrices = 'Enter valid, non-negative prices (leave blank to use the base price)';
     }
     return next;
   }
@@ -363,124 +418,73 @@ export function EditStaffModal({
   }
 
   return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      widthClassName="max-w-3xl"
-      title={isOwner ? 'Your stylist role' : `Edit ${staff.fullName || staff.email}`}
-      description={
-        isOwner
-          ? 'Take the stylist role at one of your locations so you can be booked. You keep full owner access.'
-          : 'Owners can change roles, location, and membership status.'
-      }
-      footer={
-        <>
-          <button
-            type="button"
-            className="inline-flex h-9 items-center justify-center rounded-pill border border-border-strong bg-surface px-4 text-[13px] font-medium text-text-secondary transition hover:bg-surface-alt"
-            onClick={onClose}
-            disabled={isSubmitting}
+    <>
+      <Modal
+        open={open}
+        // While the nested assign-plan modal is up, Escape/overlay must close IT,
+        // not the whole editor (both modals listen for Escape; this keeps the
+        // second listener idempotent instead of closing the editor underneath).
+        onClose={assignPlanOpen ? () => setAssignPlanOpen(false) : onClose}
+        widthClassName="max-w-3xl"
+        title={isOwner ? 'Your stylist role' : `Edit ${staff.fullName || staff.email}`}
+        description={
+          isOwner
+            ? 'Take the stylist role at one of your locations so you can be booked. You keep full owner access.'
+            : 'Owners can change roles, location, and membership status.'
+        }
+        footer={
+          <>
+            <button
+              type="button"
+              className="inline-flex h-9 items-center justify-center rounded-pill border border-border-strong bg-surface px-4 text-[13px] font-medium text-text-secondary transition hover:bg-surface-alt"
+              onClick={onClose}
+              disabled={isSubmitting}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              form="edit-staff-form"
+              disabled={isSubmitting}
+              className="inline-flex h-9 items-center justify-center rounded-pill bg-primary px-5 text-[13px] font-semibold text-text-on-primary transition hover:bg-primary-deep disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isSubmitting ? 'Saving…' : 'Save changes'}
+            </button>
+          </>
+        }
+      >
+        <form id="edit-staff-form" onSubmit={onSubmit} className="space-y-4">
+          <FormSection
+            title="Access"
+            description={
+              isOwner
+                ? 'Your owner access is always on — add the stylist role to become bookable.'
+                : 'Roles, location and sign-in status for this team member.'
+            }
           >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            form="edit-staff-form"
-            disabled={isSubmitting}
-            className="inline-flex h-9 items-center justify-center rounded-pill bg-primary px-5 text-[13px] font-semibold text-text-on-primary transition hover:bg-primary-deep disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {isSubmitting ? 'Saving…' : 'Save changes'}
-          </button>
-        </>
-      }
-    >
-      <form id="edit-staff-form" onSubmit={onSubmit} className="space-y-4">
-        <FormSection
-          title="Access"
-          description={
-            isOwner
-              ? 'Your owner access is always on — add the stylist role to become bookable.'
-              : 'Roles, location and sign-in status for this team member.'
-          }
-        >
-          <div>
-            <span className="mb-1.5 block text-[12px] font-medium text-text-secondary">Roles</span>
-            <div className="flex flex-wrap gap-2">
-              {isOwner ? (
-                <span
-                  className="inline-flex items-center gap-2 rounded-pill border border-border-strong bg-surface-alt px-3 py-1.5 text-[13px] capitalize text-text-secondary"
-                  title="Owner access can't be removed here"
-                >
-                  Owner
-                </span>
-              ) : null}
-              {roleOptions.map((roleOption) => {
-                const checked = form.roles.includes(roleOption);
-                return (
-                  <label
-                    key={roleOption}
-                    className={`inline-flex cursor-pointer items-center gap-2 rounded-pill border px-3 py-1.5 text-[13px] capitalize transition ${
-                      checked
-                        ? 'border-primary bg-primary-soft text-text-primary'
-                        : 'border-border-strong bg-surface text-text-secondary hover:bg-surface-alt'
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={(event) =>
-                        setForm({
-                          ...form,
-                          roles: event.target.checked
-                            ? [...form.roles, roleOption]
-                            : form.roles.filter((r) => r !== roleOption),
-                        })
-                      }
-                      className="h-4 w-4 rounded border-border-strong text-primary focus:ring-primary"
-                    />
-                    {roleOption}
-                  </label>
-                );
-              })}
-            </div>
-            {errors.roles ? (
-              <p className="mt-1 text-[12px] text-danger">{errors.roles}</p>
-            ) : (
-              <p className="mt-1 text-[12px] text-text-secondary">
-                {isOwner
-                  ? 'Turn on Stylist to be bookable at the selected location. Turn it off to stay owner-only.'
-                  : 'A member can hold both roles at their location.'}
-              </p>
-            )}
-          </div>
-          {form.roles.includes('stylist') ? (
-            <SelectField
-              label="Stylist location"
-              value={form.locationId}
-              onValueChange={(v) => setForm({ ...form, locationId: v })}
-              options={locationOptions}
-              placeholder="Select a location"
-              error={errors.locationId}
-              hint={
-                isOwner
-                  ? "The location you'll take appointments at as a stylist."
-                  : 'Where this stylist is bookable.'
-              }
-            />
-          ) : null}
-
-          {form.roles.includes('manager') && !isOwner ? (
-            <div className="sm:col-span-2">
-              <span className="mb-1.5 block text-[12px] font-semibold uppercase tracking-[0.12em] text-text-secondary">
-                Manager locations
+            <div>
+              <span className="mb-1.5 block text-[12px] font-medium text-text-secondary">
+                Roles
               </span>
-              <div className="grid gap-1 rounded-input-lg border border-border-strong bg-surface p-2 sm:grid-cols-2">
-                {locations.map((loc) => {
-                  const checked = form.managerLocationIds.includes(loc.id);
+              <div className="flex flex-wrap gap-2">
+                {isOwner ? (
+                  <span
+                    className="inline-flex items-center gap-2 rounded-pill border border-border-strong bg-surface-alt px-3 py-1.5 text-[13px] capitalize text-text-secondary"
+                    title="Owner access can't be removed here"
+                  >
+                    Owner
+                  </span>
+                ) : null}
+                {roleOptions.map((roleOption) => {
+                  const checked = form.roles.includes(roleOption);
                   return (
                     <label
-                      key={loc.id}
-                      className="flex cursor-pointer items-center gap-2 rounded-input px-2 py-1.5 text-[13px] text-text-primary transition hover:bg-surface-alt"
+                      key={roleOption}
+                      className={`inline-flex cursor-pointer items-center gap-2 rounded-pill border px-3 py-1.5 text-[13px] capitalize transition ${
+                        checked
+                          ? 'border-primary bg-primary-soft text-text-primary'
+                          : 'border-border-strong bg-surface text-text-secondary hover:bg-surface-alt'
+                      }`}
                     >
                       <input
                         type="checkbox"
@@ -488,411 +492,535 @@ export function EditStaffModal({
                         onChange={(event) =>
                           setForm({
                             ...form,
-                            managerLocationIds: event.target.checked
-                              ? [...form.managerLocationIds, loc.id]
-                              : form.managerLocationIds.filter((id) => id !== loc.id),
+                            roles: event.target.checked
+                              ? [...form.roles, roleOption]
+                              : form.roles.filter((r) => r !== roleOption),
                           })
                         }
                         className="h-4 w-4 rounded border-border-strong text-primary focus:ring-primary"
                       />
-                      <span className="flex-1">
-                        {loc.code ? `${loc.name} · ${loc.code}` : loc.name}
-                      </span>
+                      {roleOption}
                     </label>
                   );
                 })}
               </div>
-              {errors.managerLocationIds ? (
-                <p className="mt-1 text-[12px] text-danger">{errors.managerLocationIds}</p>
+              {errors.roles ? (
+                <p className="mt-1 text-[12px] text-danger">{errors.roles}</p>
               ) : (
                 <p className="mt-1 text-[12px] text-text-secondary">
-                  Tick every salon this manager can manage — an area manager can oversee several.
+                  {isOwner
+                    ? 'Turn on Stylist to be bookable at the selected location. Turn it off to stay owner-only.'
+                    : 'A member can hold both roles at their location.'}
                 </p>
               )}
             </div>
-          ) : null}
-          {isOwner ? null : (
-            <SelectField
-              label="Membership status"
-              value={form.membershipStatus}
-              onValueChange={(v) =>
-                setForm({ ...form, membershipStatus: v as EditForm['membershipStatus'] })
-              }
-              options={[
-                { value: 'active', label: 'Active' },
-                { value: 'suspended', label: 'Suspended' },
-                { value: 'revoked', label: 'Revoked' },
-              ]}
-              className="sm:col-span-2"
-              hint="Suspended team members keep their history but cannot sign in until reactivated."
-            />
-          )}
-          {isOwner || !canManageSecurity ? null : (
-            <SelectField
-              label="Security level"
-              value={form.securityLevelId}
-              onValueChange={(v) => setForm({ ...form, securityLevelId: v })}
-              options={[
-                { value: '', label: 'Default (base role permissions)' },
-                ...securityLevels.map((level) => ({
-                  value: level.id,
-                  label: level.isSystem ? `${level.name} (built-in)` : level.name,
-                })),
-              ]}
-              className="sm:col-span-2"
-              hint="Controls what this member can see and do (reports, financials, settings). Manage levels under Team Hub → Security levels."
-            />
-          )}
-        </FormSection>
-
-        {form.roles.includes('stylist') ? (
-          <>
-            <FormSection
-              title="Profile"
-              description="How this stylist appears on the schedule and to clients."
-            >
-              <TextField
-                label="Display name"
-                value={form.displayName}
-                onValueChange={(v) => setForm({ ...form, displayName: v })}
-                optional
-              />
-              <TextField
-                label="Calendar colour"
-                value={form.colorHex}
-                onValueChange={(v) => setForm({ ...form, colorHex: v })}
-                hint="Hex colour like #A67CF5"
-                error={errors.colorHex}
-                optional
-              />
-              <TextField
-                label="Bio"
-                value={form.bio}
-                onValueChange={(v) => setForm({ ...form, bio: v })}
-                optional
-                className="sm:col-span-2"
-              />
-              <div className="sm:col-span-2">
-                <span className="mb-1.5 block text-[12px] font-semibold uppercase tracking-[0.12em] text-text-secondary">
-                  Provider photo <span className="font-normal normal-case tracking-normal text-text-muted">(optional)</span>
-                </span>
-                <div
-                  onDragOver={(event) => event.preventDefault()}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    void handlePhotoFile(event.dataTransfer.files?.[0]);
-                  }}
-                  className="flex items-center gap-4 rounded-input-lg border border-dashed border-border-strong bg-surface-alt px-4 py-3"
-                >
-                  {form.photoUrl ? (
-                    <img
-                      src={form.photoUrl}
-                      alt="Provider"
-                      className="h-16 w-16 shrink-0 rounded-full object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-[11px] text-text-secondary">
-                      No photo
-                    </div>
-                  )}
-                  <div className="flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <label className="inline-flex cursor-pointer items-center rounded-pill border border-border-strong bg-surface px-3 py-1.5 text-[13px] font-medium text-text-primary transition hover:bg-surface-alt">
-                        {photoUploading ? 'Uploading…' : form.photoUrl ? 'Replace photo' : 'Upload photo'}
-                        <input
-                          type="file"
-                          accept="image/jpeg,image/png,image/webp"
-                          className="hidden"
-                          disabled={photoUploading}
-                          onChange={(event) => {
-                            void handlePhotoFile(event.target.files?.[0]);
-                            event.target.value = '';
-                          }}
-                        />
-                      </label>
-                      {form.photoUrl ? (
-                        <button
-                          type="button"
-                          onClick={() => setForm({ ...form, photoUrl: '' })}
-                          className="text-[13px] font-medium text-danger hover:underline"
-                        >
-                          Remove
-                        </button>
-                      ) : null}
-                    </div>
-                    <p className="mt-1 text-[12px] text-text-secondary">
-                      Drag &amp; drop or choose a JPEG/PNG/WebP (max 5 MB). Shown internally and in the
-                      client-facing Salon Suite.
-                    </p>
-                    {photoError ? <p className="mt-1 text-[12px] text-danger">{photoError}</p> : null}
-                  </div>
-                </div>
-              </div>
-              <label className="flex items-center gap-2 sm:col-span-2 text-[13px] text-text-secondary">
-                <input
-                  type="checkbox"
-                  checked={form.isBookable}
-                  onChange={(event) => setForm({ ...form, isBookable: event.target.checked })}
-                  className="h-4 w-4 rounded border-border-strong text-primary focus:ring-primary"
-                />
-                Bookable on the schedule
-              </label>
-            </FormSection>
-
-            <FormSection
-              title="Employment"
-              description="Contract details feeding KPIs, P&L and holiday tracking."
-            >
-              {form.qCode ? (
-                <div className="sm:col-span-2 flex flex-wrap items-center gap-2 rounded-input-lg border border-border bg-surface-alt px-3 py-2 text-[13px]">
-                  <span className="text-text-secondary">Q Code</span>
-                  <span className="rounded-input border border-border-strong bg-surface px-2.5 py-1 font-mono font-semibold tracking-[0.15em] text-text-primary">
-                    {form.qCode}
-                  </span>
-                  <span className="text-[12px] text-text-muted">Assigned automatically · never changes</span>
-                </div>
-              ) : null}
-              {/* Employment type selects the pay-stage pipeline and is snapshotted
-                  onto every pay summary, so it is editable only with pay access. */}
-              {canManagePay ? (
-                <SelectField
-                  label="Employment type"
-                  value={form.employmentType}
-                  onValueChange={(v) => setForm({ ...form, employmentType: v as StaffEmploymentType })}
-                  options={Object.entries(STAFF_EMPLOYMENT_TYPE_LABELS).map(([value, label]) => ({ value, label }))}
-                />
-              ) : null}
+            {form.roles.includes('stylist') ? (
               <SelectField
-                label="Status"
-                value={form.employmentStatus}
-                onValueChange={(v) => setForm({ ...form, employmentStatus: v as StaffEmploymentStatus })}
-                options={Object.entries(STAFF_EMPLOYMENT_STATUS_LABELS).map(([value, label]) => ({ value, label }))}
-                hint="Employment status used by KPIs & P&L (separate from sign-in membership status)."
+                label="Stylist location"
+                value={form.locationId}
+                onValueChange={(v) => setForm({ ...form, locationId: v })}
+                options={locationOptions}
+                placeholder="Select a location"
+                error={errors.locationId}
+                hint={
+                  isOwner
+                    ? "The location you'll take appointments at as a stylist."
+                    : 'Where this stylist is bookable.'
+                }
               />
-              <TextField
-                label="Start date"
-                type="date"
-                value={form.startDate}
-                onValueChange={(v) => setForm({ ...form, startDate: v })}
-                optional
-              />
-              {/* Contracted hours and holiday entitlement both drive payable hours,
-                  and so base pay and any multiple-of-base-pay commission threshold. */}
-              {canManagePay ? (
-                <>
-                  <TextField
-                    label="Contracted hours"
-                    value={form.contractedHours}
-                    onValueChange={(v) => setForm({ ...form, contractedHours: v })}
-                    error={errors.contractedHours}
-                  />
-                  <TextField
-                    label="Holiday entitlement (days)"
-                    value={form.holidayEntitlementDays}
-                    onValueChange={(v) => setForm({ ...form, holidayEntitlementDays: v })}
-                    error={errors.holidayEntitlementDays}
-                  />
-                </>
-              ) : null}
-              <TextField
-                label="Leave / absence context"
-                value={form.leaveNotes}
-                onValueChange={(v) => setForm({ ...form, leaveNotes: v })}
-                optional
-              />
-            </FormSection>
-
-            {canManagePay ? (
-              <FormSection
-                title="Pay & commission"
-                description="Sensitive pay data — only visible to owners and pay managers."
-              >
-                <TextField
-                  label="Hourly rate"
-                  value={form.hourlyRate}
-                  onValueChange={(v) => setForm({ ...form, hourlyRate: v })}
-                  error={errors.hourlyRate}
-                />
-                <TextField
-                  label="Colour allowance"
-                  value={form.colourAllowanceAmount}
-                  onValueChange={(v) => setForm({ ...form, colourAllowanceAmount: v })}
-                  error={errors.colourAllowanceAmount}
-                />
-                <SelectField
-                  label="Commission structure"
-                  value={form.commissionStructure}
-                  onValueChange={(v) =>
-                    setForm({ ...form, commissionStructure: v as StaffCommissionStructure })
-                  }
-                  options={Object.entries(STAFF_COMMISSION_STRUCTURE_LABELS).map(([value, label]) => ({ value, label }))}
-                />
-                <TextField
-                  label="Flat commission rate (%)"
-                  value={form.commissionFlatRatePercent}
-                  onValueChange={(v) => setForm({ ...form, commissionFlatRatePercent: v })}
-                  error={errors.commissionFlatRatePercent}
-                  hint="Used when commission structure is Flat rate."
-                />
-              </FormSection>
             ) : null}
 
-            <FormSection
-              title="Targets & KPIs"
-              description="Benchmarks used to measure this stylist's performance."
-            >
-              {/* Read by payroll accelerator conditions with basis='staff_benchmark',
-                  so editing it can move a stylist onto the accelerator rate. */}
-              {canManagePay ? (
+            {form.roles.includes('manager') && !isOwner ? (
+              <div className="sm:col-span-2">
+                <span className="mb-1.5 block text-[12px] font-semibold uppercase tracking-[0.12em] text-text-secondary">
+                  Manager locations
+                </span>
+                <div className="grid gap-1 rounded-input-lg border border-border-strong bg-surface p-2 sm:grid-cols-2">
+                  {locations.map((loc) => {
+                    const checked = form.managerLocationIds.includes(loc.id);
+                    return (
+                      <label
+                        key={loc.id}
+                        className="flex cursor-pointer items-center gap-2 rounded-input px-2 py-1.5 text-[13px] text-text-primary transition hover:bg-surface-alt"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(event) =>
+                            setForm({
+                              ...form,
+                              managerLocationIds: event.target.checked
+                                ? [...form.managerLocationIds, loc.id]
+                                : form.managerLocationIds.filter((id) => id !== loc.id),
+                            })
+                          }
+                          className="h-4 w-4 rounded border-border-strong text-primary focus:ring-primary"
+                        />
+                        <span className="flex-1">
+                          {loc.code ? `${loc.name} · ${loc.code}` : loc.name}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+                {errors.managerLocationIds ? (
+                  <p className="mt-1 text-[12px] text-danger">{errors.managerLocationIds}</p>
+                ) : (
+                  <p className="mt-1 text-[12px] text-text-secondary">
+                    Tick every salon this manager can manage — an area manager can oversee several.
+                  </p>
+                )}
+              </div>
+            ) : null}
+            {isOwner ? null : (
+              <SelectField
+                label="Membership status"
+                value={form.membershipStatus}
+                onValueChange={(v) =>
+                  setForm({ ...form, membershipStatus: v as EditForm['membershipStatus'] })
+                }
+                options={[
+                  { value: 'active', label: 'Active' },
+                  { value: 'suspended', label: 'Suspended' },
+                  { value: 'revoked', label: 'Revoked' },
+                ]}
+                className="sm:col-span-2"
+                hint="Suspended team members keep their history but cannot sign in until reactivated."
+              />
+            )}
+            {isOwner || !canManageSecurity ? null : (
+              <SelectField
+                label="Security level"
+                value={form.securityLevelId}
+                onValueChange={(v) => setForm({ ...form, securityLevelId: v })}
+                options={[
+                  { value: '', label: 'Default (base role permissions)' },
+                  ...securityLevels.map((level) => ({
+                    value: level.id,
+                    label: level.isSystem ? `${level.name} (built-in)` : level.name,
+                  })),
+                ]}
+                className="sm:col-span-2"
+                hint="Controls what this member can see and do (reports, financials, settings). Manage levels under Team Hub → Security levels."
+              />
+            )}
+          </FormSection>
+
+          {form.roles.includes('stylist') ? (
+            <>
+              <FormSection
+                title="Profile"
+                description="How this stylist appears on the schedule and to clients."
+              >
                 <TextField
-                  label="Average bill benchmark"
-                  value={form.averageBillBenchmark}
-                  onValueChange={(v) => setForm({ ...form, averageBillBenchmark: v })}
-                  error={errors.averageBillBenchmark}
+                  label="Display name"
+                  value={form.displayName}
+                  onValueChange={(v) => setForm({ ...form, displayName: v })}
+                  optional
                 />
-              ) : null}
-              {canManagePay ? (
-                <>
-                  <TextField
-                    label="Service revenue target"
-                    value={form.serviceRevenueTargetAmount}
-                    onValueChange={(v) => setForm({ ...form, serviceRevenueTargetAmount: v })}
-                    error={errors.serviceRevenueTargetAmount}
-                    hint="Leave blank to use the computed target."
-                    optional
+                <TextField
+                  label="Calendar colour"
+                  value={form.colorHex}
+                  onValueChange={(v) => setForm({ ...form, colorHex: v })}
+                  hint="Hex colour like #A67CF5"
+                  error={errors.colorHex}
+                  optional
+                />
+                <TextField
+                  label="Bio"
+                  value={form.bio}
+                  onValueChange={(v) => setForm({ ...form, bio: v })}
+                  optional
+                  className="sm:col-span-2"
+                />
+                <div className="sm:col-span-2">
+                  <span className="mb-1.5 block text-[12px] font-semibold uppercase tracking-[0.12em] text-text-secondary">
+                    Provider photo{' '}
+                    <span className="font-normal normal-case tracking-normal text-text-muted">
+                      (optional)
+                    </span>
+                  </span>
+                  <div
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      void handlePhotoFile(event.dataTransfer.files?.[0]);
+                    }}
+                    className="flex items-center gap-4 rounded-input-lg border border-dashed border-border-strong bg-surface-alt px-4 py-3"
+                  >
+                    {form.photoUrl ? (
+                      <img
+                        src={form.photoUrl}
+                        alt="Provider"
+                        className="h-16 w-16 shrink-0 rounded-full object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-[11px] text-text-secondary">
+                        No photo
+                      </div>
+                    )}
+                    <div className="flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <label className="inline-flex cursor-pointer items-center rounded-pill border border-border-strong bg-surface px-3 py-1.5 text-[13px] font-medium text-text-primary transition hover:bg-surface-alt">
+                          {photoUploading
+                            ? 'Uploading…'
+                            : form.photoUrl
+                              ? 'Replace photo'
+                              : 'Upload photo'}
+                          <input
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp"
+                            className="hidden"
+                            disabled={photoUploading}
+                            onChange={(event) => {
+                              void handlePhotoFile(event.target.files?.[0]);
+                              event.target.value = '';
+                            }}
+                          />
+                        </label>
+                        {form.photoUrl ? (
+                          <button
+                            type="button"
+                            onClick={() => setForm({ ...form, photoUrl: '' })}
+                            className="text-[13px] font-medium text-danger hover:underline"
+                          >
+                            Remove
+                          </button>
+                        ) : null}
+                      </div>
+                      <p className="mt-1 text-[12px] text-text-secondary">
+                        Drag &amp; drop or choose a JPEG/PNG/WebP (max 5 MB). Shown internally and
+                        in the client-facing Salon Suite.
+                      </p>
+                      {photoError ? (
+                        <p className="mt-1 text-[12px] text-danger">{photoError}</p>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 sm:col-span-2 text-[13px] text-text-secondary">
+                  <input
+                    type="checkbox"
+                    checked={form.isBookable}
+                    onChange={(event) => setForm({ ...form, isBookable: event.target.checked })}
+                    className="h-4 w-4 rounded border-border-strong text-primary focus:ring-primary"
                   />
+                  Bookable on the schedule
+                </label>
+              </FormSection>
+
+              <FormSection
+                title="Employment"
+                description="Contract details feeding KPIs, P&L and holiday tracking."
+              >
+                {form.qCode ? (
+                  <div className="sm:col-span-2 flex flex-wrap items-center gap-2 rounded-input-lg border border-border bg-surface-alt px-3 py-2 text-[13px]">
+                    <span className="text-text-secondary">Q Code</span>
+                    <span className="rounded-input border border-border-strong bg-surface px-2.5 py-1 font-mono font-semibold tracking-[0.15em] text-text-primary">
+                      {form.qCode}
+                    </span>
+                    <span className="text-[12px] text-text-muted">
+                      Assigned automatically · never changes
+                    </span>
+                  </div>
+                ) : null}
+                {/* Employment type selects the pay-stage pipeline and is snapshotted
+                  onto every pay summary, so it is editable only with pay access. */}
+                {canManagePay ? (
                   <SelectField
-                    label="Service revenue target basis"
-                    value={form.serviceRevenueTargetMode}
+                    label="Employment type"
+                    value={form.employmentType}
                     onValueChange={(v) =>
-                      setForm({ ...form, serviceRevenueTargetMode: v as StaffServiceRevenueTargetMode })
+                      setForm({ ...form, employmentType: v as StaffEmploymentType })
                     }
-                    options={Object.entries(STAFF_SERVICE_REVENUE_TARGET_MODE_LABELS).map(([value, label]) => ({
+                    options={Object.entries(STAFF_EMPLOYMENT_TYPE_LABELS).map(([value, label]) => ({
                       value,
                       label,
                     }))}
-                    hint={STAFF_SERVICE_REVENUE_TARGET_MODE_DESCRIPTIONS[form.serviceRevenueTargetMode]}
                   />
-                </>
-              ) : null}
-            </FormSection>
+                ) : null}
+                <SelectField
+                  label="Status"
+                  value={form.employmentStatus}
+                  onValueChange={(v) =>
+                    setForm({ ...form, employmentStatus: v as StaffEmploymentStatus })
+                  }
+                  options={Object.entries(STAFF_EMPLOYMENT_STATUS_LABELS).map(([value, label]) => ({
+                    value,
+                    label,
+                  }))}
+                  hint="Employment status used by KPIs & P&L (separate from sign-in membership status)."
+                />
+                <TextField
+                  label="Start date"
+                  type="date"
+                  value={form.startDate}
+                  onValueChange={(v) => setForm({ ...form, startDate: v })}
+                  optional
+                />
+                {/* Contracted hours and holiday entitlement both drive payable hours,
+                  and so base pay and any multiple-of-base-pay commission threshold. */}
+                {canManagePay ? (
+                  <>
+                    <TextField
+                      label="Contracted hours"
+                      value={form.contractedHours}
+                      onValueChange={(v) => setForm({ ...form, contractedHours: v })}
+                      error={errors.contractedHours}
+                    />
+                    <TextField
+                      label="Holiday entitlement (days)"
+                      value={form.holidayEntitlementDays}
+                      onValueChange={(v) => setForm({ ...form, holidayEntitlementDays: v })}
+                      error={errors.holidayEntitlementDays}
+                    />
+                  </>
+                ) : null}
+                <TextField
+                  label="Leave / absence context"
+                  value={form.leaveNotes}
+                  onValueChange={(v) => setForm({ ...form, leaveNotes: v })}
+                  optional
+                />
+              </FormSection>
 
-            <FormSection
-              title="Services"
-              description="Which services this stylist can perform, and their per-stylist price."
-              bodyClassName="px-4 py-4"
-            >
-              {services.length > 0 ? (
-                <div className="mb-2 flex items-center justify-end gap-2 text-[12px]">
-                  <span className="text-text-secondary">
-                    {form.selectedServiceIds.length} selected
-                  </span>
-                  <button
-                    type="button"
-                    className="font-medium text-primary hover:text-primary-deep"
-                    onClick={() =>
-                      setForm({ ...form, selectedServiceIds: services.map((s) => s.id) })
-                    }
-                  >
-                    Select all
-                  </button>
-                  <span className="text-border-strong">·</span>
-                  <button
-                    type="button"
-                    className="font-medium text-text-secondary hover:text-text-primary"
-                    onClick={() => setForm({ ...form, selectedServiceIds: [] })}
-                  >
-                    Clear
-                  </button>
-                </div>
-              ) : null}
-
-              {servicesLoading ? (
-                <div className="rounded-input-lg border border-border bg-surface-alt px-3 py-4 text-[13px] text-text-secondary">
-                  Loading services…
-                </div>
-              ) : services.length === 0 ? (
-                <div className="rounded-input-lg border border-border bg-surface-alt px-3 py-4 text-[13px] text-text-secondary">
-                  No active services yet. Create services first, then assign them here.
-                </div>
-              ) : (
-                <div className="max-h-56 overflow-y-auto rounded-input-lg border border-border-strong bg-surface">
-                  {serviceGroups.map(([category, groupServices]) => (
-                    <div key={category} className="border-b border-border last:border-b-0">
-                      <div className="sticky top-0 bg-surface-alt px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-secondary">
-                        {category}
+              {canManagePay ? (
+                <FormSection
+                  title="Pay & commission"
+                  description="Sensitive pay data — only visible to owners and pay managers."
+                >
+                  {canViewPayroll && payAssignmentLoaded && staffProfileId ? (
+                    <div className="sm:col-span-2 flex flex-wrap items-center justify-between gap-2 rounded-input-lg border border-border bg-surface-alt px-3 py-2.5">
+                      <div className="min-w-0">
+                        <span className="block text-[12px] font-medium text-text-secondary">
+                          Pay plan
+                        </span>
+                        <span className="mt-0.5 block text-[13px] text-text-primary">
+                          {payAssignment
+                            ? `${payAssignment.structureName} — since ${formatLocalDate(payAssignment.effectiveFrom)}`
+                            : 'No pay plan yet'}
+                        </span>
                       </div>
-                      {groupServices.map((service) => {
-                        const checked = form.selectedServiceIds.includes(service.id);
-                        return (
-                          <div
-                            key={service.id}
-                            className="flex items-center gap-2 px-3 py-2 text-[13px] text-text-primary transition hover:bg-surface-alt"
-                          >
-                            <label className="flex flex-1 cursor-pointer items-center gap-2">
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={(event) =>
-                                  setForm({
-                                    ...form,
-                                    selectedServiceIds: event.target.checked
-                                      ? [...form.selectedServiceIds, service.id]
-                                      : form.selectedServiceIds.filter((id) => id !== service.id),
-                                  })
-                                }
-                                className="h-4 w-4 rounded border-border-strong text-primary focus:ring-primary"
-                              />
-                              <span className="flex-1">{service.name}</span>
-                            </label>
-                            {checked ? (
-                              <input
-                                inputMode="decimal"
-                                value={form.servicePrices[service.id] ?? ''}
-                                onChange={(event) =>
-                                  setForm({
-                                    ...form,
-                                    servicePrices: {
-                                      ...form.servicePrices,
-                                      [service.id]: event.target.value.replace(/[^0-9.]/g, ''),
-                                    },
-                                  })
-                                }
-                                placeholder={formatBasePrice(service)}
-                                title="Price for this stylist — leave blank to use the service base price"
-                                className="h-7 w-24 rounded-input border border-border-strong bg-surface px-2 text-right text-[12px] text-text-primary focus:border-primary focus:outline-none"
-                              />
-                            ) : null}
-                          </div>
-                        );
-                      })}
+                      {canEditPayroll ? (
+                        <button
+                          type="button"
+                          onClick={() => setAssignPlanOpen(true)}
+                          className="inline-flex items-center rounded-pill border border-border-strong bg-surface px-3 py-1.5 text-[13px] font-medium text-text-primary transition hover:bg-surface-alt"
+                        >
+                          {payAssignment ? 'Change…' : 'Assign…'}
+                        </button>
+                      ) : null}
                     </div>
-                  ))}
-                </div>
-              )}
-
-              {!servicesLoading && services.length > 0 && form.selectedServiceIds.length === 0 ? (
-                <p className="mt-2 text-[12px] text-warning">
-                  No services selected — this stylist won&apos;t be bookable for anything until you pick at least one.
-                </p>
-              ) : !servicesLoading && services.length > 0 ? (
-                <p className="mt-2 text-[12px] text-text-secondary">
-                  Set a price for this stylist next to each service, or leave it blank to use the service base price.
-                </p>
+                  ) : null}
+                  <TextField
+                    label="Hourly rate"
+                    value={form.hourlyRate}
+                    onValueChange={(v) => setForm({ ...form, hourlyRate: v })}
+                    error={errors.hourlyRate}
+                  />
+                  <TextField
+                    label="Colour allowance"
+                    value={form.colourAllowanceAmount}
+                    onValueChange={(v) => setForm({ ...form, colourAllowanceAmount: v })}
+                    error={errors.colourAllowanceAmount}
+                  />
+                  <SelectField
+                    label="Commission structure"
+                    value={form.commissionStructure}
+                    onValueChange={(v) =>
+                      setForm({ ...form, commissionStructure: v as StaffCommissionStructure })
+                    }
+                    options={Object.entries(STAFF_COMMISSION_STRUCTURE_LABELS).map(
+                      ([value, label]) => ({ value, label }),
+                    )}
+                  />
+                  <TextField
+                    label="Flat commission rate (%)"
+                    value={form.commissionFlatRatePercent}
+                    onValueChange={(v) => setForm({ ...form, commissionFlatRatePercent: v })}
+                    error={errors.commissionFlatRatePercent}
+                    hint="Used when commission structure is Flat rate."
+                  />
+                </FormSection>
               ) : null}
-              {errors.servicePrices ? (
-                <p className="mt-1 text-[12px] text-danger">{errors.servicePrices}</p>
-              ) : null}
-            </FormSection>
-          </>
-        ) : null}
 
-        {submitError ? (
-          <div className="rounded-input-lg border border-danger-border bg-danger-soft px-4 py-3 text-[13px] text-danger">
-            {submitError}
-          </div>
-        ) : null}
-      </form>
-    </Modal>
+              <FormSection
+                title="Targets & KPIs"
+                description="Benchmarks used to measure this stylist's performance."
+              >
+                {/* Read by payroll accelerator conditions with basis='staff_benchmark',
+                  so editing it can move a stylist onto the accelerator rate. */}
+                {canManagePay ? (
+                  <TextField
+                    label="Average bill benchmark"
+                    value={form.averageBillBenchmark}
+                    onValueChange={(v) => setForm({ ...form, averageBillBenchmark: v })}
+                    error={errors.averageBillBenchmark}
+                  />
+                ) : null}
+                {canManagePay ? (
+                  <>
+                    <TextField
+                      label="Service revenue target"
+                      value={form.serviceRevenueTargetAmount}
+                      onValueChange={(v) => setForm({ ...form, serviceRevenueTargetAmount: v })}
+                      error={errors.serviceRevenueTargetAmount}
+                      hint="Leave blank to use the computed target."
+                      optional
+                    />
+                    <SelectField
+                      label="Service revenue target basis"
+                      value={form.serviceRevenueTargetMode}
+                      onValueChange={(v) =>
+                        setForm({
+                          ...form,
+                          serviceRevenueTargetMode: v as StaffServiceRevenueTargetMode,
+                        })
+                      }
+                      options={Object.entries(STAFF_SERVICE_REVENUE_TARGET_MODE_LABELS).map(
+                        ([value, label]) => ({
+                          value,
+                          label,
+                        }),
+                      )}
+                      hint={
+                        STAFF_SERVICE_REVENUE_TARGET_MODE_DESCRIPTIONS[
+                          form.serviceRevenueTargetMode
+                        ]
+                      }
+                    />
+                  </>
+                ) : null}
+              </FormSection>
+
+              <FormSection
+                title="Services"
+                description="Which services this stylist can perform, and their per-stylist price."
+                bodyClassName="px-4 py-4"
+              >
+                {services.length > 0 ? (
+                  <div className="mb-2 flex items-center justify-end gap-2 text-[12px]">
+                    <span className="text-text-secondary">
+                      {form.selectedServiceIds.length} selected
+                    </span>
+                    <button
+                      type="button"
+                      className="font-medium text-primary hover:text-primary-deep"
+                      onClick={() =>
+                        setForm({ ...form, selectedServiceIds: services.map((s) => s.id) })
+                      }
+                    >
+                      Select all
+                    </button>
+                    <span className="text-border-strong">·</span>
+                    <button
+                      type="button"
+                      className="font-medium text-text-secondary hover:text-text-primary"
+                      onClick={() => setForm({ ...form, selectedServiceIds: [] })}
+                    >
+                      Clear
+                    </button>
+                  </div>
+                ) : null}
+
+                {servicesLoading ? (
+                  <div className="rounded-input-lg border border-border bg-surface-alt px-3 py-4 text-[13px] text-text-secondary">
+                    Loading services…
+                  </div>
+                ) : services.length === 0 ? (
+                  <div className="rounded-input-lg border border-border bg-surface-alt px-3 py-4 text-[13px] text-text-secondary">
+                    No active services yet. Create services first, then assign them here.
+                  </div>
+                ) : (
+                  <div className="max-h-56 overflow-y-auto rounded-input-lg border border-border-strong bg-surface">
+                    {serviceGroups.map(([category, groupServices]) => (
+                      <div key={category} className="border-b border-border last:border-b-0">
+                        <div className="sticky top-0 bg-surface-alt px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-secondary">
+                          {category}
+                        </div>
+                        {groupServices.map((service) => {
+                          const checked = form.selectedServiceIds.includes(service.id);
+                          return (
+                            <div
+                              key={service.id}
+                              className="flex items-center gap-2 px-3 py-2 text-[13px] text-text-primary transition hover:bg-surface-alt"
+                            >
+                              <label className="flex flex-1 cursor-pointer items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={(event) =>
+                                    setForm({
+                                      ...form,
+                                      selectedServiceIds: event.target.checked
+                                        ? [...form.selectedServiceIds, service.id]
+                                        : form.selectedServiceIds.filter((id) => id !== service.id),
+                                    })
+                                  }
+                                  className="h-4 w-4 rounded border-border-strong text-primary focus:ring-primary"
+                                />
+                                <span className="flex-1">{service.name}</span>
+                              </label>
+                              {checked ? (
+                                <input
+                                  inputMode="decimal"
+                                  value={form.servicePrices[service.id] ?? ''}
+                                  onChange={(event) =>
+                                    setForm({
+                                      ...form,
+                                      servicePrices: {
+                                        ...form.servicePrices,
+                                        [service.id]: event.target.value.replace(/[^0-9.]/g, ''),
+                                      },
+                                    })
+                                  }
+                                  placeholder={formatBasePrice(service)}
+                                  title="Price for this stylist — leave blank to use the service base price"
+                                  className="h-7 w-24 rounded-input border border-border-strong bg-surface px-2 text-right text-[12px] text-text-primary focus:border-primary focus:outline-none"
+                                />
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {!servicesLoading && services.length > 0 && form.selectedServiceIds.length === 0 ? (
+                  <p className="mt-2 text-[12px] text-warning">
+                    No services selected — this stylist won&apos;t be bookable for anything until
+                    you pick at least one.
+                  </p>
+                ) : !servicesLoading && services.length > 0 ? (
+                  <p className="mt-2 text-[12px] text-text-secondary">
+                    Set a price for this stylist next to each service, or leave it blank to use the
+                    service base price.
+                  </p>
+                ) : null}
+                {errors.servicePrices ? (
+                  <p className="mt-1 text-[12px] text-danger">{errors.servicePrices}</p>
+                ) : null}
+              </FormSection>
+            </>
+          ) : null}
+
+          {submitError ? (
+            <div className="rounded-input-lg border border-danger-border bg-danger-soft px-4 py-3 text-[13px] text-danger">
+              {submitError}
+            </div>
+          ) : null}
+        </form>
+      </Modal>
+      {assignPlanOpen && staffProfileId ? (
+        // Record-level plan change: no defaultEffectiveFrom, so it starts today.
+        <AssignStructureModal
+          staffProfileId={staffProfileId}
+          staffName={staff.staffProfile?.displayName || staff.fullName || staff.email}
+          onClose={() => setAssignPlanOpen(false)}
+          onAssigned={() => setPayAssignmentRefresh((value) => value + 1)}
+        />
+      ) : null}
+    </>
   );
 }

@@ -30,7 +30,7 @@ const DATA_SOURCE_ORDER: PayrollDataSource[] = [
 
 /**
  * Owner/manager pay-structure list — the rule templates that price staff pay.
- * Viewing needs payroll.view; authoring (New structure) is deliberately
+ * Viewing needs payroll.view; authoring (New pay plan) is deliberately
  * owner-only on top of payroll.edit, matching the API.
  */
 export function PayStructuresPage() {
@@ -60,7 +60,7 @@ export function PayStructuresPage() {
       const res = await listPayStructures(accessToken);
       setStructures(res.structures);
     } catch (err) {
-      setError(err instanceof ApiRequestError ? err.message : 'Unable to load pay structures');
+      setError(err instanceof ApiRequestError ? err.message : 'Unable to load pay plans');
     } finally {
       setLoading(false);
     }
@@ -130,15 +130,16 @@ export function PayStructuresPage() {
       <header className="mb-6 mt-3 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <AppText as="h1" variant="heading" weight="medium">
-            Pay structures
+            Pay plans
           </AppText>
           <AppText as="p" variant="caption" tone="muted" className="mt-1">
-            The rule templates that price staff pay — assign one to each staff member.
+            A pay plan is how someone gets paid: base pay, commission bands and any extras. Put each
+            team member on one.
           </AppText>
         </div>
         {canAuthor ? (
           <AppButton size="sm" onClick={() => navigate('/payroll/structures/new')}>
-            New structure
+            New pay plan
           </AppButton>
         ) : null}
       </header>
@@ -151,21 +152,21 @@ export function PayStructuresPage() {
 
       {loading ? (
         <div className="rounded-input-lg border border-border bg-surface-alt px-4 py-10 text-center text-[13px] text-text-secondary">
-          Loading pay structures…
+          Loading pay plans…
         </div>
       ) : structures.length === 0 ? (
         <div className="rounded-input-lg border border-dashed border-border-strong bg-surface px-4 py-10 text-center text-[13px] text-text-secondary">
-          No pay structures yet. Create one from a template to put staff on payroll.
+          No pay plans yet. Create one from a template, then put your team on it.
         </div>
       ) : (
         <>
-          <SectionLabel>Structures</SectionLabel>
+          <SectionLabel>Pay plans</SectionLabel>
           <AppCard padding="none" elevation="none" className="overflow-hidden border-[1.5px]">
             <div
               className="grid items-center bg-surface-alt px-4 py-2.5"
               style={{ gridTemplateColumns: COLS }}
             >
-              {['Structure', 'Status', 'Assigned staff', ''].map((heading, idx) => (
+              {['Pay plan', 'Status', 'Assigned staff', ''].map((heading, idx) => (
                 <AppText
                   key={heading || idx}
                   as="div"

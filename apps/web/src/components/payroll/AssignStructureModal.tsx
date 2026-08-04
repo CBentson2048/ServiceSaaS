@@ -58,7 +58,7 @@ export function AssignStructureModal({
       })
       .catch((err) => {
         if (!cancelled) {
-          setError(err instanceof ApiRequestError ? err.message : 'Unable to load pay structures');
+          setError(err instanceof ApiRequestError ? err.message : 'Unable to load pay plans');
         }
       })
       .finally(() => {
@@ -72,7 +72,7 @@ export function AssignStructureModal({
   const handleSubmit = useCallback(async () => {
     if (!accessToken) return;
     if (!structureId) {
-      setError('Pick a pay structure.');
+      setError('Pick a pay plan.');
       return;
     }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveFrom)) {
@@ -89,7 +89,7 @@ export function AssignStructureModal({
       setResult(response);
       onAssigned();
     } catch (err) {
-      setError(err instanceof ApiRequestError ? err.message : 'Unable to assign the structure');
+      setError(err instanceof ApiRequestError ? err.message : 'Unable to assign the pay plan');
     } finally {
       setSubmitting(false);
     }
@@ -99,7 +99,7 @@ export function AssignStructureModal({
     <Modal
       open
       onClose={onClose}
-      title="Assign pay structure"
+      title="Assign pay plan"
       description={staffName}
       footer={
         result ? (
@@ -133,7 +133,7 @@ export function AssignStructureModal({
           </div>
           {result.closedAssignment ? (
             <AppText as="p" variant="caption" tone="muted">
-              Previous assignment closed on{' '}
+              Previous pay plan ended on{' '}
               {result.closedAssignment.effectiveTo
                 ? exclusiveEndDayLabel(result.closedAssignment.effectiveTo)
                 : formatLocalDate(effectiveFrom)}
@@ -154,17 +154,17 @@ export function AssignStructureModal({
 
           {loading ? (
             <div className="rounded-input-lg border border-border bg-surface-alt px-3 py-6 text-center text-[13px] text-text-secondary">
-              Loading pay structures…
+              Loading pay plans…
             </div>
           ) : structures.length === 0 ? (
             <div className="rounded-input-lg border border-dashed border-border-strong bg-surface px-3 py-6 text-center text-[13px] text-text-secondary">
-              No active pay structures yet. Create one under Staff pay → Pay structures first.
+              No active pay plans yet. Create one under Staff pay → Pay plans first.
             </div>
           ) : (
             <>
               <label className="block">
                 <span className="mb-1.5 block text-[12px] font-semibold uppercase tracking-[0.12em] text-text-secondary">
-                  Pay structure
+                  Pay plan
                 </span>
                 <select
                   className={INPUT_CLASSES}
@@ -172,7 +172,7 @@ export function AssignStructureModal({
                   onChange={(event) => setStructureId(event.target.value)}
                 >
                   <option value="" disabled>
-                    Pick a structure
+                    Pick a pay plan
                   </option>
                   {structures.map((structure) => (
                     <option key={structure.id} value={structure.id}>
@@ -192,7 +192,7 @@ export function AssignStructureModal({
                   onChange={(event) => setEffectiveFrom(event.target.value)}
                 />
                 <span className="mt-1.5 block text-[12px] text-text-secondary">
-                  Any open assignment closes on this date; these rules price work from it.
+                  If they're already on a plan, it ends on this date and this one takes over.
                 </span>
               </label>
             </>

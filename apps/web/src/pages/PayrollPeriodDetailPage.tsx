@@ -3,16 +3,20 @@ import { Link, Navigate, useParams } from 'react-router-dom';
 import type {
   ListPaySummariesResponse,
   PayPeriodDetailResponse,
+  PayrollMissingInput,
   PayrollReadiness,
   PayrollStaffReadiness,
+  PayrollWarning,
 } from '@sheer/domain';
 import {
   PAY_PERIOD_FREQUENCY_LABELS,
   PAY_PERIOD_KIND_LABELS,
   PAY_PERIOD_STATUS_LABELS,
+  isBlockingPayrollWarning,
   userHasPermission,
 } from '@sheer/domain';
-import { AppButton, AppCard, AppText, StatusBadge } from '../design';
+import { cn } from '@sheer/utils';
+import { AppButton, AppCard, AppText, StatusBadge, type StatusTone } from '../design';
 import { SectionLabel } from '../components/dashboard/SectionLabel';
 import { formatMoney, signedMoney } from '../components/kpi/format';
 import {
@@ -64,7 +68,7 @@ export function PayrollPeriodDetailPage() {
   /** Readiness from a 422 generate refusal — takes precedence over the loaded one. */
   const [blockedReadiness, setBlockedReadiness] = useState<PayrollReadiness | null>(null);
   const [selectedSummaryId, setSelectedSummaryId] = useState<string | null>(null);
-  /** Staff member an "Assign structure…" modal is open for. */
+  /** Staff member an "Assign pay plan…" modal is open for. */
   const [assignTarget, setAssignTarget] = useState<{
     staffProfileId: string;
     staffName: string;
@@ -108,7 +112,7 @@ export function PayrollPeriodDetailPage() {
         setActionError(err.message);
       } else {
         setActionError(
-          err instanceof ApiRequestError ? err.message : 'Unable to generate this pay period',
+          err instanceof ApiRequestError ? err.message : 'Unable to calculate pay for this period',
         );
       }
     } finally {
@@ -145,7 +149,7 @@ export function PayrollPeriodDetailPage() {
   const summaries = summariesRes?.summaries ?? [];
   const stamps = period
     ? [
-        period.generatedAt ? `Generated ${formatTimestamp(period.generatedAt)}` : null,
+        period.generatedAt ? `Calculated ${formatTimestamp(period.generatedAt)}` : null,
         period.approvedAt ? `Approved ${formatTimestamp(period.approvedAt)}` : null,
         period.lockedAt ? `Locked ${formatTimestamp(period.lockedAt)}` : null,
         period.paidAt ? `Paid ${formatTimestamp(period.paidAt)}` : null,
@@ -203,7 +207,7 @@ export function PayrollPeriodDetailPage() {
                     loading={actionBusy === 'generate'}
                     disabled={actionBusy !== null && actionBusy !== 'generate'}
                   >
-                    {period.generatedAt ? 'Regenerate' : 'Generate'}
+                    {period.generatedAt ? 'Recalculate pay' : 'Calculate pay'}
                   </AppButton>
                   <AppButton
                     size="sm"
@@ -211,7 +215,7 @@ export function PayrollPeriodDetailPage() {
                     loading={actionBusy === 'ready'}
                     disabled={actionBusy !== null && actionBusy !== 'ready'}
                   >
-                    Mark ready
+                    Send for review
                   </AppButton>
                 </>
               ) : null}
@@ -290,21 +294,22 @@ export function PayrollPeriodDetailPage() {
             <div className="mb-5 rounded-input-lg border border-warning-border bg-warning-soft px-4 py-3">
               <AppText as="div" variant="caption" tone="warning">
                 {totals.staleCount} {totals.staleCount === 1 ? 'summary is' : 'summaries are'} stale
-                — source data changed after generation. Regenerate before approving.
+                — the underlying data changed after pay was calculated. Recalculate pay before
+                approving.
               </AppText>
             </div>
           ) : null}
 
           {summariesRes && summariesRes.periodWarnings.length > 0 ? (
-            <PayrollWarningNotice warnings={summariesRes.periodWarnings} className="mb-5" />
+            <CollapsedCaptureNotice warnings={summariesRes.periodWarnings} className="mb-5" />
           ) : null}
 
           <SectionLabel>Staff summaries</SectionLabel>
           {summaries.length === 0 ? (
             <div className="rounded-input-lg border border-dashed border-border-strong bg-surface px-4 py-10 text-center text-[13px] text-text-secondary">
               {period.generatedAt
-                ? 'No staff summaries in this period. No staff member had an active pay structure over this window.'
-                : 'Period not yet generated. Generate it to calculate pay for each staff member.'}
+                ? 'No staff summaries in this period. No staff member was on a pay plan over this window.'
+                : 'Pay has not been calculated yet. Use "Calculate pay" to work out what each person earned.'}
             </div>
           ) : (
             <AppCard padding="none" elevation="none" className="overflow-x-auto border-[1.5px]">
@@ -315,7 +320,7 @@ export function PayrollPeriodDetailPage() {
                 >
                   {[
                     'Staff',
-                    'Structure',
+                    'Pay plan',
                     'Hours',
                     'Target',
                     'Service rev.',
@@ -443,18 +448,132 @@ export function PayrollPeriodDetailPage() {
   );
 }
 
+/** True when this staff member's warnings include the given missing input. */
+function hasMissingInput(staff: PayrollStaffReadiness, input: PayrollMissingInput): boolean {
+  return staff.warnings.some(
+    (warning) => warning.kind === 'input_missing' && warning.input === input,
+  );
+}
+
 /** True when this staff member is blocked for want of a pay structure. */
 function needsPayStructure(staff: PayrollStaffReadiness): boolean {
-  return staff.warnings.some(
-    (warning) => warning.kind === 'input_missing' && warning.input === 'pay_structure',
+  return hasMissingInput(staff, 'pay_structure');
+}
+
+/** One plain-English status chip per staff member. Detail stays one click away. */
+function staffReadinessChip(staff: PayrollStaffReadiness): { label: string; tone: StatusTone } {
+  if (staff.canGenerate) {
+    return staff.warnings.length === 0
+      ? { label: 'Ready ✓', tone: 'success' }
+      : { label: 'Ready — notes', tone: 'warning' };
+  }
+  if (needsPayStructure(staff)) return { label: 'Needs pay plan', tone: 'danger' };
+  if (hasMissingInput(staff, 'hourly_rate')) return { label: 'Needs hourly rate', tone: 'danger' };
+  return { label: 'Needs setup', tone: 'danger' };
+}
+
+/**
+ * Business-level capture notices, folded to one plain sentence. The full
+ * per-source list (and any blocking warnings, which are never folded) stays one
+ * "Details" click away — information is folded here, never deleted.
+ */
+function CollapsedCaptureNotice({
+  warnings,
+  className,
+}: {
+  warnings: PayrollWarning[];
+  className?: string;
+}) {
+  const [showDetails, setShowDetails] = useState(false);
+  const blocking = warnings.filter((warning) => isBlockingPayrollWarning(warning));
+  const advisory = warnings.filter((warning) => !isBlockingPayrollWarning(warning));
+  if (warnings.length === 0) return null;
+  return (
+    <div className={cn('space-y-2', className)}>
+      {blocking.length > 0 ? <PayrollWarningNotice warnings={blocking} /> : null}
+      {advisory.length > 0 ? (
+        <div className="rounded-input-lg border border-warning-border bg-warning-soft px-3 py-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <AppText as="span" variant="caption" tone="warning">
+              Retail, tips, refunds and cancellation fees aren't tracked yet, so they can't affect
+              pay.
+            </AppText>
+            <button
+              type="button"
+              onClick={() => setShowDetails((value) => !value)}
+              className="text-[12px] font-medium text-warning underline underline-offset-2"
+            >
+              {showDetails ? 'Hide details' : 'Details'}
+            </button>
+          </div>
+          {showDetails ? <PayrollWarningNotice warnings={advisory} className="mt-2" /> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** One readiness row: name + status chip; the warning detail unfolds on click. */
+function StaffReadinessRow({
+  staff,
+  canEdit,
+  onAssignStructure,
+}: {
+  staff: PayrollStaffReadiness;
+  canEdit: boolean;
+  onAssignStructure: (staff: PayrollStaffReadiness) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const chip = staffReadinessChip(staff);
+  const hasDetails = staff.warnings.length > 0;
+  return (
+    <div className="rounded-input-lg border border-border-divider bg-surface px-3 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => hasDetails && setExpanded((value) => !value)}
+          disabled={!hasDetails}
+          className={cn(
+            'flex min-w-0 items-center gap-2 text-left',
+            hasDetails ? 'cursor-pointer' : 'cursor-default',
+          )}
+          aria-expanded={hasDetails ? expanded : undefined}
+        >
+          {hasDetails ? (
+            <span
+              className={cn(
+                'text-[10px] text-text-subtle transition-transform',
+                expanded && 'rotate-90',
+              )}
+              aria-hidden
+            >
+              ▶
+            </span>
+          ) : null}
+          <AppText as="span" variant="caption" weight="medium" className="truncate">
+            {staff.staffName}
+          </AppText>
+          <StatusBadge label={chip.label} tone={chip.tone} />
+        </button>
+        {canEdit && needsPayStructure(staff) ? (
+          <AppButton size="sm" variant="secondary" onClick={() => onAssignStructure(staff)}>
+            Assign pay plan…
+          </AppButton>
+        ) : null}
+      </div>
+      {expanded && hasDetails ? (
+        <PayrollWarningNotice warnings={staff.warnings} className="mt-2" />
+      ) : null}
+    </div>
   );
 }
 
 /**
- * Pre-flight readiness. Red when generation is blocked (missing pay inputs —
- * generating anyway would silently pay £0), amber when the figures would only
- * carry data warnings. Staff missing a pay structure get an inline assign
- * action so the fix is one click away from the refusal.
+ * Pre-flight readiness. Red when calculation is blocked (missing pay inputs —
+ * calculating anyway would silently pay £0), amber when the figures would only
+ * carry data notes. Staff missing a pay plan get an inline assign action so
+ * the fix is one click away from the refusal. Rows fold their warning detail
+ * behind a chip; nothing is deleted, only folded.
  */
 function ReadinessPanel({
   readiness,
@@ -465,7 +584,6 @@ function ReadinessPanel({
   canEdit: boolean;
   onAssignStructure: (staff: PayrollStaffReadiness) => void;
 }) {
-  const blockedStaff = readiness.staff.filter((staff) => !staff.canGenerate);
   const warnedStaff = readiness.staff.filter(
     (staff) => staff.canGenerate && staff.warnings.length > 0,
   );
@@ -486,32 +604,23 @@ function ReadinessPanel({
         uppercase
         tone={readiness.canGenerate ? 'warning' : 'danger'}
       >
-        {readiness.canGenerate ? 'Data warnings' : 'Cannot generate — missing pay inputs'}
+        {readiness.canGenerate ? "Notes about this week's numbers" : 'Before you can calculate pay'}
       </AppText>
       {!readiness.canGenerate ? (
         <AppText as="p" variant="caption" tone="muted" className="mt-1">
-          Generating now would silently produce wrong pay for the staff below. Fix the missing
-          inputs in Team, then generate.
+          Some people below are missing something payroll needs — without it their pay would come
+          out as £0. Fix each one, then calculate pay.
         </AppText>
       ) : null}
-      <div className="mt-3 space-y-3">
-        {readiness.warnings.length > 0 ? (
-          <PayrollWarningNotice warnings={readiness.warnings} />
-        ) : null}
-        {[...blockedStaff, ...warnedStaff].map((staff: PayrollStaffReadiness) => (
-          <div key={staff.staffProfileId}>
-            <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
-              <AppText as="div" variant="caption" weight="medium">
-                {staff.staffName}
-              </AppText>
-              {canEdit && needsPayStructure(staff) ? (
-                <AppButton size="sm" variant="secondary" onClick={() => onAssignStructure(staff)}>
-                  Assign structure…
-                </AppButton>
-              ) : null}
-            </div>
-            <PayrollWarningNotice warnings={staff.warnings} />
-          </div>
+      <div className="mt-3 space-y-2">
+        <CollapsedCaptureNotice warnings={readiness.warnings} />
+        {readiness.staff.map((staff) => (
+          <StaffReadinessRow
+            key={staff.staffProfileId}
+            staff={staff}
+            canEdit={canEdit}
+            onAssignStructure={onAssignStructure}
+          />
         ))}
       </div>
     </AppCard>

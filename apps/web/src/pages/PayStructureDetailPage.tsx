@@ -57,7 +57,7 @@ export function PayStructureDetailPage() {
     try {
       setDetail(await getPayStructure(accessToken, structureId));
     } catch (err) {
-      setError(err instanceof ApiRequestError ? err.message : 'Unable to load this pay structure');
+      setError(err instanceof ApiRequestError ? err.message : 'Unable to load this pay plan');
     } finally {
       setLoading(false);
     }
@@ -100,12 +100,12 @@ export function PayStructureDetailPage() {
         to="/payroll/structures"
         className="text-[12px] font-medium text-primary transition hover:text-primary-deep"
       >
-        ← Pay structures
+        ← Pay plans
       </Link>
 
       {loading && !detail ? (
         <div className="mt-4 rounded-input-lg border border-border bg-surface-alt px-4 py-10 text-center text-[13px] text-text-secondary">
-          Loading pay structure…
+          Loading pay plan…
         </div>
       ) : error && !detail ? (
         <div className="mt-4 rounded-input-lg border border-danger-border bg-danger-soft px-4 py-3 text-[13px] text-danger">
@@ -153,7 +153,7 @@ export function PayStructureDetailPage() {
             ))}
             {versions.length === 0 ? (
               <div className="rounded-input-lg border border-dashed border-border-strong bg-surface px-4 py-10 text-center text-[13px] text-text-secondary">
-                This structure has no versions yet.
+                This pay plan has no versions yet.
               </div>
             ) : null}
           </div>
