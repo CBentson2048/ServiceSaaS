@@ -18,6 +18,12 @@ export function formatMoney(cents: number, currencyCode: string): string {
   }).format(safeCents / 100);
 }
 
+/** Signed money — “+£12” / “−£12” / “£0” — for variances and net payable. */
+export function signedMoney(cents: number, currencyCode: string): string {
+  const sign = cents > 0 ? '+' : cents < 0 ? '−' : '';
+  return `${sign}${formatMoney(Math.abs(cents), currencyCode)}`;
+}
+
 /** Clamp a percentage to the 0–100 range for progress-bar fills. */
 export function clampPercent(percent: number): number {
   if (!Number.isFinite(percent)) return 0;

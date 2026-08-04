@@ -26,6 +26,7 @@ import { OwnerLocationSettingsModule } from './owner-location-settings/owner-loc
 import { OwnerSecurityLevelsModule } from './owner-security-levels/owner-security-levels.module';
 import { OwnerTaxSettingsModule } from './owner-tax-settings/owner-tax-settings.module';
 import { OwnerOnboardingModule } from './owner-onboarding/owner-onboarding.module';
+import { PayrollModule } from './payroll/payroll.module';
 import { ProfileModule } from './profile/profile.module';
 import { PublicBookingModule } from './public-booking/public-booking.module';
 import { RetailSalesModule } from './retail-sales/retail-sales.module';
@@ -60,6 +61,7 @@ import { validateEnv } from './config/env.validation';
     OwnerCancellationPolicyModule,
     OwnerLocationSettingsModule,
     OwnerSecurityLevelsModule,
+    PayrollModule,
     PublicBookingModule,
     SalonDirectoryModule,
     StaffBookingModule,

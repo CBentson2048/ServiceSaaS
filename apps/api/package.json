@@ -12,7 +12,8 @@
     "lint": "eslint \"src/**/*.ts\"",
     "typecheck": "tsc --noEmit",
     "test": "jest --passWithNoTests",
-    "create-test-users": "ts-node --transpile-only scripts/create-test-users.ts"
+    "create-test-users": "ts-node --transpile-only scripts/create-test-users.ts",
+    "seed-loh-pay-template": "ts-node --transpile-only scripts/seed-loh-pay-template.ts"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.4",

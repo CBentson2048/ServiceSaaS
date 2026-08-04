@@ -38,9 +38,15 @@ import { OwnerOnboardingPage } from './pages/OwnerOnboardingPage';
 import { PasswordResetCompletePage } from './pages/PasswordResetCompletePage';
 import { PerformancePage } from './pages/PerformancePage';
 import { CommissionPage } from './pages/CommissionPage';
+import { PayrollPeriodsPage } from './pages/PayrollPeriodsPage';
+import { PayrollPeriodDetailPage } from './pages/PayrollPeriodDetailPage';
+import { PayStructuresPage } from './pages/PayStructuresPage';
+import { PayStructureDetailPage } from './pages/PayStructureDetailPage';
+import { PayStructureWizard } from './components/payroll/PayStructureWizard';
 import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { ResetPasswordPage } from './pages/ResetPasswordPage';
+import { RetailSalesPage } from './pages/RetailSalesPage';
 import { RotaPage } from './pages/RotaPage';
 import { NewWeekRotaPage } from './pages/NewWeekRotaPage';
 import { ServiceCategoriesPage } from './pages/ServiceCategoriesPage';
@@ -107,68 +113,212 @@ export function App() {
       <Route path="/unauthorized" element={<UnauthorizedPage />} />
       <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} />}>
         <Route element={<DashboardLayout />}>
-          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['report.dashboard.view']} />}>
+          <Route
+            element={
+              <ProtectedRoute
+                allowedRoles={['owner', 'manager']}
+                requiredPermissions={['report.dashboard.view']}
+              />
+            }
+          >
             <Route path="/dashboard" element={<DashboardPage />} />
           </Route>
-          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['bookings.manage']} />}>
+          <Route
+            element={
+              <ProtectedRoute
+                allowedRoles={['owner', 'manager']}
+                requiredPermissions={['bookings.manage']}
+              />
+            }
+          >
             <Route path="/bookings" element={<BookingsPage />} />
             <Route path="/bookings/new" element={<NewBookingPage />} />
             <Route path="/checkout/visits/:visitId" element={<VisitBillPage />} />
           </Route>
-          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['report.lab_analytics.view']} />}>
+          <Route
+            element={
+              <ProtectedRoute
+                allowedRoles={['owner', 'manager']}
+                requiredPermissions={['report.lab_analytics.view']}
+              />
+            }
+          >
             <Route path="/sheer-lab" element={<SheerLabPage />} />
           </Route>
-          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['crm.view']} />}>
+          <Route
+            element={
+              <ProtectedRoute
+                allowedRoles={['owner', 'manager']}
+                requiredPermissions={['crm.view']}
+              />
+            }
+          >
             <Route path="/crm" element={<CrmClientsPage />} />
             <Route path="/crm/clients/:id" element={<CrmClientDetailPage />} />
           </Route>
-          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['rota.view']} />}>
+          <Route
+            element={
+              <ProtectedRoute
+                allowedRoles={['owner', 'manager']}
+                requiredPermissions={['rota.view']}
+              />
+            }
+          >
             <Route path="/rota" element={<RotaPage />} />
           </Route>
-          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['rota.manage']} />}>
+          <Route
+            element={
+              <ProtectedRoute
+                allowedRoles={['owner', 'manager']}
+                requiredPermissions={['rota.manage']}
+              />
+            }
+          >
             <Route path="/rota/new-week" element={<NewWeekRotaPage />} />
             <Route path="/settings/book-out-types" element={<BookOutTypesPage />} />
           </Route>
-          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['services.manage']} />}>
+          <Route
+            element={
+              <ProtectedRoute
+                allowedRoles={['owner', 'manager']}
+                requiredPermissions={['services.manage']}
+              />
+            }
+          >
             <Route path="/services" element={<ServiceManagementPage />}>
               <Route index element={<ServicesPage />} />
               <Route path="categories" element={<ServiceCategoriesPage />} />
             </Route>
           </Route>
-          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['inventory.manage']} />}>
+          <Route
+            element={
+              <ProtectedRoute
+                allowedRoles={['owner', 'manager']}
+                requiredPermissions={['inventory.manage']}
+              />
+            }
+          >
             <Route path="/inventory" element={<InventoryManagementPage />}>
               <Route index element={<InventoryPage />} />
               <Route path="categories" element={<InventoryCategoriesPage />} />
             </Route>
           </Route>
-          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['report.performance.view']} />}>
+          <Route
+            element={
+              <ProtectedRoute
+                allowedRoles={['owner', 'manager']}
+                requiredPermissions={['retail.record']}
+              />
+            }
+          >
+            <Route path="/retail-sales" element={<RetailSalesPage />} />
+          </Route>
+          <Route
+            element={
+              <ProtectedRoute
+                allowedRoles={['owner', 'manager']}
+                requiredPermissions={['report.performance.view']}
+              />
+            }
+          >
             <Route path="/performance" element={<PerformancePage />} />
           </Route>
-          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['report.commission.view']} />}>
+          <Route
+            element={
+              <ProtectedRoute
+                allowedRoles={['owner', 'manager']}
+                requiredPermissions={['report.commission.view']}
+              />
+            }
+          >
             <Route path="/commission" element={<CommissionPage />} />
           </Route>
-          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['staff.manage']} />}>
+          <Route
+            element={
+              <ProtectedRoute
+                allowedRoles={['owner', 'manager']}
+                requiredPermissions={['payroll.view']}
+              />
+            }
+          >
+            <Route path="/payroll" element={<PayrollPeriodsPage />} />
+            <Route path="/payroll/periods/:periodId" element={<PayrollPeriodDetailPage />} />
+            <Route path="/payroll/structures" element={<PayStructuresPage />} />
+            {/* Authoring self-guards to owner + payroll.edit inside the wizard. */}
+            <Route path="/payroll/structures/new" element={<PayStructureWizard mode="create" />} />
+            <Route path="/payroll/structures/:structureId" element={<PayStructureDetailPage />} />
+          </Route>
+          <Route
+            element={
+              <ProtectedRoute
+                allowedRoles={['owner', 'manager']}
+                requiredPermissions={['staff.manage']}
+              />
+            }
+          >
             <Route path="/team" element={<TeamPage />} />
           </Route>
-          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['audit.read']} />}>
+          <Route
+            element={
+              <ProtectedRoute
+                allowedRoles={['owner', 'manager']}
+                requiredPermissions={['audit.read']}
+              />
+            }
+          >
             <Route path="/audit-log" element={<AuditLogPage />} />
           </Route>
-          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['zac.access']} />}>
+          <Route
+            element={
+              <ProtectedRoute
+                allowedRoles={['owner', 'manager']}
+                requiredPermissions={['zac.access']}
+              />
+            }
+          >
             <Route path="/zac" element={<ZacPage />} />
           </Route>
           <Route path="/profile" element={<ProfilePage />} />
-          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['settings.location.manage']} />}>
+          <Route
+            element={
+              <ProtectedRoute
+                allowedRoles={['owner', 'manager']}
+                requiredPermissions={['settings.location.manage']}
+              />
+            }
+          >
             <Route path="/locations" element={<LocationsPage />} />
             <Route path="/locations/:id" element={<LocationDetailPage />} />
             <Route path="/locations/:id/record-settings" element={<LocationRecordSettingsPage />} />
           </Route>
-          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['settings.booking.manage']} />}>
+          <Route
+            element={
+              <ProtectedRoute
+                allowedRoles={['owner', 'manager']}
+                requiredPermissions={['settings.booking.manage']}
+              />
+            }
+          >
             <Route path="/settings/booking" element={<BookingSettingsPage />} />
           </Route>
-          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['account.manage']} />}>
+          <Route
+            element={
+              <ProtectedRoute
+                allowedRoles={['owner', 'manager']}
+                requiredPermissions={['account.manage']}
+              />
+            }
+          >
             <Route path="/settings/plan" element={<AccountPlanPage />} />
           </Route>
-          <Route element={<ProtectedRoute allowedRoles={['owner', 'manager']} requiredPermissions={['locations.manage']} />}>
+          <Route
+            element={
+              <ProtectedRoute
+                allowedRoles={['owner', 'manager']}
+                requiredPermissions={['locations.manage']}
+              />
+            }
+          >
             <Route path="/locations/new" element={<CreateLocationPage />} />
             <Route path="/locations/:id/edit" element={<EditLocationPage />} />
           </Route>
@@ -176,7 +326,11 @@ export function App() {
       </Route>
       <Route element={<ProtectedRoute allowedRoles={['owner']} />}>
         <Route element={<DashboardLayout />}>
-          <Route element={<ProtectedRoute allowedRoles={['owner']} requiredPermissions={['security.manage']} />}>
+          <Route
+            element={
+              <ProtectedRoute allowedRoles={['owner']} requiredPermissions={['security.manage']} />
+            }
+          >
             <Route path="/settings/security-levels" element={<SecurityLevelsPage />} />
           </Route>
         </Route>

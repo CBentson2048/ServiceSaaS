@@ -157,6 +157,28 @@ import type {
   UpdateLocationTaxSettingsResponse,
   UpdateProfileResponse,
   UserProfileResponse,
+  ListPayPeriodsResponse,
+  ListPaySummariesResponse,
+  PayPeriod,
+  PayPeriodDetailResponse,
+  PayPeriodFrequency,
+  PayPeriodKind,
+  PayPeriodStatus,
+  PayrollBusinessDataSource,
+  PayrollDataSource,
+  PayrollReadiness,
+  PaySummaryDetailResponse,
+  RecordRetailSaleRequest,
+  RecordRetailSaleResponse,
+  RetailSalesListResponse,
+  AssignPayStructureRequest,
+  AssignPayStructureResponse,
+  CreatePayStructureRequest,
+  ListPayStructuresResponse,
+  PayStructureDetailResponse,
+  PayStructurePreviewRequest,
+  PayStructurePreviewResponse,
+  PayStructureRulesInput,
 } from '@sheer/domain';
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL ?? 'http://localhost:3001').replace(/\/$/, '');
@@ -280,9 +302,7 @@ export async function getPublicBookingStylists(params: {
   if (params.locationId) search.set('locationId', params.locationId);
   if (params.businessSlug) search.set('businessSlug', params.businessSlug);
   if (params.locationSlug) search.set('locationSlug', params.locationSlug);
-  return request<PublicBookingStylistsResponse>(
-    `/public/booking/stylists?${search.toString()}`,
-  );
+  return request<PublicBookingStylistsResponse>(`/public/booking/stylists?${search.toString()}`);
 }
 
 export async function getPublicBookingAvailability(params: {
@@ -350,10 +370,9 @@ export async function getStaffBookingStylists(
 ): Promise<PublicBookingStylistsResponse> {
   const search = new URLSearchParams({ locationId: params.locationId });
   search.set('serviceIds', params.serviceIds.join(','));
-  return request<PublicBookingStylistsResponse>(
-    `/staff/booking/stylists?${search.toString()}`,
-    { accessToken },
-  );
+  return request<PublicBookingStylistsResponse>(`/staff/booking/stylists?${search.toString()}`, {
+    accessToken,
+  });
 }
 
 export async function getStaffBookingAvailability(
@@ -594,7 +613,9 @@ export async function getDashboardTopServices(
   params: { locationId?: string; from: string; to: string },
 ): Promise<DashboardTopServicesResponse> {
   const search = dashboardDateRangeSearch(params);
-  return request<DashboardTopServicesResponse>(`/dashboard/top-services?${search.toString()}`, { accessToken });
+  return request<DashboardTopServicesResponse>(`/dashboard/top-services?${search.toString()}`, {
+    accessToken,
+  });
 }
 
 export async function getDashboardStylistPerformance(
@@ -602,9 +623,12 @@ export async function getDashboardStylistPerformance(
   params: { locationId?: string; from: string; to: string },
 ): Promise<DashboardStylistPerformanceResponse> {
   const search = dashboardDateRangeSearch(params);
-  return request<DashboardStylistPerformanceResponse>(`/dashboard/stylist-performance?${search.toString()}`, {
-    accessToken,
-  });
+  return request<DashboardStylistPerformanceResponse>(
+    `/dashboard/stylist-performance?${search.toString()}`,
+    {
+      accessToken,
+    },
+  );
 }
 
 export async function getDashboardInventoryAlerts(
@@ -614,12 +638,20 @@ export async function getDashboardInventoryAlerts(
   const search = new URLSearchParams();
   if (params.locationId) search.set('locationId', params.locationId);
   const query = search.toString();
-  return request<DashboardInventoryAlertsResponse>(`/dashboard/inventory-alerts${query ? `?${query}` : ''}`, {
-    accessToken,
-  });
+  return request<DashboardInventoryAlertsResponse>(
+    `/dashboard/inventory-alerts${query ? `?${query}` : ''}`,
+    {
+      accessToken,
+    },
+  );
 }
 
-function kpiSearch(params: { locationId?: string; period?: KpiPeriod; from?: string; to?: string }): string {
+function kpiSearch(params: {
+  locationId?: string;
+  period?: KpiPeriod;
+  from?: string;
+  to?: string;
+}): string {
   const search = new URLSearchParams();
   if (params.locationId) search.set('locationId', params.locationId);
   if (params.period) search.set('period', params.period);
@@ -721,7 +753,9 @@ export async function listInventoryProducts(
   if (params.q) search.set('q', params.q);
   if (params.includeInactive) search.set('includeInactive', 'true');
   const query = search.toString();
-  return request<ListInventoryProductsResponse>(`/inventory/products${query ? `?${query}` : ''}`, { accessToken });
+  return request<ListInventoryProductsResponse>(`/inventory/products${query ? `?${query}` : ''}`, {
+    accessToken,
+  });
 }
 
 export async function createInventoryProduct(
@@ -738,7 +772,11 @@ export async function createInventoryProduct(
     lowStockThresholdGrams?: number | null;
   },
 ): Promise<InventoryProductResponse> {
-  return request<InventoryProductResponse>('/inventory/products', { method: 'POST', accessToken, body: payload });
+  return request<InventoryProductResponse>('/inventory/products', {
+    method: 'POST',
+    accessToken,
+    body: payload,
+  });
 }
 
 export async function updateInventoryProduct(
@@ -757,8 +795,52 @@ export async function archiveInventoryProduct(
   accessToken: string,
   productId: string,
 ): Promise<InventoryProductResponse> {
-  return request<InventoryProductResponse>(`/inventory/products/${encodeURIComponent(productId)}/archive`, {
+  return request<InventoryProductResponse>(
+    `/inventory/products/${encodeURIComponent(productId)}/archive`,
+    {
+      method: 'POST',
+      accessToken,
+    },
+  );
+}
+
+// -------------------- Retail sales (till capture) --------------------
+
+/**
+ * Record a stylist-attributed retail sale. The server defaults `unitPriceCents`
+ * (PER UNIT) to the product's configured retail price when omitted, and
+ * stylists are always attributed to themselves regardless of `staffProfileId`.
+ */
+export async function recordRetailSale(
+  accessToken: string,
+  payload: RecordRetailSaleRequest,
+): Promise<RecordRetailSaleResponse> {
+  return request<RecordRetailSaleResponse>('/retail-sales', {
     method: 'POST',
+    body: payload,
+    accessToken,
+  });
+}
+
+export async function listRetailSales(
+  accessToken: string,
+  params: {
+    locationId?: string;
+    staffProfileId?: string;
+    /** ISO timestamps; `from` is inclusive, `to` exclusive (sold_at window). */
+    from?: string;
+    to?: string;
+    limit?: number;
+  } = {},
+): Promise<RetailSalesListResponse> {
+  const search = new URLSearchParams();
+  if (params.locationId) search.set('locationId', params.locationId);
+  if (params.staffProfileId) search.set('staffProfileId', params.staffProfileId);
+  if (params.from) search.set('from', params.from);
+  if (params.to) search.set('to', params.to);
+  if (params.limit) search.set('limit', String(params.limit));
+  const query = search.toString();
+  return request<RetailSalesListResponse>(`/retail-sales${query ? `?${query}` : ''}`, {
     accessToken,
   });
 }
@@ -772,12 +854,19 @@ export async function listInventoryStock(
   if (params.q) search.set('q', params.q);
   if (params.lowStockOnly) search.set('lowStockOnly', 'true');
   const query = search.toString();
-  return request<ListInventoryStockResponse>(`/inventory/stock${query ? `?${query}` : ''}`, { accessToken });
+  return request<ListInventoryStockResponse>(`/inventory/stock${query ? `?${query}` : ''}`, {
+    accessToken,
+  });
 }
 
 export async function initializeInventoryStock(
   accessToken: string,
-  payload: { locationId: string; productId: string; quantityOnHandGrams?: number; lowStockThresholdGrams?: number | null },
+  payload: {
+    locationId: string;
+    productId: string;
+    quantityOnHandGrams?: number;
+    lowStockThresholdGrams?: number | null;
+  },
 ): Promise<InventoryStockMutationResponse> {
   return request<InventoryStockMutationResponse>('/inventory/stock/initialize', {
     method: 'POST',
@@ -792,7 +881,12 @@ export async function adjustInventoryStock(
     locationId: string;
     productId: string;
     quantityDeltaGrams: number;
-    movementType: 'opening_balance' | 'restock' | 'manual_adjustment' | 'retail_sale' | 'correction';
+    movementType:
+      | 'opening_balance'
+      | 'restock'
+      | 'manual_adjustment'
+      | 'retail_sale'
+      | 'correction';
     reason?: string | null;
     notes?: string | null;
   },
@@ -809,16 +903,25 @@ export async function updateInventoryStockThreshold(
   stockId: string,
   payload: { lowStockThresholdGrams?: number | null; isActive?: boolean },
 ): Promise<InventoryStockMutationResponse> {
-  return request<InventoryStockMutationResponse>(`/inventory/stock/${encodeURIComponent(stockId)}`, {
-    method: 'PATCH',
-    accessToken,
-    body: payload,
-  });
+  return request<InventoryStockMutationResponse>(
+    `/inventory/stock/${encodeURIComponent(stockId)}`,
+    {
+      method: 'PATCH',
+      accessToken,
+      body: payload,
+    },
+  );
 }
 
 export async function listInventoryMovements(
   accessToken: string,
-  params: { locationId?: string; productId?: string; limit?: number; from?: string; to?: string } = {},
+  params: {
+    locationId?: string;
+    productId?: string;
+    limit?: number;
+    from?: string;
+    to?: string;
+  } = {},
 ): Promise<ListInventoryMovementsResponse> {
   const search = new URLSearchParams();
   if (params.locationId) search.set('locationId', params.locationId);
@@ -827,7 +930,10 @@ export async function listInventoryMovements(
   if (params.from) search.set('from', params.from);
   if (params.to) search.set('to', params.to);
   const query = search.toString();
-  return request<ListInventoryMovementsResponse>(`/inventory/movements${query ? `?${query}` : ''}`, { accessToken });
+  return request<ListInventoryMovementsResponse>(
+    `/inventory/movements${query ? `?${query}` : ''}`,
+    { accessToken },
+  );
 }
 
 export async function listInventoryLowStock(
@@ -837,7 +943,9 @@ export async function listInventoryLowStock(
   const search = new URLSearchParams();
   if (params.locationId) search.set('locationId', params.locationId);
   const query = search.toString();
-  return request<ListInventoryLowStockResponse>(`/inventory/low-stock${query ? `?${query}` : ''}`, { accessToken });
+  return request<ListInventoryLowStockResponse>(`/inventory/low-stock${query ? `?${query}` : ''}`, {
+    accessToken,
+  });
 }
 
 export async function listInventoryCategories(
@@ -848,14 +956,21 @@ export async function listInventoryCategories(
   if (params.q) search.set('q', params.q);
   if (params.includeInactive) search.set('includeInactive', 'true');
   const query = search.toString();
-  return request<ListInventoryCategoriesResponse>(`/inventory/categories${query ? `?${query}` : ''}`, { accessToken });
+  return request<ListInventoryCategoriesResponse>(
+    `/inventory/categories${query ? `?${query}` : ''}`,
+    { accessToken },
+  );
 }
 
 export async function createInventoryCategory(
   accessToken: string,
   payload: { name: string; description?: string | null; isActive?: boolean },
 ): Promise<InventoryCategoryResponse> {
-  return request<InventoryCategoryResponse>('/inventory/categories', { method: 'POST', accessToken, body: payload });
+  return request<InventoryCategoryResponse>('/inventory/categories', {
+    method: 'POST',
+    accessToken,
+    body: payload,
+  });
 }
 
 export async function updateInventoryCategory(
@@ -863,21 +978,27 @@ export async function updateInventoryCategory(
   categoryId: string,
   payload: { name?: string; description?: string | null; isActive?: boolean },
 ): Promise<InventoryCategoryResponse> {
-  return request<InventoryCategoryResponse>(`/inventory/categories/${encodeURIComponent(categoryId)}`, {
-    method: 'PATCH',
-    accessToken,
-    body: payload,
-  });
+  return request<InventoryCategoryResponse>(
+    `/inventory/categories/${encodeURIComponent(categoryId)}`,
+    {
+      method: 'PATCH',
+      accessToken,
+      body: payload,
+    },
+  );
 }
 
 export async function deleteInventoryCategory(
   accessToken: string,
   categoryId: string,
 ): Promise<InventoryCategoryResponse> {
-  return request<InventoryCategoryResponse>(`/inventory/categories/${encodeURIComponent(categoryId)}`, {
-    method: 'DELETE',
-    accessToken,
-  });
+  return request<InventoryCategoryResponse>(
+    `/inventory/categories/${encodeURIComponent(categoryId)}`,
+    {
+      method: 'DELETE',
+      accessToken,
+    },
+  );
 }
 
 // --- Service categories -----------------------------------------------------
@@ -890,14 +1011,20 @@ export async function listServiceCategories(
   if (params.q) search.set('q', params.q);
   if (params.includeInactive) search.set('includeInactive', 'true');
   const query = search.toString();
-  return request<ListServiceCategoriesResponse>(`/services/categories${query ? `?${query}` : ''}`, { accessToken });
+  return request<ListServiceCategoriesResponse>(`/services/categories${query ? `?${query}` : ''}`, {
+    accessToken,
+  });
 }
 
 export async function createServiceCategory(
   accessToken: string,
   payload: CreateServiceCategoryRequest,
 ): Promise<ServiceCategoryResponse> {
-  return request<ServiceCategoryResponse>('/services/categories', { method: 'POST', accessToken, body: payload });
+  return request<ServiceCategoryResponse>('/services/categories', {
+    method: 'POST',
+    accessToken,
+    body: payload,
+  });
 }
 
 export async function updateServiceCategory(
@@ -905,21 +1032,27 @@ export async function updateServiceCategory(
   categoryId: string,
   payload: UpdateServiceCategoryRequest,
 ): Promise<ServiceCategoryResponse> {
-  return request<ServiceCategoryResponse>(`/services/categories/${encodeURIComponent(categoryId)}`, {
-    method: 'PATCH',
-    accessToken,
-    body: payload,
-  });
+  return request<ServiceCategoryResponse>(
+    `/services/categories/${encodeURIComponent(categoryId)}`,
+    {
+      method: 'PATCH',
+      accessToken,
+      body: payload,
+    },
+  );
 }
 
 export async function deleteServiceCategory(
   accessToken: string,
   categoryId: string,
 ): Promise<ServiceCategoryResponse> {
-  return request<ServiceCategoryResponse>(`/services/categories/${encodeURIComponent(categoryId)}`, {
-    method: 'DELETE',
-    accessToken,
-  });
+  return request<ServiceCategoryResponse>(
+    `/services/categories/${encodeURIComponent(categoryId)}`,
+    {
+      method: 'DELETE',
+      accessToken,
+    },
+  );
 }
 
 /** Persist a new display order for service categories. `ids` is the full list in the desired order. */
@@ -938,7 +1071,12 @@ export async function reorderServiceCategories(
 
 export async function listServices(
   accessToken: string,
-  params: { q?: string; serviceCategoryId?: string; locationId?: string; includeInactive?: boolean } = {},
+  params: {
+    q?: string;
+    serviceCategoryId?: string;
+    locationId?: string;
+    includeInactive?: boolean;
+  } = {},
 ): Promise<ListManagedServicesResponse> {
   const search = new URLSearchParams();
   if (params.q) search.set('q', params.q);
@@ -946,7 +1084,9 @@ export async function listServices(
   if (params.locationId) search.set('locationId', params.locationId);
   if (params.includeInactive) search.set('includeInactive', 'true');
   const query = search.toString();
-  return request<ListManagedServicesResponse>(`/services${query ? `?${query}` : ''}`, { accessToken });
+  return request<ListManagedServicesResponse>(`/services${query ? `?${query}` : ''}`, {
+    accessToken,
+  });
 }
 
 /** Active services with no bookable stylist assigned — drives the dashboard warning. */
@@ -960,7 +1100,11 @@ export async function createService(
   accessToken: string,
   payload: UpsertServiceRequest,
 ): Promise<ManagedServiceResponse> {
-  return request<ManagedServiceResponse>('/services', { method: 'POST', accessToken, body: payload });
+  return request<ManagedServiceResponse>('/services', {
+    method: 'POST',
+    accessToken,
+    body: payload,
+  });
 }
 
 export async function updateService(
@@ -1042,10 +1186,9 @@ export async function listCrmClientNotes(
   accessToken: string,
   clientId: string,
 ): Promise<ListCrmClientNotesResponse> {
-  return request<ListCrmClientNotesResponse>(
-    `/crm/clients/${encodeURIComponent(clientId)}/notes`,
-    { accessToken },
-  );
+  return request<ListCrmClientNotesResponse>(`/crm/clients/${encodeURIComponent(clientId)}/notes`, {
+    accessToken,
+  });
 }
 
 export async function createCrmClientNote(
@@ -1053,10 +1196,11 @@ export async function createCrmClientNote(
   clientId: string,
   payload: CreateCrmClientNoteRequest,
 ): Promise<ListCrmClientNotesResponse> {
-  return request<ListCrmClientNotesResponse>(
-    `/crm/clients/${encodeURIComponent(clientId)}/notes`,
-    { method: 'POST', accessToken, body: payload },
-  );
+  return request<ListCrmClientNotesResponse>(`/crm/clients/${encodeURIComponent(clientId)}/notes`, {
+    method: 'POST',
+    accessToken,
+    body: payload,
+  });
 }
 
 export async function listCrmClientAllergies(
@@ -1160,9 +1304,7 @@ export async function loginClientBookingAccount(payload: {
 
 // -------------------- Password reset (public) --------------------
 
-export async function requestPasswordReset(
-  email: string,
-): Promise<PasswordResetRequestResponse> {
+export async function requestPasswordReset(email: string): Promise<PasswordResetRequestResponse> {
   return request<PasswordResetRequestResponse>('/auth/password-reset/request', {
     method: 'POST',
     body: { email },
@@ -1246,9 +1388,7 @@ export async function updateAccountTier(
 
 // -------------------- Security levels (owner-only) --------------------
 
-export async function listSecurityLevels(
-  accessToken: string,
-): Promise<ListSecurityLevelsResponse> {
+export async function listSecurityLevels(accessToken: string): Promise<ListSecurityLevelsResponse> {
   return request<ListSecurityLevelsResponse>('/owner/security-levels', { accessToken });
 }
 
@@ -1426,10 +1566,9 @@ export async function getLocation(
   accessToken: string,
   locationId: string,
 ): Promise<LocationDetailResponse> {
-  return request<LocationDetailResponse>(
-    `/locations/${encodeURIComponent(locationId)}`,
-    { accessToken },
-  );
+  return request<LocationDetailResponse>(`/locations/${encodeURIComponent(locationId)}`, {
+    accessToken,
+  });
 }
 
 export async function createLocation(
@@ -1448,10 +1587,11 @@ export async function updateLocation(
   locationId: string,
   payload: UpdateLocationRequest,
 ): Promise<LocationDetailResponse> {
-  return request<LocationDetailResponse>(
-    `/owner/locations/${encodeURIComponent(locationId)}`,
-    { method: 'PATCH', body: payload, accessToken },
-  );
+  return request<LocationDetailResponse>(`/owner/locations/${encodeURIComponent(locationId)}`, {
+    method: 'PATCH',
+    body: payload,
+    accessToken,
+  });
 }
 
 export async function deactivateLocation(
@@ -1493,11 +1633,14 @@ export async function updateLocationCommunicationSettings(
   accessToken: string,
   payload: UpdateLocationCommunicationSettingsRequest,
 ): Promise<LocationCommunicationSettings> {
-  const result = await request<LocationCommunicationSettingsResponse>('/owner/booking-settings/communication', {
-    method: 'PUT',
-    accessToken,
-    body: payload,
-  });
+  const result = await request<LocationCommunicationSettingsResponse>(
+    '/owner/booking-settings/communication',
+    {
+      method: 'PUT',
+      accessToken,
+      body: payload,
+    },
+  );
   return result.settings;
 }
 
@@ -1538,10 +1681,9 @@ export async function createServiceUpgradeSuggestion(
   accessToken: string,
   payload: UpsertServiceUpgradeSuggestionRequest,
 ): Promise<OwnerBookingSettingsResponse['upgradeSuggestions'][number]> {
-  const result = await request<{ suggestion: OwnerBookingSettingsResponse['upgradeSuggestions'][number] }>(
-    '/owner/booking-settings/upgrade-suggestions',
-    { method: 'POST', accessToken, body: payload },
-  );
+  const result = await request<{
+    suggestion: OwnerBookingSettingsResponse['upgradeSuggestions'][number];
+  }>('/owner/booking-settings/upgrade-suggestions', { method: 'POST', accessToken, body: payload });
   return result.suggestion;
 }
 
@@ -1550,10 +1692,13 @@ export async function updateServiceUpgradeSuggestion(
   suggestionId: string,
   payload: UpsertServiceUpgradeSuggestionRequest,
 ): Promise<OwnerBookingSettingsResponse['upgradeSuggestions'][number]> {
-  const result = await request<{ suggestion: OwnerBookingSettingsResponse['upgradeSuggestions'][number] }>(
-    `/owner/booking-settings/upgrade-suggestions/${encodeURIComponent(suggestionId)}`,
-    { method: 'PATCH', accessToken, body: payload },
-  );
+  const result = await request<{
+    suggestion: OwnerBookingSettingsResponse['upgradeSuggestions'][number];
+  }>(`/owner/booking-settings/upgrade-suggestions/${encodeURIComponent(suggestionId)}`, {
+    method: 'PATCH',
+    accessToken,
+    body: payload,
+  });
   return result.suggestion;
 }
 
@@ -1583,10 +1728,11 @@ export async function updateLocationProductBillingSettings(
   accessToken: string,
   payload: UpdateLocationProductBillingSettingsRequest,
 ): Promise<UpdateLocationProductBillingSettingsResponse> {
-  return request<UpdateLocationProductBillingSettingsResponse>(
-    '/owner/billing-settings/product',
-    { method: 'PATCH', body: payload, accessToken },
-  );
+  return request<UpdateLocationProductBillingSettingsResponse>('/owner/billing-settings/product', {
+    method: 'PATCH',
+    body: payload,
+    accessToken,
+  });
 }
 
 // -------------------- Tax configuration settings --------------------
@@ -1702,10 +1848,7 @@ export async function updateLocationFixedCost(
   );
 }
 
-export async function deleteLocationFixedCost(
-  accessToken: string,
-  id: string,
-): Promise<void> {
+export async function deleteLocationFixedCost(accessToken: string, id: string): Promise<void> {
   return request<void>(`/owner/location-settings/fixed-costs/${encodeURIComponent(id)}`, {
     method: 'DELETE',
     accessToken,
@@ -1752,13 +1895,11 @@ export async function deleteRotaShift(
   shiftId: string,
   pastEditReason?: string,
 ): Promise<{ success: true }> {
-  const search = pastEditReason
-    ? `?pastEditReason=${encodeURIComponent(pastEditReason)}`
-    : '';
-  return request<{ success: true }>(
-    `/rota/shifts/${encodeURIComponent(shiftId)}${search}`,
-    { method: 'DELETE', accessToken },
-  );
+  const search = pastEditReason ? `?pastEditReason=${encodeURIComponent(pastEditReason)}` : '';
+  return request<{ success: true }>(`/rota/shifts/${encodeURIComponent(shiftId)}${search}`, {
+    method: 'DELETE',
+    accessToken,
+  });
 }
 
 export async function addRotaBreak(
@@ -1766,10 +1907,11 @@ export async function addRotaBreak(
   shiftId: string,
   payload: CreateBreakRequest,
 ): Promise<BreakMutationResponse> {
-  return request<BreakMutationResponse>(
-    `/rota/shifts/${encodeURIComponent(shiftId)}/breaks`,
-    { method: 'POST', body: payload, accessToken },
-  );
+  return request<BreakMutationResponse>(`/rota/shifts/${encodeURIComponent(shiftId)}/breaks`, {
+    method: 'POST',
+    body: payload,
+    accessToken,
+  });
 }
 
 export async function updateRotaBreak(
@@ -1790,9 +1932,7 @@ export async function deleteRotaBreak(
   breakId: string,
   pastEditReason?: string,
 ): Promise<{ success: true }> {
-  const search = pastEditReason
-    ? `?pastEditReason=${encodeURIComponent(pastEditReason)}`
-    : '';
+  const search = pastEditReason ? `?pastEditReason=${encodeURIComponent(pastEditReason)}` : '';
   return request<{ success: true }>(
     `/rota/shifts/${encodeURIComponent(shiftId)}/breaks/${encodeURIComponent(breakId)}${search}`,
     { method: 'DELETE', accessToken },
@@ -1807,10 +1947,9 @@ export async function listRotaLeaveRequests(
   if (params.locationId) search.set('locationId', params.locationId);
   if (params.status) search.set('status', params.status);
   const query = search.toString();
-  return request<ListLeaveRequestsResponse>(
-    `/rota/leave-requests${query ? `?${query}` : ''}`,
-    { accessToken },
-  );
+  return request<ListLeaveRequestsResponse>(`/rota/leave-requests${query ? `?${query}` : ''}`, {
+    accessToken,
+  });
 }
 
 export async function approveRotaLeaveRequest(
@@ -1938,6 +2077,196 @@ export async function createNewWeek(
   });
 }
 
+// -------------------- Payroll (owner / manager review workflow) --------------------
+
+export async function listPayPeriods(
+  accessToken: string,
+  params: { kind?: PayPeriodKind; status?: PayPeriodStatus; from?: string; to?: string } = {},
+): Promise<ListPayPeriodsResponse> {
+  const search = new URLSearchParams();
+  if (params.kind) search.set('kind', params.kind);
+  if (params.status) search.set('status', params.status);
+  if (params.from) search.set('from', params.from);
+  if (params.to) search.set('to', params.to);
+  const query = search.toString();
+  return request<ListPayPeriodsResponse>(`/payroll/periods${query ? `?${query}` : ''}`, {
+    accessToken,
+  });
+}
+
+export async function createPayPeriod(
+  accessToken: string,
+  payload: {
+    kind?: PayPeriodKind;
+    frequency?: PayPeriodFrequency;
+    periodStart?: string;
+    periodEnd?: string;
+    /** Server derives the window containing this date from payroll settings. */
+    referenceDate?: string;
+    locationId?: string;
+    label?: string;
+  } = {},
+): Promise<{ period: PayPeriod }> {
+  return request<{ period: PayPeriod }>('/payroll/periods', {
+    method: 'POST',
+    accessToken,
+    body: payload,
+  });
+}
+
+export async function getPayPeriod(
+  accessToken: string,
+  periodId: string,
+): Promise<PayPeriodDetailResponse> {
+  return request<PayPeriodDetailResponse>(`/payroll/periods/${encodeURIComponent(periodId)}`, {
+    accessToken,
+  });
+}
+
+export async function getPayPeriodReadiness(
+  accessToken: string,
+  periodId: string,
+): Promise<PayrollReadiness> {
+  return request<PayrollReadiness>(`/payroll/periods/${encodeURIComponent(periodId)}/readiness`, {
+    accessToken,
+  });
+}
+
+/** 422 responses carry `{ message, readiness }` in ApiRequestError.details when staff are not ready. */
+export async function generatePayPeriod(
+  accessToken: string,
+  periodId: string,
+): Promise<{ period: PayPeriod; generated: number; skipped: PayrollReadiness }> {
+  return request<{ period: PayPeriod; generated: number; skipped: PayrollReadiness }>(
+    `/payroll/periods/${encodeURIComponent(periodId)}/generate`,
+    { method: 'POST', accessToken },
+  );
+}
+
+export async function listPaySummaries(
+  accessToken: string,
+  periodId: string,
+): Promise<ListPaySummariesResponse> {
+  return request<ListPaySummariesResponse>(
+    `/payroll/periods/${encodeURIComponent(periodId)}/summaries`,
+    { accessToken },
+  );
+}
+
+export async function getPaySummary(
+  accessToken: string,
+  summaryId: string,
+): Promise<PaySummaryDetailResponse> {
+  return request<PaySummaryDetailResponse>(`/payroll/summaries/${encodeURIComponent(summaryId)}`, {
+    accessToken,
+  });
+}
+
+// ---- Payroll data sources (capture matrix) ----
+
+export async function listPayrollDataSources(
+  accessToken: string,
+): Promise<{ dataSources: PayrollBusinessDataSource[] }> {
+  return request<{ dataSources: PayrollBusinessDataSource[] }>('/payroll/data-sources', {
+    accessToken,
+  });
+}
+
+/**
+ * Flip a source's capture flag (owner + payroll.edit). The server only allows
+ * marking sources with a REAL capture path as captured — currently retail_sales
+ * — and returns the refreshed matrix.
+ */
+export async function updatePayrollDataSource(
+  accessToken: string,
+  source: PayrollDataSource,
+  payload: { isCaptured: boolean },
+): Promise<{ dataSources: PayrollBusinessDataSource[] }> {
+  return request<{ dataSources: PayrollBusinessDataSource[] }>(
+    `/payroll/data-sources/${encodeURIComponent(source)}`,
+    { method: 'PATCH', body: payload, accessToken },
+  );
+}
+
+// ---- Pay structures (owner authoring + assignment) ----
+
+export async function listPayStructures(accessToken: string): Promise<ListPayStructuresResponse> {
+  return request<ListPayStructuresResponse>('/payroll/structures', { accessToken });
+}
+
+export async function getPayStructure(
+  accessToken: string,
+  structureId: string,
+): Promise<PayStructureDetailResponse> {
+  return request<PayStructureDetailResponse>(
+    `/payroll/structures/${encodeURIComponent(structureId)}`,
+    { accessToken },
+  );
+}
+
+export async function createPayStructure(
+  accessToken: string,
+  payload: CreatePayStructureRequest,
+): Promise<PayStructureDetailResponse> {
+  return request<PayStructureDetailResponse>('/payroll/structures', {
+    method: 'POST',
+    body: payload,
+    accessToken,
+  });
+}
+
+/** Runs the REAL engine over drafted rules with illustrative sample inputs. */
+export async function previewPayStructure(
+  accessToken: string,
+  payload: PayStructurePreviewRequest,
+): Promise<PayStructurePreviewResponse> {
+  return request<PayStructurePreviewResponse>('/payroll/structures/preview', {
+    method: 'POST',
+    body: payload,
+    accessToken,
+  });
+}
+
+/**
+ * Creates version N+1 and closes the current version at `effectiveFrom`.
+ * A 409 carries a message explaining the close-date rules when the current
+ * version has already priced later work.
+ */
+export async function createPayStructureVersion(
+  accessToken: string,
+  structureId: string,
+  payload: PayStructureRulesInput,
+): Promise<PayStructureDetailResponse> {
+  return request<PayStructureDetailResponse>(
+    `/payroll/structures/${encodeURIComponent(structureId)}/versions`,
+    { method: 'POST', body: payload, accessToken },
+  );
+}
+
+export async function assignPayStructure(
+  accessToken: string,
+  staffProfileId: string,
+  payload: AssignPayStructureRequest,
+): Promise<AssignPayStructureResponse> {
+  return request<AssignPayStructureResponse>(
+    `/payroll/staff/${encodeURIComponent(staffProfileId)}/assignment`,
+    { method: 'POST', body: payload, accessToken },
+  );
+}
+
+export type PayPeriodTransitionAction = 'ready' | 'approve' | 'lock' | 'mark-paid';
+
+export async function transitionPayPeriod(
+  accessToken: string,
+  periodId: string,
+  action: PayPeriodTransitionAction,
+): Promise<{ period: PayPeriod }> {
+  return request<{ period: PayPeriod }>(
+    `/payroll/periods/${encodeURIComponent(periodId)}/${action}`,
+    { method: 'POST', accessToken },
+  );
+}
+
 // -------------------- Public invitation acceptance --------------------
 
 export async function inspectStaffInvitation(token: string): Promise<InvitationLookupResponse> {
@@ -2036,7 +2365,11 @@ export class ApiRequestError extends Error {
   }
 }
 
-function dashboardDateRangeSearch(params: { locationId?: string; from: string; to: string }): URLSearchParams {
+function dashboardDateRangeSearch(params: {
+  locationId?: string;
+  from: string;
+  to: string;
+}): URLSearchParams {
   const search = new URLSearchParams();
   search.set('from', params.from);
   search.set('to', params.to);
@@ -2081,7 +2414,9 @@ function extractErrorMessage(payload: unknown): string | undefined {
   const value = (payload as { message?: unknown }).message;
   if (typeof value === 'string') return value;
   if (Array.isArray(value) && value.length > 0) {
-    return value.map((entry) => (typeof entry === 'string' ? entry : JSON.stringify(entry))).join(', ');
+    return value
+      .map((entry) => (typeof entry === 'string' ? entry : JSON.stringify(entry)))
+      .join(', ');
   }
   return undefined;
 }

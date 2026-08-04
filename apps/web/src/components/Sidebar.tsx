@@ -35,30 +35,139 @@ function isGroup(item: NavItem): item is NavGroup {
 }
 
 const NAV: NavItem[] = [
-  { to: '/dashboard', label: 'Dashboard', icon: DashboardIcon, end: true, permission: 'report.dashboard.view' },
-  { to: '/bookings', label: 'Appointment Book', icon: CalendarIcon, end: true, permission: 'bookings.manage' },
-  { to: '/bookings/new', label: 'New booking', icon: PlusIcon, allowedRoles: ['owner', 'manager'], permission: 'bookings.manage' },
-  { to: '/services', label: 'Service management', icon: ScissorsIcon, allowedRoles: ['owner', 'manager'], permission: 'services.manage' },
+  {
+    to: '/dashboard',
+    label: 'Dashboard',
+    icon: DashboardIcon,
+    end: true,
+    permission: 'report.dashboard.view',
+  },
+  {
+    to: '/bookings',
+    label: 'Appointment Book',
+    icon: CalendarIcon,
+    end: true,
+    permission: 'bookings.manage',
+  },
+  {
+    to: '/bookings/new',
+    label: 'New booking',
+    icon: PlusIcon,
+    allowedRoles: ['owner', 'manager'],
+    permission: 'bookings.manage',
+  },
+  {
+    to: '/services',
+    label: 'Service management',
+    icon: ScissorsIcon,
+    allowedRoles: ['owner', 'manager'],
+    permission: 'services.manage',
+  },
   { to: '/crm', label: 'Client Hub', icon: CrmIcon, permission: 'crm.view' },
-  { to: '/inventory', label: 'Product management', icon: BoxIcon, allowedRoles: ['owner', 'manager'], permission: 'inventory.manage' },
-  { to: '/sheer-lab', label: 'Qlooqo Lab', icon: BeakerIcon, permission: 'report.lab_analytics.view' },
+  {
+    to: '/inventory',
+    label: 'Product management',
+    icon: BoxIcon,
+    allowedRoles: ['owner', 'manager'],
+    permission: 'inventory.manage',
+  },
+  {
+    to: '/retail-sales',
+    label: 'Retail sales',
+    icon: TagIcon,
+    allowedRoles: ['owner', 'manager'],
+    permission: 'retail.record',
+  },
+  {
+    to: '/sheer-lab',
+    label: 'Qlooqo Lab',
+    icon: BeakerIcon,
+    permission: 'report.lab_analytics.view',
+  },
   {
     group: 'Team Hub',
     icon: TeamIcon,
     children: [
-      { to: '/team', label: 'Team', icon: TeamIcon, allowedRoles: ['owner', 'manager'], permission: 'staff.manage' },
-      { to: '/settings/security-levels', label: 'Security levels', icon: ShieldIcon, allowedRoles: ['owner'], permission: 'security.manage' },
+      {
+        to: '/team',
+        label: 'Team',
+        icon: TeamIcon,
+        allowedRoles: ['owner', 'manager'],
+        permission: 'staff.manage',
+      },
+      {
+        to: '/settings/security-levels',
+        label: 'Security levels',
+        icon: ShieldIcon,
+        allowedRoles: ['owner'],
+        permission: 'security.manage',
+      },
       { to: '/rota', label: 'Rota', icon: ClockIcon, permission: 'rota.view' },
-      { to: '/settings/book-out-types', label: 'Book-out types', icon: ClockIcon, allowedRoles: ['owner', 'manager'], permission: 'rota.manage' },
-      { to: '/performance', label: 'Performance', icon: ChartIcon, allowedRoles: ['owner', 'manager'], permission: 'report.performance.view' },
-      { to: '/commission', label: 'Commission', icon: PercentIcon, permission: 'report.commission.view' },
+      {
+        to: '/settings/book-out-types',
+        label: 'Book-out types',
+        icon: ClockIcon,
+        allowedRoles: ['owner', 'manager'],
+        permission: 'rota.manage',
+      },
+      {
+        to: '/performance',
+        label: 'Performance',
+        icon: ChartIcon,
+        allowedRoles: ['owner', 'manager'],
+        permission: 'report.performance.view',
+      },
+      {
+        to: '/commission',
+        label: 'Commission',
+        icon: PercentIcon,
+        permission: 'report.commission.view',
+      },
+      {
+        to: '/payroll',
+        label: 'Staff pay',
+        icon: BanknoteIcon,
+        allowedRoles: ['owner', 'manager'],
+        permission: 'payroll.view',
+      },
     ],
   },
-  { to: '/locations', label: 'Locations', icon: PinIcon, allowedRoles: ['owner', 'manager'], permission: 'settings.location.manage', hideForTiers: ['spark'] },
-  { to: '/settings/plan', label: 'Account & plan', icon: TagIcon, allowedRoles: ['owner', 'manager'], permission: 'account.manage' },
-  { to: '/settings/booking', label: 'Booking settings', icon: GearIcon, allowedRoles: ['owner', 'manager'], permission: 'settings.booking.manage' },
-  { to: '/audit-log', label: 'Audit log', icon: ShieldIcon, allowedRoles: ['owner', 'manager'], permission: 'audit.read' },
-  { to: '/zac', label: 'ZAC', icon: SparkIcon, allowedRoles: ['owner', 'manager'], permission: 'zac.access' },
+  {
+    to: '/locations',
+    label: 'Locations',
+    icon: PinIcon,
+    allowedRoles: ['owner', 'manager'],
+    permission: 'settings.location.manage',
+    hideForTiers: ['spark'],
+  },
+  {
+    to: '/settings/plan',
+    label: 'Account & plan',
+    icon: TagIcon,
+    allowedRoles: ['owner', 'manager'],
+    permission: 'account.manage',
+  },
+  {
+    to: '/settings/booking',
+    label: 'Booking settings',
+    icon: GearIcon,
+    allowedRoles: ['owner', 'manager'],
+    permission: 'settings.booking.manage',
+  },
+  {
+    to: '/audit-log',
+    label: 'Audit log',
+    icon: ShieldIcon,
+    allowedRoles: ['owner', 'manager'],
+    permission: 'audit.read',
+  },
+  {
+    to: '/zac',
+    label: 'ZAC',
+    icon: SparkIcon,
+    allowedRoles: ['owner', 'manager'],
+    permission: 'zac.access',
+  },
 ];
 
 // Keeps leaf entries and any group that still has at least one role-visible child.
@@ -144,7 +253,11 @@ export function Sidebar() {
           title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-white/15 text-white/60 transition hover:bg-white/10 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
         >
-          {collapsed ? <ChevronRightIcon className="h-4 w-4" /> : <ChevronLeftIcon className="h-4 w-4" />}
+          {collapsed ? (
+            <ChevronRightIcon className="h-4 w-4" />
+          ) : (
+            <ChevronLeftIcon className="h-4 w-4" />
+          )}
         </button>
       </div>
 
@@ -276,7 +389,9 @@ function NavGroupItem({
       >
         <Icon className="h-5 w-5 shrink-0" />
         <span className="flex-1 truncate text-left">{group.group}</span>
-        <ChevronDownIcon className={cn('h-4 w-4 shrink-0 transition-transform', open ? '' : '-rotate-90')} />
+        <ChevronDownIcon
+          className={cn('h-4 w-4 shrink-0 transition-transform', open ? '' : '-rotate-90')}
+        />
       </button>
       {open ? (
         <ul className="mt-1 space-y-1">
@@ -290,7 +405,8 @@ function NavGroupItem({
 }
 
 function LocationPicker({ collapsed, onExpand }: { collapsed: boolean; onExpand: () => void }) {
-  const { locations, selectedLocationId, setSelectedLocationId, isAllLocations } = useLocationScope();
+  const { locations, selectedLocationId, setSelectedLocationId, isAllLocations } =
+    useLocationScope();
   if (locations.length === 0) return null;
 
   // With a single salon "All" is just that salon, so show its name rather than
@@ -299,7 +415,9 @@ function LocationPicker({ collapsed, onExpand }: { collapsed: boolean; onExpand:
     ? locations.length === 1
       ? locations[0].name
       : 'All locations'
-    : locations.find((location) => location.id === selectedLocationId)?.name ?? locations[0]?.name ?? '';
+    : (locations.find((location) => location.id === selectedLocationId)?.name ??
+      locations[0]?.name ??
+      '');
 
   if (collapsed) {
     return (
@@ -320,7 +438,9 @@ function LocationPicker({ collapsed, onExpand }: { collapsed: boolean; onExpand:
   return (
     <div className="border-t border-white/10 px-4 py-3">
       <label className="block">
-        <span className="text-[10px] font-medium uppercase tracking-[0.08em] text-white/45">Location</span>
+        <span className="text-[10px] font-medium uppercase tracking-[0.08em] text-white/45">
+          Location
+        </span>
         {locations.length > 1 ? (
           <select
             value={selectedLocationId}
@@ -525,6 +645,16 @@ function SparkIcon(props: SVGProps<SVGSVGElement>) {
     <Svg {...props}>
       <path d="M10 3.5 11.6 8l4.4 1.6-4.4 1.6L10 15.6 8.4 11.2 4 9.6 8.4 8 10 3.5Z" />
       <path d="M15.5 3v3M14 4.5h3" />
+    </Svg>
+  );
+}
+
+function BanknoteIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Svg {...props}>
+      <rect x="2.5" y="5.5" width="15" height="9.5" rx="1.8" />
+      <circle cx="10" cy="10.25" r="2" />
+      <path d="M5.2 8v4.5M14.8 8v4.5" />
     </Svg>
   );
 }

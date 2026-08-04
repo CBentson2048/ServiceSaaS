@@ -777,3 +777,234 @@ export interface PayrollSettingsResponse {
 export interface MyPaySummariesResponse {
   summaries: PaySummaryListItem[];
 }
+
+// =============================================================================
+// 10. Pay-structure authoring (Phase 1: template-driven owner UI)
+// =============================================================================
+
+/**
+ * Stage `config` contracts — the DTO-layer validation migration 0071 promised
+ * ("validated per stage_type in the API DTO layer"). These ratify the shapes
+ * the calculation engine already reads; the authoring API refuses anything
+ * else, so UI-written rules can never drift from what the engine understands.
+ *
+ * Deliberately absent: `tips_payout` (tips are uncaptured — an authored tips
+ * stage would only ever render "source not captured") and percentage/
+ * service-specific deductions, rent cadences and rule-triggered bonuses
+ * (Phase 2; the enum values exist but have no engine semantics yet).
+ */
+export type BasePayStageConfig =
+  | { source: 'hourly_rate_x_payable_hours' }
+  | { source: 'fixed_amount'; amount_cents: number };
+
+export interface RevenueSplitStageConfig {
+  split_percent: number;
+}
+
+export interface ChairRentStageConfig {
+  amount_cents: number;
+  /** Per calculation period this phase; weekly/monthly proration is Phase 2. */
+  cadence: 'per_period';
+}
+
+export type DeductionStageConfig =
+  | { source: 'product_cost' }
+  | { source: 'fixed'; amount_cents: number };
+
+export interface BonusStageConfig {
+  source: 'fixed';
+  amount_cents: number;
+}
+
+/** One band of an authored commission stage. Exactly one bound must be set,
+ * and it must match the stage's threshold basis (DB triggers re-enforce). */
+export interface PayStructureBandInput {
+  fromMultiple?: number | null;
+  fromAmountCents?: number | null;
+  fromPercent?: number | null;
+  ratePercent: number;
+  acceleratorRatePercent?: number | null;
+}
+
+export interface PayStructureAcceleratorConditionInput {
+  metric: AcceleratorMetric;
+  comparator: PayrollComparator;
+  basis: ConditionBasis;
+  thresholdValue?: number | null;
+  weight?: number;
+}
+
+export interface PayStructureAcceleratorInput {
+  name?: string;
+  evaluationMode: AcceleratorEvaluation;
+  requiredConditionCount?: number | null;
+  requiredScore?: number | null;
+  conditions: PayStructureAcceleratorConditionInput[];
+}
+
+export interface PayStructureStageInput {
+  stageType: PayStageType;
+  label?: string | null;
+  tierSemantics?: TierSemantics | null;
+  thresholdBasis?: ThresholdBasis | null;
+  revenueStream?: PayrollRevenueStream | null;
+  inGreaterOfComparison?: boolean;
+  requiresDataSource?: PayrollDataSource | null;
+  config?: Record<string, unknown>;
+  bands?: PayStructureBandInput[];
+  accelerator?: PayStructureAcceleratorInput | null;
+}
+
+export interface PayStructureHourRuleInput {
+  category: HourCategory;
+  countsTowardTarget: boolean;
+  countsAsPaid: boolean;
+}
+
+export interface PayStructureRulesInput {
+  /** Local date the version takes effect (inclusive). */
+  effectiveFrom: string;
+  discountBasis?: DiscountBasis;
+  vatBasis?: PayrollVatBasis;
+  depositRecognition?: DepositRecognition;
+  productCostMode?: ProductCostMode;
+  stages: PayStructureStageInput[];
+  /** All eight categories must be present — absence is not a default. */
+  hourRules: PayStructureHourRuleInput[];
+  notes?: string;
+}
+
+export interface CreatePayStructureRequest extends PayStructureRulesInput {
+  name: string;
+  description?: string;
+}
+
+/** Creates version N+1 and closes the current version at `effectiveFrom`. */
+export type CreatePayStructureVersionRequest = PayStructureRulesInput;
+
+export interface PayStructureBandDetail {
+  id: string;
+  sequenceNo: number;
+  fromMultiple: number | null;
+  fromAmountCents: number | null;
+  fromPercent: number | null;
+  ratePercent: number;
+  acceleratorRatePercent: number | null;
+}
+
+export interface PayStructureStageDetail {
+  id: string;
+  sequenceNo: number;
+  stageType: PayStageType;
+  label: string | null;
+  tierSemantics: TierSemantics | null;
+  thresholdBasis: ThresholdBasis | null;
+  revenueStream: PayrollRevenueStream | null;
+  inGreaterOfComparison: boolean;
+  requiresDataSource: PayrollDataSource | null;
+  config: Record<string, unknown>;
+  bands: PayStructureBandDetail[];
+  accelerator:
+    | (PayStructureAcceleratorInput & {
+        conditions: (PayStructureAcceleratorConditionInput & { sequenceNo: number })[];
+      })
+    | null;
+}
+
+export interface PayStructureVersionDetail {
+  id: string;
+  versionNo: number;
+  effectiveFrom: string;
+  /** EXCLUSIVE; null = in force. */
+  effectiveTo: string | null;
+  discountBasis: DiscountBasis;
+  vatBasis: PayrollVatBasis;
+  depositRecognition: DepositRecognition;
+  productCostMode: ProductCostMode;
+  /** True once any pay run priced this version — rules are frozen by the DB. */
+  isUsed: boolean;
+  stages: PayStructureStageDetail[];
+  hourRules: PayStructureHourRuleInput[];
+  notes: string | null;
+}
+
+export interface PayStructureSummary {
+  id: string;
+  name: string;
+  description: string | null;
+  isSystem: boolean;
+  isActive: boolean;
+  assignedStaffCount: number;
+}
+
+export interface ListPayStructuresResponse {
+  structures: PayStructureSummary[];
+}
+
+export interface PayStructureDetailResponse {
+  structure: PayStructureSummary;
+  versions: PayStructureVersionDetail[];
+  /** The version in force today, when one exists. */
+  currentVersionId: string | null;
+}
+
+/**
+ * Wizard preview: run the REAL engine over the drafted rules with illustrative
+ * sample inputs, before anything is saved. All sources are treated as captured
+ * so the illustration shows figures; the live engine still warns/zeroes per
+ * the capture matrix.
+ */
+export interface PayStructurePreviewSample {
+  hourlyRateCents?: number;
+  workedHours?: number;
+  serviceRevenueCents?: number;
+  retailRevenueCents?: number;
+  averageBillBenchmarkCents?: number | null;
+  rebookingRatePercent?: number | null;
+  averageBillCents?: number | null;
+  clientCount?: number | null;
+}
+
+export interface PayStructurePreviewRequest {
+  rules: PayStructureRulesInput;
+  sample?: PayStructurePreviewSample;
+}
+
+export interface PayStructurePreviewResponse {
+  illustrative: true;
+  netPayableCents: number;
+  basePayCents: number;
+  commissionCents: number;
+  revenueSplitCents: number;
+  bonusCents: number;
+  chairRentCents: number;
+  deductionsCents: number;
+  target: ServiceRevenueTargetBreakdown;
+  bands: CommissionBandBreakdown[];
+  accelerator: AcceleratorBreakdown | null;
+  greaterOf: GreaterOfBreakdown | null;
+  warnings: PayrollWarning[];
+}
+
+// --- Assignment ---
+
+export interface AssignPayStructureRequest {
+  structureId: string;
+  /** Local date the assignment starts; any open assignment closes here. */
+  effectiveFrom: string;
+}
+
+export interface StaffPayAssignmentDetail {
+  id: string;
+  staffProfileId: string;
+  structureId: string;
+  structureName: string;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+}
+
+export interface AssignPayStructureResponse {
+  assignment: StaffPayAssignmentDetail;
+  /** The previous open assignment that was closed, when one existed. */
+  closedAssignment: StaffPayAssignmentDetail | null;
+}
