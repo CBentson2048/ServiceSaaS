@@ -172,6 +172,15 @@ export class PayrollController {
 
   // ---- Assignment (owner or manager-within-location, + payroll.edit) ----
 
+  @Get('staff/:staffProfileId/assignment')
+  @RequirePermissions('payroll.view')
+  async getCurrentAssignment(
+    @CurrentUser() actor: AuthUser,
+    @Param() params: StaffProfileIdParamDto,
+  ) {
+    return this.structures.getCurrentAssignment(actor, params.staffProfileId);
+  }
+
   @Post('staff/:staffProfileId/assignment')
   @RequirePermissions('payroll.view', 'payroll.edit')
   async assignStructure(

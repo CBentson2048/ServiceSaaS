@@ -983,6 +983,54 @@ export class PayrollStructuresService {
     };
   }
 
+  /**
+   * The staff member's pay plan in force today, or null. Read side of the
+   * Team-record integration: owners look for pay ON the person, so the staff
+   * editor shows the current plan without a trip to the structures page.
+   */
+  async getCurrentAssignment(
+    actor: AuthUser,
+    staffProfileId: string,
+  ): Promise<{ assignment: AssignPayStructureResponse['assignment'] | null }> {
+    const staff = await this.inputs.loadStaff(actor.businessId);
+    const member = staff.find((s) => s.staffProfileId === staffProfileId);
+    if (!member) throw new NotFoundException('Staff member not found in your business');
+    if (!userHasRole(actor, 'owner')) {
+      if (
+        member.primaryLocationId === null ||
+        !actor.allowedLocationIds.includes(member.primaryLocationId)
+      ) {
+        throw new NotFoundException('Staff member not found in your business');
+      }
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    const { data, error } = await this.admin
+      .schema('payroll')
+      .from('staff_pay_assignments')
+      .select('id,structure_id,effective_from,effective_to')
+      .eq('business_id', actor.businessId)
+      .eq('staff_profile_id', staffProfileId)
+      .lte('effective_from', today)
+      .or(`effective_to.is.null,effective_to.gt.${today}`)
+      .maybeSingle();
+    if (error) {
+      this.logger.error(`getCurrentAssignment failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load the current pay plan');
+    }
+    if (!data) return { assignment: null };
+    const structure = await this.fetchStructure(actor, data.structure_id);
+    return {
+      assignment: {
+        id: data.id,
+        staffProfileId,
+        structureId: data.structure_id,
+        structureName: structure.name,
+        effectiveFrom: data.effective_from,
+        effectiveTo: data.effective_to,
+      },
+    };
+  }
+
   // ---------------------------------------------------------------------------
   // Internals
   // ---------------------------------------------------------------------------
