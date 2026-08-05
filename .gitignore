@@ -63,3 +63,4 @@ apps/api/dist/
 *.seed
 *.tgz
 .eslintcache
+apps/sheer-lab/ios/SheerLabNative.xcworkspace/xcuserdata/shiny.xcuserdatad/UserInterfaceState.xcuserstate

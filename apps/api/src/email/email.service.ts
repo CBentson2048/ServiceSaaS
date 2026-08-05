@@ -2,6 +2,12 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Resend } from 'resend';
 
+export interface SendEmailAttachment {
+  filename: string;
+  /** Raw file bytes (Buffer) or base64 string — passed straight to Resend. */
+  content: Buffer | string;
+}
+
 export interface SendEmailInput {
   to: string;
   subject: string;
@@ -11,6 +17,8 @@ export interface SendEmailInput {
   replyTo?: string;
   /** Free-form tag list forwarded to Resend for analytics/grouping. */
   tags?: Array<{ name: string; value: string }>;
+  /** Optional file attachments (e.g. payslip PDFs). */
+  attachments?: SendEmailAttachment[];
 }
 
 export interface SendEmailResult {
@@ -70,6 +78,10 @@ export class EmailService {
         text: input.text,
         replyTo: input.replyTo,
         tags: input.tags,
+        attachments: input.attachments?.map((a) => ({
+          filename: a.filename,
+          content: a.content,
+        })),
       });
 
       if (error) {

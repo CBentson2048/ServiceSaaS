@@ -43,7 +43,16 @@ describe('payroll guard-presence contract', () => {
     {
       controller: PayrollController,
       baseKey: 'payroll.view',
-      mutating: ['createPeriod', 'generate', 'markReady', 'approve', 'lock', 'markPaid'],
+      mutating: [
+        'createPeriod',
+        'generate',
+        'markReady',
+        'approve',
+        'lock',
+        'markPaid',
+        'emailSummary',
+        'emailPeriod',
+      ],
     },
     {
       controller: PayrollSelfController,
@@ -122,6 +131,13 @@ describe('payroll guard-presence contract', () => {
       createStructureVersion: 'payroll.edit',
       assignStructure: 'payroll.edit',
       updateDataSource: 'payroll.edit',
+      // Exports need payroll.export; emails need payroll.email ("Email
+      // delivery works and is limited to authorised users").
+      exportPeriodCsv: 'payroll.export',
+      exportPeriodPdf: 'payroll.export',
+      exportSummaryPdf: 'payroll.export',
+      emailSummary: 'payroll.email',
+      emailPeriod: 'payroll.email',
     };
     for (const [handlerName, requiredKey] of Object.entries(expected)) {
       const handler = prototypeOf(PayrollController)[handlerName] as object;

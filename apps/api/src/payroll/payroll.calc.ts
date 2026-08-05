@@ -53,9 +53,11 @@ import type {
   PayrollWarning,
   ProductCostMode,
   ServiceRevenueTargetBreakdown,
+  StaffServiceRevenueTargetMode,
   ThresholdBasis,
   TierSemantics,
 } from '@sheer/domain';
+import { DEFAULT_CONTRACTED_HOURS_PER_WEEK } from '@sheer/domain';
 import { rateAmountCents, roundMagnitude } from './payroll-money';
 
 // =============================================================================
@@ -160,6 +162,13 @@ export interface EngineStaffInput {
   contractedHours: number | null;
   /** Cents. Null or <= 0 => staff_benchmark conditions are unevaluable. */
   averageBillBenchmarkCents: number | null;
+  /**
+   * How the tracking target is applied. 'pro_rated' scales it by target-counted
+   * hours against the contracted baseline (Luke's 13 Jul direction, 0072).
+   * Band-derived targets are unaffected — multiple_of_base_pay already follows
+   * hours through the base-pay figure.
+   */
+  serviceRevenueTargetMode: StaffServiceRevenueTargetMode;
 }
 
 /** Observed KPI metrics for accelerator conditions. Null = not derivable. */
@@ -592,8 +601,34 @@ export function calculatePaySummary(input: EngineInput): EngineResult {
     }
   }
   if (serviceRevenueTargetCents === null && input.trackingTargetCents !== null) {
-    serviceRevenueTargetCents = input.trackingTargetCents;
-    targetDerivation = 'Tracking target from payroll targets (no band-derived threshold).';
+    if (staff.serviceRevenueTargetMode === 'pro_rated') {
+      // A pro-rated target follows the hours the member could actually sell,
+      // so a short week shrinks it. contracted_hours is a per-week figure and
+      // periodEnd is exclusive — scale the baseline to the period length.
+      const periodDays = Math.max(
+        1,
+        Math.round(
+          (Date.parse(`${input.period.periodEnd}T00:00:00Z`) -
+            Date.parse(`${input.period.periodStart}T00:00:00Z`)) /
+            86_400_000,
+        ),
+      );
+      const hasContracted = staff.contractedHours !== null && staff.contractedHours > 0;
+      const weeklyContracted = hasContracted
+        ? staff.contractedHours!
+        : DEFAULT_CONTRACTED_HOURS_PER_WEEK;
+      const baselineHours = weeklyContracted * (periodDays / 7);
+      const factor = Math.max(0, targetHours) / baselineHours;
+      serviceRevenueTargetCents = roundMagnitude(input.trackingTargetCents * factor);
+      targetDerivation =
+        `Tracking target ${formatCents(input.trackingTargetCents)} pro-rated by hours: ` +
+        `${targetHours.toFixed(1)} target-counted / ${baselineHours.toFixed(1)} contracted` +
+        (hasContracted ? '' : ' (assumed 40.0/week — set contracted hours for accuracy)') +
+        ` = ${formatCents(serviceRevenueTargetCents)}`;
+    } else {
+      serviceRevenueTargetCents = input.trackingTargetCents;
+      targetDerivation = 'Tracking target from payroll targets (no band-derived threshold).';
+    }
   }
 
   // ---- Accelerator evaluation (PER STAGE — payroll.accelerators is keyed by
@@ -1378,6 +1413,7 @@ export function calculatePaySummary(input: EngineInput): EngineResult {
       employmentType: staff.employmentType,
       hourlyRateCents: staff.hourlyRateCents,
       contractedHours: staff.contractedHours,
+      serviceRevenueTargetMode: staff.serviceRevenueTargetMode,
       averageBillBenchmarkCents: staff.averageBillBenchmarkCents,
     },
     rule: {

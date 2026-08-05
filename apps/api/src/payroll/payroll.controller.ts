@@ -13,7 +13,19 @@
  * NOT in this controller's role list.
  */
 
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Res,
+  StreamableFile,
+  UseGuards,
+} from '@nestjs/common';
+import type { Response } from 'express';
 import type {
   AuthUser,
   ListPayPeriodsResponse,
@@ -30,6 +42,7 @@ import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import {
   CreatePayPeriodDto,
   DataSourceParamDto,
+  EmailPayPeriodDto,
   ListPayPeriodsQueryDto,
   PayPeriodIdParamDto,
   PaySummaryIdParamDto,
@@ -43,6 +56,7 @@ import {
   PayStructureRulesDto,
   StaffProfileIdParamDto,
 } from './structures.dto';
+import { PayrollExportService } from './payroll-export.service';
 import { PayrollPeriodService } from './payroll-period.service';
 import { PayrollStructuresService } from './payroll-structures.service';
 import { PayrollService } from './payroll.service';
@@ -56,6 +70,7 @@ export class PayrollController {
     private readonly payroll: PayrollService,
     private readonly periods: PayrollPeriodService,
     private readonly structures: PayrollStructuresService,
+    private readonly exports: PayrollExportService,
   ) {}
 
   // ---- Read/review (payroll.view) ----
@@ -132,6 +147,68 @@ export class PayrollController {
     @Param() params: PaySummaryIdParamDto,
   ): Promise<PaySummaryDetailResponse> {
     return this.payroll.getSummaryBreakdown(actor, params.summaryId);
+  }
+
+  // ---- Exports (payroll.view + payroll.export). Figures come from the SAME
+  // read paths as the screens above — see PayrollExportService header. ----
+
+  @Get('periods/:periodId/export.csv')
+  @RequirePermissions('payroll.view', 'payroll.export')
+  async exportPeriodCsv(
+    @CurrentUser() actor: AuthUser,
+    @Param() params: PayPeriodIdParamDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { filename, content } = await this.exports.exportPeriodCsv(actor, params.periodId);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return new StreamableFile(content);
+  }
+
+  @Get('periods/:periodId/export.pdf')
+  @RequirePermissions('payroll.view', 'payroll.export')
+  async exportPeriodPdf(
+    @CurrentUser() actor: AuthUser,
+    @Param() params: PayPeriodIdParamDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { filename, content } = await this.exports.exportPeriodPdf(actor, params.periodId);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return new StreamableFile(content);
+  }
+
+  @Get('summaries/:summaryId/export.pdf')
+  @RequirePermissions('payroll.view', 'payroll.export')
+  async exportSummaryPdf(
+    @CurrentUser() actor: AuthUser,
+    @Param() params: PaySummaryIdParamDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { filename, content } = await this.exports.exportSummaryPdf(actor, params.summaryId);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return new StreamableFile(content);
+  }
+
+  // ---- Email (payroll.view + payroll.email). The payslip endpoint takes NO
+  // body: the recipient is the staff member's own address, resolved
+  // server-side. Only the period (accountant) endpoint accepts an address. ----
+
+  @Post('summaries/:summaryId/email')
+  @RequirePermissions('payroll.view', 'payroll.email')
+  async emailSummary(@CurrentUser() actor: AuthUser, @Param() params: PaySummaryIdParamDto) {
+    return this.exports.emailSummaryToStaff(actor, params.summaryId);
+  }
+
+  @Post('periods/:periodId/email')
+  @RequirePermissions('payroll.view', 'payroll.email')
+  async emailPeriod(
+    @CurrentUser() actor: AuthUser,
+    @Param() params: PayPeriodIdParamDto,
+    @Body() body: EmailPayPeriodDto,
+  ) {
+    return this.exports.emailPeriodToRecipient(actor, params.periodId, body.recipientEmail);
   }
 
   // ---- Pay-structure authoring (OWNER-only + payroll.view + payroll.edit).

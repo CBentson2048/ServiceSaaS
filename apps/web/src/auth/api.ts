@@ -2279,6 +2279,68 @@ export async function transitionPayPeriod(
   );
 }
 
+// ---- Payroll exports & emailing (payroll.export / payroll.email) ----
+
+/** Delivery receipt for payroll emails. */
+export interface PayrollEmailResult {
+  delivered: boolean;
+  to: string;
+}
+
+/** The whole period as a CSV download (payroll.export). */
+export async function exportPayPeriodCsv(
+  accessToken: string,
+  periodId: string,
+): Promise<BlobDownload> {
+  return requestBlob(`/payroll/periods/${encodeURIComponent(periodId)}/export.csv`, {
+    accessToken,
+  });
+}
+
+/** The whole period as a PDF download (payroll.export). */
+export async function exportPayPeriodPdf(
+  accessToken: string,
+  periodId: string,
+): Promise<BlobDownload> {
+  return requestBlob(`/payroll/periods/${encodeURIComponent(periodId)}/export.pdf`, {
+    accessToken,
+  });
+}
+
+/** One staff member's payslip as a PDF download (payroll.export). */
+export async function exportPaySummaryPdf(
+  accessToken: string,
+  summaryId: string,
+): Promise<BlobDownload> {
+  return requestBlob(`/payroll/summaries/${encodeURIComponent(summaryId)}/export.pdf`, {
+    accessToken,
+  });
+}
+
+/** Email a staff member their payslip; the server resolves the address (payroll.email). */
+export async function emailPaySummary(
+  accessToken: string,
+  summaryId: string,
+): Promise<PayrollEmailResult> {
+  return request<PayrollEmailResult>(`/payroll/summaries/${encodeURIComponent(summaryId)}/email`, {
+    method: 'POST',
+    accessToken,
+  });
+}
+
+/** Email the whole period to a chosen recipient, e.g. an accountant (payroll.email). */
+export async function emailPayPeriod(
+  accessToken: string,
+  periodId: string,
+  payload: { recipientEmail: string },
+): Promise<PayrollEmailResult> {
+  return request<PayrollEmailResult>(`/payroll/periods/${encodeURIComponent(periodId)}/email`, {
+    method: 'POST',
+    body: payload,
+    accessToken,
+  });
+}
+
 // -------------------- Public invitation acceptance --------------------
 
 export async function inspectStaffInvitation(token: string): Promise<InvitationLookupResponse> {
@@ -2419,6 +2481,46 @@ async function request<T>(
   }
 
   return (await response.json()) as T;
+}
+
+/** A fetched binary response plus the server-suggested filename, when given. */
+export interface BlobDownload {
+  blob: Blob;
+  /** From Content-Disposition; null when the server didn't name the file. */
+  filename: string | null;
+}
+
+/**
+ * Mirror of `request<T>` for binary responses (CSV/PDF exports): same base URL
+ * and auth header, but the body comes back as a Blob instead of JSON.
+ */
+async function requestBlob(
+  path: string,
+  init: { method?: string; accessToken?: string } = {},
+): Promise<BlobDownload> {
+  const response = await fetch(`${API_BASE_URL}/api${path}`, {
+    method: init.method ?? 'GET',
+    headers: init.accessToken ? { Authorization: `Bearer ${init.accessToken}` } : undefined,
+  });
+
+  if (!response.ok) {
+    const raw = await response.text();
+    let parsed: unknown;
+    try {
+      parsed = raw ? JSON.parse(raw) : undefined;
+    } catch {
+      parsed = undefined;
+    }
+    const message = extractErrorMessage(parsed) ?? raw ?? `Request failed with ${response.status}`;
+    throw new ApiRequestError(message, response.status, parsed);
+  }
+
+  const disposition = response.headers.get('content-disposition');
+  const match = disposition?.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
+  return {
+    blob: await response.blob(),
+    filename: match ? decodeURIComponent(match[1]) : null,
+  };
 }
 
 function extractErrorMessage(payload: unknown): string | undefined {

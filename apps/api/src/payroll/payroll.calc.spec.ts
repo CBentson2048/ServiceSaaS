@@ -97,6 +97,7 @@ function baseInput(overrides: Partial<EngineInput> = {}): EngineInput {
       hourlyRateCents: 1221, // £12.21
       contractedHours: 40,
       averageBillBenchmarkCents: null,
+      serviceRevenueTargetMode: 'flat',
     },
     version: null,
     hours: [
@@ -975,5 +976,90 @@ describe('settlement statement', () => {
     const evidence = result.lines.find((l) => l.lineType === 'service_revenue')!;
     expect(evidence.vatRatePercentSnapshot).toBe(20);
     expect(evidence.basisAmountCents).toBe(10_000);
+  });
+});
+
+describe('pro-rated tracking target (Service Revenue Target mode)', () => {
+  /** All-zero hour rows except `worked`, which counts toward the target. */
+  const workedOnly = (worked: number) => [
+    { category: 'worked' as const, hours: worked, notes: null },
+    { category: 'paid_holiday' as const, hours: 0, notes: null },
+    { category: 'unpaid_leave' as const, hours: 0, notes: null },
+    { category: 'sickness' as const, hours: 0, notes: null },
+    { category: 'training' as const, hours: 0, notes: null },
+    { category: 'authorised_absence' as const, hours: 0, notes: null },
+    { category: 'additional' as const, hours: 0, notes: null },
+    { category: 'manual_adjustment' as const, hours: 0, notes: null },
+  ];
+
+  it('pro_rated scales the tracking target by target-counted vs contracted hours', () => {
+    const result = calculatePaySummary(
+      baseInput({
+        version: version([hourlyBaseStage()]),
+        hours: workedOnly(20),
+        trackingTargetCents: 50_000,
+        staff: { ...baseInput().staff, serviceRevenueTargetMode: 'pro_rated' },
+      }),
+    );
+    // 20 target-counted hours against 40 contracted over a 7-day period: half.
+    expect(result.target.targetCents).toBe(25_000);
+    expect(result.target.derivation).toContain('pro-rated by hours');
+  });
+
+  it('flat mode leaves the tracking target exactly as entered', () => {
+    const result = calculatePaySummary(
+      baseInput({
+        version: version([hourlyBaseStage()]),
+        hours: workedOnly(20),
+        trackingTargetCents: 50_000,
+      }),
+    );
+    expect(result.target.targetCents).toBe(50_000);
+    expect(result.target.derivation).toContain('Tracking target from payroll targets');
+  });
+
+  it('a band-derived target ignores the mode — multiple_of_base_pay already follows hours', () => {
+    const result = calculatePaySummary(
+      baseInput({
+        version: version([hourlyBaseStage(), lohServiceStage(false)]),
+        trackingTargetCents: 99_999,
+        staff: { ...baseInput().staff, serviceRevenueTargetMode: 'pro_rated' },
+      }),
+    );
+    // 3.0 x (£12.21 x 40 target hours) = £1,465.20 — from the band, not the
+    // tracking figure, and untouched by the pro-rating mode.
+    expect(result.target.targetCents).toBe(3 * Math.round(1221 * 40));
+    expect(result.target.derivation).toContain('base pay');
+  });
+
+  it('missing contracted hours assumes the 40h/week default and says so in the derivation', () => {
+    const result = calculatePaySummary(
+      baseInput({
+        version: version([hourlyBaseStage()]),
+        hours: workedOnly(20),
+        trackingTargetCents: 50_000,
+        staff: {
+          ...baseInput().staff,
+          contractedHours: null,
+          serviceRevenueTargetMode: 'pro_rated',
+        },
+      }),
+    );
+    expect(result.target.targetCents).toBe(25_000);
+    expect(result.target.derivation).toContain('assumed');
+  });
+
+  it('a fortnight period doubles the contracted baseline (periodEnd exclusive)', () => {
+    const result = calculatePaySummary(
+      baseInput({
+        period: { periodStart: '2026-07-28', periodEnd: '2026-08-11' },
+        version: version([hourlyBaseStage()]),
+        hours: workedOnly(40),
+        trackingTargetCents: 50_000,
+        staff: { ...baseInput().staff, serviceRevenueTargetMode: 'pro_rated' },
+      }),
+    );
+    // 40 hours against 40 x (14/7) = 80 contracted for the fortnight: half.
+    expect(result.target.targetCents).toBe(25_000);
   });
 });

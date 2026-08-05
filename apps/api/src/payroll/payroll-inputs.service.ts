@@ -22,6 +22,7 @@ import type {
   PayrollDataSource,
   PayrollSettings,
   PayrollBusinessDataSource,
+  StaffServiceRevenueTargetMode,
 } from '@sheer/domain';
 import { calculateHours } from './hours.calc';
 import type {
@@ -45,6 +46,7 @@ interface StaffRow {
   hourly_rate: number | string | null;
   contracted_hours: number | string | null;
   average_bill_benchmark: number | string | null;
+  service_revenue_target_mode: string | null;
   employment_type: string | null;
   employment_status: string | null;
   primary_location_id: string | null;
@@ -216,6 +218,7 @@ export interface TrustedStaff {
   hourlyRateCents: number | null;
   contractedHours: number | null;
   averageBillBenchmarkCents: number | null;
+  serviceRevenueTargetMode: StaffServiceRevenueTargetMode;
 }
 
 export interface ResolvedPayrollSettings extends PayrollSettings {
@@ -224,7 +227,7 @@ export interface ResolvedPayrollSettings extends PayrollSettings {
 }
 
 const STAFF_COLUMNS =
-  'id,display_name,hourly_rate,contracted_hours,average_bill_benchmark,employment_type,employment_status,primary_location_id,termination_date,user_profiles(full_name)';
+  'id,display_name,hourly_rate,contracted_hours,average_bill_benchmark,service_revenue_target_mode,employment_type,employment_status,primary_location_id,termination_date,user_profiles(full_name)';
 
 const DEFAULT_TIMEZONE = 'Europe/London';
 
@@ -372,6 +375,7 @@ export class PayrollInputsService {
       hourlyRateCents: majorToCents(row.hourly_rate),
       contractedHours: numOrNull(row.contracted_hours),
       averageBillBenchmarkCents: majorToCents(row.average_bill_benchmark),
+      serviceRevenueTargetMode: row.service_revenue_target_mode === 'pro_rated' ? 'pro_rated' : 'flat',
     }));
   }
 
@@ -780,6 +784,7 @@ export class PayrollInputsService {
           hourlyRateCents: member.hourlyRateCents,
           contractedHours: member.contractedHours,
           averageBillBenchmarkCents: member.averageBillBenchmarkCents,
+          serviceRevenueTargetMode: member.serviceRevenueTargetMode,
         },
         version: versions.get(member.staffProfileId) ?? null,
         hours,

@@ -13,12 +13,18 @@ import {
   THRESHOLD_BASIS_LABELS,
 } from '@sheer/domain';
 import { cn } from '@sheer/utils';
-import { AppText, StatusBadge } from '../../design';
+import { AppButton, AppText, StatusBadge } from '../../design';
 import { Modal } from '../team/Modal';
 import { formatMoney, signedMoney } from '../kpi/format';
 import { formatHours, formatLocalDate, formatTimestamp } from './format';
+import { filenameSlug, saveDownload } from './download';
 import { PayrollWarningNotice } from './PayrollWarningNotice';
-import { ApiRequestError, getPaySummary } from '../../auth/api';
+import {
+  ApiRequestError,
+  emailPaySummary,
+  exportPaySummaryPdf,
+  getPaySummary,
+} from '../../auth/api';
 
 const HOURS_COLS = '1.5fr 0.6fr 0.9fr 0.6fr';
 const LINES_COLS = '1.7fr 0.8fr 0.8fr 0.5fr 0.9fr';
@@ -43,16 +49,25 @@ export function PaySummaryDetailModal({
   summaryId,
   accessToken,
   periodLabel,
+  canExport = false,
+  canEmail = false,
   onClose,
 }: {
   summaryId: string | null;
   accessToken?: string;
   periodLabel: string;
+  /** payroll.export — shows "Download payslip (PDF)". */
+  canExport?: boolean;
+  /** payroll.email — shows "Email payslip to {first name}". */
+  canEmail?: boolean;
   onClose: () => void;
 }) {
   const [breakdown, setBreakdown] = useState<PaySummaryBreakdown | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [actionBusy, setActionBusy] = useState<'download' | 'email' | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
 
   useEffect(() => {
     if (!summaryId || !accessToken) {
@@ -64,6 +79,9 @@ export function PaySummaryDetailModal({
     setLoading(true);
     setError(null);
     setBreakdown(null);
+    setActionBusy(null);
+    setActionError(null);
+    setActionNotice(null);
     getPaySummary(accessToken, summaryId)
       .then((res) => {
         if (!cancelled) setBreakdown(res.breakdown);
@@ -87,6 +105,46 @@ export function PaySummaryDetailModal({
 
   const summary = breakdown?.summary ?? null;
   const currency = summary?.currencyCode ?? 'GBP';
+  const firstName = breakdown ? breakdown.staffName.trim().split(/\s+/)[0] : '';
+
+  const handleDownload = async () => {
+    if (!summaryId || !accessToken || !breakdown) return;
+    setActionBusy('download');
+    setActionError(null);
+    setActionNotice(null);
+    try {
+      const download = await exportPaySummaryPdf(accessToken, summaryId);
+      saveDownload(download, `payslip-${filenameSlug(breakdown.staffName)}.pdf`);
+    } catch (err) {
+      setActionError(
+        err instanceof ApiRequestError ? err.message : 'Unable to download this payslip',
+      );
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
+  const handleEmail = async () => {
+    if (!summaryId || !accessToken || !breakdown) return;
+    if (!window.confirm(`Email this payslip to ${breakdown.staffName}?`)) return;
+    setActionBusy('email');
+    setActionError(null);
+    setActionNotice(null);
+    try {
+      const result = await emailPaySummary(accessToken, summaryId);
+      if (result.delivered) {
+        setActionNotice(`Payslip emailed to ${result.to}.`);
+      } else {
+        setActionError(`Couldn't deliver the payslip to ${result.to}.`);
+      }
+    } catch (err) {
+      setActionError(
+        err instanceof ApiRequestError ? err.message : 'Unable to email this payslip',
+      );
+    } finally {
+      setActionBusy(null);
+    }
+  };
 
   return (
     <Modal
@@ -115,6 +173,47 @@ export function PaySummaryDetailModal({
               ) : null}
             </div>
           </div>
+
+          {canExport || canEmail ? (
+            <div className="flex flex-wrap items-center gap-2">
+              {canExport ? (
+                <AppButton
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => void handleDownload()}
+                  loading={actionBusy === 'download'}
+                  disabled={actionBusy !== null && actionBusy !== 'download'}
+                >
+                  Download payslip (PDF)
+                </AppButton>
+              ) : null}
+              {canEmail ? (
+                <AppButton
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => void handleEmail()}
+                  loading={actionBusy === 'email'}
+                  disabled={actionBusy !== null && actionBusy !== 'email'}
+                >
+                  Email payslip to {firstName}
+                </AppButton>
+              ) : null}
+            </div>
+          ) : null}
+
+          {actionError ? (
+            <div className="rounded-input-lg border border-danger-border bg-danger-soft px-3 py-2.5 text-[13px] text-danger">
+              {actionError}
+            </div>
+          ) : null}
+
+          {actionNotice ? (
+            <div className="rounded-input-lg border border-success-border bg-success-soft px-3 py-2.5">
+              <AppText as="div" variant="caption" tone="success">
+                {actionNotice}
+              </AppText>
+            </div>
+          ) : null}
 
           {summary.isStale && summary.staleReason ? (
             <div className="rounded-input-lg border border-warning-border bg-warning-soft px-3 py-2.5">

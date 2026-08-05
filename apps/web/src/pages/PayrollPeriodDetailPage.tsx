@@ -28,9 +28,14 @@ import {
 import { PayrollWarningNotice } from '../components/payroll/PayrollWarningNotice';
 import { PaySummaryDetailModal } from '../components/payroll/PaySummaryDetailModal';
 import { AssignStructureModal } from '../components/payroll/AssignStructureModal';
+import { filenameSlug, saveDownload } from '../components/payroll/download';
+import { Modal } from '../components/team/Modal';
 import { useAuth } from '../auth/AuthProvider';
 import {
   ApiRequestError,
+  emailPayPeriod,
+  exportPayPeriodCsv,
+  exportPayPeriodPdf,
   generatePayPeriod,
   getPayPeriod,
   listPaySummaries,
@@ -40,7 +45,10 @@ import {
 
 const COLS = '1.5fr 1.1fr 0.6fr 0.85fr 0.9fr 0.85fr 0.9fr 0.8fr 0.85fr 1fr';
 
-type BusyAction = 'generate' | PayPeriodTransitionAction;
+const INPUT_CLASSES =
+  'w-full rounded-input-lg border border-border-strong bg-surface px-3.5 py-2.5 text-[14px] text-text-primary outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20';
+
+type BusyAction = 'generate' | PayPeriodTransitionAction | 'export-csv' | 'export-pdf' | 'email';
 
 /**
  * One pay period: readiness, workflow transitions and the per-staff summary
@@ -58,6 +66,8 @@ export function PayrollPeriodDetailPage() {
   const canEdit = userHasPermission(auth.user, 'payroll.edit');
   const canApprove = userHasPermission(auth.user, 'payroll.approve');
   const canLock = userHasPermission(auth.user, 'payroll.lock');
+  const canExport = userHasPermission(auth.user, 'payroll.export');
+  const canEmail = userHasPermission(auth.user, 'payroll.email');
 
   const [detail, setDetail] = useState<PayPeriodDetailResponse | null>(null);
   const [summariesRes, setSummariesRes] = useState<ListPaySummariesResponse | null>(null);
@@ -65,6 +75,11 @@ export function PayrollPeriodDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState<BusyAction | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  /** Success notice for export/email actions. */
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
+  /** "Email period to accountant…" dialog. */
+  const [emailModalOpen, setEmailModalOpen] = useState(false);
+  const [accountantEmail, setAccountantEmail] = useState('');
   /** Readiness from a 422 generate refusal — takes precedence over the loaded one. */
   const [blockedReadiness, setBlockedReadiness] = useState<PayrollReadiness | null>(null);
   const [selectedSummaryId, setSelectedSummaryId] = useState<string | null>(null);
@@ -138,6 +153,54 @@ export function PayrollPeriodDetailPage() {
     },
     [accessToken, periodId, load],
   );
+
+  const handleExport = useCallback(
+    async (format: 'csv' | 'pdf') => {
+      if (!accessToken || !periodId) return;
+      const windowLabel = detail?.period ? payPeriodWindowLabel(detail.period) : periodId;
+      setActionBusy(format === 'csv' ? 'export-csv' : 'export-pdf');
+      setActionError(null);
+      setActionNotice(null);
+      try {
+        const download =
+          format === 'csv'
+            ? await exportPayPeriodCsv(accessToken, periodId)
+            : await exportPayPeriodPdf(accessToken, periodId);
+        saveDownload(download, `pay-period-${filenameSlug(windowLabel)}.${format}`);
+      } catch (err) {
+        setActionError(
+          err instanceof ApiRequestError ? err.message : 'Unable to export this pay period',
+        );
+      } finally {
+        setActionBusy(null);
+      }
+    },
+    [accessToken, periodId, detail],
+  );
+
+  const handleEmailPeriod = useCallback(async () => {
+    const recipientEmail = accountantEmail.trim();
+    if (!accessToken || !periodId || recipientEmail === '') return;
+    if (!window.confirm(`Email this pay period to ${recipientEmail}?`)) return;
+    setActionBusy('email');
+    setActionError(null);
+    setActionNotice(null);
+    try {
+      const result = await emailPayPeriod(accessToken, periodId, { recipientEmail });
+      setEmailModalOpen(false);
+      if (result.delivered) {
+        setActionNotice(`Pay period emailed to ${result.to}.`);
+      } else {
+        setActionError(`Couldn't deliver the email to ${result.to} — check the address.`);
+      }
+    } catch (err) {
+      setActionError(
+        err instanceof ApiRequestError ? err.message : 'Unable to email this pay period',
+      );
+    } finally {
+      setActionBusy(null);
+    }
+  }, [accessToken, periodId, accountantEmail]);
 
   if (auth.user && !canView) {
     return <Navigate to="/dashboard" replace />;
@@ -249,12 +312,55 @@ export function PayrollPeriodDetailPage() {
                   Mark paid
                 </AppButton>
               ) : null}
+              {canExport ? (
+                <>
+                  <AppButton
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => void handleExport('csv')}
+                    loading={actionBusy === 'export-csv'}
+                    disabled={actionBusy !== null && actionBusy !== 'export-csv'}
+                  >
+                    Export CSV
+                  </AppButton>
+                  <AppButton
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => void handleExport('pdf')}
+                    loading={actionBusy === 'export-pdf'}
+                    disabled={actionBusy !== null && actionBusy !== 'export-pdf'}
+                  >
+                    Export PDF
+                  </AppButton>
+                </>
+              ) : null}
+              {canEmail ? (
+                <AppButton
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    setActionNotice(null);
+                    setEmailModalOpen(true);
+                  }}
+                  disabled={actionBusy !== null}
+                >
+                  Email period to accountant…
+                </AppButton>
+              ) : null}
             </div>
           </header>
 
           {actionError ? (
             <div className="mb-4 rounded-input-lg border border-danger-border bg-danger-soft px-4 py-3 text-[13px] text-danger">
               {actionError}
+            </div>
+          ) : null}
+
+          {actionNotice ? (
+            <div className="mb-4 rounded-input-lg border border-success-border bg-success-soft px-4 py-3">
+              <AppText as="div" variant="caption" tone="success">
+                {actionNotice}
+              </AppText>
             </div>
           ) : null}
 
@@ -426,8 +532,51 @@ export function PayrollPeriodDetailPage() {
             summaryId={selectedSummaryId}
             accessToken={accessToken}
             periodLabel={payPeriodWindowLabel(period)}
+            canExport={canExport}
+            canEmail={canEmail}
             onClose={() => setSelectedSummaryId(null)}
           />
+
+          <Modal
+            open={emailModalOpen}
+            onClose={() => setEmailModalOpen(false)}
+            title="Email period to accountant"
+            description="Sends this pay period's summaries to the address below."
+            footer={
+              <>
+                <AppButton
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setEmailModalOpen(false)}
+                  disabled={actionBusy === 'email'}
+                >
+                  Cancel
+                </AppButton>
+                <AppButton
+                  size="sm"
+                  onClick={() => void handleEmailPeriod()}
+                  loading={actionBusy === 'email'}
+                  disabled={accountantEmail.trim() === ''}
+                >
+                  Send
+                </AppButton>
+              </>
+            }
+          >
+            <label className="block">
+              <span className="mb-1.5 block text-[12px] font-semibold uppercase tracking-[0.12em] text-text-secondary">
+                Accountant's email
+              </span>
+              <input
+                type="email"
+                className={INPUT_CLASSES}
+                value={accountantEmail}
+                onChange={(event) => setAccountantEmail(event.target.value)}
+                placeholder="e.g. accounts@example.co.uk"
+                autoFocus
+              />
+            </label>
+          </Modal>
 
           {assignTarget ? (
             <AssignStructureModal

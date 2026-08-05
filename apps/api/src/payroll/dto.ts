@@ -1,4 +1,13 @@
-import { IsBoolean, IsIn, IsOptional, IsString, IsUUID, Matches, MaxLength } from 'class-validator';
+import {
+  IsBoolean,
+  IsEmail,
+  IsIn,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Matches,
+  MaxLength,
+} from 'class-validator';
 import type {
   PayPeriodFrequency,
   PayPeriodKind,
@@ -102,4 +111,15 @@ export class DataSourceParamDto {
 export class UpdateDataSourceDto {
   @IsBoolean()
   isCaptured!: boolean;
+}
+
+/**
+ * Consolidated period email — the ONLY payroll email endpoint that accepts a
+ * recipient. The payslip email endpoint deliberately takes no body: the staff
+ * member's own address is resolved server-side.
+ */
+export class EmailPayPeriodDto {
+  @IsEmail({}, { message: 'recipientEmail must be a valid email address' })
+  @MaxLength(320)
+  recipientEmail!: string;
 }

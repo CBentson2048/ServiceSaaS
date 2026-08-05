@@ -69,7 +69,7 @@ const INPUT_SM_CLASSES =
 
 type TemplateId =
   | 'flat_commission'
-  | 'tiered_loh'
+  | 'tiered_commission'
   | 'base_bonus'
   | 'guarantee_or_commission'
   | 'chair_renter';
@@ -87,6 +87,12 @@ interface DraftStage {
   key: number;
   stageType: PayStageType;
   label: string;
+  /**
+   * Include/exclude toggle (revenue split & chair rent). Disabled stages are
+   * omitted from the payload but keep their values so toggling back on
+   * restores them.
+   */
+  enabled: boolean;
   inGreaterOfComparison: boolean;
   requiresDataSource: PayrollDataSource | null;
   // Commission stages
@@ -111,6 +117,21 @@ interface DraftHourRule {
   category: HourCategory;
   countsTowardTarget: boolean;
   countsAsPaid: boolean;
+}
+
+/**
+ * The service revenue target implied by the drafted bands (the engine derives
+ * it from the lowest positive band threshold of the service commission stage),
+ * stated up front so band thresholds read as what they are.
+ */
+interface DerivedTargetSummary {
+  /** Draft key of the service commission stage the target derives from. */
+  sourceStageKey: number | null;
+  basis: ThresholdBasis | null;
+  /** Lowest positive band threshold in the basis unit (a multiple or pounds). */
+  lowestFrom: number | null;
+  /** The target in £ cents on the example week, when computable. */
+  exampleTargetCents: number | null;
 }
 
 /** The signed-off matrix: worked/additional/manual adj → target+paid; paid holiday/training → paid only; the rest → neither. */
@@ -140,8 +161,8 @@ const BASIS_FROM_HEADING: Record<ThresholdBasis, string> = {
   multiple_of_base_pay: 'From (× base pay)',
   absolute: 'From (£)',
   per_client: 'From (£ per client)',
-  percent_of_service_target: 'From (%)',
-  percent_of_service_revenue: 'From (%)',
+  percent_of_service_target: 'From (% of service revenue target)',
+  percent_of_service_revenue: 'From (% of service revenue)',
 };
 
 let draftKeySeq = 1;
@@ -155,6 +176,7 @@ function blankStage(stageType: PayStageType): DraftStage {
     key: nextKey(),
     stageType,
     label: '',
+    enabled: true,
     inGreaterOfComparison: false,
     requiresDataSource: null,
     tierSemantics: 'marginal',
@@ -200,8 +222,8 @@ const TEMPLATES: TemplateDefinition[] = [
     ],
   },
   {
-    id: 'tiered_loh',
-    name: 'Tiered commission (LOH-style)',
+    id: 'tiered_commission',
+    name: 'Tiered commission',
     description:
       'Hourly base plus marginal service commission at 3× / 3.5× of base pay with the all-three accelerator, and retail commission.',
     stages: () => [
@@ -288,6 +310,23 @@ const TEMPLATES: TemplateDefinition[] = [
     ],
   },
 ];
+
+/**
+ * Ensure the toggleable stages (revenue split, chair rent) always exist in the
+ * draft so their Include toggle can be shown — OFF when the template or source
+ * version doesn't carry the stage. Disabled stages never reach the payload, so
+ * templates without them still produce exactly the payload they did before.
+ */
+function withToggleableStages(stages: DraftStage[]): DraftStage[] {
+  const result = [...stages];
+  if (!result.some((stage) => stage.stageType === 'revenue_split')) {
+    result.push({ ...blankStage('revenue_split'), label: 'Revenue split', enabled: false });
+  }
+  if (!result.some((stage) => stage.stageType === 'chair_rent')) {
+    result.push({ ...blankStage('chair_rent'), label: 'Chair rent', enabled: false });
+  }
+  return result;
+}
 
 // -----------------------------------------------------------------------------
 // Version detail → draft (New version prefill)
@@ -421,8 +460,22 @@ function buildRules(args: BuildRulesArgs): { rules?: PayStructureRulesInput; err
   if (!/^\d{4}-\d{2}-\d{2}$/.test(args.effectiveFrom)) {
     return { error: 'Pick an effective-from date.' };
   }
+  // With more than one bonus, each needs its own name — the payslip lists one
+  // line per bonus and the names are what tell them apart.
+  const enabledBonuses = args.stages.filter(
+    (stage) => stage.enabled && stage.stageType === 'bonus',
+  );
+  if (enabledBonuses.length > 1 && enabledBonuses.some((stage) => stage.label.trim() === '')) {
+    return {
+      error:
+        'Give each bonus its own name — with more than one bonus, the names tell them apart on the payslip.',
+    };
+  }
   const stages: PayStructureStageInput[] = [];
   for (const [index, stage] of args.stages.entries()) {
+    // Toggled-off stages are kept in the draft (so their values survive) but
+    // never reach the payload.
+    if (!stage.enabled) continue;
     const where = `Stage ${index + 1} (${stage.label || PAY_STAGE_TYPE_LABELS[stage.stageType]})`;
     const base: PayStructureStageInput = {
       stageType: stage.stageType,
@@ -596,7 +649,10 @@ export function PayStructureWizard({
   const [description, setDescription] = useState('');
   const [effectiveFrom, setEffectiveFrom] = useState(todayLocalIso());
   const [stages, setStages] = useState<DraftStage[]>(() =>
-    mode === 'version' && sourceVersion ? stagesFromVersion(sourceVersion) : [],
+    mode === 'version' && sourceVersion ? withToggleableStages(stagesFromVersion(sourceVersion)) : [],
+  );
+  const [vatBasis, setVatBasis] = useState<PayrollVatBasis>(
+    mode === 'version' && sourceVersion ? sourceVersion.vatBasis : 'exclusive',
   );
   const [hourRules, setHourRules] = useState<DraftHourRule[]>(() =>
     mode === 'version' && sourceVersion
@@ -626,13 +682,69 @@ export function PayStructureWizard({
         hourRules,
         effectiveFrom,
         discountBasis: sourceVersion?.discountBasis,
-        vatBasis: sourceVersion?.vatBasis,
+        // In create mode the server default is 'exclusive', so only send an
+        // explicit choice — the default payload stays byte-identical.
+        vatBasis: mode === 'create' && vatBasis === 'exclusive' ? undefined : vatBasis,
         depositRecognition: sourceVersion?.depositRecognition,
         productCostMode: sourceVersion?.productCostMode,
       }),
-    [stages, hourRules, effectiveFrom, sourceVersion],
+    [stages, hourRules, effectiveFrom, sourceVersion, mode, vatBasis],
   );
   const rulesKey = useMemo(() => (built.rules ? JSON.stringify(built.rules) : null), [built.rules]);
+
+  /**
+   * Mirrors the engine's target derivation — the lowest positive band
+   * threshold of the service commission stage — so the parameters step can
+   * state the target up front, illustrated with the example-week inputs.
+   */
+  const derivedTarget = useMemo<DerivedTargetSummary>(() => {
+    const empty: DerivedTargetSummary = {
+      sourceStageKey: null,
+      basis: null,
+      lowestFrom: null,
+      exampleTargetCents: null,
+    };
+    const serviceStage = stages.find(
+      (stage) =>
+        stage.enabled &&
+        stage.stageType === 'commission' &&
+        (stage.revenueStream === 'service' || stage.revenueStream === 'service_and_retail'),
+    );
+    if (!serviceStage) return empty;
+    const positiveFroms = serviceStage.bands
+      .map((band) => parseNumber(band.from))
+      .filter((value): value is number => value !== null && value > 0);
+    const lowestFrom = positiveFroms.length > 0 ? Math.min(...positiveFroms) : null;
+    let exampleTargetCents: number | null = null;
+    if (lowestFrom !== null) {
+      if (serviceStage.thresholdBasis === 'multiple_of_base_pay') {
+        const baseStage = stages.find(
+          (stage) => stage.enabled && stage.stageType === 'base_pay',
+        );
+        let exampleBasePayCents: number | null = null;
+        if (baseStage?.baseSource === 'fixed_amount') {
+          exampleBasePayCents = poundsToCents(baseStage.amountPounds);
+        } else if (baseStage) {
+          const rateCents = poundsToCents(sampleHourlyRate);
+          const hours = parseNumber(sampleHours);
+          exampleBasePayCents =
+            rateCents !== null && rateCents >= 0 && hours !== null && hours >= 0
+              ? Math.round(rateCents * hours)
+              : null;
+        }
+        exampleTargetCents =
+          exampleBasePayCents !== null ? Math.round(lowestFrom * exampleBasePayCents) : null;
+      } else if (serviceStage.thresholdBasis === 'absolute') {
+        exampleTargetCents = Math.round(lowestFrom * 100);
+      }
+    }
+    return {
+      sourceStageKey: serviceStage.key,
+      basis: serviceStage.thresholdBasis,
+      lowestFrom,
+      exampleTargetCents,
+    };
+  }, [stages, sampleHourlyRate, sampleHours]);
 
   // Debounced preview: on entering Review and whenever sample inputs change.
   useEffect(() => {
@@ -657,7 +769,7 @@ export function PayStructureWizard({
       retailRevenueCents < 0
     ) {
       setPreview(null);
-      setPreviewError('Enter valid sample figures to preview.');
+      setPreviewError('Enter valid example figures to preview.');
       return;
     }
     const rules = built.rules;
@@ -705,13 +817,30 @@ export function PayStructureWizard({
       setTemplate((current) => {
         if (current === id) return current;
         const definition = TEMPLATES.find((entry) => entry.id === id)!;
-        setStages(definition.stages());
+        setStages(withToggleableStages(definition.stages()));
         return id;
       });
       setStepError(null);
     },
     [setStages],
   );
+
+  const addBonus = useCallback(() => {
+    setStages((current) => {
+      const bonus = { ...blankStage('bonus') };
+      // Keep new bonuses ahead of the toggled-off placeholder stages so the
+      // stages someone is actually editing stay grouped together.
+      const insertAt = current.findIndex(
+        (stage) => !stage.enabled && TOGGLEABLE_STAGE_TYPES.includes(stage.stageType),
+      );
+      if (insertAt === -1) return [...current, bonus];
+      return [...current.slice(0, insertAt), bonus, ...current.slice(insertAt)];
+    });
+  }, []);
+
+  const removeStage = useCallback((key: number) => {
+    setStages((current) => current.filter((stage) => stage.key !== key));
+  }, []);
 
   const goNext = useCallback(() => {
     setStepError(null);
@@ -900,21 +1029,50 @@ export function PayStructureWizard({
           ) : null}
 
           <AppCard padding="md" elevation="none" className="border-[1.5px]">
-            <FieldShell
-              label="Effective from"
-              hint={
-                mode === 'version'
-                  ? 'The current version closes on this date; the new rules price work from this date.'
-                  : 'The first date these rules price work. To cover a pay period that has already started, set this on or before that period’s start date — rules are resolved at period start.'
-              }
-            >
-              <input
-                type="date"
-                className={cn(INPUT_CLASSES, 'max-w-xs')}
-                value={effectiveFrom}
-                onChange={(event) => setEffectiveFrom(event.target.value)}
-              />
-            </FieldShell>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <FieldShell
+                label="Effective from"
+                hint={
+                  mode === 'version'
+                    ? 'The current version closes on this date; the new rules price work from this date.'
+                    : 'The first date these rules price work. To cover a pay period that has already started, set this on or before that period’s start date — rules are resolved at period start.'
+                }
+              >
+                <input
+                  type="date"
+                  className={cn(INPUT_CLASSES, 'max-w-xs')}
+                  value={effectiveFrom}
+                  onChange={(event) => setEffectiveFrom(event.target.value)}
+                />
+              </FieldShell>
+              <FieldShell
+                label="Commission is calculated on"
+                hint="One setting for the whole plan — every revenue figure, target and split uses the same prices."
+              >
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {(
+                    [
+                      ['inclusive', 'Prices including VAT'],
+                      ['exclusive', 'Prices excluding VAT'],
+                    ] as [PayrollVatBasis, string][]
+                  ).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setVatBasis(value)}
+                      className={cn(
+                        'rounded-pill border px-3 py-1.5 text-[13px] font-medium transition',
+                        vatBasis === value
+                          ? 'border-primary bg-primary-soft text-text-primary'
+                          : 'border-border-strong text-text-secondary hover:bg-surface-alt',
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </FieldShell>
+            </div>
           </AppCard>
 
           {stages.map((stage, index) => (
@@ -922,9 +1080,15 @@ export function PayStructureWizard({
               key={stage.key}
               stage={stage}
               index={index}
+              derivedTarget={derivedTarget}
               onChange={(patch) => updateStage(stage.key, patch)}
+              onRemove={stage.stageType === 'bonus' ? () => removeStage(stage.key) : undefined}
             />
           ))}
+
+          <AppButton size="sm" variant="ghost" onClick={addBonus}>
+            + Add bonus
+          </AppButton>
         </div>
       ) : null}
 
@@ -1040,10 +1204,14 @@ export function PayStructureWizard({
               uppercase
               className="text-text-subtle"
             >
-              Sample inputs
+              Try it with an example week
+            </AppText>
+            <AppText as="p" variant="caption" tone="muted" className="mt-1">
+              These are what-if figures to see the plan in action — they are not targets and are
+              not saved with the plan.
             </AppText>
             <div className="mt-3 grid gap-3 sm:grid-cols-4">
-              <FieldShell label="Hourly rate (£)">
+              <FieldShell label="Example hourly rate (£)">
                 <input
                   className={INPUT_CLASSES}
                   inputMode="decimal"
@@ -1051,7 +1219,7 @@ export function PayStructureWizard({
                   onChange={(event) => setSampleHourlyRate(event.target.value)}
                 />
               </FieldShell>
-              <FieldShell label="Hours">
+              <FieldShell label="Example hours">
                 <input
                   className={INPUT_CLASSES}
                   inputMode="decimal"
@@ -1059,7 +1227,7 @@ export function PayStructureWizard({
                   onChange={(event) => setSampleHours(event.target.value)}
                 />
               </FieldShell>
-              <FieldShell label="Service revenue (£)">
+              <FieldShell label="Example service revenue (£)">
                 <input
                   className={INPUT_CLASSES}
                   inputMode="decimal"
@@ -1067,7 +1235,7 @@ export function PayStructureWizard({
                   onChange={(event) => setSampleServiceRevenue(event.target.value)}
                 />
               </FieldShell>
-              <FieldShell label="Retail revenue (£)">
+              <FieldShell label="Example retail revenue (£)">
                 <input
                   className={INPUT_CLASSES}
                   inputMode="decimal"
@@ -1149,28 +1317,85 @@ const BAND_COLS = 'minmax(0,1.2fr) minmax(0,1fr) minmax(0,1fr) 32px';
 // Step 2 — per-stage parameter cards
 // -----------------------------------------------------------------------------
 
+/** Stage types with an explicit Include/Exclude toggle in the wizard. */
+const TOGGLEABLE_STAGE_TYPES: PayStageType[] = ['revenue_split', 'chair_rent'];
+
+const STAGE_TOGGLE_LABELS: Partial<Record<PayStageType, string>> = {
+  revenue_split: 'Include revenue split',
+  chair_rent: 'Include chair rent',
+};
+
+const STAGE_TOGGLE_OFF_HINTS: Partial<Record<PayStageType, string>> = {
+  revenue_split: 'Not part of this plan — turn on to pay the stylist a share of their takings.',
+  chair_rent: 'Not part of this plan — turn on to charge rent each period.',
+};
+
 function StageParametersCard({
   stage,
   index,
+  derivedTarget,
   onChange,
+  onRemove,
 }: {
   stage: DraftStage;
   index: number;
+  derivedTarget: DerivedTargetSummary;
   onChange: (patch: Partial<DraftStage>) => void;
+  /** Present only for removable stages (bonuses). */
+  onRemove?: () => void;
 }) {
+  const toggleable = TOGGLEABLE_STAGE_TYPES.includes(stage.stageType);
   return (
-    <AppCard padding="md" elevation="none" className="border-[1.5px]">
+    <AppCard
+      padding="md"
+      elevation="none"
+      className={cn('border-[1.5px]', !stage.enabled && 'bg-surface-alt')}
+    >
       <div className="flex flex-wrap items-center gap-2">
-        <AppText as="div" weight="medium" className="text-[14px]">
+        <AppText
+          as="div"
+          weight="medium"
+          className={cn('text-[14px]', !stage.enabled && 'text-text-muted')}
+        >
           {index + 1}. {stage.label || PAY_STAGE_TYPE_LABELS[stage.stageType]}
         </AppText>
         <StatusBadge label={PAY_STAGE_TYPE_LABELS[stage.stageType]} tone="neutral" />
         {stage.inGreaterOfComparison ? (
           <StatusBadge label="In greater-of comparison" tone="neutral" />
         ) : null}
+        <div className="ml-auto flex items-center gap-3">
+          {toggleable ? (
+            <label className="flex cursor-pointer items-center gap-2">
+              <input
+                type="checkbox"
+                checked={stage.enabled}
+                onChange={(event) => onChange({ enabled: event.target.checked })}
+                className="h-4 w-4 rounded border-border-strong text-primary focus:ring-primary"
+              />
+              <AppText as="span" variant="caption" weight="medium">
+                {STAGE_TOGGLE_LABELS[stage.stageType]}
+              </AppText>
+            </label>
+          ) : null}
+          {onRemove ? (
+            <button
+              type="button"
+              onClick={onRemove}
+              className="text-[12px] font-medium text-text-subtle transition hover:text-danger"
+            >
+              Remove
+            </button>
+          ) : null}
+        </div>
       </div>
 
-      {stage.requiresDataSource === 'retail_sales' ? (
+      {!stage.enabled ? (
+        <AppText as="p" variant="caption" tone="muted" className="mt-2">
+          {STAGE_TOGGLE_OFF_HINTS[stage.stageType] ?? 'Not part of this plan.'}
+        </AppText>
+      ) : null}
+
+      {stage.enabled && stage.requiresDataSource === 'retail_sales' ? (
         <div className="mt-3 rounded-input-lg border border-warning-border bg-warning-soft px-3 py-2.5">
           <AppText as="div" variant="caption" tone="warning">
             {RETAIL_NOTE}
@@ -1211,10 +1436,10 @@ function StageParametersCard({
       ) : null}
 
       {stage.stageType === 'commission' ? (
-        <CommissionStageFields stage={stage} onChange={onChange} />
+        <CommissionStageFields stage={stage} derivedTarget={derivedTarget} onChange={onChange} />
       ) : null}
 
-      {stage.stageType === 'revenue_split' ? (
+      {stage.enabled && stage.stageType === 'revenue_split' ? (
         <div className="mt-3 max-w-xs">
           <FieldShell label="Split to the stylist (%)">
             <input
@@ -1227,7 +1452,7 @@ function StageParametersCard({
         </div>
       ) : null}
 
-      {stage.stageType === 'chair_rent' ? (
+      {stage.enabled && stage.stageType === 'chair_rent' ? (
         <div className="mt-3 max-w-xs">
           <FieldShell label="Rent (£)" hint="Charged once per calculation period.">
             <input
@@ -1241,7 +1466,19 @@ function StageParametersCard({
       ) : null}
 
       {stage.stageType === 'bonus' ? (
-        <div className="mt-3 max-w-xs">
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <FieldShell
+            label="Bonus name"
+            hint="Shown as its own line on the payslip — e.g. Christmas bonus."
+          >
+            <input
+              className={INPUT_CLASSES}
+              value={stage.label}
+              onChange={(event) => onChange({ label: event.target.value })}
+              placeholder="e.g. Christmas bonus"
+              maxLength={120}
+            />
+          </FieldShell>
           <FieldShell label="Bonus (£)" hint="A fixed amount added each calculation period.">
             <input
               className={INPUT_CLASSES}
@@ -1292,9 +1529,11 @@ function StageParametersCard({
 
 function CommissionStageFields({
   stage,
+  derivedTarget,
   onChange,
 }: {
   stage: DraftStage;
+  derivedTarget: DerivedTargetSummary;
   onChange: (patch: Partial<DraftStage>) => void;
 }) {
   const fromHeading = BASIS_FROM_HEADING[stage.thresholdBasis];
@@ -1305,8 +1544,45 @@ function CommissionStageFields({
   };
   const showAcceleratorColumn = stage.accelerator !== null;
 
+  // The target, stated up front — Luke's review showed the bands are read as
+  // targets, so say what the target actually is before any band editing.
+  let targetLine: string | null = null;
+  if (stage.key === derivedTarget.sourceStageKey) {
+    if (derivedTarget.lowestFrom === null) {
+      targetLine = 'No service revenue target — commission starts from the first pound.';
+    } else if (derivedTarget.basis === 'multiple_of_base_pay') {
+      targetLine = `Service revenue target: ${derivedTarget.lowestFrom}× base pay${
+        derivedTarget.exampleTargetCents !== null
+          ? ` = ${formatMoney(derivedTarget.exampleTargetCents, CURRENCY)} on the example week`
+          : ''
+      }.`;
+    } else if (derivedTarget.basis === 'absolute') {
+      targetLine = `Service revenue target: ${
+        derivedTarget.exampleTargetCents !== null
+          ? formatMoney(derivedTarget.exampleTargetCents, CURRENCY)
+          : `£${derivedTarget.lowestFrom}`
+      } per period.`;
+    }
+  } else if (
+    stage.revenueStream === 'retail' &&
+    stage.thresholdBasis === 'percent_of_service_target'
+  ) {
+    targetLine = `Retail bands are a % of the service revenue target${
+      derivedTarget.exampleTargetCents !== null
+        ? ` (${formatMoney(derivedTarget.exampleTargetCents, CURRENCY)} on the example week)`
+        : ''
+    }.`;
+  }
+
   return (
     <div className="mt-3 space-y-4">
+      {targetLine ? (
+        <div className="rounded-input-lg border border-border bg-surface-alt px-3 py-2.5">
+          <AppText as="div" variant="caption" weight="medium">
+            {targetLine}
+          </AppText>
+        </div>
+      ) : null}
       <AppText as="p" variant="caption">
         Commission is paid on revenue above the thresholds below.
       </AppText>

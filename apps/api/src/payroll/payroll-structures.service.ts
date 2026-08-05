@@ -322,6 +322,9 @@ export class PayrollStructuresService {
         hourlyRateCents: sample.hourlyRateCents ?? 1221,
         contractedHours: workedHours,
         averageBillBenchmarkCents: sample.averageBillBenchmarkCents ?? null,
+        // Preview is an example week with explicit hours — flat keeps the
+        // what-if figures literal; pro-rating belongs to real pay runs.
+        serviceRevenueTargetMode: 'flat',
       },
       version,
       hours: ALL_HOUR_CATEGORIES.map((category) => ({
