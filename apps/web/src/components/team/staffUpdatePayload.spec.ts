@@ -21,7 +21,6 @@ const REDACTED_PLACEHOLDERS = {
   contractedHours: '0',
   averageBillBenchmark: '0',
   holidayEntitlementDays: '0',
-  commissionFlatRatePercent: '0',
   colourAllowanceAmount: '0',
   serviceRevenueTargetAmount: '',
   employmentType: 'employed' as const,
@@ -39,7 +38,6 @@ function form(overrides: Partial<EditForm> = {}): EditForm {
     isBookable: true,
     leaveNotes: 'Back Tuesday',
     employmentStatus: 'active',
-    commissionStructure: 'tiered',
     serviceRevenueTargetMode: 'flat',
     photoUrl: '',
     startDate: '2026-01-01',
@@ -59,8 +57,6 @@ const PAY_FIELDS = [
   'averageBillBenchmark',
   'employmentType',
   'holidayEntitlementDays',
-  'commissionStructure',
-  'commissionFlatRatePercent',
   'serviceRevenueTargetAmount',
   'serviceRevenueTargetMode',
   'colourAllowanceAmount',
@@ -119,10 +115,9 @@ describe('buildStaffUpdatePayload — with staff.pay.manage', () => {
       contractedHours: '40',
       averageBillBenchmark: '65',
       holidayEntitlementDays: '28',
-      commissionFlatRatePercent: '10',
       colourAllowanceAmount: '50',
       serviceRevenueTargetAmount: '1500',
-      employmentType: 'self_employed',
+      employmentType: 'hybrid',
     }),
     { canManagePay: true, canManageSecurity: true },
   );
@@ -132,11 +127,9 @@ describe('buildStaffUpdatePayload — with staff.pay.manage', () => {
     expect(payload.contractedHours).toBe(40);
     expect(payload.averageBillBenchmark).toBe(65);
     expect(payload.holidayEntitlementDays).toBe(28);
-    expect(payload.commissionFlatRatePercent).toBe(10);
     expect(payload.colourAllowanceAmount).toBe(50);
     expect(payload.serviceRevenueTargetAmount).toBe(1500);
-    expect(payload.employmentType).toBe('self_employed');
-    expect(payload.commissionStructure).toBe('tiered');
+    expect(payload.employmentType).toBe('hybrid');
     expect(payload.serviceRevenueTargetMode).toBe('flat');
   });
 
@@ -159,6 +152,47 @@ describe('buildStaffUpdatePayload — with staff.pay.manage', () => {
 
   it('sends securityLevelId with security.manage', () => {
     expect(payload.securityLevelId).toBeNull(); // blank in the fixture => explicit clear
+  });
+});
+
+describe('buildStaffUpdatePayload — employment-type-driven omissions', () => {
+  it('omits holidayEntitlementDays for the self-employed, whose field is hidden', () => {
+    const payload = buildStaffUpdatePayload(
+      form({ employmentType: 'self_employed', holidayEntitlementDays: '28' }),
+      { canManagePay: true, canManageSecurity: false },
+    );
+    expect(payload.holidayEntitlementDays).toBeUndefined();
+    // The type itself still saves — only the hidden field is withheld.
+    expect(payload.employmentType).toBe('self_employed');
+  });
+
+  it('sends holidayEntitlementDays for hybrid — the employed part accrues holiday', () => {
+    const payload = buildStaffUpdatePayload(
+      form({ employmentType: 'hybrid', holidayEntitlementDays: '14' }),
+      { canManagePay: true, canManageSecurity: false },
+    );
+    expect(payload.holidayEntitlementDays).toBe(14);
+  });
+});
+
+describe('buildStaffUpdatePayload — plan-driven target omission', () => {
+  it('omits both Service Revenue Target fields when the plan provably reads no target', () => {
+    const payload = buildStaffUpdatePayload(form({ serviceRevenueTargetAmount: '1500' }), {
+      canManagePay: true,
+      canManageSecurity: false,
+      serviceTargetHidden: true,
+    });
+    expect(payload.serviceRevenueTargetAmount).toBeUndefined();
+    expect(payload.serviceRevenueTargetMode).toBeUndefined();
+  });
+
+  it('fails open: target fields are sent when plan usage is unknown (option omitted)', () => {
+    const payload = buildStaffUpdatePayload(form({ serviceRevenueTargetAmount: '1500' }), {
+      canManagePay: true,
+      canManageSecurity: false,
+    });
+    expect(payload.serviceRevenueTargetAmount).toBe(1500);
+    expect(payload.serviceRevenueTargetMode).toBe('flat');
   });
 });
 
