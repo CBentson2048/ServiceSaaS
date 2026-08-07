@@ -17,5 +17,6 @@ import { LabAppointmentsService } from './lab-appointments.service';
   imports: [AuthModule, AuditModule, LabSessionModule, RebookingModule, OwnerTaxSettingsModule, CommunicationsModule, StripeModule],
   controllers: [LabAppointmentsController, LabSessionAppointmentsController, MobileAppointmentsController],
   providers: [LabAppointmentsService],
+  exports: [LabAppointmentsService],
 })
 export class LabAppointmentsModule {}

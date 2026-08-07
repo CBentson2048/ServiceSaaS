@@ -2,7 +2,9 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router, usePathname } from 'expo-router';
+import { userHasPermission } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
+import { useAuth } from '../auth/AuthProvider';
 
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 
@@ -24,13 +26,26 @@ const TABS: StylistTab[] = [
   { key: 'profile', label: 'Profile', href: '/profile', icon: 'person-outline', activeIcon: 'person' },
 ];
 
+// Shown only to stylists holding the zac.access permission — granting it is an
+// explicit per-security-level decision, so most stylists will not see this tab
+// during the dark launch.
+const ZAC_TAB: StylistTab = {
+  key: 'zac',
+  label: 'ZAC',
+  href: '/zac',
+  icon: 'sparkles-outline',
+  activeIcon: 'sparkles',
+};
+
 export function StylistTabBar() {
   const pathname = usePathname();
+  const { user } = useAuth();
+  const tabs = userHasPermission(user, 'zac.access') ? [...TABS, ZAC_TAB] : TABS;
 
   return (
     <SafeAreaView edges={['bottom']} style={s.safe}>
       <View style={s.bar}>
-        {TABS.map((tab) => {
+        {tabs.map((tab) => {
           const active = pathname === tab.href;
           return (
             <Pressable

@@ -18,10 +18,11 @@ export type ZacToolName =
   | 'report.utilisation_summary'
   | 'report.stylist_performance'
   | 'kpi.personal_coaching'
+  | 'schedule.my_appointments'
   | 'qlab.colour_analytics'
   | 'inventory.stock_status';
 
-export type ZacToolDomain = 'context' | 'report' | 'kpi' | 'qlab' | 'inventory';
+export type ZacToolDomain = 'context' | 'report' | 'kpi' | 'schedule' | 'qlab' | 'inventory';
 
 export type ZacToolResultStatus =
   | 'ok'

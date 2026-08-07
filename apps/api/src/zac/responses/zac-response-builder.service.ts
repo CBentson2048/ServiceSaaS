@@ -202,6 +202,121 @@ export class ZacResponseBuilderService {
     };
   }
 
+  /**
+   * A stylist asked for owner/manager/business-wide data (revenue, payroll,
+   * team, other stylists, client lists). Acknowledge the intent, state the
+   * access boundary plainly, redirect to what IS in scope. Nothing is
+   * dispatched for this answer and no restricted data of any kind exists in it;
+   * the evidence references the permission boundary, never live data.
+   */
+  buildStylistRestrictedResponse(input: {
+    context: ZacActingContext;
+    profile: ZacRoleProfile;
+    visibleTools: ZacReadOnlyTool[];
+    completion: ZacModelCompletion;
+    traceId: string;
+  }): ZacResponse {
+    const { context, profile, visibleTools, completion, traceId } = input;
+
+    return {
+      answer: [
+        "I understand what you're asking, but that information is not available at your access level.",
+        'Business reports, pay information, team data and client lists belong to owner and manager roles. I can help with your own work context and coaching where permitted.',
+        'Try asking "What should I focus on today?" or "What can you help me with?" to see what is available for your role.',
+      ].join('\n\n'),
+      role_context: context.roleContext,
+      response_type: 'Refusal / Insufficient Data',
+      evidence: [
+        {
+          source_type: 'zac.access_boundary',
+          source_ref: 'stylist-role-scope',
+          as_of: null,
+          entities_used: [],
+        },
+      ],
+      confidence: 'high',
+      limitations: [
+        'This area is outside the stylist access level — no restricted data was read or shown.',
+        `Your ZAC scope: ${profile.scopeDescription}`,
+      ],
+      suggested_next_step:
+        'Ask "What can you help me with?" to see what ZAC offers for your role.',
+      measurement_hook: null,
+      attribution_seed: null,
+      memory_updates: [],
+      tool_calls: [],
+      cost_metadata: this.costMetadata(completion),
+      technical_details: {
+        ...this.technicalDetails(visibleTools, completion),
+        detected_intent: 'stylist.restricted',
+      },
+      trace_id: traceId,
+    };
+  }
+
+  /**
+   * A stylist asked about their OWN work (schedule, focus, improvement,
+   * performance) before the stylist-safe tools are connected. Recognised as a
+   * personal intent — not a generic fallback — and answered honestly.
+   */
+  buildStylistPersonalUnavailableResponse(input: {
+    context: ZacActingContext;
+    profile: ZacRoleProfile;
+    visibleTools: ZacReadOnlyTool[];
+    completion: ZacModelCompletion;
+    traceId: string;
+  }): ZacResponse {
+    const { context, profile, visibleTools, completion, traceId } = input;
+
+    return {
+      answer: [
+        "I understand you're asking about your own stylist work context.",
+        "That read-only stylist data is not connected to ZAC yet, so I can't answer from live QLOOQO data right now.",
+        "Once the stylist-safe tools are connected, I'll be able to help with your own schedule, personal coaching and improvement opportunities where permitted.",
+      ].join('\n\n'),
+      role_context: context.roleContext,
+      response_type: 'Refusal / Insufficient Data',
+      evidence: [
+        {
+          source_type: 'zac.intent',
+          source_ref: 'stylist-personal-intent:not-connected',
+          as_of: null,
+          entities_used: [],
+        },
+      ],
+      confidence: 'high',
+      limitations: [
+        'Your own schedule, coaching and performance data is not connected to ZAC yet.',
+        'Nothing was read from your salon records for this answer.',
+        `Your ZAC scope: ${profile.scopeDescription}`,
+      ],
+      suggested_next_step:
+        'Ask "What can you help me with?" — or check back once stylist tools come online.',
+      measurement_hook: null,
+      attribution_seed: null,
+      memory_updates: [],
+      tool_calls: [],
+      cost_metadata: this.costMetadata(completion),
+      technical_details: {
+        ...this.technicalDetails(visibleTools, completion),
+        detected_intent: 'stylist.personal',
+      },
+      trace_id: traceId,
+    };
+  }
+
+  private costMetadata(completion: ZacModelCompletion): ZacResponse['cost_metadata'] {
+    return {
+      provider: completion.provider,
+      model: completion.model,
+      input_tokens: completion.inputTokens,
+      output_tokens: completion.outputTokens,
+      reasoning_tokens: completion.reasoningTokens,
+      estimated_cost_usd: completion.estimatedCostUsd,
+      cache_hit: false,
+    };
+  }
+
   private technicalDetails(
     visibleTools: ZacReadOnlyTool[],
     completion: ZacModelCompletion,

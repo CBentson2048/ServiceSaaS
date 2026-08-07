@@ -17,7 +17,11 @@ import { ZacService } from './zac.service';
  */
 @Controller('zac')
 @UseGuards(ZacFeatureGuard, SupabaseAuthGuard, RolesGuard, PermissionsGuard)
-@RequireRoles('owner', 'manager')
+// Stylists are admitted to the SURFACE only; the registry gives them a
+// stylist-safe tool catalogue and the router adds self-scope/restricted
+// handling. zac.access is still required — stylists do NOT hold it by default
+// (granting it is a product rollout decision, not a code default).
+@RequireRoles('owner', 'manager', 'stylist')
 @RequirePermissions('zac.access')
 export class ZacController {
   constructor(private readonly zac: ZacService) {}
