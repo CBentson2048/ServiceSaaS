@@ -87,12 +87,6 @@ interface DraftStage {
   key: number;
   stageType: PayStageType;
   label: string;
-  /**
-   * Include/exclude toggle (revenue split & chair rent). Disabled stages are
-   * omitted from the payload but keep their values so toggling back on
-   * restores them.
-   */
-  enabled: boolean;
   inGreaterOfComparison: boolean;
   requiresDataSource: PayrollDataSource | null;
   // Commission stages
@@ -176,7 +170,6 @@ function blankStage(stageType: PayStageType): DraftStage {
     key: nextKey(),
     stageType,
     label: '',
-    enabled: true,
     inGreaterOfComparison: false,
     requiresDataSource: null,
     tierSemantics: 'marginal',
@@ -312,21 +305,17 @@ const TEMPLATES: TemplateDefinition[] = [
 ];
 
 /**
- * Ensure the toggleable stages (revenue split, chair rent) always exist in the
- * draft so their Include toggle can be shown — OFF when the template or source
- * version doesn't carry the stage. Disabled stages never reach the payload, so
- * templates without them still produce exactly the payload they did before.
+ * Stages any plan can mix in via "+ Add" (hybrid arrangements — e.g. a
+ * commission stylist who also pays chair rent). At most one of each per plan,
+ * so the button hides once the draft carries the stage.
  */
-function withToggleableStages(stages: DraftStage[]): DraftStage[] {
-  const result = [...stages];
-  if (!result.some((stage) => stage.stageType === 'revenue_split')) {
-    result.push({ ...blankStage('revenue_split'), label: 'Revenue split', enabled: false });
-  }
-  if (!result.some((stage) => stage.stageType === 'chair_rent')) {
-    result.push({ ...blankStage('chair_rent'), label: 'Chair rent', enabled: false });
-  }
-  return result;
-}
+const OPTIONAL_STAGE_TYPES = ['revenue_split', 'chair_rent'] as const;
+type OptionalStageType = (typeof OPTIONAL_STAGE_TYPES)[number];
+
+const OPTIONAL_STAGE_LABELS: Record<OptionalStageType, string> = {
+  revenue_split: 'Revenue split',
+  chair_rent: 'Chair rent',
+};
 
 // -----------------------------------------------------------------------------
 // Version detail → draft (New version prefill)
@@ -462,10 +451,8 @@ function buildRules(args: BuildRulesArgs): { rules?: PayStructureRulesInput; err
   }
   // With more than one bonus, each needs its own name — the payslip lists one
   // line per bonus and the names are what tell them apart.
-  const enabledBonuses = args.stages.filter(
-    (stage) => stage.enabled && stage.stageType === 'bonus',
-  );
-  if (enabledBonuses.length > 1 && enabledBonuses.some((stage) => stage.label.trim() === '')) {
+  const bonuses = args.stages.filter((stage) => stage.stageType === 'bonus');
+  if (bonuses.length > 1 && bonuses.some((stage) => stage.label.trim() === '')) {
     return {
       error:
         'Give each bonus its own name — with more than one bonus, the names tell them apart on the payslip.',
@@ -473,9 +460,6 @@ function buildRules(args: BuildRulesArgs): { rules?: PayStructureRulesInput; err
   }
   const stages: PayStructureStageInput[] = [];
   for (const [index, stage] of args.stages.entries()) {
-    // Toggled-off stages are kept in the draft (so their values survive) but
-    // never reach the payload.
-    if (!stage.enabled) continue;
     const where = `Stage ${index + 1} (${stage.label || PAY_STAGE_TYPE_LABELS[stage.stageType]})`;
     const base: PayStructureStageInput = {
       stageType: stage.stageType,
@@ -649,7 +633,7 @@ export function PayStructureWizard({
   const [description, setDescription] = useState('');
   const [effectiveFrom, setEffectiveFrom] = useState(todayLocalIso());
   const [stages, setStages] = useState<DraftStage[]>(() =>
-    mode === 'version' && sourceVersion ? withToggleableStages(stagesFromVersion(sourceVersion)) : [],
+    mode === 'version' && sourceVersion ? stagesFromVersion(sourceVersion) : [],
   );
   const [vatBasis, setVatBasis] = useState<PayrollVatBasis>(
     mode === 'version' && sourceVersion ? sourceVersion.vatBasis : 'exclusive',
@@ -706,7 +690,6 @@ export function PayStructureWizard({
     };
     const serviceStage = stages.find(
       (stage) =>
-        stage.enabled &&
         stage.stageType === 'commission' &&
         (stage.revenueStream === 'service' || stage.revenueStream === 'service_and_retail'),
     );
@@ -718,9 +701,7 @@ export function PayStructureWizard({
     let exampleTargetCents: number | null = null;
     if (lowestFrom !== null) {
       if (serviceStage.thresholdBasis === 'multiple_of_base_pay') {
-        const baseStage = stages.find(
-          (stage) => stage.enabled && stage.stageType === 'base_pay',
-        );
+        const baseStage = stages.find((stage) => stage.stageType === 'base_pay');
         let exampleBasePayCents: number | null = null;
         if (baseStage?.baseSource === 'fixed_amount') {
           exampleBasePayCents = poundsToCents(baseStage.amountPounds);
@@ -817,7 +798,7 @@ export function PayStructureWizard({
       setTemplate((current) => {
         if (current === id) return current;
         const definition = TEMPLATES.find((entry) => entry.id === id)!;
-        setStages(withToggleableStages(definition.stages()));
+        setStages(definition.stages());
         return id;
       });
       setStepError(null);
@@ -828,13 +809,25 @@ export function PayStructureWizard({
   const addBonus = useCallback(() => {
     setStages((current) => {
       const bonus = { ...blankStage('bonus') };
-      // Keep new bonuses ahead of the toggled-off placeholder stages so the
-      // stages someone is actually editing stay grouped together.
-      const insertAt = current.findIndex(
-        (stage) => !stage.enabled && TOGGLEABLE_STAGE_TYPES.includes(stage.stageType),
-      );
+      // Keep new bonuses ahead of chair rent so the deduction stays last.
+      const insertAt = current.findIndex((stage) => stage.stageType === 'chair_rent');
       if (insertAt === -1) return [...current, bonus];
       return [...current.slice(0, insertAt), bonus, ...current.slice(insertAt)];
+    });
+  }, []);
+
+  const addOptionalStage = useCallback((stageType: OptionalStageType) => {
+    setStages((current) => {
+      if (current.some((stage) => stage.stageType === stageType)) return current;
+      const added = { ...blankStage(stageType), label: OPTIONAL_STAGE_LABELS[stageType] };
+      // A revenue split earns before chair rent deducts, so it slots in ahead.
+      if (stageType === 'revenue_split') {
+        const insertAt = current.findIndex((stage) => stage.stageType === 'chair_rent');
+        if (insertAt !== -1) {
+          return [...current.slice(0, insertAt), added, ...current.slice(insertAt)];
+        }
+      }
+      return [...current, added];
     });
   }, []);
 
@@ -1082,13 +1075,32 @@ export function PayStructureWizard({
               index={index}
               derivedTarget={derivedTarget}
               onChange={(patch) => updateStage(stage.key, patch)}
-              onRemove={stage.stageType === 'bonus' ? () => removeStage(stage.key) : undefined}
+              onRemove={
+                stage.stageType === 'bonus' ||
+                OPTIONAL_STAGE_TYPES.includes(stage.stageType as OptionalStageType)
+                  ? () => removeStage(stage.key)
+                  : undefined
+              }
             />
           ))}
 
-          <AppButton size="sm" variant="ghost" onClick={addBonus}>
-            + Add bonus
-          </AppButton>
+          <div className="flex flex-wrap gap-2">
+            <AppButton size="sm" variant="ghost" onClick={addBonus}>
+              + Add bonus
+            </AppButton>
+            {OPTIONAL_STAGE_TYPES.filter(
+              (stageType) => !stages.some((stage) => stage.stageType === stageType),
+            ).map((stageType) => (
+              <AppButton
+                key={stageType}
+                size="sm"
+                variant="ghost"
+                onClick={() => addOptionalStage(stageType)}
+              >
+                + Add {OPTIONAL_STAGE_LABELS[stageType].toLowerCase()}
+              </AppButton>
+            ))}
+          </div>
         </div>
       ) : null}
 
@@ -1317,19 +1329,6 @@ const BAND_COLS = 'minmax(0,1.2fr) minmax(0,1fr) minmax(0,1fr) 32px';
 // Step 2 — per-stage parameter cards
 // -----------------------------------------------------------------------------
 
-/** Stage types with an explicit Include/Exclude toggle in the wizard. */
-const TOGGLEABLE_STAGE_TYPES: PayStageType[] = ['revenue_split', 'chair_rent'];
-
-const STAGE_TOGGLE_LABELS: Partial<Record<PayStageType, string>> = {
-  revenue_split: 'Include revenue split',
-  chair_rent: 'Include chair rent',
-};
-
-const STAGE_TOGGLE_OFF_HINTS: Partial<Record<PayStageType, string>> = {
-  revenue_split: 'Not part of this plan — turn on to pay the stylist a share of their takings.',
-  chair_rent: 'Not part of this plan — turn on to charge rent each period.',
-};
-
 function StageParametersCard({
   stage,
   index,
@@ -1341,61 +1340,31 @@ function StageParametersCard({
   index: number;
   derivedTarget: DerivedTargetSummary;
   onChange: (patch: Partial<DraftStage>) => void;
-  /** Present only for removable stages (bonuses). */
+  /** Present only for removable stages (bonuses, revenue split, chair rent). */
   onRemove?: () => void;
 }) {
-  const toggleable = TOGGLEABLE_STAGE_TYPES.includes(stage.stageType);
   return (
-    <AppCard
-      padding="md"
-      elevation="none"
-      className={cn('border-[1.5px]', !stage.enabled && 'bg-surface-alt')}
-    >
+    <AppCard padding="md" elevation="none" className="border-[1.5px]">
       <div className="flex flex-wrap items-center gap-2">
-        <AppText
-          as="div"
-          weight="medium"
-          className={cn('text-[14px]', !stage.enabled && 'text-text-muted')}
-        >
+        <AppText as="div" weight="medium" className="text-[14px]">
           {index + 1}. {stage.label || PAY_STAGE_TYPE_LABELS[stage.stageType]}
         </AppText>
         <StatusBadge label={PAY_STAGE_TYPE_LABELS[stage.stageType]} tone="neutral" />
         {stage.inGreaterOfComparison ? (
           <StatusBadge label="In greater-of comparison" tone="neutral" />
         ) : null}
-        <div className="ml-auto flex items-center gap-3">
-          {toggleable ? (
-            <label className="flex cursor-pointer items-center gap-2">
-              <input
-                type="checkbox"
-                checked={stage.enabled}
-                onChange={(event) => onChange({ enabled: event.target.checked })}
-                className="h-4 w-4 rounded border-border-strong text-primary focus:ring-primary"
-              />
-              <AppText as="span" variant="caption" weight="medium">
-                {STAGE_TOGGLE_LABELS[stage.stageType]}
-              </AppText>
-            </label>
-          ) : null}
-          {onRemove ? (
-            <button
-              type="button"
-              onClick={onRemove}
-              className="text-[12px] font-medium text-text-subtle transition hover:text-danger"
-            >
-              Remove
-            </button>
-          ) : null}
-        </div>
+        {onRemove ? (
+          <button
+            type="button"
+            onClick={onRemove}
+            className="ml-auto text-[12px] font-medium text-text-subtle transition hover:text-danger"
+          >
+            Remove
+          </button>
+        ) : null}
       </div>
 
-      {!stage.enabled ? (
-        <AppText as="p" variant="caption" tone="muted" className="mt-2">
-          {STAGE_TOGGLE_OFF_HINTS[stage.stageType] ?? 'Not part of this plan.'}
-        </AppText>
-      ) : null}
-
-      {stage.enabled && stage.requiresDataSource === 'retail_sales' ? (
+      {stage.requiresDataSource === 'retail_sales' ? (
         <div className="mt-3 rounded-input-lg border border-warning-border bg-warning-soft px-3 py-2.5">
           <AppText as="div" variant="caption" tone="warning">
             {RETAIL_NOTE}
@@ -1439,7 +1408,7 @@ function StageParametersCard({
         <CommissionStageFields stage={stage} derivedTarget={derivedTarget} onChange={onChange} />
       ) : null}
 
-      {stage.enabled && stage.stageType === 'revenue_split' ? (
+      {stage.stageType === 'revenue_split' ? (
         <div className="mt-3 max-w-xs">
           <FieldShell label="Split to the stylist (%)">
             <input
@@ -1452,7 +1421,7 @@ function StageParametersCard({
         </div>
       ) : null}
 
-      {stage.enabled && stage.stageType === 'chair_rent' ? (
+      {stage.stageType === 'chair_rent' ? (
         <div className="mt-3 max-w-xs">
           <FieldShell label="Rent (£)" hint="Charged once per calculation period.">
             <input
