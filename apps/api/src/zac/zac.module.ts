@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { DashboardModule } from '../dashboard/dashboard.module';
+import { KpiModule } from '../kpi/kpi.module';
+import { LabAppointmentsModule } from '../lab-appointments/lab-appointments.module';
 import { ZacContextService } from './context/zac-context.service';
 import { ZacCostTelemetryService } from './measurement/zac-cost-telemetry.service';
 import { StubZacModelProvider } from './models/providers/stub-zac-provider';
@@ -20,7 +22,7 @@ import { ZacService } from './zac.service';
  * business data.
  */
 @Module({
-  imports: [AuthModule, DashboardModule],
+  imports: [AuthModule, DashboardModule, KpiModule, LabAppointmentsModule],
   controllers: [ZacController],
   providers: [
     ZacFeatureGuard,

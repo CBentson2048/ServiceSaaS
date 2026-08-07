@@ -2,6 +2,8 @@ import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import type { AuthUser, DashboardKpisResponse } from '@sheer/domain';
 import type { DashboardService } from '../dashboard/dashboard.service';
+import type { KpiService } from '../kpi/kpi.service';
+import type { LabAppointmentsService } from '../lab-appointments/lab-appointments.service';
 import { ZacContextService } from './context/zac-context.service';
 import type { ZacCostTelemetryService } from './measurement/zac-cost-telemetry.service';
 import { StubZacModelProvider } from './models/providers/stub-zac-provider';
@@ -57,9 +59,67 @@ function makeActor(overrides: Partial<AuthUser> = {}): AuthUser {
   } as AuthUser;
 }
 
+const MY_KPI_FIXTURE = {
+  periodStart: '2026-07-29T00:00:00.000Z',
+  periodEnd: '2026-08-05T00:00:00.000Z',
+  period: 'week',
+  scope: 'stylist',
+  selectedLocationId: 'loc-1',
+  stylist: {
+    staffProfileId: 'staff-1',
+    stylistName: 'Maya Chen',
+    currencyCode: 'GBP',
+    hoursWorked: 32,
+    serviceTargetCents: 96000,
+    actualServiceRevenueCents: 72000,
+    serviceTargetProgressPercent: 75,
+    retailTargetProgressPercent: 40,
+    rebooking: { rebookingRatePercent: 35 },
+    rebookingKpiMet: false,
+    retailKpiMet: false,
+    averageBillKpiMet: true,
+  },
+} as unknown as Awaited<ReturnType<KpiService['myKpi']>>;
+
+const MY_SCHEDULE_FIXTURE = {
+  bookings: [
+    {
+      id: 'b1',
+      status: 'accepted',
+      startsAt: '2026-08-05T09:00:00.000Z',
+      clientDisplayName: 'Sarah Whitfield',
+      serviceNames: ['Cut & finish'],
+    },
+  ],
+  scope: 'stylist',
+  rangeStart: '2026-08-05T00:00:00.000Z',
+  rangeEnd: '2026-08-06T00:00:00.000Z',
+} as unknown as Awaited<ReturnType<LabAppointmentsService['today']>>;
+
+const MY_SCHEDULE_LIST_FIXTURE = {
+  bookings: [
+    ...MY_SCHEDULE_FIXTURE.bookings,
+    {
+      id: 'b3',
+      status: 'pending',
+      startsAt: '2026-08-06T10:00:00.000Z',
+      clientDisplayName: 'Priya Patel',
+      serviceNames: ['Balayage'],
+    },
+  ],
+  scope: 'stylist',
+  rangeStart: '2026-08-01T00:00:00.000Z',
+  rangeEnd: '2026-08-20T00:00:00.000Z',
+} as unknown as Awaited<ReturnType<LabAppointmentsService['list']>>;
+
 function makeService(
   env: Record<string, string | undefined> = { ZAC_ENABLED: 'true' },
   dashboard: Partial<DashboardService> = { kpis: jest.fn().mockResolvedValue(KPI_FIXTURE) },
+  kpi: Partial<KpiService> = { myKpi: jest.fn().mockResolvedValue(MY_KPI_FIXTURE) },
+  labAppointments: Partial<LabAppointmentsService> = {
+    today: jest.fn().mockResolvedValue(MY_SCHEDULE_FIXTURE),
+    list: jest.fn().mockResolvedValue(MY_SCHEDULE_LIST_FIXTURE),
+  },
 ): {
   service: ZacService;
   telemetry: { recordCostEvent: jest.Mock; recordSpineEvent: jest.Mock };
@@ -71,7 +131,11 @@ function makeService(
     new ZacRolloutService(config),
     new ZacContextService(),
     new ZacRoleProfileService(),
-    new ZacToolRegistryService(dashboard as DashboardService),
+    new ZacToolRegistryService(
+      dashboard as DashboardService,
+      kpi as KpiService,
+      labAppointments as LabAppointmentsService,
+    ),
     new ZacResponseBuilderService(),
     telemetry as unknown as ZacCostTelemetryService,
     new StubZacModelProvider(),
@@ -364,6 +428,215 @@ describe('ZacService', () => {
 
       const business = await service.ask(makeActor(), { question: 'Which business am I looking at?' });
       expect(business.tool_calls[0]?.tool).toBe('context.business_summary');
+    });
+  });
+
+  describe('stylist-safe access', () => {
+    function makeStylist(overrides: Partial<AuthUser> = {}): AuthUser {
+      return makeActor({
+        roles: ['stylist'],
+        primaryRole: 'stylist',
+        allowedLocationIds: ['loc-1'],
+        locations: [{ id: 'loc-1', name: 'Main' }],
+        staffProfileId: 'staff-1',
+        profile: { id: 'profile-2', email: 'stylist@example.com', fullName: 'Maya Chen', firstName: 'Maya' },
+        // zac.access + the default stylist grant that unlocks their own diary.
+        permissions: ['zac.access', 'bookings.manage'],
+        ...overrides,
+      });
+    }
+
+    const RESTRICTED_QUESTIONS = [
+      'Show business revenue.',
+      'Can you show business revenue?',
+      'How is the whole business doing?',
+      'Show payroll.',
+      'Show team members.',
+      'Which stylist is underperforming?',
+      'Show all clients.',
+      'Show manager reports.',
+      'What is the salon profit?',
+      'Show staff performance.',
+    ];
+
+    const COACHING_QUESTIONS = [
+      'What should I focus on today?',
+      'How can I improve this week?',
+      'How am I performing?',
+      'How can I improve my rebooking?',
+    ];
+
+    const SCHEDULE_QUESTIONS = [
+      'Can you show my appointments today?',
+      'What appointments do I have today?',
+    ];
+
+    it('serves a stylist holding zac.access through the normal gates', async () => {
+      const { service } = makeService();
+
+      const response = await service.ask(makeStylist(), { question: 'What can you help me with?' });
+      expect(response.role_context).toBe('stylist');
+      expect(response.trace_id).toBeTruthy();
+    });
+
+    it('gives a stylist the stylist capability answer, never the owner console copy', async () => {
+      const { service } = makeService();
+
+      const { answer } = await service.ask(makeStylist(), { question: 'What can you help me with?' });
+      expect(answer.startsWith('Hi Maya 👋')).toBe(true);
+      expect(answer).toContain("I'm ZAC, your AI assistant for QLOOQO.");
+      expect(answer).toContain('For stylists');
+      expect(answer).toMatch(/can't show owner-level business reports/i);
+      // Owner/manager console wording must not leak through.
+      expect(answer).not.toContain('AI business assistant');
+      expect(answer).not.toContain('business health snapshot');
+      expect(answer).not.toContain('Your business context');
+    });
+
+    it.each(RESTRICTED_QUESTIONS)('refuses "%s" at the access boundary without dispatching', async (question) => {
+      const kpis = jest.fn().mockResolvedValue(KPI_FIXTURE);
+      const { service } = makeService(undefined, { kpis } as Partial<DashboardService>);
+
+      const response = await service.ask(makeStylist(), { question });
+
+      expect(response.response_type).toBe('Refusal / Insufficient Data');
+      expect(response.answer).toMatch(/not available at your access level/i);
+      expect(response.evidence[0].source_type).toBe('zac.access_boundary');
+      expect(response.tool_calls).toEqual([]);
+      expect(response.technical_details.detected_intent).toBe('stylist.restricted');
+      expect(kpis).not.toHaveBeenCalled();
+    });
+
+    it.each(COACHING_QUESTIONS)('answers "%s" with LIVE self-scoped coaching', async (question) => {
+      const kpis = jest.fn().mockResolvedValue(KPI_FIXTURE);
+      const myKpi = jest.fn().mockResolvedValue(MY_KPI_FIXTURE);
+      const { service } = makeService(undefined, { kpis } as Partial<DashboardService>, { myKpi });
+
+      const response = await service.ask(makeStylist(), { question });
+
+      expect(response.response_type).toBe('Coaching Point');
+      expect(response.answer).toContain('rebooking rate is 35%');
+      expect(response.answer).toContain('£720.00'); // own service revenue
+      expect(response.answer).toMatch(/a good focus: rebooking/i); // first unmet KPI
+      expect(response.evidence[0].source_type).toBe('kpi.personal');
+      expect(response.tool_calls[0]).toMatchObject({ tool: 'kpi.personal_coaching', status: 'ok' });
+      expect(myKpi).toHaveBeenCalledTimes(1);
+      expect(kpis).not.toHaveBeenCalled(); // never the business-wide service
+      // Own coaching never carries pay figures.
+      expect(JSON.stringify(response)).not.toMatch(/commission|hourly|salary|wage/i);
+    });
+
+    it('passes the question period through to the coaching tool', async () => {
+      const myKpi = jest.fn().mockResolvedValue(MY_KPI_FIXTURE);
+      const { service } = makeService(undefined, undefined, { myKpi });
+      const stylist = makeStylist();
+
+      await service.ask(stylist, { question: 'What should I focus on today?' });
+      expect(myKpi).toHaveBeenLastCalledWith(stylist, { period: 'today' });
+
+      await service.ask(stylist, { question: 'How can I improve this week?' });
+      expect(myKpi).toHaveBeenLastCalledWith(stylist, { period: 'week' });
+    });
+
+    it.each(SCHEDULE_QUESTIONS)('answers "%s" from the LIVE self-scoped diary', async (question) => {
+      const today = jest.fn().mockResolvedValue(MY_SCHEDULE_FIXTURE);
+      const list = jest.fn().mockResolvedValue(MY_SCHEDULE_LIST_FIXTURE);
+      const { service } = makeService(undefined, undefined, undefined, { today, list });
+
+      const response = await service.ask(makeStylist(), { question });
+
+      expect(response.response_type).toBe('Explanation');
+      expect(response.answer).toContain('1 appointment scheduled for today');
+      expect(response.answer).toContain('Cut & finish with Sarah');
+      expect(response.answer).not.toContain('Whitfield'); // first name only
+      expect(response.evidence[0].source_type).toBe('booking.schedule');
+      expect(response.tool_calls[0]).toMatchObject({ tool: 'schedule.my_appointments', status: 'ok' });
+      expect(today).toHaveBeenCalledTimes(1);
+      expect(list).not.toHaveBeenCalled(); // today-only horizon
+    });
+
+    it('answers "Is there a scheduled appointment from today to tomorrow?" across both days', async () => {
+      const today = jest.fn().mockResolvedValue(MY_SCHEDULE_FIXTURE);
+      const list = jest.fn().mockResolvedValue(MY_SCHEDULE_LIST_FIXTURE);
+      const { service } = makeService(undefined, undefined, undefined, { today, list });
+
+      const response = await service.ask(makeStylist(), {
+        question: 'Is there a scheduled appointment from today to tomorrow?',
+      });
+
+      expect(response.answer).toContain('2 appointments scheduled for today and tomorrow');
+      expect(response.answer).toContain('Cut & finish with Sarah');
+      expect(response.answer).toContain('Tomorrow');
+      expect(response.answer).toContain('Balayage with Priya');
+      expect(list).toHaveBeenCalledTimes(1);
+    });
+
+    it('degrades to the honest not-connected answer when a personal service fails', async () => {
+      const { service } = makeService(
+        undefined,
+        undefined,
+        { myKpi: jest.fn().mockRejectedValue(new Error('boom')) },
+        {
+          today: jest.fn().mockRejectedValue(new Error('boom')),
+          list: jest.fn().mockRejectedValue(new Error('boom')),
+        },
+      );
+
+      for (const question of ['What should I focus on today?', 'Can you show my appointments today?']) {
+        const response = await service.ask(makeStylist(), { question });
+        expect(response.response_type).toBe('Refusal / Insufficient Data');
+        expect(response.evidence[0].source_ref).toBe('stylist-personal-intent:not-connected');
+        expect(response.answer).not.toContain('boom');
+      }
+    });
+
+    it('keeps personal tools honest for a stylist WITHOUT the diary permission', async () => {
+      const today = jest.fn();
+      const { service } = makeService(undefined, undefined, undefined, {
+        today,
+      } as Partial<LabAppointmentsService>);
+
+      const response = await service.ask(
+        makeStylist({ permissions: ['zac.access'] }), // no bookings.manage
+        { question: 'Can you show my appointments today?' },
+      );
+
+      expect(response.response_type).toBe('Refusal / Insufficient Data');
+      expect(response.evidence[0].source_ref).toBe('stylist-personal-intent:not-connected');
+      expect(today).not.toHaveBeenCalled();
+    });
+
+    it('exposes no business figures or pay terms anywhere in restricted stylist responses', async () => {
+      const { service } = makeService();
+
+      for (const question of ['Show payroll.', 'Show business revenue.']) {
+        const response = await service.ask(makeStylist(), { question });
+        const serialized = JSON.stringify(response);
+        expect(serialized).not.toMatch(/£|\bGBP\b|salary|wage|commission|hourly/i);
+        expect(serialized).not.toContain('report.dashboard');
+        expect(response.technical_details.connected_tools).not.toContain('report.business_health');
+      }
+    });
+
+    it('personal answers carry ONLY self-scoped figures — own revenue yes, pay and business data never', async () => {
+      const { service } = makeService();
+
+      const response = await service.ask(makeStylist(), { question: 'What should I focus on today?' });
+      const serialized = JSON.stringify(response);
+
+      expect(response.answer).toContain('£720.00'); // the stylist's own revenue is allowed
+      expect(serialized).not.toContain('£1250.00'); // the business-wide figure is not
+      expect(serialized).not.toMatch(/salary|wage|commission|hourly/i);
+      expect(serialized).not.toContain('report.dashboard');
+      expect(response.technical_details.connected_tools).not.toContain('report.business_health');
+    });
+
+    it('keeps the flag and allowlist gates intact for stylists', async () => {
+      const off = makeService({ ZAC_ENABLED: undefined });
+      await expect(off.service.ask(makeStylist(), { question: 'hi' })).rejects.toThrow(NotFoundException);
+
+      const excluded = makeService({ ZAC_ENABLED: 'true', ZAC_ALLOWED_BUSINESS_IDS: 'biz-9' });
+      await expect(excluded.service.ask(makeStylist(), { question: 'hi' })).rejects.toThrow(NotFoundException);
     });
   });
 

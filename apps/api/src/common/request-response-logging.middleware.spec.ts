@@ -1,3 +1,4 @@
+import type { ConfigService } from '@nestjs/config';
 import type { NextFunction, Request, Response } from 'express';
 import { RequestResponseLoggingMiddleware } from './request-response-logging.middleware';
 
@@ -6,21 +7,27 @@ interface LoggedLine {
   [key: string]: unknown;
 }
 
-function makeMiddleware(): { middleware: RequestResponseLoggingMiddleware; lines: () => LoggedLine[] } {
-  const middleware = new RequestResponseLoggingMiddleware();
+function makeMiddleware(env: Record<string, string | undefined> = {}): {
+  middleware: RequestResponseLoggingMiddleware;
+  lines: () => LoggedLine[];
+  raw: () => string;
+} {
+  const config = { get: jest.fn((key: string) => env[key]) } as unknown as ConfigService;
+  const middleware = new RequestResponseLoggingMiddleware(config);
   const log = jest.fn();
   (middleware as unknown as { logger: { log: jest.Mock } }).logger = { log };
-  return {
-    middleware,
-    lines: () => log.mock.calls.map((call) => JSON.parse(call[0] as string) as LoggedLine),
-  };
+  const lines = () => log.mock.calls.map((call) => JSON.parse(call[0] as string) as LoggedLine);
+  return { middleware, lines, raw: () => JSON.stringify(lines()) };
 }
 
-function makeRequest(url: string, body: unknown): Request {
+/** Body logging switched on, as a developer would locally. */
+const DEV = { LOG_HTTP_BODIES: 'true' };
+
+function makeRequest(url: string, body: unknown, query: unknown = { q: 'sarah' }): Request {
   return {
     method: 'POST',
     originalUrl: url,
-    query: { secretQuestion: 'is-this-logged' },
+    query,
     body,
     ip: '127.0.0.1',
     get: jest.fn().mockReturnValue('jest'),
@@ -39,117 +46,193 @@ function makeResponse(): { response: Response; finish: () => void } {
   return { response, finish: () => listeners.finish() };
 }
 
+/** A realistic CRM payload: names, contact details and health notes. */
+const CLIENT_PAYLOAD = {
+  clients: [
+    {
+      clientCode: 'CL-0042',
+      firstName: 'Sarah',
+      lastName: 'Whitfield',
+      displayName: 'Sarah Whitfield',
+      email: 'sarah.whitfield@gmail.com',
+      phone: '+447700900123',
+      notes: 'Allergic to PPD. Going through chemo — prefers gentle products.',
+    },
+  ],
+};
+
+function run(
+  middleware: RequestResponseLoggingMiddleware,
+  url: string,
+  requestBody: unknown,
+  responseBody?: unknown,
+  query?: unknown,
+): void {
+  const { response, finish } = makeResponse();
+  const next: NextFunction = jest.fn();
+  middleware.use(makeRequest(url, requestBody, query), response, next);
+  if (responseBody !== undefined) response.send(JSON.stringify(responseBody));
+  finish();
+  expect(next).toHaveBeenCalled();
+}
+
 describe('RequestResponseLoggingMiddleware', () => {
-  it('suppresses request and response bodies on /api/zac routes', () => {
-    const { middleware, lines } = makeMiddleware();
-    const { response, finish } = makeResponse();
-    const next: NextFunction = jest.fn();
+  describe('by default (no LOG_HTTP_BODIES)', () => {
+    it('suppresses bodies and query strings on ordinary routes', () => {
+      const { middleware, lines } = makeMiddleware();
 
-    middleware.use(makeRequest('/api/zac/ask', { question: 'private prompt text' }), response, next);
-    response.send(JSON.stringify({ answer: 'private answer text' }));
-    finish();
+      run(middleware, '/api/crm/clients', { search: 'sarah' }, CLIENT_PAYLOAD);
 
-    const [requestLine, responseLine] = lines();
-    expect(requestLine.body).toBe('[suppressed]');
-    expect(requestLine.query).toBe('[suppressed]');
-    expect(responseLine.body).toBe('[suppressed]');
-    expect(JSON.stringify(lines())).not.toContain('private prompt text');
-    expect(JSON.stringify(lines())).not.toContain('private answer text');
-    expect(next).toHaveBeenCalled();
+      const [requestLine, responseLine] = lines();
+      expect(requestLine.body).toBe('[suppressed]');
+      expect(requestLine.query).toBe('[suppressed]');
+      expect(responseLine.body).toBe('[suppressed]');
+    });
+
+    it('never leaks client names, contact details or health notes', () => {
+      const { middleware, raw } = makeMiddleware();
+
+      run(middleware, '/api/crm/clients', {}, CLIENT_PAYLOAD);
+
+      const logged = raw();
+      for (const secret of [
+        'Sarah',
+        'Whitfield',
+        'sarah.whitfield@gmail.com',
+        '+447700900123',
+        'chemo',
+        'Allergic',
+      ]) {
+        expect(logged).not.toContain(secret);
+      }
+    });
+
+    it.each([
+      '/api/staff',
+      '/api/profile',
+      '/api/auth/login',
+      '/api/public-booking/clients',
+      '/api/lab-appointments/123',
+      '/api/communications/send',
+      '/api/staff-booking/slots',
+      '/api/account',
+      '/api/retail-sales',
+      '/api/salon-directory',
+    ])('suppresses bodies on %s', (url) => {
+      const { middleware, lines } = makeMiddleware();
+
+      run(middleware, url, CLIENT_PAYLOAD, CLIENT_PAYLOAD);
+
+      expect(lines()[0].body).toBe('[suppressed]');
+      expect(lines()[1].body).toBe('[suppressed]');
+    });
+
+    it('still logs the operational metadata needed for debugging', () => {
+      const { middleware, lines } = makeMiddleware();
+
+      run(middleware, '/api/crm/clients?q=sarah', {}, CLIENT_PAYLOAD);
+
+      const [requestLine, responseLine] = lines();
+      expect(requestLine).toMatchObject({
+        event: 'request',
+        method: 'POST',
+        url: '/api/crm/clients?q=sarah',
+        ip: '127.0.0.1',
+      });
+      expect(requestLine.requestId).toBeTruthy();
+      expect(responseLine).toMatchObject({ event: 'response', statusCode: 200 });
+      expect(typeof responseLine.durationMs).toBe('number');
+    });
   });
 
-  it('suppresses /api/zac routes with query strings and nested paths', () => {
-    const { middleware, lines } = makeMiddleware();
-    const { response, finish } = makeResponse();
+  describe('with LOG_HTTP_BODIES=true (local development)', () => {
+    it('logs bodies but redacts personal data', () => {
+      const { middleware, lines, raw } = makeMiddleware(DEV);
 
-    middleware.use(makeRequest('/api/zac/health?probe=1', {}), response, jest.fn());
-    finish();
+      run(middleware, '/api/crm/clients', {}, CLIENT_PAYLOAD);
 
-    expect(lines()[0].body).toBe('[suppressed]');
+      const responseLine = lines()[1];
+      const client = (responseLine.body as { clients: Record<string, unknown>[] }).clients[0];
+
+      // Non-identifying fields survive, so the log is still useful.
+      expect(client.clientCode).toBe('CL-0042');
+      // Everything identifying does not.
+      expect(client.firstName).toBe('[redacted]');
+      expect(client.lastName).toBe('[redacted]');
+      expect(client.displayName).toBe('[redacted]');
+      expect(client.email).toBe('[redacted]');
+      expect(client.phone).toBe('[redacted]');
+      expect(client.notes).toBe('[redacted]');
+
+      const logged = raw();
+      expect(logged).not.toContain('Sarah');
+      expect(logged).not.toContain('sarah.whitfield@gmail.com');
+      expect(logged).not.toContain('chemo');
+    });
+
+    it('still redacts credentials', () => {
+      const { middleware, lines } = makeMiddleware(DEV);
+
+      run(
+        middleware,
+        '/api/auth/login',
+        { email: 'owner@salon.co.uk', password: 'hunter2' },
+        { session: { access_token: 'eyJ', refresh_token: 'eyJ' } },
+      );
+
+      const [requestLine, responseLine] = lines();
+      expect(requestLine.body).toEqual({ email: '[redacted]', password: '[redacted]' });
+      expect(responseLine.body).toEqual({
+        session: { access_token: '[redacted]', refresh_token: '[redacted]' },
+      });
+    });
+
+    it('redacts personal data nested in arrays and sub-objects', () => {
+      const { middleware, raw } = makeMiddleware(DEV);
+
+      run(middleware, '/api/staff', {}, {
+        team: [{ profile: { fullName: 'Jane Doe', email: 'jane@x.co' } }],
+      });
+
+      expect(raw()).not.toContain('Jane Doe');
+      expect(raw()).not.toContain('jane@x.co');
+    });
   });
 
-  it('leaves other routes logged with key-based redaction intact', () => {
-    const { middleware, lines } = makeMiddleware();
-    const { response, finish } = makeResponse();
+  describe('always-suppressed routes', () => {
+    it.each([
+      ['/api/zac/ask', 'private prompt text'],
+      ['/api/payroll/periods/abc/summaries', 'netPayableCents'],
+    ])('keeps %s suppressed even when body logging is enabled', (url, secret) => {
+      const { middleware, lines, raw } = makeMiddleware(DEV);
 
-    middleware.use(
-      makeRequest('/api/kpi/stylists', { period: 'week', password: 'hunter2' }),
-      response,
-      jest.fn(),
-    );
-    response.send(JSON.stringify({ ok: true }));
-    finish();
+      run(middleware, url, { question: 'private prompt text' }, {
+        summaries: [{ staffName: 'Jane Doe', netPayableCents: 68010 }],
+      });
 
-    const [requestLine, responseLine] = lines();
-    expect(requestLine.body).toEqual({ period: 'week', password: '[redacted]' });
-    expect(responseLine.body).toEqual({ ok: true });
-  });
+      expect(lines()[0].body).toBe('[suppressed]');
+      expect(lines()[0].query).toBe('[suppressed]');
+      expect(lines()[1].body).toBe('[suppressed]');
+      expect(raw()).not.toContain(secret);
+    });
 
-  it('does not treat a zac-prefixed but different route as a ZAC route', () => {
-    const { middleware, lines } = makeMiddleware();
-    const { response, finish } = makeResponse();
+    it('matches on path segments, not bare prefixes', () => {
+      const { middleware, lines } = makeMiddleware(DEV);
 
-    middleware.use(makeRequest('/api/zackary', { fine: true }), response, jest.fn());
-    finish();
+      run(middleware, '/api/zackary', { fine: true }, { ok: true });
 
-    expect(lines()[0].body).toEqual({ fine: true });
-  });
+      // Not a ZAC route, so normal (redacted) body logging applies.
+      expect(lines()[0].body).toEqual({ fine: true });
+    });
 
-  it('suppresses request and response bodies on /api/payroll routes', () => {
-    // Payroll responses carry wage, commission and settlement figures for named
-    // staff. Key-name redaction cannot help — the sensitive values live in
-    // ordinary keys like netPayableCents, so the whole body must be suppressed.
-    const { middleware, lines } = makeMiddleware();
-    const { response, finish } = makeResponse();
-    const next: NextFunction = jest.fn();
+    it('suppresses the bare route and query-string variants', () => {
+      const bare = makeMiddleware(DEV);
+      run(bare.middleware, '/api/payroll', {}, { ok: true });
+      expect(bare.lines()[0].body).toBe('[suppressed]');
 
-    middleware.use(
-      makeRequest('/api/payroll/periods/abc/summaries', { periodId: 'abc' }),
-      response,
-      next,
-    );
-    response.send(
-      JSON.stringify({ summaries: [{ staffName: 'Jane Doe', netPayableCents: 68010 }] }),
-    );
-    finish();
-
-    const [requestLine, responseLine] = lines();
-    expect(requestLine.body).toBe('[suppressed]');
-    expect(requestLine.query).toBe('[suppressed]');
-    expect(responseLine.body).toBe('[suppressed]');
-    expect(JSON.stringify(lines())).not.toContain('Jane Doe');
-    expect(JSON.stringify(lines())).not.toContain('68010');
-    expect(next).toHaveBeenCalled();
-  });
-
-  it('suppresses /api/payroll routes with query strings and nested paths', () => {
-    const { middleware, lines } = makeMiddleware();
-    const { response, finish } = makeResponse();
-
-    middleware.use(makeRequest('/api/payroll/periods?status=locked', {}), response, jest.fn());
-    finish();
-
-    expect(lines()[0].body).toBe('[suppressed]');
-    expect(lines()[0].query).toBe('[suppressed]');
-  });
-
-  it('suppresses the bare /api/payroll route', () => {
-    const { middleware, lines } = makeMiddleware();
-    const { response, finish } = makeResponse();
-
-    middleware.use(makeRequest('/api/payroll', {}), response, jest.fn());
-    finish();
-
-    expect(lines()[0].body).toBe('[suppressed]');
-  });
-
-  it('does not treat a payroll-prefixed but different route as a payroll route', () => {
-    const { middleware, lines } = makeMiddleware();
-    const { response, finish } = makeResponse();
-
-    middleware.use(makeRequest('/api/payrollsomething', { fine: true }), response, jest.fn());
-    finish();
-
-    expect(lines()[0].body).toEqual({ fine: true });
+      const queried = makeMiddleware(DEV);
+      run(queried.middleware, '/api/zac/health?probe=1', {}, { ok: true });
+      expect(queried.lines()[0].body).toBe('[suppressed]');
+    });
   });
 });

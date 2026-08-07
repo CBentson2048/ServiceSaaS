@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import type { AuthUser } from '@sheer/domain';
-import type { ZacToolName } from './tools/zac-tool.types';
+import type { ZacActingContext } from './context/zac-context.types';
+import type { ZacModelCompletion } from './models/zac-model-provider.interface';
+import type { ZacRoleProfile } from './roles/zac-role-profile.types';
+import type { ZacReadOnlyTool, ZacToolName } from './tools/zac-tool.types';
 import { ZacContextService } from './context/zac-context.service';
 import { ZacCostTelemetryService } from './measurement/zac-cost-telemetry.service';
 import { ZAC_MODEL_PROVIDER } from './models/zac-model-provider.interface';
@@ -58,7 +61,9 @@ export class ZacService {
     });
 
     let response: ZacResponse;
-    if (this.isStaffMembersQuestion(request.question)) {
+    if (context.roleContext === 'stylist') {
+      response = await this.answerAsStylist(actor, context, profile, visibleTools, completion, request.question, traceId);
+    } else if (this.isStaffMembersQuestion(request.question)) {
       // Recognised staff/team/member intent, but no read-only staff tool is
       // connected yet: answer honestly from the service layer without touching
       // any staff service — nothing is dispatched at all.
@@ -136,6 +141,145 @@ export class ZacService {
     });
 
     return response;
+  }
+
+  /**
+   * Stylist turns never enter the owner/manager router. Three outcomes only:
+   * a stylist-personal intent (own schedule/coaching/performance — honest
+   * "not connected yet"), a restricted intent (business/pay/team/client asks —
+   * plain access-boundary refusal), or the stylist-tailored capability summary.
+   * Restricted and personal intents dispatch NOTHING; the capability path
+   * dispatches only `context.capabilities`, which the registry re-checks. Even
+   * a routing bug here cannot reach business data: every business tool's
+   * `allowedRoles` excludes stylists, and dispatch re-checks that.
+   */
+  private async answerAsStylist(
+    actor: AuthUser,
+    context: ZacActingContext,
+    profile: ZacRoleProfile,
+    visibleTools: ZacReadOnlyTool[],
+    completion: ZacModelCompletion,
+    question: string,
+    traceId: string,
+  ): Promise<ZacResponse> {
+    const q = question.toLowerCase();
+
+    // Own-work intents first: self markers beat topic keywords, so "how can I
+    // improve MY rebooking" reads as personal, not restricted.
+    const isPersonal =
+      /\bmy (day|week|appointments?|schedule|diary|rebooking|retail|performance|kpis?|numbers?|goals?|targets?)\b|what should i focus|how (can|do|should) i improve|how am i (doing|performing)|\bam i on track\b|\bappointments? (do|have) i\b|\b(do|have) i (have|got)\b.*(appointment|booking|client)|scheduled appointment/.test(
+        q,
+      );
+    // Owner/manager territory: business-wide, money, team, other stylists, clients.
+    const isRestricted =
+      /\b(payroll|salar(y|ies)|wages?|commissions?|\bpay\b)\b|\b(team|staff|colleagues?|members?|employees?)\b|other stylists?|which stylist|\bstylists\b|\bclients?\b|business (revenue|health|reports?|performance)|\b(revenue|profit|turnover|takings|sales)\b|\b(owner|manager) (report|dashboard)s?\b|whole business|how('s| is) the (business|salon)|\bstock\b|\binventory\b|\bqlab\b/.test(
+        q,
+      );
+
+    if (isPersonal && !this.isCapabilityQuestion(q)) {
+      // Schedule-shaped vs coaching-shaped: appointments/diary go to the
+      // self-scoped schedule tool; focus/improve/performance go to coaching.
+      const isSchedule =
+        /\b(appointments?|schedule|diary|booked|bookings?)\b|\bmy (day|week)\b/.test(q) &&
+        !/focus|improve|performing|coach|rebook/.test(q);
+      const toolName: ZacToolName = isSchedule ? 'schedule.my_appointments' : 'kpi.personal_coaching';
+      const input: Record<string, unknown> = isSchedule
+        ? { horizon: /tomorrow/.test(q) ? 'today_tomorrow' : 'today' }
+        : { period: /month/.test(q) ? 'month' : /today\b/.test(q) && !/week/.test(q) ? 'today' : 'week' };
+
+      const { result, trace } = await this.toolRegistry.dispatch(actor, context, toolName, input);
+      this.telemetry.recordSpineEvent('source_used', {
+        trace_id: traceId,
+        business_id: context.businessId,
+        actor_user_id: context.actorUserId,
+        role_context: context.roleContext,
+        tool: toolName,
+        status: result.status,
+        latency_ms: trace.latency_ms,
+      });
+
+      if (result.status === 'ok') {
+        return this.responseBuilder.buildToolBackedResponse({
+          context,
+          profile,
+          visibleTools,
+          completion,
+          result,
+          trace,
+          traceId,
+        });
+      }
+      // Degrade honestly: denied/unavailable/failed personal tools fall back to
+      // the "not connected" personal answer, never an error.
+      return this.responseBuilder.buildStylistPersonalUnavailableResponse({
+        context,
+        profile,
+        visibleTools,
+        completion,
+        traceId,
+      });
+    }
+
+    if (isRestricted && !this.isCapabilityQuestion(q)) {
+      this.telemetry.recordSpineEvent('source_used', {
+        trace_id: traceId,
+        business_id: context.businessId,
+        actor_user_id: context.actorUserId,
+        role_context: context.roleContext,
+        tool: 'stylist.restricted',
+        status: 'permission_denied',
+        latency_ms: 0,
+      });
+      return this.responseBuilder.buildStylistRestrictedResponse({
+        context,
+        profile,
+        visibleTools,
+        completion,
+        traceId,
+      });
+    }
+
+    // Capability question, or anything unmatched: the stylist-tailored
+    // capability summary is the honest default.
+    const { result, trace } = await this.toolRegistry.dispatch(
+      actor,
+      context,
+      'context.capabilities',
+      {},
+    );
+    this.telemetry.recordSpineEvent('source_used', {
+      trace_id: traceId,
+      business_id: context.businessId,
+      actor_user_id: context.actorUserId,
+      role_context: context.roleContext,
+      tool: 'context.capabilities',
+      status: result.status,
+      latency_ms: trace.latency_ms,
+    });
+    return result.status === 'ok'
+      ? this.responseBuilder.buildToolBackedResponse({
+          context,
+          profile,
+          visibleTools,
+          completion,
+          result,
+          trace,
+          traceId,
+        })
+      : this.responseBuilder.buildControlledTestResponse({
+          context,
+          profile,
+          visibleTools,
+          completion,
+          toolCalls: [trace],
+          traceId,
+        });
+  }
+
+  private isCapabilityQuestion(q: string): boolean {
+    return /what can (you|zac|i ask)|help me with|what do you do|what can you do|capabilit|what information can you access/.test(
+      q,
+    );
   }
 
   /**

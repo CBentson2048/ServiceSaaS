@@ -16,6 +16,7 @@ import type {
   MobileOwnerDashboardResponse,
   StaffBookingSummary,
 } from '@sheer/domain';
+import { userHasPermission } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
 import { useAuth } from '../src/auth/AuthProvider';
@@ -303,6 +304,8 @@ function VisitRow({ visit, isLast }: { visit: CrmVisitSummary; isLast: boolean }
 // ── Staff dashboards (unchanged logic, upgraded style) ────────────────────────
 
 function ManagerDashboard({ dashboard }: { dashboard: MobileManagerDashboardResponse }) {
+  const auth = useAuth();
+  const showZac = userHasPermission(auth.user, 'zac.access');
   return (
     <>
       <View style={s.accentPanel}>
@@ -332,6 +335,9 @@ function ManagerDashboard({ dashboard }: { dashboard: MobileManagerDashboardResp
 
       <SectionRow title="Quick actions" />
       <View style={s.quickGrid}>
+        {showZac ? (
+          <QuickAction icon="Z" title="ZAC" subtitle="AI business assistant" onPress={() => router.push('/zac')} />
+        ) : null}
         <QuickAction icon="P" title="Profile" subtitle="Your details" onPress={() => router.push('/profile')} />
         <QuickAction icon="B" title="Bookings" subtitle="Today's diary" onPress={() => router.push('/bookings')} />
         <QuickAction icon="R" title="Rota" subtitle="Team cover" onPress={() => router.push('/rota')} />
@@ -341,6 +347,8 @@ function ManagerDashboard({ dashboard }: { dashboard: MobileManagerDashboardResp
 }
 
 function OwnerDashboard({ dashboard }: { dashboard: MobileOwnerDashboardResponse }) {
+  const auth = useAuth();
+  const showZac = userHasPermission(auth.user, 'zac.access');
   return (
     <>
       <View style={s.accentPanel}>
@@ -355,6 +363,9 @@ function OwnerDashboard({ dashboard }: { dashboard: MobileOwnerDashboardResponse
       </View>
       <SectionRow title="Quick actions" />
       <View style={s.quickGrid}>
+        {showZac ? (
+          <QuickAction icon="Z" title="ZAC" subtitle="AI business assistant" onPress={() => router.push('/zac')} />
+        ) : null}
         <QuickAction icon="P" title="Profile" subtitle="Your details" onPress={() => router.push('/profile')} />
         <QuickAction icon="D" title="Dashboard" subtitle="Mobile overview" onPress={() => router.push('/dashboard')} />
       </View>

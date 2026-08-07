@@ -245,6 +245,20 @@ export class EnvConfig {
   COMMS_DISPATCH_MAX_DRAIN_BATCHES?: string;
 
   /**
+   * Set to `true` to include HTTP request/response bodies in the application log.
+   * LOCAL DEVELOPMENT ONLY — ordinary QLOOQO payloads carry client and staff
+   * personal data (names, emails, phone numbers, and free-text notes that often
+   * contain health information). Logs have a different access model and retention
+   * period from the database and sit outside subject-access/erasure processes, so
+   * this must stay unset in every deployed environment. Even when enabled,
+   * credential and personal-data keys are redacted and `/api/zac` and
+   * `/api/payroll` bodies remain suppressed. Defaults off.
+   */
+  @IsOptional()
+  @IsString()
+  LOG_HTTP_BODIES?: string;
+
+  /**
    * Dark-launch kill-switch for the ZAC assistant. ZAC routes only exist when this is
    * exactly `true`; unset or any other value keeps every `/api/zac/*` route hidden (404),
    * regardless of the `zac.access` permission. Defaults OFF.

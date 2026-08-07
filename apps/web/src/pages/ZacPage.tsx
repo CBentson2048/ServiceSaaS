@@ -25,6 +25,7 @@ const EVIDENCE_SOURCE_LABELS: Record<string, string> = {
   'zac.registry': 'Connected capability check',
   'zac.intent': 'Question understanding',
   'zac.foundation': 'ZAC foundation',
+  'zac.access_boundary': 'Your role’s access level',
 };
 
 const RESPONSE_TYPE_BADGES: Record<string, { label: string; tone: StatusTone }> = {

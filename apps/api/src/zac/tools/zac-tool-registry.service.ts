@@ -7,12 +7,15 @@ import {
 } from '@sheer/domain';
 import type { AuthUser } from '@sheer/domain';
 import { DashboardService } from '../../dashboard/dashboard.service';
+import { KpiService } from '../../kpi/kpi.service';
+import { LabAppointmentsService } from '../../lab-appointments/lab-appointments.service';
 import type { ZacActingContext } from '../context/zac-context.types';
 import { BusinessContextSummaryTool } from './tools/business-context-summary.tool';
 import { BusinessHealthSummaryTool } from './tools/business-health.tool';
 import { InventoryStockStatusTool } from './tools/inventory-stock-status.tool';
 import { KpiSummaryTool } from './tools/kpi-summary.tool';
 import { LocationContextSummaryTool } from './tools/location-context-summary.tool';
+import { MyScheduleTool } from './tools/my-schedule.tool';
 import { PersonalStylistCoachingTool } from './tools/personal-stylist-coaching.tool';
 import { QlabColourAnalyticsTool } from './tools/qlab-colour-analytics.tool';
 import { RebookingSummaryTool } from './tools/rebooking-summary.tool';
@@ -31,22 +34,28 @@ export class ZacToolRegistryService {
   private readonly logger = new Logger(ZacToolRegistryService.name);
   private readonly tools: readonly ZacReadOnlyTool[];
 
-  constructor(dashboard: DashboardService) {
+  constructor(
+    dashboard: DashboardService,
+    kpi: KpiService,
+    labAppointments: LabAppointmentsService,
+  ) {
     const tools: ZacReadOnlyTool[] = [
-      // Live Week 2 tools: context tools read only the guard-resolved acting
-      // context; business health calls the existing guarded DashboardService.
+      // Live tools. Context tools read only the guard-resolved acting context;
+      // the rest call existing guarded QLOOQO services with the resolved actor.
       new BusinessContextSummaryTool(),
       new LocationContextSummaryTool(),
       new ZacCapabilitySummaryTool((actor) =>
         tools.filter((tool) => this.actorMayUse(actor, tool)),
       ),
       new BusinessHealthSummaryTool(dashboard),
+      // Stylist-self tools: both self-scoped twice (tool contract + service).
+      new PersonalStylistCoachingTool(kpi),
+      new MyScheduleTool(labAppointments),
       // Skeletons for later weeks — registered but disabled.
       new KpiSummaryTool(),
       new RebookingSummaryTool(),
       new UtilisationSummaryTool(),
       new StylistPerformanceTool(),
-      new PersonalStylistCoachingTool(),
       new QlabColourAnalyticsTool(),
       new InventoryStockStatusTool(),
     ];
