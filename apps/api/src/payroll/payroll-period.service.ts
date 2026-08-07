@@ -422,7 +422,7 @@ export class PayrollPeriodService {
           tips_paid_out_cents: figures.tipsPaidOutCents,
           tips_owed_cents: figures.tipsOwedCents,
           adjustments_cents: figures.adjustmentsCents,
-          net_payable_cents: figures.netPayableCents,
+          gross_payable_cents: figures.grossPayableCents,
           business_retained_cents: figures.businessRetainedCents,
           greater_of_applied: figures.greaterOfApplied,
           greater_of_winner: figures.greaterOfWinner,

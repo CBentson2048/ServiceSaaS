@@ -144,7 +144,7 @@ function summaryRow(id: string, payPeriodId: string, staffProfileId: string) {
     tips_paid_out_cents: 0,
     tips_owed_cents: 0,
     adjustments_cents: 0,
-    net_payable_cents: 66840,
+    gross_payable_cents: 66840,
     business_retained_cents: 113160,
     greater_of_applied: false,
     greater_of_winner: null,
@@ -198,7 +198,7 @@ describe('stylist self-view visibility', () => {
       label: null,
       status: 'approved',
     });
-    expect(response.summaries[0].netPayableCents).toBe(66840);
+    expect(response.summaries[0].grossPayableCents).toBe(66840);
   });
 
   it.each(['locked', 'paid'] as const)('a %s period is visible', async (status) => {

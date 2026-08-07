@@ -270,7 +270,7 @@ describe('LOH marginal service commission (docs/payroll-loh-template.md §1)', (
     // 3x = 146,520; 3.5x = 170,940. Band 2: 24,420 x 10% = 2,442.
     // Band 3: (180,000 - 170,940) x 15% = 1,359. Total £38.01.
     expect(result.figures!.commissionCents).toBe(3_801);
-    expect(result.figures!.netPayableCents).toBe(48_840 + 3_801);
+    expect(result.figures!.grossPayableCents).toBe(48_840 + 3_801);
 
     // Accelerator could not fully evaluate (no metrics) => NOT achieved.
     expect(result.accelerator?.achieved).not.toBe(true);
@@ -400,7 +400,7 @@ describe('Example A1 (docs/payroll-loh-template.md §5)', () => {
     expect(result.figures!.basePayCents).toBe(48_840);
     // Target 2.5x = £1,221. (1,800 - 1,221) x 30% = £173.70; retail £18.
     expect(result.figures!.commissionCents).toBe(17_370 + 1_800);
-    expect(result.figures!.netPayableCents).toBe(68_010); // £680.10
+    expect(result.figures!.grossPayableCents).toBe(68_010); // £680.10
     expect(result.target.targetCents).toBe(122_100);
   });
 });
@@ -455,7 +455,7 @@ describe('Example A2 (docs/payroll-loh-template.md §6)', () => {
     // The losing guarantee contributes nothing to the totals...
     expect(result.figures!.basePayCents).toBe(0);
     expect(result.figures!.commissionCents).toBe(54_000);
-    expect(result.figures!.netPayableCents).toBe(54_000); // £540.00
+    expect(result.figures!.grossPayableCents).toBe(54_000); // £540.00
     // ...but both sides survive on the summary record.
     expect(result.figures!.greaterOfApplied).toBe(true);
     expect(result.figures!.greaterOfWinner).toBe('commission');
@@ -838,7 +838,7 @@ describe('missing configuration inputs BLOCK generation', () => {
 // =============================================================================
 
 describe('settlement statement', () => {
-  it('a chair renter can owe the business (signed negative net payable)', () => {
+  it('a chair renter can owe the business (signed negative gross payable)', () => {
     const split = stage({
       stageType: 'revenue_split',
       sequenceNo: 1,
@@ -858,13 +858,13 @@ describe('settlement statement', () => {
       }),
     );
     expect(result.ok).toBe(true);
-    // 45% of £1,800 = £810; rent £1,000 => net -£190.
+    // 45% of £1,800 = £810; rent £1,000 => gross payable -£190.
     expect(result.figures!.revenueSplitCents).toBe(81_000);
     expect(result.figures!.chairRentCents).toBe(100_000);
-    expect(result.figures!.netPayableCents).toBe(-19_000);
+    expect(result.figures!.grossPayableCents).toBe(-19_000);
   });
 
-  it('pay lines sum to net payable and the net_payable line closes the statement', () => {
+  it('pay lines sum to gross payable and the gross_payable line closes the statement', () => {
     const result = calculatePaySummary(
       baseInput({
         version: version([hourlyBaseStage(), lohServiceStage(false)]),
@@ -872,11 +872,11 @@ describe('settlement statement', () => {
       }),
     );
     expect(result.ok).toBe(true);
-    const payLines = result.lines.filter((l) => l.lineType !== 'net_payable');
-    const netLine = result.lines[result.lines.length - 1];
-    expect(netLine.lineType).toBe('net_payable');
-    expect(payLines.reduce((sum, l) => sum + l.amountCents, 0)).toBe(netLine.amountCents);
-    expect(netLine.amountCents).toBe(result.figures!.netPayableCents);
+    const payLines = result.lines.filter((l) => l.lineType !== 'gross_payable');
+    const grossLine = result.lines[result.lines.length - 1];
+    expect(grossLine.lineType).toBe('gross_payable');
+    expect(payLines.reduce((sum, l) => sum + l.amountCents, 0)).toBe(grossLine.amountCents);
+    expect(grossLine.amountCents).toBe(result.figures!.grossPayableCents);
     expect(result.figures!.adjustmentsCents).toBe(-1_500);
   });
 

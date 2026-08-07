@@ -115,7 +115,7 @@ function StatementBody({
 }) {
   const { summary } = breakdown;
   const currency = summary.currencyCode;
-  const owesSalon = summary.netPayableCents < 0;
+  const owesSalon = summary.grossPayableCents < 0;
 
   const earnings: [string, number][] = [
     ['Base pay', summary.basePayCents],
@@ -136,7 +136,7 @@ function StatementBody({
 
   return (
     <>
-      {/* ── Net pay hero ── */}
+      {/* ── Gross pay hero ── */}
       <View style={s.hero}>
         <View style={s.heroTopRow}>
           <Text style={s.heroPeriod}>
@@ -155,9 +155,9 @@ function StatementBody({
             </View>
           ) : null}
         </View>
-        <Text style={s.heroValueLabel}>{owesSalon ? 'OWED TO THE SALON' : 'NET PAY'}</Text>
+        <Text style={s.heroValueLabel}>{owesSalon ? 'OWED TO THE SALON' : 'GROSS PAY'}</Text>
         <Text style={[s.heroValue, owesSalon && s.heroValueOwed]}>
-          {formatMoney(Math.abs(summary.netPayableCents), currency)}
+          {formatMoney(Math.abs(summary.grossPayableCents), currency)}
         </Text>
         {owesSalon ? (
           <Text style={s.heroNote}>

@@ -1949,18 +1949,18 @@ function PreviewResult({
         <PayrollWarningNotice warnings={preview.warnings} className="mt-4" />
       ) : null}
 
-      {/* NET total */}
+      {/* GROSS total */}
       <div className="mt-4 flex items-center justify-between rounded-input-lg border border-border bg-surface-alt px-3 py-2.5">
         <AppText as="div" weight="medium" className="text-[13px]">
-          Net payable
+          Gross payable
         </AppText>
         <AppText
           as="div"
           variant="title"
           weight="medium"
-          tone={preview.netPayableCents > 0 ? 'success' : 'primary'}
+          tone={preview.grossPayableCents > 0 ? 'success' : 'primary'}
         >
-          {signedMoney(preview.netPayableCents, CURRENCY)}
+          {signedMoney(preview.grossPayableCents, CURRENCY)}
         </AppText>
       </div>
     </AppCard>

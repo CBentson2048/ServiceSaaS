@@ -389,9 +389,9 @@ export function PayrollPeriodDetailPage() {
                 value={formatMoney(totals.totalCommissionCents, totals.currencyCode)}
               />
               <SummaryStat
-                label="Net payable"
-                value={signedMoney(totals.totalNetPayableCents, totals.currencyCode)}
-                tone={totals.totalNetPayableCents > 0 ? 'success' : 'primary'}
+                label="Gross payable"
+                value={signedMoney(totals.totalGrossPayableCents, totals.currencyCode)}
+                tone={totals.totalGrossPayableCents > 0 ? 'success' : 'primary'}
               />
             </div>
           ) : null}
@@ -434,7 +434,7 @@ export function PayrollPeriodDetailPage() {
                     'Commission',
                     'Accelerator',
                     'Deductions',
-                    'Net payable',
+                    'Gross payable',
                   ].map((heading) => (
                     <AppText
                       key={heading}
@@ -517,10 +517,10 @@ export function PayrollPeriodDetailPage() {
                     <AppText
                       as="div"
                       weight="medium"
-                      tone={summary.netPayableCents > 0 ? 'success' : 'primary'}
+                      tone={summary.grossPayableCents > 0 ? 'success' : 'primary'}
                       className="text-[13px]"
                     >
-                      {signedMoney(summary.netPayableCents, summary.currencyCode)}
+                      {signedMoney(summary.grossPayableCents, summary.currencyCode)}
                     </AppText>
                   </button>
                 ))}

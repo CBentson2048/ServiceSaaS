@@ -193,7 +193,7 @@ delete from payroll.target_adjustments where id='d0000000-0000-0000-0000-0000000
 select adjusted_target_cents from payroll.target_adjustments where id='d0000000-0000-0000-0000-000000000001';
 
 \echo V21_uncaptured_source_shows_warning_not_zero
-insert into payroll.pay_summaries (id,business_id,pay_period_id,staff_profile_id,employment_type_snapshot,structure_version_id,net_payable_cents)
+insert into payroll.pay_summaries (id,business_id,pay_period_id,staff_profile_id,employment_type_snapshot,structure_version_id,gross_payable_cents)
 values ('99999999-9999-9999-9999-999999999999','11111111-1111-1111-1111-111111111111','88888888-8888-8888-8888-888888888888',
         '44444444-4444-4444-4444-444444444444','employed','77777777-7777-7777-7777-777777777777',0);
 select tips_paid_out_cents,tips_owed_cents from payroll.pay_summaries;

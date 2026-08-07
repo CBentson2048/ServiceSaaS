@@ -165,7 +165,7 @@ export type PayLineType =
   | 'bonus'
   | 'tip'
   | 'adjustment'
-  | 'net_payable';
+  | 'gross_payable';
 
 /** payroll.pay_line_source_enum — what a line drills down to. */
 export type PayLineSource =
@@ -239,7 +239,7 @@ export const PAY_LINE_TYPE_LABELS: Record<PayLineType, string> = {
   bonus: 'Bonus',
   tip: 'Tips',
   adjustment: 'Adjustment',
-  net_payable: 'Net payable',
+  gross_payable: 'Gross payable',
 };
 
 export const PAY_STAGE_TYPE_LABELS: Record<PayStageType, string> = {
@@ -462,7 +462,7 @@ export interface PayPeriod {
 /** Period-level roll-up shown on the list, so a row is useful without drilling in. */
 export interface PayPeriodSummaryTotals {
   staffCount: number;
-  totalNetPayableCents: number;
+  totalGrossPayableCents: number;
   totalBasePayCents: number;
   totalCommissionCents: number;
   staleCount: number;
@@ -517,7 +517,7 @@ export interface PaySummary {
   adjustmentsCents: number;
 
   /** SIGNED — negative means the stylist owes the business, normal for renters. */
-  netPayableCents: number;
+  grossPayableCents: number;
   businessRetainedCents: number;
 
   greaterOfApplied: boolean;
@@ -707,7 +707,7 @@ export interface PaySummaryListItem {
   bonusCents: number;
   adjustmentsCents: number;
   /** SIGNED. */
-  netPayableCents: number;
+  grossPayableCents: number;
   businessRetainedCents: number;
   greaterOfApplied: boolean;
   greaterOfWinner: GreaterOfWinner | null;
@@ -1004,7 +1004,7 @@ export interface PayStructurePreviewRequest {
 
 export interface PayStructurePreviewResponse {
   illustrative: true;
-  netPayableCents: number;
+  grossPayableCents: number;
   basePayCents: number;
   commissionCents: number;
   revenueSplitCents: number;
@@ -1039,4 +1039,35 @@ export interface AssignPayStructureResponse {
   assignment: StaffPayAssignmentDetail;
   /** The previous open assignment that was closed, when one existed. */
   closedAssignment: StaffPayAssignmentDetail | null;
+}
+
+export interface StaffPayAssignmentResponse {
+  /** The assignment in force today, or null. */
+  assignment: StaffPayAssignmentDetail | null;
+  /**
+   * The open (unended) assignment. Differs from `assignment` only when the
+   * open assignment starts in the future — the case a start-date correction
+   * exists to fix.
+   */
+  openAssignment: StaffPayAssignmentDetail | null;
+}
+
+export interface AmendPayAssignmentRequest {
+  /** Corrected local start date for the staff member's open assignment. */
+  effectiveFrom: string;
+}
+
+export interface AmendPayAssignmentResponse {
+  assignment: StaffPayAssignmentDetail;
+  previousEffectiveFrom: string;
+  /**
+   * Already-calculated pay summaries the date move made stale (their periods
+   * resolved the plan under the old date). Recalculate those periods.
+   */
+  staleFlaggedCount: number;
+  /**
+   * Locked/paid periods inside the moved window. Their figures are final;
+   * corrections flow through a pay adjustment in a later period.
+   */
+  lockedPeriodCount: number;
 }

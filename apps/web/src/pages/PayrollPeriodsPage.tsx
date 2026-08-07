@@ -227,7 +227,7 @@ export function PayrollPeriodsPage() {
               className="grid items-center bg-surface-alt px-4 py-2.5"
               style={{ gridTemplateColumns: COLS }}
             >
-              {['Period', 'Kind', 'Frequency', 'Status', 'Staff', 'Net payable', ''].map(
+              {['Period', 'Kind', 'Frequency', 'Status', 'Staff', 'Gross payable', ''].map(
                 (heading, idx) => (
                   <AppText
                     key={heading || idx}
@@ -283,10 +283,10 @@ export function PayrollPeriodsPage() {
                   <AppText
                     as="div"
                     weight="medium"
-                    tone={totals.totalNetPayableCents > 0 ? 'success' : 'primary'}
+                    tone={totals.totalGrossPayableCents > 0 ? 'success' : 'primary'}
                     className="text-[13px]"
                   >
-                    {signedMoney(totals.totalNetPayableCents, totals.currencyCode)}
+                    {signedMoney(totals.totalGrossPayableCents, totals.currencyCode)}
                   </AppText>
                 ) : (
                   <AppText as="div" variant="micro" tone="muted">

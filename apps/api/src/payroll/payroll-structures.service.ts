@@ -28,6 +28,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { SupabaseClient, createClient } from '@supabase/supabase-js';
 import type {
+  AmendPayAssignmentResponse,
   AssignPayStructureResponse,
   AuthUser,
   CreatePayStructureRequest,
@@ -40,6 +41,7 @@ import type {
   PayStructureStageInput,
   PayStructureVersionDetail,
   PayrollDataSource,
+  StaffPayAssignmentResponse,
   ThresholdBasis,
 } from '@sheer/domain';
 import { userHasRole } from '@sheer/domain';
@@ -377,7 +379,7 @@ export class PayrollStructuresService {
     }
     return {
       illustrative: true,
-      netPayableCents: result.figures.netPayableCents,
+      grossPayableCents: result.figures.grossPayableCents,
       basePayCents: result.figures.basePayCents,
       commissionCents: result.figures.commissionCents,
       revenueSplitCents: result.figures.revenueSplitCents,
@@ -884,32 +886,8 @@ export class PayrollStructuresService {
       throw new BadRequestException('effectiveFrom must be YYYY-MM-DD');
     }
     const structure = await this.fetchStructure(actor, request.structureId);
-
-    // Manager scope: only staff at the manager's own locations.
-    const staff = await this.inputs.loadStaff(actor.businessId);
-    const member = staff.find((s) => s.staffProfileId === staffProfileId);
-    if (!member) throw new NotFoundException('Staff member not found in your business');
-    if (!userHasRole(actor, 'owner')) {
-      if (
-        member.primaryLocationId === null ||
-        !actor.allowedLocationIds.includes(member.primaryLocationId)
-      ) {
-        throw new NotFoundException('Staff member not found in your business');
-      }
-    }
-
-    const { data: open, error: openError } = await this.admin
-      .schema('payroll')
-      .from('staff_pay_assignments')
-      .select('id,structure_id,effective_from,effective_to')
-      .eq('business_id', actor.businessId)
-      .eq('staff_profile_id', staffProfileId)
-      .is('effective_to', null)
-      .maybeSingle();
-    if (openError) {
-      this.logger.error(`assign open check failed: ${openError.message}`);
-      throw new InternalServerErrorException('Unable to check current assignment');
-    }
+    await this.assertStaffInScope(actor, staffProfileId);
+    const open = await this.loadOpenAssignment(actor.businessId, staffProfileId);
 
     let closedAssignment: AssignPayStructureResponse['closedAssignment'] = null;
     if (open) {
@@ -987,14 +965,201 @@ export class PayrollStructuresService {
   }
 
   /**
-   * The staff member's pay plan in force today, or null. Read side of the
-   * Team-record integration: owners look for pay ON the person, so the staff
-   * editor shows the current plan without a trip to the structures page.
+   * Corrects the START DATE of the staff member's open assignment — the
+   * "I picked the wrong date" repair path the POST cannot express (it refuses
+   * same-structure reassignment). Assignment history is a gapless chain
+   * welded by assign() (predecessor.effective_to === successor
+   * .effective_from), so the predecessor's end moves with this start:
+   * shrink-first when moving earlier, extend-after when moving later — the
+   * order the non-deferrable no-overlap constraint forces.
+   *
+   * Periods whose start falls inside the moved window were priced under the
+   * old date: their summaries are flagged stale for recalculation (statements
+   * are never silently recalculated). Locked/paid periods are final by
+   * design — they are counted for the caller's messaging, never touched;
+   * their corrections flow through a pay adjustment in a later period.
+   */
+  async amendAssignmentStart(
+    actor: AuthUser,
+    staffProfileId: string,
+    request: { effectiveFrom: string },
+  ): Promise<AmendPayAssignmentResponse> {
+    if (!isLocalDate(request.effectiveFrom)) {
+      throw new BadRequestException('effectiveFrom must be YYYY-MM-DD');
+    }
+    await this.assertStaffInScope(actor, staffProfileId);
+
+    const open = await this.loadOpenAssignment(actor.businessId, staffProfileId);
+    if (!open) {
+      throw new NotFoundException(
+        'This staff member has no current pay plan to amend — assign one instead',
+      );
+    }
+    const previousEffectiveFrom = open.effective_from;
+    if (previousEffectiveFrom === request.effectiveFrom) {
+      throw new BadRequestException('The pay plan already starts on that date');
+    }
+
+    const { data: predecessor, error: predecessorError } = await this.admin
+      .schema('payroll')
+      .from('staff_pay_assignments')
+      .select('id,structure_id,effective_from,effective_to')
+      .eq('business_id', actor.businessId)
+      .eq('staff_profile_id', staffProfileId)
+      .eq('effective_to', previousEffectiveFrom)
+      .maybeSingle<{ id: string; effective_from: string; effective_to: string }>();
+    if (predecessorError) {
+      this.logger.error(`amend predecessor check failed: ${predecessorError.message}`);
+      throw new InternalServerErrorException('Unable to check the previous assignment');
+    }
+    if (predecessor && !isBefore(predecessor.effective_from, request.effectiveFrom)) {
+      throw new BadRequestException('The start date must stay after the previous pay plan started');
+    }
+
+    const movingEarlier = isBefore(request.effectiveFrom, previousEffectiveFrom);
+    if (predecessor && movingEarlier) {
+      // Shrink the predecessor first — the earlier start would overlap it.
+      await this.moveAssignmentEnd(actor.businessId, predecessor.id, request.effectiveFrom);
+    }
+
+    const { error: moveError } = await this.admin
+      .schema('payroll')
+      .from('staff_pay_assignments')
+      .update({ effective_from: request.effectiveFrom })
+      .eq('id', open.id)
+      .eq('business_id', actor.businessId);
+    if (moveError) {
+      if (predecessor && movingEarlier) {
+        // Best-effort restore so the chain stays welded.
+        await this.admin
+          .schema('payroll')
+          .from('staff_pay_assignments')
+          .update({ effective_to: previousEffectiveFrom })
+          .eq('id', predecessor.id);
+      }
+      if (this.isOverlapViolation(moveError.message)) {
+        throw new ConflictException(
+          'That start date overlaps an earlier pay plan for this staff member',
+        );
+      }
+      this.logger.error(`amend start move failed: ${moveError.message}`);
+      throw new InternalServerErrorException('Unable to update the start date');
+    }
+
+    if (predecessor && !movingEarlier) {
+      // Extend the predecessor to the later start so no uncovered gap remains.
+      try {
+        await this.moveAssignmentEnd(actor.businessId, predecessor.id, request.effectiveFrom);
+      } catch (error) {
+        await this.admin
+          .schema('payroll')
+          .from('staff_pay_assignments')
+          .update({ effective_from: previousEffectiveFrom })
+          .eq('id', open.id);
+        throw error;
+      }
+    }
+
+    await this.audit.record(actor, {
+      entityType: 'pay_structure',
+      entityId: open.structure_id,
+      action: 'pay_structure.assignment_date_changed',
+      before: { staffProfileId, effectiveFrom: previousEffectiveFrom },
+      after: { staffProfileId, effectiveFrom: request.effectiveFrom },
+    });
+
+    const staleness = await this.flagStaleSummaries(
+      actor.businessId,
+      staffProfileId,
+      previousEffectiveFrom,
+      request.effectiveFrom,
+    );
+
+    const structure = await this.fetchStructure(actor, open.structure_id);
+    return {
+      assignment: {
+        id: open.id,
+        staffProfileId,
+        structureId: open.structure_id,
+        structureName: structure.name,
+        effectiveFrom: request.effectiveFrom,
+        effectiveTo: null,
+      },
+      previousEffectiveFrom,
+      staleFlaggedCount: staleness.staleFlaggedCount,
+      lockedPeriodCount: staleness.lockedPeriodCount,
+    };
+  }
+
+  /**
+   * The staff member's pay plan in force today plus the OPEN assignment (the
+   * row a start-date correction targets — they differ only when the open
+   * assignment starts in the future). Read side of the Team-record
+   * integration: owners look for pay ON the person, so the staff editor shows
+   * the current plan without a trip to the structures page.
    */
   async getCurrentAssignment(
     actor: AuthUser,
     staffProfileId: string,
-  ): Promise<{ assignment: AssignPayStructureResponse['assignment'] | null }> {
+  ): Promise<StaffPayAssignmentResponse> {
+    await this.assertStaffInScope(actor, staffProfileId);
+    const today = new Date().toISOString().slice(0, 10);
+    const { data, error } = await this.admin
+      .schema('payroll')
+      .from('staff_pay_assignments')
+      .select('id,structure_id,effective_from,effective_to')
+      .eq('business_id', actor.businessId)
+      .eq('staff_profile_id', staffProfileId)
+      .lte('effective_from', today)
+      .or(`effective_to.is.null,effective_to.gt.${today}`)
+      .maybeSingle<{
+        id: string;
+        structure_id: string;
+        effective_from: string;
+        effective_to: string | null;
+      }>();
+    if (error) {
+      this.logger.error(`getCurrentAssignment failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load the current pay plan');
+    }
+    const open = await this.loadOpenAssignment(actor.businessId, staffProfileId);
+
+    const toDetail = async (row: {
+      id: string;
+      structure_id: string;
+      effective_from: string;
+      effective_to: string | null;
+    }) => {
+      const structure = await this.fetchStructure(actor, row.structure_id);
+      return {
+        id: row.id,
+        staffProfileId,
+        structureId: row.structure_id,
+        structureName: structure.name,
+        effectiveFrom: row.effective_from,
+        effectiveTo: row.effective_to,
+      };
+    };
+
+    const assignment = data ? await toDetail(data) : null;
+    const openAssignment = open
+      ? open.id === assignment?.id
+        ? assignment
+        : await toDetail(open)
+      : null;
+    return { assignment, openAssignment };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Internals
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Owner: any staff member in the business. Manager: only staff at the
+   * manager's own locations. Missing and out-of-scope are both 404 so scope
+   * cannot be probed.
+   */
+  private async assertStaffInScope(actor: AuthUser, staffProfileId: string): Promise<void> {
     const staff = await this.inputs.loadStaff(actor.businessId);
     const member = staff.find((s) => s.staffProfileId === staffProfileId);
     if (!member) throw new NotFoundException('Staff member not found in your business');
@@ -1006,37 +1171,132 @@ export class PayrollStructuresService {
         throw new NotFoundException('Staff member not found in your business');
       }
     }
-    const today = new Date().toISOString().slice(0, 10);
+  }
+
+  /** The staff member's open (unended) assignment row, or null. */
+  private async loadOpenAssignment(businessId: string, staffProfileId: string) {
     const { data, error } = await this.admin
       .schema('payroll')
       .from('staff_pay_assignments')
       .select('id,structure_id,effective_from,effective_to')
-      .eq('business_id', actor.businessId)
+      .eq('business_id', businessId)
       .eq('staff_profile_id', staffProfileId)
-      .lte('effective_from', today)
-      .or(`effective_to.is.null,effective_to.gt.${today}`)
-      .maybeSingle();
+      .is('effective_to', null)
+      .maybeSingle<{
+        id: string;
+        structure_id: string;
+        effective_from: string;
+        effective_to: string | null;
+      }>();
     if (error) {
-      this.logger.error(`getCurrentAssignment failed: ${error.message}`);
-      throw new InternalServerErrorException('Unable to load the current pay plan');
+      this.logger.error(`assign open check failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to check current assignment');
     }
-    if (!data) return { assignment: null };
-    const structure = await this.fetchStructure(actor, data.structure_id);
-    return {
-      assignment: {
-        id: data.id,
-        staffProfileId,
-        structureId: data.structure_id,
-        structureName: structure.name,
-        effectiveFrom: data.effective_from,
-        effectiveTo: data.effective_to,
-      },
-    };
+    return data;
   }
 
-  // ---------------------------------------------------------------------------
-  // Internals
-  // ---------------------------------------------------------------------------
+  private async moveAssignmentEnd(
+    businessId: string,
+    assignmentId: string,
+    effectiveTo: string,
+  ): Promise<void> {
+    const { error } = await this.admin
+      .schema('payroll')
+      .from('staff_pay_assignments')
+      .update({ effective_to: effectiveTo })
+      .eq('id', assignmentId)
+      .eq('business_id', businessId);
+    if (error) {
+      this.logger.error(`amend predecessor end move failed: ${error.message}`);
+      throw new InternalServerErrorException("Unable to move the previous pay plan's end date");
+    }
+  }
+
+  /** Postgres exclusion-constraint violation (23P01) surfaced through PostgREST. */
+  private isOverlapViolation(message: string): boolean {
+    return message.includes('staff_pay_assignments_no_overlap') || message.includes('23P01');
+  }
+
+  /**
+   * Periods are priced by the plan in force at PERIOD START, so exactly the
+   * periods starting inside [min(old,new), max(old,new)) resolved this staff
+   * member's plan under a date that is no longer true. Their summaries are
+   * flagged stale (statements are never silently recalculated); locked/paid
+   * periods are final and only counted for the caller's messaging.
+   */
+  private async flagStaleSummaries(
+    businessId: string,
+    staffProfileId: string,
+    oldFrom: string,
+    newFrom: string,
+  ): Promise<{ staleFlaggedCount: number; lockedPeriodCount: number }> {
+    const lo = oldFrom < newFrom ? oldFrom : newFrom;
+    const hi = oldFrom < newFrom ? newFrom : oldFrom;
+
+    const { data: periods, error: periodsError } = await this.admin
+      .schema('payroll')
+      .from('pay_periods')
+      .select('id,status,period_start')
+      .eq('business_id', businessId)
+      .gte('period_start', lo)
+      .lt('period_start', hi);
+    if (periodsError) {
+      this.logger.error(`stale-flag period scan failed: ${periodsError.message}`);
+      throw new InternalServerErrorException(
+        'The start date was updated, but checking already-calculated periods failed — recalculate any periods the change overlaps',
+      );
+    }
+    const affected = (periods ?? []) as Array<{ id: string; status: string }>;
+    if (affected.length === 0) return { staleFlaggedCount: 0, lockedPeriodCount: 0 };
+
+    const finalStatuses = new Set(['locked', 'paid']);
+    const recalcableIds = new Set(
+      affected.filter((p) => !finalStatuses.has(p.status)).map((p) => p.id),
+    );
+
+    const { data: summaries, error: summariesError } = await this.admin
+      .schema('payroll')
+      .from('pay_summaries')
+      .select('id,pay_period_id')
+      .eq('business_id', businessId)
+      .eq('staff_profile_id', staffProfileId)
+      .in(
+        'pay_period_id',
+        affected.map((p) => p.id),
+      )
+      .is('superseded_by_id', null);
+    if (summariesError) {
+      this.logger.error(`stale-flag summary scan failed: ${summariesError.message}`);
+      throw new InternalServerErrorException(
+        'The start date was updated, but checking already-calculated periods failed — recalculate any periods the change overlaps',
+      );
+    }
+    const rows = (summaries ?? []) as Array<{ id: string; pay_period_id: string }>;
+    const staleIds = rows.filter((s) => recalcableIds.has(s.pay_period_id)).map((s) => s.id);
+    const lockedPeriods = new Set(
+      rows.filter((s) => !recalcableIds.has(s.pay_period_id)).map((s) => s.pay_period_id),
+    );
+
+    if (staleIds.length > 0) {
+      const { error: staleError } = await this.admin
+        .schema('payroll')
+        .from('pay_summaries')
+        .update({
+          is_stale: true,
+          stale_reason: `Pay plan start date changed from ${oldFrom} to ${newFrom} after pay was calculated`,
+        })
+        .eq('business_id', businessId)
+        .in('id', staleIds);
+      if (staleError) {
+        this.logger.error(`stale flagging failed: ${staleError.message}`);
+        throw new InternalServerErrorException(
+          'The start date was updated, but flagging already-calculated periods failed — recalculate any periods the change overlaps',
+        );
+      }
+    }
+
+    return { staleFlaggedCount: staleIds.length, lockedPeriodCount: lockedPeriods.size };
+  }
 
   private async fetchStructure(actor: AuthUser, structureId: string) {
     const { data, error } = await this.admin

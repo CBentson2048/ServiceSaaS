@@ -350,3 +350,8 @@ export class AssignPayStructureDto {
   @Matches(DATE_REGEX, DATE_MESSAGE)
   effectiveFrom!: string;
 }
+
+export class AmendPayAssignmentDto {
+  @Matches(DATE_REGEX, DATE_MESSAGE)
+  effectiveFrom!: string;
+}

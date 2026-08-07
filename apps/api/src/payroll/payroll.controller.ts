@@ -49,6 +49,7 @@ import {
   UpdateDataSourceDto,
 } from './dto';
 import {
+  AmendPayAssignmentDto,
   AssignPayStructureDto,
   CreatePayStructureDto,
   PayStructureIdParamDto,
@@ -266,6 +267,16 @@ export class PayrollController {
     @Body() body: AssignPayStructureDto,
   ) {
     return this.structures.assign(actor, params.staffProfileId, body);
+  }
+
+  @Patch('staff/:staffProfileId/assignment')
+  @RequirePermissions('payroll.view', 'payroll.edit')
+  async amendAssignment(
+    @CurrentUser() actor: AuthUser,
+    @Param() params: StaffProfileIdParamDto,
+    @Body() body: AmendPayAssignmentDto,
+  ) {
+    return this.structures.amendAssignmentStart(actor, params.staffProfileId, body);
   }
 
   // ---- Create / generate / ready (payroll.view + payroll.edit) ----

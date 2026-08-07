@@ -204,12 +204,12 @@ export class PayrollExportService {
       subject: `Your pay summary — ${range}`,
       text: [
         `Hi ${breakdown.staffName},`,
-        `Your pay summary for ${range} is attached as a PDF. It shows the full breakdown behind your net payable figure.`,
+        `Your pay summary for ${range} is attached as a PDF. It shows the full breakdown behind your gross payable figure.`,
         PAYROLL_EXPORT_DISCLAIMER,
       ].join('\n\n'),
       html: [
         `<p>Hi ${escapeHtml(breakdown.staffName)},</p>`,
-        `<p>Your pay summary for ${escapeHtml(range)} is attached as a PDF. It shows the full breakdown behind your net payable figure.</p>`,
+        `<p>Your pay summary for ${escapeHtml(range)} is attached as a PDF. It shows the full breakdown behind your gross payable figure.</p>`,
         `<p>${escapeHtml(PAYROLL_EXPORT_DISCLAIMER)}</p>`,
       ].join('\n'),
       attachments: [
@@ -433,7 +433,7 @@ export class PayrollExportService {
         'Deductions (£)',
         'Bonuses (£)',
         'Adjustments (£)',
-        'Net payable (£)',
+        'Gross payable (£)',
         'Business retained (£)',
         'Greater-of winner',
         'Warnings',
@@ -460,7 +460,7 @@ export class PayrollExportService {
           poundsCsv(summary.deductionsCents),
           poundsCsv(summary.bonusCents),
           poundsCsv(summary.adjustmentsCents),
-          poundsCsv(summary.netPayableCents),
+          poundsCsv(summary.grossPayableCents),
           poundsCsv(summary.businessRetainedCents),
           summary.greaterOfWinner ?? '',
           summary.warnings.length,
@@ -509,17 +509,17 @@ export class PayrollExportService {
         { header: 'Chair rent', width: 55, value: (s) => poundsDisplay(s.chairRentCents), align: 'right' },
         { header: 'Deductions', width: 58, value: (s) => poundsDisplay(s.deductionsCents), align: 'right' },
         { header: 'Adjust.', width: 50, value: (s) => poundsDisplay(s.adjustmentsCents), align: 'right' },
-        { header: 'Net payable', width: 62, value: (s) => poundsDisplay(s.netPayableCents), align: 'right' },
+        { header: 'Gross payable', width: 62, value: (s) => poundsDisplay(s.grossPayableCents), align: 'right' },
       ];
       drawTable(doc, columns, summaries);
 
       doc.moveDown(1);
-      const totalNet = summaries.reduce((sum, s) => sum + s.netPayableCents, 0);
+      const totalGross = summaries.reduce((sum, s) => sum + s.grossPayableCents, 0);
       doc
         .font('Helvetica-Bold')
         .fontSize(10)
         .text(
-          `Total net payable across ${summaries.length} staff: ${poundsDisplay(totalNet)}`,
+          `Total gross payable across ${summaries.length} staff: ${poundsDisplay(totalGross)}`,
         );
       const warningCount = summaries.reduce((sum, s) => sum + s.warnings.length, 0);
       if (warningCount > 0) {
@@ -599,7 +599,7 @@ export class PayrollExportService {
       );
       doc.moveDown(1);
 
-      // Totals block. Net payable is SIGNED: negative means the stylist owes
+      // Totals block. Gross payable is SIGNED: negative means the stylist owes
       // the business (normal for chair renters), and the sign is preserved.
       doc.font('Helvetica-Bold').fontSize(11).text('Totals');
       doc.moveDown(0.3);
@@ -620,13 +620,13 @@ export class PayrollExportService {
       doc
         .font('Helvetica-Bold')
         .fontSize(12)
-        .text(`Net payable: ${poundsDisplay(summary.netPayableCents)}`);
-      if (summary.netPayableCents < 0) {
+        .text(`Gross payable: ${poundsDisplay(summary.grossPayableCents)}`);
+      if (summary.grossPayableCents < 0) {
         doc
           .font('Helvetica')
           .fontSize(9)
           .fillColor('#8a1f11')
-          .text('A negative net payable means this amount is owed to the business.');
+          .text('A negative gross payable means this amount is owed to the business.');
         doc.fillColor('#000000');
       }
       doc.moveDown(1);

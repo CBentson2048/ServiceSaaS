@@ -37,7 +37,7 @@ insert into payroll.pay_structure_bands (id,stage_id,sequence_no,from_multiple,r
 
 insert into payroll.pay_periods (id,business_id,kind,frequency,period_start,period_end,status)
 values ('88888888-8888-8888-8888-888888888888','11111111-1111-1111-1111-111111111111','calculation','weekly','2026-07-21','2026-07-28','draft');
-insert into payroll.pay_summaries (id,business_id,pay_period_id,staff_profile_id,employment_type_snapshot,net_payable_cents,structure_version_id)
+insert into payroll.pay_summaries (id,business_id,pay_period_id,staff_profile_id,employment_type_snapshot,gross_payable_cents,structure_version_id)
 values ('99999999-9999-9999-9999-999999999999','11111111-1111-1111-1111-111111111111','88888888-8888-8888-8888-888888888888',
         '44444444-4444-4444-4444-444444444444','employed',48840,'77777777-7777-7777-7777-777777777777');
 insert into payroll.pay_summary_lines (id,summary_id,sequence_no,line_type,label,amount_cents,structure_version_id,occurred_on,band_id)
@@ -84,7 +84,7 @@ set constraints payroll.payroll_pay_summaries_superseded_by_fkey deferred;
 update payroll.pay_summaries
    set superseded_by_id='99999999-0000-0000-0000-000000000002'
  where id='99999999-9999-9999-9999-999999999999';
-insert into payroll.pay_summaries (id,business_id,pay_period_id,staff_profile_id,employment_type_snapshot,net_payable_cents)
+insert into payroll.pay_summaries (id,business_id,pay_period_id,staff_profile_id,employment_type_snapshot,gross_payable_cents)
 values ('99999999-0000-0000-0000-000000000002','11111111-1111-1111-1111-111111111111','88888888-8888-8888-8888-888888888888',
         '44444444-4444-4444-4444-444444444444','employed',51600);
 commit;
@@ -141,7 +141,7 @@ select (summary_id is not null) as linked from payroll.target_adjustments
 -- =============================================================================
 
 \echo D10_summary_for_another_businesss_staff_ERROR
-insert into payroll.pay_summaries (business_id,pay_period_id,staff_profile_id,employment_type_snapshot,net_payable_cents)
+insert into payroll.pay_summaries (business_id,pay_period_id,staff_profile_id,employment_type_snapshot,gross_payable_cents)
 values ('aaaa1111-1111-1111-1111-111111111111','88888888-8888-8888-8888-888888888888',
         '44444444-4444-4444-4444-444444444444','employed',100);
 
@@ -169,7 +169,7 @@ values ('11111111-1111-1111-1111-111111111111','calculation','weekly','2026-10-0
 insert into payroll.pay_periods (id,business_id,kind,frequency,period_start,period_end,status)
 values ('88888888-0000-0000-0000-000000000009','11111111-1111-1111-1111-111111111111','calculation','weekly','2026-11-04','2026-11-11','draft');
 insert into payroll.pay_summaries (id,business_id,pay_period_id,staff_profile_id,employment_type_snapshot,
-                                   greater_of_applied,greater_of_winner,net_payable_cents)
+                                   greater_of_applied,greater_of_winner,gross_payable_cents)
 values ('99999999-0000-0000-0000-000000000009','11111111-1111-1111-1111-111111111111','88888888-0000-0000-0000-000000000009',
         '44444444-4444-4444-4444-444444444444','self_employed',true,'revenue_split',60000);
 select greater_of_winner from payroll.pay_summaries where id='99999999-0000-0000-0000-000000000009';
@@ -177,13 +177,13 @@ select greater_of_winner from payroll.pay_summaries where id='99999999-0000-0000
 \echo D13a_applied_comparison_still_requires_a_winner_ERROR
 -- pay_summaries_greater_of_winner (0073) must NOT have been dropped by 0078.
 insert into payroll.pay_summaries (business_id,pay_period_id,staff_profile_id,employment_type_snapshot,
-                                   greater_of_applied,greater_of_winner,net_payable_cents)
+                                   greater_of_applied,greater_of_winner,gross_payable_cents)
 values ('11111111-1111-1111-1111-111111111111','88888888-0000-0000-0000-000000000009',
         '44444444-4444-4444-4444-444444444444','employed',true,null,100);
 
 \echo D13b_non_operand_line_type_still_rejected_ERROR
 insert into payroll.pay_summaries (business_id,pay_period_id,staff_profile_id,employment_type_snapshot,
-                                   greater_of_applied,greater_of_winner,net_payable_cents)
+                                   greater_of_applied,greater_of_winner,gross_payable_cents)
 values ('11111111-1111-1111-1111-111111111111','88888888-0000-0000-0000-000000000009',
         '44444444-4444-4444-4444-444444444444','employed',true,'chair_rent',100);
 

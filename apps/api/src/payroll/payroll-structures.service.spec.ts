@@ -142,7 +142,7 @@ describe('preview — the wizard worked example runs the real engine', () => {
       basePayCents: 48_840,
       commissionCents: 54_000,
     });
-    expect(preview.netPayableCents).toBe(54_000);
+    expect(preview.grossPayableCents).toBe(54_000);
   });
 });
 

@@ -94,7 +94,7 @@ values ('88888888-0000-0000-0000-000000000002','11111111-1111-1111-1111-11111111
 update payroll.pay_periods set parent_payment_period_id='88888888-0000-0000-0000-000000000002'
  where id='88888888-8888-8888-8888-888888888888';
 
-insert into payroll.pay_summaries (id,business_id,pay_period_id,staff_profile_id,employment_type_snapshot,structure_version_id,net_payable_cents)
+insert into payroll.pay_summaries (id,business_id,pay_period_id,staff_profile_id,employment_type_snapshot,structure_version_id,gross_payable_cents)
 values ('99999999-9999-9999-9999-999999999999','11111111-1111-1111-1111-111111111111','88888888-8888-8888-8888-888888888888',
         '44444444-4444-4444-4444-444444444444','employed','77777777-7777-7777-7777-777777777777',48840);
 insert into payroll.pay_summary_lines (id,summary_id,sequence_no,line_type,label,amount_cents,structure_version_id)
@@ -102,19 +102,19 @@ values ('bbbbbbbb-0000-0000-0000-000000000001','99999999-9999-9999-9999-99999999
         '77777777-7777-7777-7777-777777777777');
 
 \echo R08_duplicate_live_summary_ERROR
-insert into payroll.pay_summaries (business_id,pay_period_id,staff_profile_id,employment_type_snapshot,net_payable_cents)
+insert into payroll.pay_summaries (business_id,pay_period_id,staff_profile_id,employment_type_snapshot,gross_payable_cents)
 values ('11111111-1111-1111-1111-111111111111','88888888-8888-8888-8888-888888888888',
         '44444444-4444-4444-4444-444444444444','employed',100);
 
 \echo R09_locked_figures_cannot_be_rewritten_ERROR_then_48840
 update payroll.pay_periods set status='locked', locked_at=now() where id='88888888-8888-8888-8888-888888888888';
-update payroll.pay_summaries set net_payable_cents=999999 where id='99999999-9999-9999-9999-999999999999';
-select net_payable_cents from payroll.pay_summaries where id='99999999-9999-9999-9999-999999999999';
+update payroll.pay_summaries set gross_payable_cents=999999 where id='99999999-9999-9999-9999-999999999999';
+select gross_payable_cents from payroll.pay_summaries where id='99999999-9999-9999-9999-999999999999';
 
 \echo R10_locked_summary_cannot_be_moved_out_of_lock_ERROR
-update payroll.pay_summaries set pay_period_id='88888888-0000-0000-0000-000000000002', net_payable_cents=1
+update payroll.pay_summaries set pay_period_id='88888888-0000-0000-0000-000000000002', gross_payable_cents=1
  where id='99999999-9999-9999-9999-999999999999';
-select pay_period_id, net_payable_cents from payroll.pay_summaries where id='99999999-9999-9999-9999-999999999999';
+select pay_period_id, gross_payable_cents from payroll.pay_summaries where id='99999999-9999-9999-9999-999999999999';
 
 \echo R11_locked_summary_cannot_be_reassigned_ERROR
 update payroll.pay_summaries set currency_code='USD' where id='99999999-9999-9999-9999-999999999999';

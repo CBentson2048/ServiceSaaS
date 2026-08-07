@@ -18,7 +18,7 @@ export function formatMoney(cents: number, currencyCode: string): string {
   }).format(safeCents / 100);
 }
 
-/** Signed money — “+£12” / “−£12” / “£0” — for variances and net payable. */
+/** Signed money — “+£12” / “−£12” / “£0” — for variances and gross payable. */
 export function signedMoney(cents: number, currencyCode: string): string {
   const sign = cents > 0 ? '+' : cents < 0 ? '−' : '';
   return `${sign}${formatMoney(Math.abs(cents), currencyCode)}`;

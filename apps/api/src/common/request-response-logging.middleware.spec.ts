@@ -202,12 +202,12 @@ describe('RequestResponseLoggingMiddleware', () => {
   describe('always-suppressed routes', () => {
     it.each([
       ['/api/zac/ask', 'private prompt text'],
-      ['/api/payroll/periods/abc/summaries', 'netPayableCents'],
+      ['/api/payroll/periods/abc/summaries', 'grossPayableCents'],
     ])('keeps %s suppressed even when body logging is enabled', (url, secret) => {
       const { middleware, lines, raw } = makeMiddleware(DEV);
 
       run(middleware, url, { question: 'private prompt text' }, {
-        summaries: [{ staffName: 'Jane Doe', netPayableCents: 68010 }],
+        summaries: [{ staffName: 'Jane Doe', grossPayableCents: 68010 }],
       });
 
       expect(lines()[0].body).toBe('[suppressed]');

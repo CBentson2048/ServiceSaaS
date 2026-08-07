@@ -42,7 +42,7 @@ const COMPARATOR_SYMBOLS: Record<PayrollComparator, string> = {
  * everything needed to defend a figure. Hours → target derivation → each
  * commission band priced separately → accelerator condition results →
  * itemised evidence lines → greater-of comparison → adjustments → the final
- * SIGNED net payable. Lines whose transaction source is not captured render
+ * SIGNED gross payable. Lines whose transaction source is not captured render
  * an amber "Not captured" chip, never £0.
  */
 export function PaySummaryDetailModal({
@@ -561,18 +561,18 @@ export function PaySummaryDetailModal({
             </div>
             <div className="mt-3 flex items-center justify-between rounded-input-lg border border-border bg-surface-alt px-3 py-2.5">
               <AppText as="div" weight="medium" className="text-[13px]">
-                Net payable
+                Gross payable
               </AppText>
               <AppText
                 as="div"
                 variant="title"
                 weight="medium"
-                tone={summary.netPayableCents > 0 ? 'success' : 'primary'}
+                tone={summary.grossPayableCents > 0 ? 'success' : 'primary'}
               >
-                {signedMoney(summary.netPayableCents, currency)}
+                {signedMoney(summary.grossPayableCents, currency)}
               </AppText>
             </div>
-            {summary.netPayableCents < 0 ? (
+            {summary.grossPayableCents < 0 ? (
               <AppText as="div" variant="micro" tone="muted" className="mt-1.5">
                 Negative means the staff member owes the business — normal for chair renters paying
                 rent out of takings held by the salon.

@@ -97,7 +97,7 @@ function summaryItem(overrides: Partial<PaySummaryListItem> = {}): PaySummaryLis
     deductionsCents: 0,
     bonusCents: 5000,
     adjustmentsCents: -1500,
-    netPayableCents: 78215,
+    grossPayableCents: 78215,
     businessRetainedCents: 183785,
     greaterOfApplied: false,
     greaterOfWinner: null,
@@ -110,7 +110,7 @@ function summaryItem(overrides: Partial<PaySummaryListItem> = {}): PaySummaryLis
   };
 }
 
-/** A chair renter whose signed net payable is NEGATIVE (they owe the salon). */
+/** A chair renter whose signed gross payable is NEGATIVE (they owe the salon). */
 function renterItem(): PaySummaryListItem {
   return summaryItem({
     summaryId: RENTER_SUMMARY_ID,
@@ -131,7 +131,7 @@ function renterItem(): PaySummaryListItem {
     deductionsCents: -500,
     bonusCents: 0,
     adjustmentsCents: 0,
-    netPayableCents: -13500,
+    grossPayableCents: -13500,
     businessRetainedCents: 123500,
     greaterOfWinner: null,
     warnings: [
@@ -172,7 +172,7 @@ function breakdown(): PaySummaryBreakdown {
       tipsPaidOutCents: 0,
       tipsOwedCents: 0,
       adjustmentsCents: item.adjustmentsCents,
-      netPayableCents: item.netPayableCents,
+      grossPayableCents: item.grossPayableCents,
       businessRetainedCents: item.businessRetainedCents,
       greaterOfApplied: false,
       greaterOfWinner: null,
@@ -350,12 +350,12 @@ describe('period CSV export', () => {
       '0',
     ]);
 
-    // Chair renter: SIGNED negative net payable survives into the export.
+    // Chair renter: SIGNED negative gross payable survives into the export.
     const renter = parseCsvLine(lines[headerIndex + 2]);
     expect(renter[0]).toBe('O\'Hara, "Renter" Kim');
     expect(renter[1]).toBe('self_employed');
     expect(renter[12]).toBe('-900.00'); // chair rent
-    expect(renter[16]).toBe('-135.00'); // net payable, negative = owes the salon
+    expect(renter[16]).toBe('-135.00'); // gross payable, negative = owes the salon
     expect(renter[19]).toBe('1'); // warnings count
   });
 

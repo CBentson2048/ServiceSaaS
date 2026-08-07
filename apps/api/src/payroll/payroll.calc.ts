@@ -26,7 +26,7 @@
  *    with the observed figure in basisAmountCents — they are drill-down
  *    evidence, not pay.
  *  - Pay lines are signed (deductions / chair rent negative).
- *  - The final net_payable line equals the sum of all pay lines, and the
+ *  - The final gross_payable line equals the sum of all pay lines, and the
  *    engine asserts this before returning.
  */
 
@@ -255,7 +255,7 @@ export interface EngineSummaryFigures {
   tipsPaidOutCents: number;
   tipsOwedCents: number;
   adjustmentsCents: number;
-  netPayableCents: number;
+  grossPayableCents: number;
   businessRetainedCents: number;
   greaterOfApplied: boolean;
   greaterOfWinner: GreaterOfWinner | null;
@@ -1276,12 +1276,12 @@ export function calculatePaySummary(input: EngineInput): EngineResult {
     tipsPaidOutCents: 0,
     tipsOwedCents: 0,
     adjustmentsCents: input.adjustments.reduce((sum, a) => sum + a.amountCents, 0),
-    netPayableCents: 0,
+    grossPayableCents: 0,
     businessRetainedCents: 0,
     greaterOfApplied: greaterOf?.applied ?? false,
     greaterOfWinner: greaterOf?.winner ?? null,
   };
-  figures.netPayableCents =
+  figures.grossPayableCents =
     figures.basePayCents +
     figures.commissionCents +
     figures.revenueSplitCents +
@@ -1292,7 +1292,7 @@ export function calculatePaySummary(input: EngineInput): EngineResult {
     figures.adjustmentsCents;
   figures.businessRetainedCents = Math.max(
     0,
-    figures.totalCollectedCents - Math.max(figures.netPayableCents, 0),
+    figures.totalCollectedCents - Math.max(figures.grossPayableCents, 0),
   );
 
   // ---- Lines ----
@@ -1369,20 +1369,20 @@ export function calculatePaySummary(input: EngineInput): EngineResult {
     });
   }
 
-  // Invariant: pay lines must sum to net payable. The DB enforces nothing here,
+  // Invariant: pay lines must sum to gross payable. The DB enforces nothing here,
   // so the engine does (plan W3.2-D "rounding and line-sum invariants").
   const paySum = lines.reduce((sum, l) => sum + l.amountCents, 0);
-  if (paySum !== figures.netPayableCents) {
+  if (paySum !== figures.grossPayableCents) {
     throw new Error(
-      `payroll.calc invariant violation: pay lines sum ${paySum} != net payable ${figures.netPayableCents}`,
+      `payroll.calc invariant violation: pay lines sum ${paySum} != gross payable ${figures.grossPayableCents}`,
     );
   }
 
   push({
-    lineType: 'net_payable',
+    lineType: 'gross_payable',
     stageId: null,
     bandId: null,
-    label: 'Net payable',
+    label: 'Gross payable',
     sourceType: null,
     sourceId: null,
     occurredOn: null,
@@ -1390,7 +1390,7 @@ export function calculatePaySummary(input: EngineInput): EngineResult {
     basisAmountCents: null,
     vatRatePercentSnapshot: null,
     ratePercent: null,
-    amountCents: figures.netPayableCents,
+    amountCents: figures.grossPayableCents,
     structureVersionId: version.versionId,
     sourceUnavailable: false,
     unavailableSource: null,

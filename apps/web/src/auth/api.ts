@@ -171,9 +171,12 @@ import type {
   RecordRetailSaleRequest,
   RecordRetailSaleResponse,
   RetailSalesListResponse,
+  AmendPayAssignmentRequest,
+  AmendPayAssignmentResponse,
   AssignPayStructureRequest,
   AssignPayStructureResponse,
   StaffPayAssignmentDetail,
+  StaffPayAssignmentResponse,
   CreatePayStructureRequest,
   ListPayStructuresResponse,
   PayStructureDetailResponse,
@@ -2244,12 +2247,15 @@ export async function createPayStructureVersion(
   );
 }
 
-/** The staff member's current open pay-structure assignment, or null when none. */
+/**
+ * The staff member's pay plan in force today plus their open assignment
+ * (differs only when the open assignment starts in the future).
+ */
 export async function getStaffPayAssignment(
   accessToken: string,
   staffProfileId: string,
-): Promise<{ assignment: StaffPayAssignmentDetail | null }> {
-  return request<{ assignment: StaffPayAssignmentDetail | null }>(
+): Promise<StaffPayAssignmentResponse> {
+  return request<StaffPayAssignmentResponse>(
     `/payroll/staff/${encodeURIComponent(staffProfileId)}/assignment`,
     { accessToken },
   );
@@ -2263,6 +2269,18 @@ export async function assignPayStructure(
   return request<AssignPayStructureResponse>(
     `/payroll/staff/${encodeURIComponent(staffProfileId)}/assignment`,
     { method: 'POST', body: payload, accessToken },
+  );
+}
+
+/** Corrects the start date of the staff member's current (open) assignment. */
+export async function amendStaffPayAssignment(
+  accessToken: string,
+  staffProfileId: string,
+  payload: AmendPayAssignmentRequest,
+): Promise<AmendPayAssignmentResponse> {
+  return request<AmendPayAssignmentResponse>(
+    `/payroll/staff/${encodeURIComponent(staffProfileId)}/assignment`,
+    { method: 'PATCH', body: payload, accessToken },
   );
 }
 

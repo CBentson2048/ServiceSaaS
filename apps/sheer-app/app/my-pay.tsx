@@ -142,7 +142,7 @@ function openStatement(item: MyPaySummaryListItem) {
 
 /** The most recent statement — the number the stylist opened the screen for. */
 function HeroStatement({ item }: { item: MyPaySummaryListItem }) {
-  const owesSalon = item.netPayableCents < 0;
+  const owesSalon = item.grossPayableCents < 0;
   return (
     <Pressable
       onPress={() => openStatement(item)}
@@ -156,9 +156,9 @@ function HeroStatement({ item }: { item: MyPaySummaryListItem }) {
         </Text>
         <StatusPill status={item.period.status} />
       </View>
-      <Text style={s.heroValueLabel}>{owesSalon ? 'OWED TO THE SALON' : 'NET PAY'}</Text>
+      <Text style={s.heroValueLabel}>{owesSalon ? 'OWED TO THE SALON' : 'GROSS PAY'}</Text>
       <Text style={[s.heroValue, owesSalon && s.heroValueOwed]}>
-        {formatMoney(Math.abs(item.netPayableCents), item.currencyCode)}
+        {formatMoney(Math.abs(item.grossPayableCents), item.currencyCode)}
       </Text>
       <Text style={s.heroMeta}>
         {[
@@ -177,7 +177,7 @@ function HeroStatement({ item }: { item: MyPaySummaryListItem }) {
 }
 
 function StatementCard({ item }: { item: MyPaySummaryListItem }) {
-  const owesSalon = item.netPayableCents < 0;
+  const owesSalon = item.grossPayableCents < 0;
   return (
     <Pressable
       onPress={() => openStatement(item)}
@@ -196,7 +196,7 @@ function StatementCard({ item }: { item: MyPaySummaryListItem }) {
       </View>
       <View style={s.rowRight}>
         <Text style={[s.rowAmount, owesSalon && s.rowAmountOwed]}>
-          {formatMoney(item.netPayableCents, item.currencyCode)}
+          {formatMoney(item.grossPayableCents, item.currencyCode)}
         </Text>
         <Text style={s.rowChevron}>›</Text>
       </View>

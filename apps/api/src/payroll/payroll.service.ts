@@ -66,7 +66,7 @@ interface SummaryRow {
   tips_paid_out_cents: number | string;
   tips_owed_cents: number | string;
   adjustments_cents: number | string;
-  net_payable_cents: number | string;
+  gross_payable_cents: number | string;
   business_retained_cents: number | string;
   greater_of_applied: boolean;
   greater_of_winner: string | null;
@@ -83,7 +83,7 @@ interface SummaryRow {
 }
 
 const SUMMARY_COLUMNS =
-  'id,business_id,pay_period_id,staff_profile_id,employment_type_snapshot,structure_id,structure_version_id,currency_code,service_revenue_cents,retail_revenue_cents,total_collected_cents,base_pay_cents,commission_cents,revenue_split_cents,bonus_cents,chair_rent_cents,deductions_cents,tips_paid_out_cents,tips_owed_cents,adjustments_cents,net_payable_cents,business_retained_cents,greater_of_applied,greater_of_winner,is_stale,stale_reason,superseded_by_id,inputs_snapshot,generated_by_user_profile_id,generated_at,exported_at,emailed_at,created_at,updated_at';
+  'id,business_id,pay_period_id,staff_profile_id,employment_type_snapshot,structure_id,structure_version_id,currency_code,service_revenue_cents,retail_revenue_cents,total_collected_cents,base_pay_cents,commission_cents,revenue_split_cents,bonus_cents,chair_rent_cents,deductions_cents,tips_paid_out_cents,tips_owed_cents,adjustments_cents,gross_payable_cents,business_retained_cents,greater_of_applied,greater_of_winner,is_stale,stale_reason,superseded_by_id,inputs_snapshot,generated_by_user_profile_id,generated_at,exported_at,emailed_at,created_at,updated_at';
 
 interface LineRow {
   id: string;
@@ -301,7 +301,7 @@ export class PayrollService {
       string,
       {
         staffCount: number;
-        totalNetPayableCents: number;
+        totalGrossPayableCents: number;
         totalBasePayCents: number;
         totalCommissionCents: number;
         staleCount: number;
@@ -314,7 +314,7 @@ export class PayrollService {
       .schema('payroll')
       .from('pay_summaries')
       .select(
-        'pay_period_id,staff_profile_id,net_payable_cents,base_pay_cents,commission_cents,is_stale,currency_code',
+        'pay_period_id,staff_profile_id,gross_payable_cents,base_pay_cents,commission_cents,is_stale,currency_code',
       )
       .in('pay_period_id', periodIds)
       .eq('business_id', actor.businessId)
@@ -327,14 +327,14 @@ export class PayrollService {
       if (scoped !== null && !scoped.has(row.staff_profile_id)) continue;
       const entry = totals.get(row.pay_period_id) ?? {
         staffCount: 0,
-        totalNetPayableCents: 0,
+        totalGrossPayableCents: 0,
         totalBasePayCents: 0,
         totalCommissionCents: 0,
         staleCount: 0,
         currencyCode: row.currency_code ?? 'GBP',
       };
       entry.staffCount += 1;
-      entry.totalNetPayableCents += numOrZero(row.net_payable_cents);
+      entry.totalGrossPayableCents += numOrZero(row.gross_payable_cents);
       entry.totalBasePayCents += numOrZero(row.base_pay_cents);
       entry.totalCommissionCents += numOrZero(row.commission_cents);
       if (row.is_stale === true) entry.staleCount += 1;
@@ -605,7 +605,7 @@ export class PayrollService {
       deductionsCents: numOrZero(row.deductions_cents),
       bonusCents: numOrZero(row.bonus_cents),
       adjustmentsCents: numOrZero(row.adjustments_cents),
-      netPayableCents: numOrZero(row.net_payable_cents),
+      grossPayableCents: numOrZero(row.gross_payable_cents),
       businessRetainedCents: numOrZero(row.business_retained_cents),
       greaterOfApplied: row.greater_of_applied === true,
       greaterOfWinner: (row.greater_of_winner as PaySummaryListItem['greaterOfWinner']) ?? null,
@@ -712,7 +712,7 @@ export class PayrollService {
         tipsPaidOutCents: numOrZero(row.tips_paid_out_cents),
         tipsOwedCents: numOrZero(row.tips_owed_cents),
         adjustmentsCents: numOrZero(row.adjustments_cents),
-        netPayableCents: numOrZero(row.net_payable_cents),
+        grossPayableCents: numOrZero(row.gross_payable_cents),
         businessRetainedCents: numOrZero(row.business_retained_cents),
         greaterOfApplied: row.greater_of_applied === true,
         greaterOfWinner: (row.greater_of_winner as never) ?? null,
