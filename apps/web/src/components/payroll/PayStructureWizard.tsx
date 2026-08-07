@@ -654,17 +654,15 @@ export function PayStructureWizard({
    * default rules are still submitted because the API requires all eight.
    */
   const needsHourRules = stages.some(
-    (stage) =>
-      stage.enabled && (stage.stageType === 'base_pay' || stage.stageType === 'commission'),
+    (stage) => stage.stageType === 'base_pay' || stage.stageType === 'commission',
   );
 
-  /** Whether any enabled stage reads retail sales — gates the retail sample input. */
+  /** Whether any stage reads retail sales — gates the retail sample input. */
   const usesRetailSales = stages.some(
     (stage) =>
-      stage.enabled &&
-      (stage.requiresDataSource === 'retail_sales' ||
-        (stage.stageType === 'commission' &&
-          (stage.revenueStream === 'retail' || stage.revenueStream === 'service_and_retail'))),
+      stage.requiresDataSource === 'retail_sales' ||
+      (stage.stageType === 'commission' &&
+        (stage.revenueStream === 'retail' || stage.revenueStream === 'service_and_retail')),
   );
 
   const steps = useMemo<WizardStep[]>(() => {
