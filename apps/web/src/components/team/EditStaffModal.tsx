@@ -4,7 +4,6 @@ import type {
   BusinessLocationSummary,
   InvitableRole,
   ManagedService,
-  StaffCommissionStructure,
   StaffEmploymentStatus,
   StaffEmploymentType,
   StaffMember,
@@ -13,7 +12,6 @@ import type {
   UpdateStaffMemberRequest,
 } from '@sheer/domain';
 import {
-  STAFF_COMMISSION_STRUCTURE_LABELS,
   STAFF_EMPLOYMENT_STATUS_LABELS,
   STAFF_EMPLOYMENT_TYPE_LABELS,
   STAFF_SERVICE_REVENUE_TARGET_MODE_DESCRIPTIONS,
@@ -24,6 +22,7 @@ import type { EditForm as StaffEditForm } from './staffUpdatePayload';
 import { buildStaffUpdatePayload } from './staffUpdatePayload';
 import {
   ApiRequestError,
+  getPayStructure,
   getStaffPayAssignment,
   listSecurityLevels,
   listServices,
@@ -123,6 +122,11 @@ export function EditStaffModal({
   const [payAssignmentLoaded, setPayAssignmentLoaded] = useState(false);
   const [assignPlanOpen, setAssignPlanOpen] = useState(false);
   const [payAssignmentRefresh, setPayAssignmentRefresh] = useState(0);
+  // Whether the assigned plan's in-force rules read the staff Service Revenue
+  // Target. null = unknown (no payroll.view, fetch failed, no in-force version)
+  // and the target fields FAIL OPEN — hide only on positive proof of non-use,
+  // because hiding a field the engine reads is worse than showing a spare one.
+  const [planUsesServiceTarget, setPlanUsesServiceTarget] = useState<boolean | null>(null);
   const staffProfileId = staff?.staffProfile?.id ?? null;
 
   // Load the member's current pay plan when the modal opens. Silent on error or
@@ -148,6 +152,43 @@ export function EditStaffModal({
       cancelled = true;
     };
   }, [open, accessToken, canViewPayroll, staffProfileId, payAssignmentRefresh]);
+
+  // Resolve which staff inputs the assigned plan actually uses, so the form can
+  // show only the fields that feed this member's pay. The check mirrors the
+  // engine's two target reads: band thresholds based on a percent of the service
+  // target, and accelerator conditions of the target_met basis.
+  useEffect(() => {
+    if (!open || !accessToken || !canViewPayroll || !payAssignmentLoaded) {
+      setPlanUsesServiceTarget(null);
+      return;
+    }
+    if (!payAssignment) {
+      // No plan → nothing reads the target. The pay-plan row nudges to assign.
+      setPlanUsesServiceTarget(false);
+      return;
+    }
+    let cancelled = false;
+    getPayStructure(accessToken, payAssignment.structureId)
+      .then((result) => {
+        if (cancelled) return;
+        const current = result.versions.find((v) => v.id === result.currentVersionId);
+        setPlanUsesServiceTarget(
+          current
+            ? current.stages.some(
+                (stage) =>
+                  stage.thresholdBasis === 'percent_of_service_target' ||
+                  (stage.accelerator?.conditions ?? []).some((c) => c.basis === 'target_met'),
+              )
+            : null,
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setPlanUsesServiceTarget(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, accessToken, canViewPayroll, payAssignmentLoaded, payAssignment]);
 
   // Load the business's security levels so the owner can assign one to the member.
   useEffect(() => {
@@ -232,11 +273,6 @@ export function EditStaffModal({
       leaveNotes: staff.staffProfile?.leaveNotes ?? '',
       employmentType: staff.staffProfile?.employmentType ?? 'employed',
       employmentStatus: staff.staffProfile?.employmentStatus ?? 'active',
-      commissionStructure: staff.staffProfile?.commissionStructure ?? 'tiered',
-      commissionFlatRatePercent:
-        staff.staffProfile?.commissionFlatRatePercent !== undefined
-          ? String(staff.staffProfile.commissionFlatRatePercent)
-          : '0',
       serviceRevenueTargetAmount:
         staff.staffProfile?.serviceRevenueTargetAmount != null
           ? String(staff.staffProfile.serviceRevenueTargetAmount)
@@ -300,6 +336,14 @@ export function EditStaffModal({
   const isOwner = staff.roles.includes('owner');
   const roleOptions: InvitableRole[] = isOwner ? ['stylist'] : ['manager', 'stylist'];
 
+  // Employment-type-driven UI. Reacts immediately to the selector: switching to
+  // self-employed hides holiday entitlement (no holiday pay) and reframes the
+  // pay section around the assigned plan. Hybrid keeps everything — the
+  // employed part of a hybrid contract still accrues holiday.
+  const isSelfEmployed = form.employmentType === 'self_employed';
+  // Fail-open: hidden only when the plan provably reads no target.
+  const showServiceTargetFields = planUsesServiceTarget !== false;
+
   function validate(values: EditForm): Record<string, string> {
     const next: Record<string, string> = {};
     if (!isOwner && values.roles.length === 0) next.roles = 'Select at least one role';
@@ -332,16 +376,13 @@ export function EditStaffModal({
           Number(values.averageBillBenchmark) < 0
         )
           next.averageBillBenchmark = 'Use a non-negative number';
+        // Hidden fields are skipped for the same reason as the permission gates
+        // above: a stale value behind an invisible input must not block a save.
         if (
-          Number.isNaN(Number(values.commissionFlatRatePercent)) ||
-          Number(values.commissionFlatRatePercent) < 0 ||
-          Number(values.commissionFlatRatePercent) > 100
-        )
-          next.commissionFlatRatePercent = 'Use 0-100';
-        if (
-          Number.isNaN(Number(values.holidayEntitlementDays)) ||
-          Number(values.holidayEntitlementDays) < 0 ||
-          Number(values.holidayEntitlementDays) > 366
+          values.employmentType !== 'self_employed' &&
+          (Number.isNaN(Number(values.holidayEntitlementDays)) ||
+            Number(values.holidayEntitlementDays) < 0 ||
+            Number(values.holidayEntitlementDays) > 366)
         )
           next.holidayEntitlementDays = 'Use 0-366 days';
         if (
@@ -350,6 +391,7 @@ export function EditStaffModal({
         )
           next.colourAllowanceAmount = 'Use a non-negative number';
         if (
+          showServiceTargetFields &&
           values.serviceRevenueTargetAmount.trim() &&
           (Number.isNaN(Number(values.serviceRevenueTargetAmount)) ||
             Number(values.serviceRevenueTargetAmount) < 0)
@@ -403,6 +445,7 @@ export function EditStaffModal({
     const payload: UpdateStaffMemberRequest = buildStaffUpdatePayload(form, {
       canManagePay,
       canManageSecurity,
+      serviceTargetHidden: !showServiceTargetFields,
     });
     try {
       const result = await updateStaffMember(accessToken, staff.userProfileId, payload);
@@ -768,12 +811,16 @@ export function EditStaffModal({
                       onValueChange={(v) => setForm({ ...form, contractedHours: v })}
                       error={errors.contractedHours}
                     />
-                    <TextField
-                      label="Holiday entitlement (days)"
-                      value={form.holidayEntitlementDays}
-                      onValueChange={(v) => setForm({ ...form, holidayEntitlementDays: v })}
-                      error={errors.holidayEntitlementDays}
-                    />
+                    {/* Self-employed members have no holiday pay; hybrid keeps
+                      the field because the employed part still accrues it. */}
+                    {isSelfEmployed ? null : (
+                      <TextField
+                        label="Holiday entitlement (days)"
+                        value={form.holidayEntitlementDays}
+                        onValueChange={(v) => setForm({ ...form, holidayEntitlementDays: v })}
+                        error={errors.holidayEntitlementDays}
+                      />
+                    )}
                   </>
                 ) : null}
                 <TextField
@@ -787,7 +834,11 @@ export function EditStaffModal({
               {canManagePay ? (
                 <FormSection
                   title="Pay & commission"
-                  description="Sensitive pay data — only visible to owners and pay managers."
+                  description={
+                    isSelfEmployed
+                      ? 'Self-employed pay is governed by the assigned pay plan (e.g. chair rent or revenue split). Only visible to owners and pay managers.'
+                      : 'Commission and pay rules live in the assigned pay plan. Only visible to owners and pay managers.'
+                  }
                 >
                   {canViewPayroll && payAssignmentLoaded && staffProfileId ? (
                     <div className="sm:col-span-2 flex flex-wrap items-center justify-between gap-2 rounded-input-lg border border-border bg-surface-alt px-3 py-2.5">
@@ -800,6 +851,11 @@ export function EditStaffModal({
                             ? `${payAssignment.structureName} — since ${formatLocalDate(payAssignment.effectiveFrom)}`
                             : 'No pay plan yet'}
                         </span>
+                        {payAssignment ? null : (
+                          <span className="mt-0.5 block text-[12px] text-warning">
+                            Pay can&apos;t be calculated for this stylist until a plan is assigned.
+                          </span>
+                        )}
                       </div>
                       {canEditPayroll ? (
                         <button
@@ -824,74 +880,66 @@ export function EditStaffModal({
                     onValueChange={(v) => setForm({ ...form, colourAllowanceAmount: v })}
                     error={errors.colourAllowanceAmount}
                   />
-                  <SelectField
-                    label="Commission structure"
-                    value={form.commissionStructure}
-                    onValueChange={(v) =>
-                      setForm({ ...form, commissionStructure: v as StaffCommissionStructure })
-                    }
-                    options={Object.entries(STAFF_COMMISSION_STRUCTURE_LABELS).map(
-                      ([value, label]) => ({ value, label }),
-                    )}
-                  />
-                  <TextField
-                    label="Flat commission rate (%)"
-                    value={form.commissionFlatRatePercent}
-                    onValueChange={(v) => setForm({ ...form, commissionFlatRatePercent: v })}
-                    error={errors.commissionFlatRatePercent}
-                    hint="Used when commission structure is Flat rate."
-                  />
                 </FormSection>
               ) : null}
 
-              <FormSection
-                title="Targets & KPIs"
-                description="Benchmarks used to measure this stylist's performance."
-              >
-                {/* Read by payroll accelerator conditions with basis='staff_benchmark',
-                  so editing it can move a stylist onto the accelerator rate. */}
-                {canManagePay ? (
+              {/* Every child is pay-gated, so the whole section goes with them —
+                no empty chrome for actors without pay access. */}
+              {canManagePay ? (
+                <FormSection
+                  title="Targets & KPIs"
+                  description="Benchmarks used to measure this stylist's performance."
+                >
+                  {/* Read by the KPI report for EVERY member and by payroll
+                    accelerator conditions with basis='staff_benchmark', so it
+                    stays visible regardless of employment type or plan. */}
                   <TextField
                     label="Average bill benchmark"
                     value={form.averageBillBenchmark}
                     onValueChange={(v) => setForm({ ...form, averageBillBenchmark: v })}
                     error={errors.averageBillBenchmark}
                   />
-                ) : null}
-                {canManagePay ? (
-                  <>
-                    <TextField
-                      label="Service revenue target"
-                      value={form.serviceRevenueTargetAmount}
-                      onValueChange={(v) => setForm({ ...form, serviceRevenueTargetAmount: v })}
-                      error={errors.serviceRevenueTargetAmount}
-                      hint="Leave blank to use the computed target."
-                      optional
-                    />
-                    <SelectField
-                      label="Service revenue target basis"
-                      value={form.serviceRevenueTargetMode}
-                      onValueChange={(v) =>
-                        setForm({
-                          ...form,
-                          serviceRevenueTargetMode: v as StaffServiceRevenueTargetMode,
-                        })
-                      }
-                      options={Object.entries(STAFF_SERVICE_REVENUE_TARGET_MODE_LABELS).map(
-                        ([value, label]) => ({
-                          value,
-                          label,
-                        }),
-                      )}
-                      hint={
-                        STAFF_SERVICE_REVENUE_TARGET_MODE_DESCRIPTIONS[
-                          form.serviceRevenueTargetMode
-                        ]
-                      }
-                    />
-                  </>
-                ) : null}
-              </FormSection>
+                  {showServiceTargetFields ? (
+                    <>
+                      <TextField
+                        label="Service revenue target"
+                        value={form.serviceRevenueTargetAmount}
+                        onValueChange={(v) => setForm({ ...form, serviceRevenueTargetAmount: v })}
+                        error={errors.serviceRevenueTargetAmount}
+                        hint="Leave blank to use the computed target."
+                        optional
+                      />
+                      <SelectField
+                        label="Service revenue target basis"
+                        value={form.serviceRevenueTargetMode}
+                        onValueChange={(v) =>
+                          setForm({
+                            ...form,
+                            serviceRevenueTargetMode: v as StaffServiceRevenueTargetMode,
+                          })
+                        }
+                        options={Object.entries(STAFF_SERVICE_REVENUE_TARGET_MODE_LABELS).map(
+                          ([value, label]) => ({
+                            value,
+                            label,
+                          }),
+                        )}
+                        hint={
+                          STAFF_SERVICE_REVENUE_TARGET_MODE_DESCRIPTIONS[
+                            form.serviceRevenueTargetMode
+                          ]
+                        }
+                      />
+                    </>
+                  ) : (
+                    <p className="self-center text-[12px] text-text-muted">
+                      {payAssignment
+                        ? `${payAssignment.structureName} doesn't read a service revenue target, so no target fields apply.`
+                        : 'Service revenue target fields appear when an assigned pay plan uses a target.'}
+                    </p>
+                  )}
+                </FormSection>
+              ) : null}
 
               <FormSection
                 title="Services"

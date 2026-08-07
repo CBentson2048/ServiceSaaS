@@ -602,10 +602,13 @@ export interface PayStructureWizardProps {
 }
 
 /**
- * Owner-only 4-step authoring wizard: Template → Parameters → Hour rules →
- * Review & preview. Money is entered in POUNDS and converted to integer cents
- * only when a payload is built. The preview runs the drafted rules through the
- * REAL engine server-side — nothing here re-implements pay maths.
+ * Owner-only authoring wizard: Template → Parameters → Hour rules → Review &
+ * preview. The Hour rules step only appears when the draft has a stage that
+ * reads hours (base pay or commission) — a chair-renter plan of revenue split
+ * + rent skips it and silently submits the default rules, which are inert
+ * without those stages. Money is entered in POUNDS and converted to integer
+ * cents only when a payload is built. The preview runs the drafted rules
+ * through the REAL engine server-side — nothing here re-implements pay maths.
  */
 export function PayStructureWizard({
   mode,
@@ -622,11 +625,7 @@ export function PayStructureWizard({
   const isOwnerEditor =
     userHasRole(auth.user, 'owner') && userHasPermission(auth.user, 'payroll.edit');
 
-  const steps: WizardStep[] =
-    mode === 'create'
-      ? ['template', 'parameters', 'hours', 'review']
-      : ['parameters', 'hours', 'review'];
-  const [step, setStep] = useState<WizardStep>(steps[0]);
+  const [step, setStep] = useState<WizardStep>(mode === 'create' ? 'template' : 'parameters');
 
   const [template, setTemplate] = useState<TemplateId | null>(null);
   const [name, setName] = useState('');
@@ -647,6 +646,40 @@ export function PayStructureWizard({
   // the user navigates back and forth between steps.
   const [hoursExpanded, setHoursExpanded] = useState(false);
   const [stepError, setStepError] = useState<string | null>(null);
+
+  /**
+   * Hours only influence pay through base pay (hourly × payable hours) and
+   * commission targets. Without either stage the hour rules are inert, so the
+   * Hours step and the example hourly-rate/hours inputs are dropped — the
+   * default rules are still submitted because the API requires all eight.
+   */
+  const needsHourRules = stages.some(
+    (stage) =>
+      stage.enabled && (stage.stageType === 'base_pay' || stage.stageType === 'commission'),
+  );
+
+  /** Whether any enabled stage reads retail sales — gates the retail sample input. */
+  const usesRetailSales = stages.some(
+    (stage) =>
+      stage.enabled &&
+      (stage.requiresDataSource === 'retail_sales' ||
+        (stage.stageType === 'commission' &&
+          (stage.revenueStream === 'retail' || stage.revenueStream === 'service_and_retail'))),
+  );
+
+  const steps = useMemo<WizardStep[]>(() => {
+    const list: WizardStep[] = mode === 'create' ? ['template', 'parameters'] : ['parameters'];
+    if (needsHourRules) list.push('hours');
+    list.push('review');
+    return list;
+  }, [mode, needsHourRules]);
+
+  // Stages are only editable on steps that always exist, but if the current
+  // step ever drops out of the list, land back on Parameters rather than
+  // leaving the indicator and Next/Back maths pointing at nothing.
+  useEffect(() => {
+    if (!steps.includes(step)) setStep('parameters');
+  }, [steps, step]);
 
   // Step 4 — illustrative sample inputs (pounds / hours)
   const [sampleHourlyRate, setSampleHourlyRate] = useState('12.21');
@@ -735,10 +768,12 @@ export function PayStructureWizard({
       setPreviewError(built.error ?? 'The drafted rules are incomplete.');
       return;
     }
-    const hourlyRateCents = poundsToCents(sampleHourlyRate);
-    const workedHours = parseNumber(sampleHours);
+    // Hidden sample fields are provably inert (no stage reads them), so they
+    // are sent as zero rather than validated.
+    const hourlyRateCents = needsHourRules ? poundsToCents(sampleHourlyRate) : 0;
+    const workedHours = needsHourRules ? parseNumber(sampleHours) : 0;
     const serviceRevenueCents = poundsToCents(sampleServiceRevenue);
-    const retailRevenueCents = poundsToCents(sampleRetailRevenue);
+    const retailRevenueCents = usesRetailSales ? poundsToCents(sampleRetailRevenue) : 0;
     if (
       hourlyRateCents === null ||
       hourlyRateCents < 0 ||
@@ -787,6 +822,8 @@ export function PayStructureWizard({
     rulesKey,
     built.rules,
     built.error,
+    needsHourRules,
+    usesRetailSales,
     sampleHourlyRate,
     sampleHours,
     sampleServiceRevenue,
@@ -1223,22 +1260,26 @@ export function PayStructureWizard({
               not saved with the plan.
             </AppText>
             <div className="mt-3 grid gap-3 sm:grid-cols-4">
-              <FieldShell label="Example hourly rate (£)">
-                <input
-                  className={INPUT_CLASSES}
-                  inputMode="decimal"
-                  value={sampleHourlyRate}
-                  onChange={(event) => setSampleHourlyRate(event.target.value)}
-                />
-              </FieldShell>
-              <FieldShell label="Example hours">
-                <input
-                  className={INPUT_CLASSES}
-                  inputMode="decimal"
-                  value={sampleHours}
-                  onChange={(event) => setSampleHours(event.target.value)}
-                />
-              </FieldShell>
+              {needsHourRules ? (
+                <>
+                  <FieldShell label="Example hourly rate (£)">
+                    <input
+                      className={INPUT_CLASSES}
+                      inputMode="decimal"
+                      value={sampleHourlyRate}
+                      onChange={(event) => setSampleHourlyRate(event.target.value)}
+                    />
+                  </FieldShell>
+                  <FieldShell label="Example hours">
+                    <input
+                      className={INPUT_CLASSES}
+                      inputMode="decimal"
+                      value={sampleHours}
+                      onChange={(event) => setSampleHours(event.target.value)}
+                    />
+                  </FieldShell>
+                </>
+              ) : null}
               <FieldShell label="Example service revenue (£)">
                 <input
                   className={INPUT_CLASSES}
@@ -1247,14 +1288,16 @@ export function PayStructureWizard({
                   onChange={(event) => setSampleServiceRevenue(event.target.value)}
                 />
               </FieldShell>
-              <FieldShell label="Example retail revenue (£)">
-                <input
-                  className={INPUT_CLASSES}
-                  inputMode="decimal"
-                  value={sampleRetailRevenue}
-                  onChange={(event) => setSampleRetailRevenue(event.target.value)}
-                />
-              </FieldShell>
+              {usesRetailSales ? (
+                <FieldShell label="Example retail revenue (£)">
+                  <input
+                    className={INPUT_CLASSES}
+                    inputMode="decimal"
+                    value={sampleRetailRevenue}
+                    onChange={(event) => setSampleRetailRevenue(event.target.value)}
+                  />
+                </FieldShell>
+              ) : null}
             </div>
             <AppText as="p" variant="micro" tone="muted" className="mt-3">
               {PREVIEW_NOTE}

@@ -690,55 +690,62 @@ interface TableColumn<T> {
   align?: 'left' | 'right';
 }
 
-/** Minimal text table: bold header row, hairline under it, page-break aware. */
+/**
+ * Styled table: dark header band, zebra rows, hairline row separators,
+ * page-break aware (the header band repeats on every page).
+ */
 function drawTable<T>(doc: PDFKit.PDFDocument, columns: TableColumn<T>[], rows: T[]): void {
   const startX = doc.page.margins.left;
   const bottom = doc.page.height - doc.page.margins.bottom;
-  const rowHeight = 16;
+  const headerHeight = 20;
+  const rowHeight = 18;
+  const cellPadX = 6;
+  const tableWidth = columns.reduce((w, c) => w + c.width, 0);
 
-  const drawHeader = (): void => {
+  const drawCells = (texts: string[], y: number, height: number): void => {
     let x = startX;
-    doc.font('Helvetica-Bold').fontSize(8);
-    for (const column of columns) {
-      doc.text(column.header, x, doc.y, {
-        width: column.width - 6,
-        align: column.align ?? 'left',
+    for (let i = 0; i < columns.length; i += 1) {
+      doc.text(texts[i], x + cellPadX, y + (height - 8) / 2 - 1, {
+        width: columns[i].width - cellPadX * 2,
+        align: columns[i].align ?? 'left',
         lineBreak: false,
       });
-      x += column.width;
-      doc.x = startX;
+      x += columns[i].width;
     }
-    doc.moveDown(0.6);
-    doc
-      .moveTo(startX, doc.y)
-      .lineTo(startX + columns.reduce((w, c) => w + c.width, 0), doc.y)
-      .lineWidth(0.5)
-      .strokeColor('#999999')
-      .stroke();
-    doc.strokeColor('#000000');
-    doc.moveDown(0.3);
+  };
+
+  const drawHeader = (): void => {
+    const y = doc.y;
+    doc.rect(startX, y, tableWidth, headerHeight).fill('#2b2b33');
+    doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8);
+    drawCells(columns.map((c) => c.header), y, headerHeight);
+    doc.fillColor('#000000');
+    doc.x = startX;
+    doc.y = y + headerHeight;
   };
 
   drawHeader();
-  doc.font('Helvetica').fontSize(8);
-  for (const row of rows) {
+  rows.forEach((row, index) => {
     if (doc.y + rowHeight > bottom) {
       doc.addPage();
       drawHeader();
-      doc.font('Helvetica').fontSize(8);
     }
     const y = doc.y;
-    let x = startX;
-    for (const column of columns) {
-      doc.text(column.value(row), x, y, {
-        width: column.width - 6,
-        align: column.align ?? 'left',
-        lineBreak: false,
-      });
-      x += column.width;
+    if (index % 2 === 1) {
+      doc.rect(startX, y, tableWidth, rowHeight).fill('#f5f5f7');
+      doc.fillColor('#000000');
     }
+    doc.font('Helvetica').fontSize(8).fillColor('#1a1a1a');
+    drawCells(columns.map((c) => c.value(row)), y, rowHeight);
+    doc
+      .moveTo(startX, y + rowHeight)
+      .lineTo(startX + tableWidth, y + rowHeight)
+      .lineWidth(0.5)
+      .strokeColor('#dddde2')
+      .stroke();
     doc.x = startX;
     doc.y = y + rowHeight;
-  }
+  });
+  doc.strokeColor('#000000').fillColor('#000000');
   doc.x = startX;
 }

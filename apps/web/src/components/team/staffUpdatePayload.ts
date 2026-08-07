@@ -1,6 +1,5 @@
 import type {
   InvitableRole,
-  StaffCommissionStructure,
   StaffEmploymentStatus,
   StaffEmploymentType,
   StaffServiceRevenueTargetMode,
@@ -23,8 +22,6 @@ export interface EditForm {
   leaveNotes: string;
   employmentType: StaffEmploymentType;
   employmentStatus: StaffEmploymentStatus;
-  commissionStructure: StaffCommissionStructure;
-  commissionFlatRatePercent: string;
   serviceRevenueTargetAmount: string;
   serviceRevenueTargetMode: StaffServiceRevenueTargetMode;
   holidayEntitlementDays: string;
@@ -59,11 +56,19 @@ export interface StaffUpdatePayloadOptions {
   canManagePay: boolean;
   /** Actor holds `security.manage`. */
   canManageSecurity: boolean;
+  /**
+   * True when the Service Revenue Target fields are hidden because the member's
+   * assigned pay plan provably reads no target (no `percent_of_service_target`
+   * band basis, no `target_met` accelerator condition). Hidden fields must be
+   * OMITTED, not submitted: their form state can be stale relative to what the
+   * owner last saw on screen. Defaults to false (fields shown → submitted).
+   */
+  serviceTargetHidden?: boolean;
 }
 
 export function buildStaffUpdatePayload(
   form: EditForm,
-  { canManagePay, canManageSecurity }: StaffUpdatePayloadOptions,
+  { canManagePay, canManageSecurity, serviceTargetHidden = false }: StaffUpdatePayloadOptions,
 ): UpdateStaffMemberRequest {
   const isStylist = form.roles.includes('stylist');
   /** Stylist-only AND pay-gated. */
@@ -93,15 +98,19 @@ export function buildStaffUpdatePayload(
     contractedHours: pay ? Number(form.contractedHours) : undefined,
     averageBillBenchmark: pay ? Number(form.averageBillBenchmark) : undefined,
     employmentType: pay ? form.employmentType : undefined,
-    holidayEntitlementDays: pay ? Number(form.holidayEntitlementDays) : undefined,
-    commissionStructure: pay ? form.commissionStructure : undefined,
-    commissionFlatRatePercent: pay ? Number(form.commissionFlatRatePercent) : undefined,
-    serviceRevenueTargetAmount: pay
-      ? form.serviceRevenueTargetAmount.trim()
-        ? Number(form.serviceRevenueTargetAmount)
-        : null
-      : undefined,
-    serviceRevenueTargetMode: pay ? form.serviceRevenueTargetMode : undefined,
+    // Hidden for the self-employed (no holiday pay), so a stale value must not
+    // be written back. Hybrid keeps it: the employed part accrues holiday.
+    holidayEntitlementDays:
+      pay && form.employmentType !== 'self_employed'
+        ? Number(form.holidayEntitlementDays)
+        : undefined,
+    serviceRevenueTargetAmount:
+      pay && !serviceTargetHidden
+        ? form.serviceRevenueTargetAmount.trim()
+          ? Number(form.serviceRevenueTargetAmount)
+          : null
+        : undefined,
+    serviceRevenueTargetMode: pay && !serviceTargetHidden ? form.serviceRevenueTargetMode : undefined,
     colourAllowanceAmount: pay ? Number(form.colourAllowanceAmount) : undefined,
     // ------------------------------------------------------------------------
 
