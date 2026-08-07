@@ -3,19 +3,19 @@ import { ConfigService } from '@nestjs/config';
 import type { AuthUser } from '@sheer/domain';
 
 /**
- * Controlled rollout for the ZAC dark launch. Entry requires, in order: the
- * global `ZAC_ENABLED` flag → the optional per-business allowlist → the
- * `zac.access` permission (controller guards) → each tool's own underlying
- * permission (registry/dispatch). Rollout failures read as 404, not 403 — a
- * dark-launched route stays invisible.
+ * Controlled rollout for ZAC. Entry requires, in order: the global `ZAC_ENABLED`
+ * kill-switch → the optional per-business allowlist → the `zac.access`
+ * permission (controller guards) → each tool's own underlying permission
+ * (registry/dispatch). Rollout failures read as 404, not 403 — a switched-off
+ * route stays invisible.
  */
 @Injectable()
 export class ZacRolloutService {
   constructor(private readonly config: ConfigService) {}
 
-  /** ZAC exists only when ZAC_ENABLED is exactly 'true'. Defaults off. */
+  /** ZAC is on by default since general availability; ZAC_ENABLED='false' kills it. */
   isGloballyEnabled(): boolean {
-    return this.config.get<string>('ZAC_ENABLED') === 'true';
+    return this.config.get<string>('ZAC_ENABLED') !== 'false';
   }
 
   /** Unset/empty allowlist = no business restriction; otherwise membership required. */

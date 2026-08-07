@@ -464,6 +464,10 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'settings.tax.manage',
     'settings.booking.manage',
     'audit.read',
+    // ZAC left dark launch 2026-08-07: every staff role now opens the assistant
+    // by default. Surface-only — each ZAC tool re-checks the exact underlying
+    // report/feature permission it needs, so this widens no data access.
+    'zac.access',
   ],
   // `payroll.self.view` is safe as a ROLE DEFAULT because it is scoped to the actor,
   // not to a business: every endpoint guarded by it must resolve the staff profile
@@ -478,6 +482,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'services.view',
     'rota.view',
     'payroll.self.view',
+    // Surface-only, same as the manager entry: the ZAC registry serves stylists
+    // a stylist-safe tool catalogue and self-scoped answers.
+    'zac.access',
   ],
   client: [],
 };
