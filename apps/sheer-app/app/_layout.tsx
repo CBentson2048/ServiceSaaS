@@ -45,6 +45,8 @@ export default function RootLayout() {
             <Stack.Screen name="client/visits" options={{ headerShown: false }} />
             <Stack.Screen name="client/visit-detail" options={{ headerShown: false }} />
             <Stack.Screen name="profile" options={{ headerShown: false }} />
+            <Stack.Screen name="my-pay" options={{ headerShown: false }} />
+            <Stack.Screen name="pay-summary" options={{ headerShown: false }} />
             <Stack.Screen name="salon-detail" options={{ headerShown: false }} />
             <Stack.Screen name="manage-appointment" options={{ headerShown: false }} />
             <Stack.Screen name="reschedule" options={{ headerShown: false }} />

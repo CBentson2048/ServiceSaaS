@@ -28,6 +28,8 @@ import type {
   MobileOwnerDashboardResponse,
   MobileStylistDashboardResponse,
   MyLeaveRequestsResponse,
+  MyPaySummariesResponse,
+  PaySummaryDetailResponse,
   PublicBookingAttemptResponse,
   PublicBookingAvailabilityResponse,
   PublicBookingLocationsResponse,
@@ -202,6 +204,23 @@ export async function getMyKpi(
   period: KpiPeriod,
 ): Promise<StylistKpiResponse> {
   return request<StylistKpiResponse>(`/kpi/me?period=${encodeURIComponent(period)}`, { accessToken });
+}
+
+// The caller's own pay statements. Scoped server-side to the actor's staff
+// profile and to approved/locked/paid periods — the API never accepts a staff
+// id on this path, so a colleague's pay is unrequestable by construction.
+export async function getMyPaySummaries(accessToken: string): Promise<MyPaySummariesResponse> {
+  return request<MyPaySummariesResponse>('/payroll/me/summaries', { accessToken });
+}
+
+export async function getMyPaySummary(
+  accessToken: string,
+  summaryId: string,
+): Promise<PaySummaryDetailResponse> {
+  return request<PaySummaryDetailResponse>(
+    `/payroll/me/summaries/${encodeURIComponent(summaryId)}`,
+    { accessToken },
+  );
 }
 
 export async function createMyLeaveRequest(

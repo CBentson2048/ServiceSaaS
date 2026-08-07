@@ -14,7 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import type { CustomerSalonSummary, UserProfileResponse } from '@sheer/domain';
-import { userHasRole } from '@sheer/domain';
+import { userHasPermission, userHasRole } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
 import { StylistTabBar } from '../src/navigation/StylistTabBar';
@@ -285,6 +285,11 @@ export default function ProfileScreen() {
                 />
               )}
 
+              {/* ── My pay (staff with self-view permission) ── */}
+              {userHasPermission(auth.user, 'payroll.self.view') && auth.user?.staffProfileId ? (
+                <MyPaySection />
+              ) : null}
+
               {/* ── Account actions ── */}
               <View style={s.accountSection}>
                 <Text style={s.sectionLabel}>ACCOUNT</Text>
@@ -437,6 +442,33 @@ function CustomerProfileBody({
       {/* ── Salons the customer has joined ── */}
       <SalonsSection accessToken={accessToken} />
     </>
+  );
+}
+
+// ── My pay entry (staff self-view) ────────────────────────────────────────────
+
+/** Reuses the salon-tile look — same tappable row idiom, different destination. */
+function MyPaySection() {
+  return (
+    <View style={s.section}>
+      <Text style={s.sectionLabel}>PAY</Text>
+      <Pressable
+        onPress={() => router.push('/my-pay')}
+        style={({ pressed }) => [s.salonTile, pressed && s.pressed]}
+        accessibilityRole="button"
+        accessibilityLabel="My pay"
+        accessibilityHint="Opens your pay statements"
+      >
+        <View style={s.salonTileIcon}>
+          <Ionicons name="wallet-outline" size={20} color={BRAND_LIGHT} />
+        </View>
+        <View style={s.salonTileBody}>
+          <Text style={s.salonTileName}>My pay</Text>
+          <Text style={s.salonTileMeta}>Confirmed pay statements and full breakdowns</Text>
+        </View>
+        <Text style={s.salonTileChevron}>›</Text>
+      </Pressable>
+    </View>
   );
 }
 

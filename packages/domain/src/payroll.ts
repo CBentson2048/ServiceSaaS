@@ -141,6 +141,18 @@ export type PayPeriodKind = 'calculation' | 'payment';
 /** payroll.pay_period_status_enum — the approval workflow. */
 export type PayPeriodStatus = 'draft' | 'ready_for_review' | 'approved' | 'locked' | 'paid';
 
+/**
+ * Period statuses visible through stylist self-view. Draft and
+ * ready-for-review figures are the owner's unreviewed working numbers —
+ * publishing them to staff before approval would force corrections to be
+ * negotiated after the fact instead of caught in review.
+ */
+export const SELF_VIEW_PAY_PERIOD_STATUSES: readonly PayPeriodStatus[] = [
+  'approved',
+  'locked',
+  'paid',
+];
+
 /** payroll.pay_line_type_enum */
 export type PayLineType =
   | 'service_revenue'
@@ -773,9 +785,29 @@ export interface PayrollSettingsResponse {
   dataSources: PayrollBusinessDataSource[];
 }
 
+/**
+ * The slice of the parent period a stylist needs to read their own statement.
+ * Deliberately NOT the full PayPeriod: who generated/approved/locked it and
+ * the owner's period notes are management-side data.
+ */
+export interface MyPayPeriod {
+  payPeriodId: string;
+  kind: PayPeriodKind;
+  /** Local date, inclusive. */
+  periodStart: string;
+  /** Local date, EXCLUSIVE. */
+  periodEnd: string;
+  label: string | null;
+  status: PayPeriodStatus;
+}
+
+export interface MyPaySummaryListItem extends PaySummaryListItem {
+  period: MyPayPeriod;
+}
+
 /** Stylist self-view. Scoped server-side to the actor — never takes a staff id. */
 export interface MyPaySummariesResponse {
-  summaries: PaySummaryListItem[];
+  summaries: MyPaySummaryListItem[];
 }
 
 // =============================================================================

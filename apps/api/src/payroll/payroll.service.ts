@@ -26,7 +26,9 @@ import type {
   AuthUser,
   ListPayPeriodsResponse,
   ListPaySummariesResponse,
+  MyPayPeriod,
   MyPaySummariesResponse,
+  MyPaySummaryListItem,
   PayPeriodDetailResponse,
   PayrollBusinessDataSource,
   PayrollDataSource,
@@ -36,7 +38,7 @@ import type {
   PayrollSettingsResponse,
   PayrollWarning,
 } from '@sheer/domain';
-import { userHasRole } from '@sheer/domain';
+import { SELF_VIEW_PAY_PERIOD_STATUSES, userHasRole } from '@sheer/domain';
 import { AuditService } from '../audit/audit.service';
 import { PayrollInputsService, type TrustedStaff } from './payroll-inputs.service';
 import { PayrollPeriodService, toPayPeriod } from './payroll-period.service';
@@ -438,12 +440,21 @@ export class PayrollService {
       this.logger.error(`listOwnSummaries failed: ${error.message}`);
       throw new InternalServerErrorException('Unable to load your pay summaries');
     }
+    // Rows in unapproved periods are dropped AFTER the limit — the list may
+    // return fewer than 52, never a draft figure.
+    const visiblePeriods = await this.selfVisiblePeriods(actor.businessId, [
+      ...new Set((data ?? []).map((row) => row.pay_period_id)),
+    ]);
     const staff = await this.inputs.loadStaff(actor.businessId);
     const me = staff.find((s) => s.staffProfileId === staffProfileId) ?? null;
     const structureNames = await this.structureNames(actor.businessId);
-    return {
-      summaries: (data ?? []).map((row) => this.toListItem(row, me, structureNames)),
-    };
+    const summaries: MyPaySummaryListItem[] = [];
+    for (const row of data ?? []) {
+      const period = visiblePeriods.get(row.pay_period_id);
+      if (!period) continue;
+      summaries.push({ ...this.toListItem(row, me, structureNames), period });
+    }
+    return { summaries };
   }
 
   async getOwnSummaryBreakdown(
@@ -459,7 +470,58 @@ export class PayrollService {
       // A colleague's summary id is a 404, not a 403 — no existence oracle.
       throw new NotFoundException('Pay summary not found');
     }
+    const visiblePeriods = await this.selfVisiblePeriods(actor.businessId, [row.pay_period_id]);
+    if (!visiblePeriods.has(row.pay_period_id)) {
+      // Same 404 as nonexistent: an unapproved statement is not published yet.
+      throw new NotFoundException('Pay summary not found');
+    }
     return { breakdown: await this.buildBreakdown(actor, row) };
+  }
+
+  /**
+   * The parent periods a stylist may see, keyed by id. Only approved, locked
+   * or paid periods qualify — draft and ready-for-review figures are the
+   * owner's unreviewed working numbers (docs/V1.1/3-2 plan.md §6.3).
+   */
+  private async selfVisiblePeriods(
+    businessId: string,
+    periodIds: string[],
+  ): Promise<Map<string, MyPayPeriod>> {
+    if (periodIds.length === 0) return new Map();
+    const { data, error } = await this.admin
+      .schema('payroll')
+      .from('pay_periods')
+      .select('id,kind,period_start,period_end,label,status')
+      .eq('business_id', businessId)
+      .in('id', periodIds)
+      .in('status', [...SELF_VIEW_PAY_PERIOD_STATUSES])
+      .returns<
+        {
+          id: string;
+          kind: string;
+          period_start: string;
+          period_end: string;
+          label: string | null;
+          status: string;
+        }[]
+      >();
+    if (error) {
+      this.logger.error(`selfVisiblePeriods failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load your pay summaries');
+    }
+    return new Map(
+      (data ?? []).map((row) => [
+        row.id,
+        {
+          payPeriodId: row.id,
+          kind: row.kind as MyPayPeriod['kind'],
+          periodStart: row.period_start,
+          periodEnd: row.period_end,
+          label: row.label,
+          status: row.status as MyPayPeriod['status'],
+        },
+      ]),
+    );
   }
 
   // ---------------------------------------------------------------------------
