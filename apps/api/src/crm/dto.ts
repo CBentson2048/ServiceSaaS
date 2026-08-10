@@ -54,6 +54,37 @@ export class ListCrmClientsQueryDto {
   pageSize?: number;
 }
 
+/**
+ * Query for the lean global-search typeahead (`GET /crm/clients/search`).
+ * Unlike {@link ListCrmClientsQueryDto} the term is required — the endpoint
+ * exists only to answer "find this client", never to browse.
+ */
+export class SearchCrmClientsQueryDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(120)
+  q!: string;
+
+  @IsOptional()
+  @IsUUID()
+  locationId?: string;
+
+  /** 1-based page index. Defaults to 1 when omitted. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  /** Rows per page. Clamped server-side to [1, 50]. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(50)
+  pageSize?: number;
+}
+
 export class CreateCrmClientDto {
   @IsString()
   @MinLength(1)

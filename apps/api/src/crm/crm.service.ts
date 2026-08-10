@@ -21,6 +21,7 @@ import type {
   CrmClientFormula,
   CrmClientNote,
   CrmClientProfile,
+  CrmClientSearchResult,
   CrmClientsPagination,
   CrmClientSummary,
   CrmMessageLog,
@@ -34,10 +35,11 @@ import type {
   ListCrmClientVisitsResponse,
   ListCrmClientsResponse,
   ListCrmVisitPhotosResponse,
+  SearchCrmClientsResponse,
   UpdateCrmClientRequest,
 } from '@sheer/domain';
 import { userHasRole, userHasAnyRole } from '@sheer/domain';
-import type { ListCrmClientsQueryDto } from './dto';
+import type { ListCrmClientsQueryDto, SearchCrmClientsQueryDto } from './dto';
 import {
   LabFormulaService,
   type LabClientFormulaHistoryRecord,
@@ -62,6 +64,20 @@ interface ClientProfileRow {
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+}
+
+/** Row shape returned by the `crm.search_clients` RPC (migration 0083). */
+interface ClientSearchRpcRow {
+  id: string;
+  client_code: string;
+  first_name: string;
+  last_name: string;
+  email: string | null;
+  phone: string | null;
+  primary_location_id: string | null;
+  rank: number;
+  /** Full match count for the term, windowed onto every returned row. */
+  total_count: number;
 }
 
 interface AppointmentVisitRow {
@@ -229,6 +245,11 @@ const CLIENT_COLUMNS =
 const DEFAULT_CLIENTS_PAGE_SIZE = 50;
 const MAX_CLIENTS_PAGE_SIZE = 100;
 
+// The typeahead palette shows a short list; its endpoint still supports real
+// pagination for any consumer that wants to walk the full match set.
+const DEFAULT_SEARCH_PAGE_SIZE = 10;
+const MAX_SEARCH_PAGE_SIZE = 50;
+
 type CrmStaffScope = 'owner' | 'manager' | 'stylist';
 
 @Injectable()
@@ -257,9 +278,43 @@ export class CrmService {
 
     const pageSize = clampInt(query.pageSize ?? DEFAULT_CLIENTS_PAGE_SIZE, 1, MAX_CLIENTS_PAGE_SIZE);
     const page = Math.max(1, Math.trunc(query.page ?? 1));
+
+    const locationIds = this.resolveReadableLocationIds(actor, requestedLocationId);
+    if (locationIds && locationIds.length === 0) {
+      return {
+        clients: [],
+        scope: crmScope(actor),
+        pagination: buildClientsPagination(0, page, pageSize),
+      };
+    }
+
+    const search = query.q?.trim();
+    if (search) {
+      // Index-backed fuzzy path (migration 0083): the RPC returns rank-ordered
+      // ids plus the exact total; full rows and enrichment are then hydrated in
+      // rank order so the response shape is identical to the browse path. This
+      // replaces the old five-column leading-wildcard ILIKE, which could not
+      // use an index and missed reformatted phone numbers and misspellings.
+      const { rows: matches, total } = await this.runClientSearch(
+        actor.businessId,
+        locationIds ?? null,
+        search,
+        pageSize,
+        (page - 1) * pageSize,
+      );
+      const rows = await this.fetchClientRowsByIds(
+        actor.businessId,
+        matches.map((match) => match.id),
+      );
+      return {
+        clients: await this.buildClientSummaries(actor.businessId, rows),
+        scope: crmScope(actor),
+        pagination: buildClientsPagination(total, page, pageSize),
+      };
+    }
+
     const from = (page - 1) * pageSize;
     const to = from + pageSize - 1;
-
     let request = this.admin
       .schema('core')
       .from('client_profiles')
@@ -269,26 +324,7 @@ export class CrmService {
       .eq('business_id', actor.businessId)
       .order('updated_at', { ascending: false })
       .range(from, to);
-
-    const locationIds = this.resolveReadableLocationIds(actor, requestedLocationId);
-    if (locationIds) {
-      if (locationIds.length === 0) {
-        return {
-          clients: [],
-          scope: crmScope(actor),
-          pagination: buildClientsPagination(0, page, pageSize),
-        };
-      }
-      request = request.in('primary_location_id', locationIds);
-    }
-
-    const search = query.q?.trim();
-    if (search) {
-      const escaped = escapeIlike(search);
-      request = request.or(
-        `first_name.ilike.%${escaped}%,last_name.ilike.%${escaped}%,email.ilike.%${escaped}%,phone.ilike.%${escaped}%,client_code.ilike.%${escaped}%`,
-      );
-    }
+    if (locationIds) request = request.in('primary_location_id', locationIds);
 
     const { data, error, count } = await request.returns<ClientProfileRow[]>();
     if (error) {
@@ -297,23 +333,119 @@ export class CrmService {
     }
 
     const rows = data ?? [];
-    const [lastVisitByClient, allergyCounts, expiredPatchCounts] = await Promise.all([
-      this.fetchLastVisitByClient(actor.businessId, rows.map((row) => row.id)),
-      this.fetchActiveAllergyCounts(actor.businessId, rows.map((row) => row.id)),
-      this.fetchExpiredPatchCounts(actor.businessId, rows.map((row) => row.id)),
-    ]);
-
     return {
-      clients: rows.map((row) =>
-        toClientSummary(row, {
-          lastVisitAt: lastVisitByClient.get(row.id),
-          activeAllergies: allergyCounts.get(row.id) ?? 0,
-          expiredPatchTests: expiredPatchCounts.get(row.id) ?? 0,
-        }),
-      ),
+      clients: await this.buildClientSummaries(actor.businessId, rows),
       scope: crmScope(actor),
       pagination: buildClientsPagination(count ?? rows.length, page, pageSize),
     };
+  }
+
+  /**
+   * Lean typeahead behind the global search palette. Same scoping rules as
+   * {@link listClients} but skips the visit/alert enrichment fan-out — the
+   * palette refetches on every keystroke, so this stays one indexed query.
+   */
+  async searchClients(
+    actor: AuthUser,
+    query: SearchCrmClientsQueryDto,
+  ): Promise<SearchCrmClientsResponse> {
+    this.assertStaffRole(actor);
+    if (query.locationId) this.assertLocationScope(actor, query.locationId);
+
+    const pageSize = clampInt(query.pageSize ?? DEFAULT_SEARCH_PAGE_SIZE, 1, MAX_SEARCH_PAGE_SIZE);
+    const page = Math.max(1, Math.trunc(query.page ?? 1));
+    const term = query.q.trim();
+    const locationIds = this.resolveReadableLocationIds(actor, query.locationId);
+    if (!term || (locationIds && locationIds.length === 0)) {
+      return { results: [], pagination: buildClientsPagination(0, page, pageSize) };
+    }
+
+    const { rows, total } = await this.runClientSearch(
+      actor.businessId,
+      locationIds ?? null,
+      term,
+      pageSize,
+      (page - 1) * pageSize,
+    );
+    return {
+      results: rows.map(toClientSearchResult),
+      pagination: buildClientsPagination(total, page, pageSize),
+    };
+  }
+
+  /**
+   * Calls the `crm.search_clients` RPC (0083). The total arrives windowed onto
+   * every row, so a beyond-the-end page returns no rows and therefore no total;
+   * a one-row probe at offset 0 recovers the real count in that case, keeping
+   * pagination truthful instead of collapsing to zero.
+   */
+  private async runClientSearch(
+    businessId: string,
+    locationIds: string[] | null,
+    term: string,
+    limit: number,
+    offset: number,
+  ): Promise<{ rows: ClientSearchRpcRow[]; total: number }> {
+    const call = async (callLimit: number, callOffset: number) => {
+      const { data, error } = await this.admin.schema('crm').rpc('search_clients', {
+        p_business_id: businessId,
+        p_location_ids: locationIds,
+        p_term: term,
+        p_limit: callLimit,
+        p_offset: callOffset,
+      });
+      if (error) {
+        this.logger.error(`search_clients RPC failed: ${error.message}`);
+        throw new InternalServerErrorException('Unable to search clients');
+      }
+      return (data ?? []) as ClientSearchRpcRow[];
+    };
+
+    const rows = await call(limit, offset);
+    if (rows.length > 0) return { rows, total: Number(rows[0].total_count) };
+    if (offset === 0) return { rows, total: 0 };
+    const probe = await call(1, 0);
+    return { rows, total: probe.length > 0 ? Number(probe[0].total_count) : 0 };
+  }
+
+  /** Hydrates full client rows for the given ids, preserving the ids' order. */
+  private async fetchClientRowsByIds(
+    businessId: string,
+    ids: string[],
+  ): Promise<ClientProfileRow[]> {
+    if (ids.length === 0) return [];
+    const { data, error } = await this.admin
+      .schema('core')
+      .from('client_profiles')
+      .select(CLIENT_COLUMNS)
+      .eq('business_id', businessId)
+      .in('id', ids)
+      .returns<ClientProfileRow[]>();
+    if (error) {
+      this.logger.error(`fetchClientRowsByIds failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load CRM clients');
+    }
+    const byId = new Map((data ?? []).map((row) => [row.id, row]));
+    return ids.map((id) => byId.get(id)).filter((row): row is ClientProfileRow => Boolean(row));
+  }
+
+  /** Enriches raw client rows with last-visit and alert counts. */
+  private async buildClientSummaries(
+    businessId: string,
+    rows: ClientProfileRow[],
+  ): Promise<CrmClientSummary[]> {
+    const [lastVisitByClient, allergyCounts, expiredPatchCounts] = await Promise.all([
+      this.fetchLastVisitByClient(businessId, rows.map((row) => row.id)),
+      this.fetchActiveAllergyCounts(businessId, rows.map((row) => row.id)),
+      this.fetchExpiredPatchCounts(businessId, rows.map((row) => row.id)),
+    ]);
+    return rows.map((row) =>
+      toClientSummary(row, {
+        lastVisitAt: lastVisitByClient.get(row.id),
+        activeAllergies: allergyCounts.get(row.id) ?? 0,
+        expiredPatchTests: expiredPatchCounts.get(row.id) ?? 0,
+      }),
+    );
   }
 
   async createClient(
@@ -1548,8 +1680,17 @@ function cleanOptional(
   return options.lowercase ? trimmed.toLowerCase() : trimmed;
 }
 
-function escapeIlike(value: string): string {
-  return value.replace(/[%_]/g, (char) => `\\${char}`);
+function toClientSearchResult(row: ClientSearchRpcRow): CrmClientSearchResult {
+  return {
+    id: row.id,
+    clientCode: row.client_code,
+    firstName: row.first_name,
+    lastName: row.last_name,
+    displayName: `${row.first_name} ${row.last_name}`.trim(),
+    email: row.email ?? undefined,
+    phone: row.phone ?? undefined,
+    primaryLocationId: row.primary_location_id ?? undefined,
+  };
 }
 
 function clampInt(value: number, min: number, max: number): number {

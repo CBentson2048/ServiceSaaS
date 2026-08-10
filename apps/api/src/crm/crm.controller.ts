@@ -11,6 +11,7 @@ import type {
   ListCrmClientVisitsResponse,
   ListCrmClientsResponse,
   ListCrmVisitPhotosResponse,
+  SearchCrmClientsResponse,
 } from '@sheer/domain';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { PermissionsGuard, RequirePermissions } from '../auth/permissions.guard';
@@ -23,6 +24,7 @@ import {
   CreateCrmPatchTestDto,
   CreateCrmVisitPhotoDto,
   ListCrmClientsQueryDto,
+  SearchCrmClientsQueryDto,
   UpdateCrmClientDto,
 } from './dto';
 import { CrmService } from './crm.service';
@@ -40,6 +42,15 @@ export class CrmController {
     @Query() query: ListCrmClientsQueryDto,
   ): Promise<ListCrmClientsResponse> {
     return this.crm.listClients(actor, query);
+  }
+
+  // Declared before `clients/:id` so the literal segment wins route matching.
+  @Get('clients/search')
+  searchClients(
+    @CurrentUser() actor: AuthUser,
+    @Query() query: SearchCrmClientsQueryDto,
+  ): Promise<SearchCrmClientsResponse> {
+    return this.crm.searchClients(actor, query);
   }
 
   @Post('clients')

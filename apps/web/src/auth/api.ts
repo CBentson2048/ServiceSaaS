@@ -69,6 +69,7 @@ import type {
   ListCrmClientPatchTestsResponse,
   ListCrmClientVisitsResponse,
   ListCrmClientsResponse,
+  SearchCrmClientsResponse,
   ListCrmVisitPhotosResponse,
   ListLeaveRequestsResponse,
   ListLocationsResponse,
@@ -450,6 +451,24 @@ export async function listCrmClients(
   if (params.pageSize) search.set('pageSize', String(params.pageSize));
   const query = search.toString();
   return request<ListCrmClientsResponse>(`/crm/clients${query ? `?${query}` : ''}`, {
+    accessToken,
+  });
+}
+
+/**
+ * Lean, rank-ordered client typeahead behind the global search palette.
+ * Fuzzy server-side (name/phone/email/Q code); paginated via page/pageSize.
+ */
+export async function searchCrmClients(
+  accessToken: string,
+  params: { q: string; locationId?: string; page?: number; pageSize?: number },
+): Promise<SearchCrmClientsResponse> {
+  const search = new URLSearchParams();
+  search.set('q', params.q);
+  if (params.locationId) search.set('locationId', params.locationId);
+  if (params.page) search.set('page', String(params.page));
+  if (params.pageSize) search.set('pageSize', String(params.pageSize));
+  return request<SearchCrmClientsResponse>(`/crm/clients/search?${search.toString()}`, {
     accessToken,
   });
 }

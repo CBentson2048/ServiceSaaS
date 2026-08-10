@@ -6,7 +6,7 @@
  * scoping` block below is a first real harness covering the create path, which
  * is authorization- and scoping-critical.
  */
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import { createClient } from '@supabase/supabase-js';
 import type { AuthUser } from '@sheer/domain';
@@ -78,9 +78,116 @@ function createService(existingByEmail: Record<string, unknown> | null = null) {
   return { service: new CrmService(config, labFormulas), captured: mock.captured };
 }
 
+// Search harness: captures every `schema('crm').rpc('search_clients', …)` call
+// so tests can assert the tenancy/location scope actually sent to the database.
+function createSearchService(rpcRows: Array<Record<string, unknown>> = []) {
+  const rpcCalls: Array<{ name: string; params: Record<string, unknown> }> = [];
+  const query: Record<string, unknown> = {};
+  Object.assign(query, {
+    schema: () => query,
+    rpc: async (name: string, params: Record<string, unknown>) => {
+      rpcCalls.push({ name, params });
+      return { data: rpcRows, error: null };
+    },
+  });
+  mockedCreateClient.mockReturnValue(query as never);
+  const config = { getOrThrow: jest.fn(() => 'test') } as unknown as ConfigService;
+  const labFormulas = {
+    historyForClient: jest.fn(async () => []),
+  } as unknown as LabFormulaService;
+  return { service: new CrmService(config, labFormulas), rpcCalls };
+}
+
 describe('CrmService — permissions and search', () => {
-  it.todo('owner can search clients across the business by name, phone, and email');
-  it.todo('manager searches only clients in assigned locations');
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  function actor(overrides: Partial<AuthUser> = {}): AuthUser {
+    return {
+      id: 'user_1',
+      roles: ['manager'],
+      primaryRole: 'manager',
+      businessId: 'business_1',
+      allowedLocationIds: ['location_1'],
+      ...overrides,
+    } as unknown as AuthUser;
+  }
+
+  const rpcRow = {
+    id: 'client_1',
+    client_code: 'ABCD1234',
+    first_name: 'Jane',
+    last_name: 'Doe',
+    email: 'jane@example.com',
+    phone: '+447700900123',
+    primary_location_id: 'location_1',
+    rank: 0.9,
+    total_count: 1,
+  };
+
+  it('owner can search clients across the business by name, phone, and email', async () => {
+    const { service, rpcCalls } = createSearchService([rpcRow]);
+
+    const result = await service.searchClients(
+      actor({ roles: ['owner'], primaryRole: 'owner' }),
+      { q: 'jane' },
+    );
+
+    expect(rpcCalls).toHaveLength(1);
+    expect(rpcCalls[0].name).toBe('search_clients');
+    // Owner scope is business-wide: no location filter reaches the database.
+    expect(rpcCalls[0].params).toMatchObject({
+      p_business_id: 'business_1',
+      p_location_ids: null,
+      p_term: 'jane',
+    });
+    expect(result.results).toEqual([
+      expect.objectContaining({
+        id: 'client_1',
+        displayName: 'Jane Doe',
+        clientCode: 'ABCD1234',
+        email: 'jane@example.com',
+        phone: '+447700900123',
+      }),
+    ]);
+    expect(result.pagination).toMatchObject({ total: 1, page: 1 });
+  });
+
+  it('manager searches only clients in assigned locations', async () => {
+    const { service, rpcCalls } = createSearchService([rpcRow]);
+
+    await service.searchClients(actor({ allowedLocationIds: ['location_1', 'location_2'] }), {
+      q: 'jane',
+    });
+
+    expect(rpcCalls[0].params).toMatchObject({
+      p_location_ids: ['location_1', 'location_2'],
+    });
+  });
+
+  it('rejects a search scoped to a location outside the manager scope', async () => {
+    const { service, rpcCalls } = createSearchService([rpcRow]);
+
+    await expect(
+      service.searchClients(actor({ allowedLocationIds: ['location_1'] }), {
+        q: 'jane',
+        locationId: 'location_9',
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(rpcCalls).toHaveLength(0);
+  });
+
+  it('returns empty without querying when the actor has no permitted locations', async () => {
+    const { service, rpcCalls } = createSearchService([rpcRow]);
+
+    const result = await service.searchClients(actor({ allowedLocationIds: [] }), { q: 'jane' });
+
+    expect(rpcCalls).toHaveLength(0);
+    expect(result.results).toEqual([]);
+    expect(result.pagination.total).toBe(0);
+  });
+
   it.todo('manager cannot read another location client detail');
   it.todo('stylist can only read clients from assigned scope or own appointment history');
   it.todo('client role is rejected from every CRM staff endpoint');

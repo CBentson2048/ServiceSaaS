@@ -4061,6 +4061,27 @@ export interface ListCrmClientsResponse {
   pagination?: CrmClientsPagination;
 }
 
+/**
+ * Lean row returned by the global client search typeahead. Deliberately omits
+ * the visit/alert enrichment carried by {@link CrmClientSummary} — the palette
+ * refetches on every keystroke, so the endpoint stays a single indexed query.
+ */
+export interface CrmClientSearchResult {
+  id: string;
+  clientCode: string;
+  firstName: string;
+  lastName: string;
+  displayName: string;
+  email?: string;
+  phone?: string;
+  primaryLocationId?: string;
+}
+
+export interface SearchCrmClientsResponse {
+  results: CrmClientSearchResult[];
+  pagination: CrmClientsPagination;
+}
+
 export interface ListCrmClientNotesResponse {
   notes: CrmClientNote[];
 }

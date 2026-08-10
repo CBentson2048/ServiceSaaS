@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, Navigate } from 'react-router-dom';
+import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import type { CrmClientSummary, CrmClientsPagination } from '@sheer/domain';
 import { userHasAnyRole } from '@sheer/domain';
 import { ApiRequestError, createCrmClient, listCrmClients } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
+import { useDebounce } from '../hooks/useDebounce';
 
 const PAGE_SIZE_OPTIONS = [5, 10, 15, 20, 50] as const;
 const DEFAULT_PAGE_SIZE = 20;
@@ -15,11 +16,16 @@ export function CrmClientsPage() {
   // than one, they must choose (a NULL-location client is invisible to every
   // non-owner and 403s on open). A single location is assigned automatically.
   const locations = auth.user?.locations ?? [];
+  // The table's query state (search term, page, page size) lives in the URL so
+  // the address bar always describes exactly what is on screen — copying the
+  // link gives the receiver the same page of results the sender was seeing.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlQuery = searchParams.get('q') ?? '';
+  const page = parsePage(searchParams.get('page'));
+  const pageSize = parsePageSize(searchParams.get('pageSize'));
   const [clients, setClients] = useState<CrmClientSummary[]>([]);
   const [pagination, setPagination] = useState<CrmClientsPagination | null>(null);
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(urlQuery);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
@@ -73,24 +79,67 @@ export function CrmClientsPage() {
     [accessToken, pageSize],
   );
 
-  // Query the backend as the user types (debounced + trimmed) so any client is
-  // found — not just the recently-updated page held in memory. Trimming keeps
-  // "Luke" and "Luke " equivalent so a trailing space never changes results.
-  // Paging is server-side, so page changes refetch through the same effect.
+  // Writes table state into the URL — the single source of truth for what the
+  // table shows. `replace` for keystroke-driven updates so typing doesn't flood
+  // the history; explicit page navigation pushes so Back walks pages.
+  const applyParams = useCallback(
+    (
+      updates: { q?: string | null; page?: number | null; pageSize?: number | null },
+      options: { replace: boolean },
+    ) => {
+      setSearchParams(
+        (previous) => {
+          const next = new URLSearchParams(previous);
+          for (const [key, value] of Object.entries(updates)) {
+            if (value === null || value === undefined || value === '') next.delete(key);
+            else next.set(key, String(value));
+          }
+          return next;
+        },
+        { replace: options.replace },
+      );
+    },
+    [setSearchParams],
+  );
+
+  // Commit the input to the URL once typing pauses (trimmed, so "Luke" and
+  // "Luke " share one link). A new term always restarts at page 1.
+  const debouncedSearch = useDebounce(search, 250);
+  // Last q this tab wrote or adopted: lets external URL changes (palette
+  // hand-off, back/forward, a pasted link) update the input, while our own
+  // debounced writes don't loop back into it.
+  const lastQRef = useRef(urlQuery);
+  useEffect(() => {
+    const term = debouncedSearch.trim();
+    if (term === lastQRef.current) return;
+    lastQRef.current = term;
+    applyParams({ q: term || null, page: null }, { replace: true });
+  }, [debouncedSearch, applyParams]);
+
+  useEffect(() => {
+    if (urlQuery !== lastQRef.current) {
+      lastQRef.current = urlQuery;
+      setSearch(urlQuery);
+    }
+  }, [urlQuery]);
+
+  // Fetch whenever the URL state changes. The URL is already debounced, so a
+  // deep link or a shared link loads immediately with the right page.
   useEffect(() => {
     if (!accessToken) return;
-    const term = search.trim();
-    const handle = setTimeout(() => {
-      void reload(term, page);
-    }, 250);
-    return () => clearTimeout(handle);
-  }, [accessToken, search, page, reload]);
+    void reload(urlQuery, page);
+  }, [accessToken, urlQuery, page, reload]);
 
   // Safety net: if the dataset shrank (e.g. a client was removed elsewhere) and
   // the current page no longer exists, snap back to the last valid page.
   useEffect(() => {
-    if (pagination && page > pagination.pageCount) setPage(pagination.pageCount);
-  }, [pagination, page]);
+    if (pagination && page > pagination.pageCount) {
+      applyParams(
+        { page: pagination.pageCount === 1 ? null : pagination.pageCount },
+        { replace: true },
+      );
+    }
+  }, [pagination, page, applyParams]);
 
   // CRM is staff-only: block users who hold NO staff role. A user who is also a
   // client (e.g. an owner who has booked themselves) keeps access — mirrors the
@@ -151,8 +200,9 @@ export function CrmClientsPage() {
       // search and jump to page 1 so the new record is actually visible — a
       // lingering search term would filter it out and contradict the toast.
       setSearch('');
-      if (page === 1) void reload('', 1);
-      else setPage(1);
+      lastQRef.current = '';
+      if (urlQuery || page !== 1) applyParams({ q: null, page: null }, { replace: true });
+      else void reload('', 1);
     } catch (err: unknown) {
       if (err instanceof ApiRequestError && err.status === 409) {
         const existing = extractExistingClient(err.details);
@@ -319,18 +369,18 @@ export function CrmClientsPage() {
         className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center"
         onSubmit={(event) => {
           event.preventDefault();
-          // A new search starts at page 1; the debounced effect does the fetch.
-          setPage(1);
+          // Explicit submit commits immediately (skipping the debounce) and
+          // starts a fresh history entry at page 1.
+          const term = search.trim();
+          lastQRef.current = term;
+          applyParams({ q: term || null, page: null }, { replace: false });
         }}
       >
         <input
           type="search"
           placeholder="Search by name, phone, email, or Q code"
           value={search}
-          onChange={(event) => {
-            setSearch(event.target.value);
-            setPage(1);
-          }}
+          onChange={(event) => setSearch(event.target.value)}
           className="h-10 w-full rounded-input-lg border border-border-strong bg-surface px-3 text-[13px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 sm:w-96"
         />
         <button
@@ -379,11 +429,13 @@ export function CrmClientsPage() {
             pageSize={pageSize}
             pageSizeOptions={PAGE_SIZE_OPTIONS}
             disabled={loading}
-            onChange={(next) => setPage(next)}
+            onChange={(next) => applyParams({ page: next === 1 ? null : next }, { replace: false })}
             onPageSizeChange={(next) => {
               // New page size invalidates the current offset — restart at page 1.
-              setPageSize(next);
-              setPage(1);
+              applyParams(
+                { pageSize: next === DEFAULT_PAGE_SIZE ? null : next, page: null },
+                { replace: false },
+              );
             }}
           />
         ) : null}
@@ -645,4 +697,16 @@ function formatDate(value?: string): string {
     month: 'short',
     year: 'numeric',
   }).format(new Date(value));
+}
+
+// Parse table state from the URL, falling back safely on junk values so a
+// hand-edited or truncated link can never break the page.
+function parsePage(value: string | null): number {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 1 ? parsed : 1;
+}
+
+function parsePageSize(value: string | null): number {
+  const parsed = Number(value);
+  return (PAGE_SIZE_OPTIONS as readonly number[]).includes(parsed) ? parsed : DEFAULT_PAGE_SIZE;
 }

@@ -603,10 +603,10 @@ export interface PayStructureWizardProps {
 
 /**
  * Owner-only authoring wizard: Template → Parameters → Hour rules → Review &
- * preview. The Hour rules step only appears when the draft has a stage that
- * reads hours (base pay or commission) — a chair-renter plan of revenue split
- * + rent skips it and silently submits the default rules, which are inert
- * without those stages. Money is entered in POUNDS and converted to integer
+ * preview. The Hour rules step is always shown — for a draft with no stage
+ * that reads hours (e.g. a chair-renter plan of revenue split + rent) the
+ * rules are inert but stay visible and editable, so owners always see the
+ * time & hours settings. Money is entered in POUNDS and converted to integer
  * cents only when a payload is built. The preview runs the drafted rules
  * through the REAL engine server-side — nothing here re-implements pay maths.
  */
@@ -649,9 +649,9 @@ export function PayStructureWizard({
 
   /**
    * Hours only influence pay through base pay (hourly × payable hours) and
-   * commission targets. Without either stage the hour rules are inert, so the
-   * Hours step and the example hourly-rate/hours inputs are dropped — the
-   * default rules are still submitted because the API requires all eight.
+   * commission targets. Without either stage the hour rules are inert — the
+   * Hours step still shows so the settings are never hidden, but the example
+   * hourly-rate/hours inputs are dropped and sent as zero.
    */
   const needsHourRules = stages.some(
     (stage) => stage.stageType === 'base_pay' || stage.stageType === 'commission',
@@ -667,10 +667,9 @@ export function PayStructureWizard({
 
   const steps = useMemo<WizardStep[]>(() => {
     const list: WizardStep[] = mode === 'create' ? ['template', 'parameters'] : ['parameters'];
-    if (needsHourRules) list.push('hours');
-    list.push('review');
+    list.push('hours', 'review');
     return list;
-  }, [mode, needsHourRules]);
+  }, [mode]);
 
   // Stages are only editable on steps that always exist, but if the current
   // step ever drops out of the list, land back on Parameters rather than
@@ -1119,23 +1118,38 @@ export function PayStructureWizard({
             />
           ))}
 
-          <div className="flex flex-wrap gap-2">
-            <AppButton size="sm" variant="ghost" onClick={addBonus}>
-              + Add bonus
-            </AppButton>
-            {OPTIONAL_STAGE_TYPES.filter(
-              (stageType) => !stages.some((stage) => stage.stageType === stageType),
-            ).map((stageType) => (
-              <AppButton
-                key={stageType}
-                size="sm"
-                variant="ghost"
-                onClick={() => addOptionalStage(stageType)}
-              >
-                + Add {OPTIONAL_STAGE_LABELS[stageType].toLowerCase()}
+          <AppCard padding="md" elevation="none" className="border-[1.5px] border-dashed">
+            <AppText
+              as="div"
+              variant="caption"
+              weight="medium"
+              uppercase
+              className="text-text-subtle"
+            >
+              Add to this plan
+            </AppText>
+            <AppText as="p" variant="caption" tone="muted" className="mt-1">
+              Mix in extra building blocks — a bonus, a revenue split or chair rent — to make a
+              hybrid plan.
+            </AppText>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <AppButton size="sm" variant="secondary" onClick={addBonus}>
+                + Add bonus
               </AppButton>
-            ))}
-          </div>
+              {OPTIONAL_STAGE_TYPES.filter(
+                (stageType) => !stages.some((stage) => stage.stageType === stageType),
+              ).map((stageType) => (
+                <AppButton
+                  key={stageType}
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => addOptionalStage(stageType)}
+                >
+                  + Add {OPTIONAL_STAGE_LABELS[stageType].toLowerCase()}
+                </AppButton>
+              ))}
+            </div>
+          </AppCard>
         </div>
       ) : null}
 
@@ -1721,7 +1735,7 @@ function CommissionStageFields({
         </div>
         <AppButton
           size="sm"
-          variant="ghost"
+          variant="secondary"
           className="mt-2"
           onClick={() =>
             onChange({

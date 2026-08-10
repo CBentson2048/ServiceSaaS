@@ -4,6 +4,7 @@ import { formatDate, cn } from '@sheer/utils';
 import { useNavigate } from 'react-router-dom';
 import { AppText } from '../design';
 import { BrandLogo } from './BrandLogo';
+import { GlobalSearch } from './GlobalSearch';
 import { useAuth } from '../auth/AuthProvider';
 import { resolveTimezone } from '../config/timezones';
 
@@ -53,6 +54,7 @@ export function TopBar() {
       <NavClock timezone={timezone} variant="desktop" />
 
       <div className="flex items-center gap-4">
+        <GlobalSearch />
         <NavClock timezone={timezone} variant="mobile" />
 
         <div ref={menuRef} className="relative">
