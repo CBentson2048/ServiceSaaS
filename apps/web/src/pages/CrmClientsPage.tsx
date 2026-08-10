@@ -23,6 +23,17 @@ export function CrmClientsPage() {
   const urlQuery = searchParams.get('q') ?? '';
   const page = parsePage(searchParams.get('page'));
   const pageSize = parsePageSize(searchParams.get('pageSize'));
+  // Optional location filter (set by the global palette's "View all" hand-off
+  // so its scoped result count carries over). Only ids the user can actually
+  // read are honoured — junk in a pasted link is ignored, not sent to the API.
+  const urlLocation = searchParams.get('location');
+  const locationFilter =
+    urlLocation && locations.some((location) => location.id === urlLocation)
+      ? urlLocation
+      : undefined;
+  const locationFilterName = locationFilter
+    ? locations.find((location) => location.id === locationFilter)?.name
+    : undefined;
   const [clients, setClients] = useState<CrmClientSummary[]>([]);
   const [pagination, setPagination] = useState<CrmClientsPagination | null>(null);
   const [search, setSearch] = useState(urlQuery);
@@ -52,39 +63,17 @@ export function CrmClientsPage() {
   // otherwise a slow response for an earlier query can clobber a later one.
   const reloadIdRef = useRef(0);
 
-  const reload = useCallback(
-    async (term: string, pageArg: number) => {
-      if (!accessToken) return;
-      const requestId = ++reloadIdRef.current;
-      setLoading(true);
-      setError(null);
-      try {
-        const result = await listCrmClients(accessToken, {
-          q: term || undefined,
-          page: pageArg,
-          pageSize,
-        });
-        if (requestId !== reloadIdRef.current) return; // superseded by a newer reload
-        setClients(result.clients);
-        setPagination(result.pagination ?? null);
-      } catch (err: unknown) {
-        if (requestId !== reloadIdRef.current) return;
-        if (err instanceof ApiRequestError) setError(err.message);
-        else if (err instanceof Error) setError(err.message);
-        else setError('Could not load clients');
-      } finally {
-        if (requestId === reloadIdRef.current) setLoading(false);
-      }
-    },
-    [accessToken, pageSize],
-  );
-
   // Writes table state into the URL — the single source of truth for what the
   // table shows. `replace` for keystroke-driven updates so typing doesn't flood
   // the history; explicit page navigation pushes so Back walks pages.
   const applyParams = useCallback(
     (
-      updates: { q?: string | null; page?: number | null; pageSize?: number | null },
+      updates: {
+        q?: string | null;
+        page?: number | null;
+        pageSize?: number | null;
+        location?: string | null;
+      },
       options: { replace: boolean },
     ) => {
       setSearchParams(
@@ -100,6 +89,42 @@ export function CrmClientsPage() {
       );
     },
     [setSearchParams],
+  );
+
+  const reload = useCallback(
+    async (term: string, pageArg: number) => {
+      if (!accessToken) return;
+      const requestId = ++reloadIdRef.current;
+      setLoading(true);
+      setError(null);
+      try {
+        const result = await listCrmClients(accessToken, {
+          q: term || undefined,
+          locationId: locationFilter,
+          page: pageArg,
+          pageSize,
+        });
+        if (requestId !== reloadIdRef.current) return; // superseded by a newer reload
+        setClients(result.clients);
+        setPagination(result.pagination ?? null);
+        // Snap back when this exact query says the requested page is past the
+        // end (e.g. the dataset shrank, or a stale link). Decided here — on the
+        // fresh response — rather than in an effect, where leftover pagination
+        // from a previous query would wrongly hijack Back navigation.
+        const pageCount = result.pagination?.pageCount;
+        if (pageCount && pageArg > pageCount) {
+          applyParams({ page: pageCount === 1 ? null : pageCount }, { replace: true });
+        }
+      } catch (err: unknown) {
+        if (requestId !== reloadIdRef.current) return;
+        if (err instanceof ApiRequestError) setError(err.message);
+        else if (err instanceof Error) setError(err.message);
+        else setError('Could not load clients');
+      } finally {
+        if (requestId === reloadIdRef.current) setLoading(false);
+      }
+    },
+    [accessToken, pageSize, locationFilter, applyParams],
   );
 
   // Commit the input to the URL once typing pauses (trimmed, so "Luke" and
@@ -124,22 +149,12 @@ export function CrmClientsPage() {
   }, [urlQuery]);
 
   // Fetch whenever the URL state changes. The URL is already debounced, so a
-  // deep link or a shared link loads immediately with the right page.
+  // deep link or a shared link loads immediately with the right page. (The
+  // past-the-end snap-back lives inside `reload`, keyed to the fresh response.)
   useEffect(() => {
     if (!accessToken) return;
     void reload(urlQuery, page);
   }, [accessToken, urlQuery, page, reload]);
-
-  // Safety net: if the dataset shrank (e.g. a client was removed elsewhere) and
-  // the current page no longer exists, snap back to the last valid page.
-  useEffect(() => {
-    if (pagination && page > pagination.pageCount) {
-      applyParams(
-        { page: pagination.pageCount === 1 ? null : pagination.pageCount },
-        { replace: true },
-      );
-    }
-  }, [pagination, page, applyParams]);
 
   // CRM is staff-only: block users who hold NO staff role. A user who is also a
   // client (e.g. an owner who has booked themselves) keeps access — mirrors the
@@ -390,6 +405,21 @@ export function CrmClientsPage() {
           Search
         </button>
       </form>
+
+      {locationFilter ? (
+        <div className="mb-4 flex items-center gap-2 text-[12px] text-text-secondary">
+          <span>Filtered to location</span>
+          <button
+            type="button"
+            onClick={() => applyParams({ location: null, page: null }, { replace: false })}
+            title="Remove location filter"
+            className="inline-flex items-center gap-1.5 rounded-pill border border-border-strong bg-surface px-2.5 py-1 font-medium text-text-primary transition hover:bg-surface-alt"
+          >
+            {locationFilterName ?? 'Selected location'}
+            <span aria-hidden>×</span>
+          </button>
+        </div>
+      ) : null}
 
       <section className="overflow-hidden rounded-card-lg border border-border bg-surface">
         {loading ? (

@@ -12,11 +12,22 @@
 --   1. pg_trgm (trigram) extension — powers substring + fuzzy name/email match
 --      so search works "without requiring a space or exact spelling"
 --      (Week 5 parent acceptance criterion).
---   2. GIN trigram indexes on the exact expressions the search RPC queries:
---      full name, email, and a digits-only phone rendering.
---   3. crm.search_clients(...) — the single search entry point used by the API
+--   2. GIN trigram indexes on full name, email, digits-only phone and Q code —
+--      one per OR-arm of the search predicate, so the planner can BitmapOr
+--      them instead of scanning the tenant's rows (an OR needs an index path
+--      on EVERY arm before it stops filtering).
+--   3. A btree index on the last-9-digits phone suffix for the equality arm
+--      that matches international/legacy formats (see below).
+--   4. crm.search_clients(...) — the single search entry point used by the API
 --      (service role only). Bound parameters, rank-ordered, paginated via
 --      limit/offset, with the total match count windowed onto every row.
+--
+-- Phone matching model: both sides reduce to digits. The typed term drops an
+-- international-dial prefix ("00…") and then a trunk zero ("0…"), and matches
+-- either as a digit substring of the stored number or — for terms of 9+
+-- digits — by last-9-digits suffix equality. The suffix arm is what lets a
+-- typed "+44 7725 485160" find a legacy row stored as "07725 485160" (and the
+-- reverse) without any backfill.
 --
 -- Access model: the function is intentionally NOT granted to authenticated —
 -- tenant scoping (business_id / permitted locations) is enforced by the API,
@@ -46,8 +57,6 @@ comment on index core.idx_client_profiles_email_trgm is
 
 -- Phone search: index the digits-only rendering so "+447725485160",
 -- "07725 485160" and "(0)7725-485160" are all the same searchable string.
--- The RPC compares digits-to-digits, so stored rows that predate E.164
--- normalisation still match without a backfill.
 create index if not exists idx_client_profiles_phone_digits_trgm
   on core.client_profiles
   using gin (regexp_replace(phone, '\D', '', 'g') extensions.gin_trgm_ops)
@@ -56,8 +65,28 @@ create index if not exists idx_client_profiles_phone_digits_trgm
 comment on index core.idx_client_profiles_phone_digits_trgm is
   'Trigram index over digits-only phone for format-insensitive search (0083).';
 
+-- Last-9-digits suffix, for the equality arm that bridges international vs
+-- local renderings of the same number (9 digits is the UK national significant
+-- number floor; equality on 9+ digits is precise enough for search ranking).
+create index if not exists idx_client_profiles_phone_suffix9
+  on core.client_profiles (right(regexp_replace(phone, '\D', '', 'g'), 9))
+  where phone is not null;
+
+comment on index core.idx_client_profiles_phone_suffix9 is
+  'Digit-suffix equality index bridging +44… / 0… phone formats (0083).';
+
+-- Q-code search: the existing unique btree (0019) is collation-bound and
+-- cannot serve LIKE; without an index path on this OR-arm the planner would
+-- abandon BitmapOr and filter-scan the whole tenant on every keystroke.
+create index if not exists idx_client_profiles_client_code_trgm
+  on core.client_profiles
+  using gin (client_code extensions.gin_trgm_ops);
+
+comment on index core.idx_client_profiles_client_code_trgm is
+  'Trigram index for substring Q-code search (0083).';
+
 -- The search entry point. STABLE SQL (not security definer): it is executed by
--- the API''s service-role connection, which already bypasses RLS; keeping it a
+-- the API service-role connection, which already bypasses RLS; keeping it a
 -- plain function avoids search_path/definer pitfalls. All identifiers from the
 -- extensions schema are qualified so resolution never depends on search_path.
 create or replace function crm.search_clients(
@@ -84,10 +113,11 @@ as $$
   with input as (
     select
       lower(trim(coalesce(p_term, ''))) as term,
-      -- LIKE-escaped variant of the term for the substring legs, so a typed
+      -- LIKE-escaped variants of the term for the pattern legs, so a typed
       -- "%", "_" or "\" is matched literally instead of acting as a wildcard.
       replace(replace(replace(lower(trim(coalesce(p_term, ''))), '\', '\\'), '%', '\%'), '_', '\_') as term_like,
       upper(trim(coalesce(p_term, ''))) as term_code,
+      replace(replace(replace(upper(trim(coalesce(p_term, ''))), '\', '\\'), '%', '\%'), '_', '\_') as term_code_like,
       regexp_replace(coalesce(p_term, ''), '\D', '', 'g') as digits
   ),
   norm as (
@@ -95,9 +125,15 @@ as $$
       term,
       term_like,
       term_code,
-      -- Strip one leading trunk zero so a local "07725..." matches the stored
-      -- "+447725..." country-code rendering by digit suffix.
-      case when digits like '0%' then substring(digits from 2) else digits end as digits_alt
+      term_code_like,
+      -- Normalise the typed digits: drop an international dial prefix ("00…"),
+      -- then a trunk zero ("0…"), so "0044 7725…", "+44 7725…" and
+      -- "07725…" all reduce to a comparable form.
+      case
+        when digits like '00%' then substring(digits from 3)
+        when digits like '0%' then substring(digits from 2)
+        else digits
+      end as digits_alt
     from input
   )
   select
@@ -113,11 +149,15 @@ as $$
       case when c.email is not null
            then extensions.similarity(lower(c.email::text), n.term)
            else 0 end,
-      case when length(n.digits_alt) >= 3 and c.phone is not null
-                and regexp_replace(c.phone, '\D', '', 'g') like '%' || n.digits_alt || '%'
+      case when c.phone is not null and (
+             (length(n.digits_alt) >= 3
+              and regexp_replace(c.phone, '\D', '', 'g') like '%' || n.digits_alt || '%')
+             or (length(n.digits_alt) >= 9
+                 and right(regexp_replace(c.phone, '\D', '', 'g'), 9) = right(n.digits_alt, 9)))
            then 0.9 else 0 end,
       case when c.client_code = n.term_code then 1.0
-           when c.client_code like n.term_code || '%' then 0.8
+           when c.client_code like n.term_code_like || '%' escape '\' then 0.8
+           when c.client_code like '%' || n.term_code_like || '%' escape '\' then 0.65
            else 0 end
     )::real as rank,
     count(*) over () as total_count
@@ -127,18 +167,25 @@ as $$
     and c.business_id = p_business_id
     and (p_location_ids is null or c.primary_location_id = any (p_location_ids))
     and (
-      -- Substring on name/email (hits the trgm GIN indexes)…
-      lower(c.first_name || ' ' || c.last_name) like '%' || n.term_like || '%'
-      or (c.email is not null and lower(c.email::text) like '%' || n.term_like || '%')
+      -- Substring on name/email (served by the trgm GIN indexes)…
+      lower(c.first_name || ' ' || c.last_name) like '%' || n.term_like || '%' escape '\'
+      or (c.email is not null
+          and lower(c.email::text) like '%' || n.term_like || '%' escape '\')
       -- …fuzzy name for misspellings ("no exact spelling" acceptance)…
       or lower(c.first_name || ' ' || c.last_name) operator(extensions.%) n.term
-      -- …digits-to-digits phone match…
+      -- …digit-substring phone match…
       or (length(n.digits_alt) >= 3 and c.phone is not null
           and regexp_replace(c.phone, '\D', '', 'g') like '%' || n.digits_alt || '%')
-      -- …and Q-code prefix.
-      or c.client_code like n.term_code || '%'
+      -- …digit-suffix phone match bridging +44…/0… renderings…
+      or (length(n.digits_alt) >= 9 and c.phone is not null
+          and right(regexp_replace(c.phone, '\D', '', 'g'), 9) = right(n.digits_alt, 9))
+      -- …and Q-code substring (matches the old ILIKE behaviour).
+      or c.client_code like '%' || n.term_code_like || '%' escape '\'
     )
-  order by rank desc, c.updated_at desc
+  -- c.id is the unique tiebreaker: rank/updated_at ties are common (every code
+  -- prefix match ranks 0.8) and limit/offset needs a total order to page
+  -- without repeating or skipping rows.
+  order by rank desc, c.updated_at desc, c.id desc
   limit greatest(1, least(coalesce(p_limit, 20), 100))
   offset greatest(coalesce(p_offset, 0), 0)
 $$;

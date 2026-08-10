@@ -62,6 +62,9 @@ export function GlobalSearch() {
   useEffect(() => {
     if (!open || !accessToken) return;
     if (trimmedTerm.length < MIN_TERM_LENGTH) {
+      // Also advance the request id so an in-flight response for a longer
+      // earlier term can't land late and resurrect results under the hint.
+      reloadIdRef.current += 1;
       setResults([]);
       setTotal(0);
       setError(null);
@@ -104,11 +107,15 @@ export function GlobalSearch() {
     navigate(`/crm/clients/${id}`);
   }
 
-  // Hands the term to the Client Hub table, whose q/page state lives in the
-  // URL — the resulting link is shareable and lands on the same results.
+  // Hands the term to the Client Hub table, whose q/page/location state lives
+  // in the URL — the resulting link is shareable and lands on the same
+  // results. The palette's location scope travels along so "all N results"
+  // means the same N on the destination page.
   function viewAllResults() {
     close();
-    navigate(`/crm?q=${encodeURIComponent(trimmedTerm)}`);
+    const params = new URLSearchParams({ q: trimmedTerm });
+    if (scopedLocationId) params.set('location', scopedLocationId);
+    navigate(`/crm?${params.toString()}`);
   }
 
   function onInputKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
@@ -129,9 +136,12 @@ export function GlobalSearch() {
     }
     if (event.key === 'Enter') {
       event.preventDefault();
+      // Guard on term length so Enter can never act on results that belong to
+      // an earlier, longer term after the user backspaced below the minimum.
+      if (trimmedTerm.length < MIN_TERM_LENGTH) return;
       const active = results[activeIndex] ?? results[0];
       if (active) openClient(active.id);
-      else if (trimmedTerm.length >= MIN_TERM_LENGTH && total > 0) viewAllResults();
+      else if (total > 0) viewAllResults();
     }
   }
 
