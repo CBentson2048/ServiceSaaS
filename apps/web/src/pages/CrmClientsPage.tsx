@@ -1,9 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router-dom';
-import type { CrmClientSummary, CrmClientsPagination } from '@sheer/domain';
+import type { ClientDuplicateGroup, CrmClientSummary, CrmClientsPagination } from '@sheer/domain';
 import { userHasAnyRole } from '@sheer/domain';
-import { ApiRequestError, createCrmClient, listCrmClients } from '../auth/api';
+import {
+  ApiRequestError,
+  createCrmClient,
+  listClientDuplicates,
+  listCrmClients,
+  mergeCrmClients,
+} from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
+import { DuplicateClientHint } from '../components/clients/DuplicateClientHint';
+import { TablePagination } from '../components/TablePagination';
 import { useDebounce } from '../hooks/useDebounce';
 
 const PAGE_SIZE_OPTIONS = [5, 10, 15, 20, 50] as const;
@@ -62,6 +70,59 @@ export function CrmClientsPage() {
   // Monotonic id so only the most recently issued reload applies its result —
   // otherwise a slow response for an earlier query can clobber a later one.
   const reloadIdRef = useRef(0);
+
+  // Possible-duplicate surfacing + merge (owner/manager). Loaded once per
+  // mount and after every merge; failures stay silent — the banner is an aid,
+  // never a blocker for the page.
+  const canManageClients = userHasAnyRole(auth.user, ['owner', 'manager']);
+  const [duplicateGroups, setDuplicateGroups] = useState<ClientDuplicateGroup[]>([]);
+  const [showDuplicates, setShowDuplicates] = useState(false);
+  const [survivorByGroup, setSurvivorByGroup] = useState<Record<number, string>>({});
+  const [armedGroup, setArmedGroup] = useState<number | null>(null);
+  const [mergeBusy, setMergeBusy] = useState(false);
+
+  const refreshDuplicates = useCallback(async () => {
+    if (!accessToken || !canManageClients) return;
+    try {
+      const result = await listClientDuplicates(accessToken);
+      setDuplicateGroups(result.groups);
+    } catch {
+      setDuplicateGroups([]);
+    }
+  }, [accessToken, canManageClients]);
+
+  useEffect(() => {
+    void refreshDuplicates();
+  }, [refreshDuplicates]);
+
+  async function mergeGroup(groupIndex: number) {
+    if (!accessToken || mergeBusy) return;
+    const group = duplicateGroups[groupIndex];
+    if (!group) return;
+    const survivorId = survivorByGroup[groupIndex] ?? group.clients[0]?.id;
+    const others = group.clients.filter((client) => client.id !== survivorId);
+    if (!survivorId || others.length === 0) return;
+    setMergeBusy(true);
+    setError(null);
+    try {
+      for (const duplicate of others) {
+        await mergeCrmClients(accessToken, survivorId, { duplicateClientId: duplicate.id });
+      }
+      const survivor = group.clients.find((client) => client.id === survivorId);
+      setActionMessage(
+        `Merged ${others.length} duplicate record${others.length === 1 ? '' : 's'} into ${
+          survivor?.displayName ?? 'the selected client'
+        }.`,
+      );
+      setArmedGroup(null);
+      await refreshDuplicates();
+      void reload(urlQuery, page);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not merge clients');
+    } finally {
+      setMergeBusy(false);
+    }
+  }
 
   // Writes table state into the URL — the single source of truth for what the
   // table shows. `replace` for keystroke-driven updates so typing doesn't flood
@@ -268,6 +329,99 @@ export function CrmClientsPage() {
         </div>
       ) : null}
 
+      {canManageClients && duplicateGroups.length > 0 ? (
+        <div className="mb-4 rounded-card-lg border border-border bg-surface">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+            <p className="text-[13px] text-text-primary">
+              <span className="font-semibold text-warning">
+                {duplicateGroups.length} possible duplicate client{' '}
+                {duplicateGroups.length === 1 ? 'group' : 'groups'}
+              </span>{' '}
+              found — records sharing an email or phone number split a client&apos;s history and
+              alerts.
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowDuplicates((current) => !current)}
+              className="rounded-pill border border-border-strong bg-surface px-4 py-1.5 text-[12px] font-medium text-text-secondary transition hover:bg-surface-alt"
+            >
+              {showDuplicates ? 'Hide' : 'Review & merge'}
+            </button>
+          </div>
+          {showDuplicates ? (
+            <div className="divide-y divide-border border-t border-border">
+              {duplicateGroups.map((group, groupIndex) => {
+                const survivorId = survivorByGroup[groupIndex] ?? group.clients[0]?.id;
+                const otherCount = group.clients.length - 1;
+                return (
+                  <div key={`${group.matchType}-${group.value}-${groupIndex}`} className="px-4 py-3">
+                    <p className="text-[12px] font-medium uppercase tracking-[0.06em] text-text-muted">
+                      Same {group.matchType === 'email' ? 'email' : 'phone'} · {group.value}
+                    </p>
+                    <div className="mt-2 space-y-1.5">
+                      {group.clients.map((client) => (
+                        <label
+                          key={client.id}
+                          className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px]"
+                        >
+                          <input
+                            type="radio"
+                            name={`survivor-${groupIndex}`}
+                            checked={survivorId === client.id}
+                            onChange={() =>
+                              setSurvivorByGroup((current) => ({
+                                ...current,
+                                [groupIndex]: client.id,
+                              }))
+                            }
+                            className="h-4 w-4 border-border-strong text-primary focus:ring-2 focus:ring-primary/20"
+                          />
+                          <span className="font-medium text-text-primary">{client.displayName}</span>
+                          <span className="text-[12px] text-text-secondary">
+                            Q code {client.clientCode}
+                            {client.phone ? ` · ${client.phone}` : ''}
+                            {client.email ? ` · ${client.email}` : ''}
+                          </span>
+                          <Link
+                            to={`/crm/clients/${client.id}`}
+                            className="text-[12px] font-medium text-primary hover:text-primary-deep"
+                          >
+                            Open
+                          </Link>
+                        </label>
+                      ))}
+                    </div>
+                    <p className="mt-2 text-[12px] text-text-secondary">
+                      The selected record survives; the other{otherCount === 1 ? '' : 's'} keep
+                      their visits, bills, notes and alerts — everything moves onto the survivor.
+                    </p>
+                    <button
+                      type="button"
+                      disabled={mergeBusy}
+                      onClick={() => {
+                        if (armedGroup === groupIndex) void mergeGroup(groupIndex);
+                        else setArmedGroup(groupIndex);
+                      }}
+                      className={`mt-2 rounded-pill border px-4 py-1.5 text-[12px] font-semibold transition disabled:opacity-60 ${
+                        armedGroup === groupIndex
+                          ? 'border-danger-border bg-danger-soft text-danger'
+                          : 'border-border-strong bg-surface text-text-secondary hover:bg-surface-alt'
+                      }`}
+                    >
+                      {mergeBusy && armedGroup === groupIndex
+                        ? 'Merging…'
+                        : armedGroup === groupIndex
+                          ? `Confirm merge of ${otherCount} record${otherCount === 1 ? '' : 's'} — cannot be undone`
+                          : `Merge ${otherCount} into selected`}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       {showCreate ? (
         <form
           onSubmit={handleCreate}
@@ -319,6 +473,7 @@ export function CrmClientsPage() {
             value={form.phone}
             onChange={(value) => setForm((current) => ({ ...current, phone: value }))}
           />
+          <DuplicateClientHint email={form.email} phone={form.phone} />
           {locations.length > 1 ? (
             <label className="text-[12px] font-medium text-text-secondary">
               Primary location
@@ -454,7 +609,7 @@ export function CrmClientsPage() {
           </div>
         )}
         {pagination && pagination.total > 0 ? (
-          <Pagination
+          <TablePagination
             pagination={pagination}
             pageSize={pageSize}
             pageSizeOptions={PAGE_SIZE_OPTIONS}
@@ -472,146 +627,6 @@ export function CrmClientsPage() {
       </section>
     </div>
   );
-}
-
-// Server-side pager: shows the visible range + total and a windowed set of page
-// buttons with ellipses, so the control stays compact for large client lists.
-function Pagination({
-  pagination,
-  pageSize,
-  pageSizeOptions,
-  disabled,
-  onChange,
-  onPageSizeChange,
-}: {
-  pagination: CrmClientsPagination;
-  pageSize: number;
-  pageSizeOptions: readonly number[];
-  disabled: boolean;
-  onChange: (page: number) => void;
-  onPageSizeChange: (pageSize: number) => void;
-}) {
-  const { page, total, pageCount } = pagination;
-  // Use the server-echoed page size for the visible range so it always matches
-  // the rows actually rendered, even for the brief moment after the size changes.
-  const effectivePageSize = pagination.pageSize;
-  const firstRow = (page - 1) * effectivePageSize + 1;
-  const lastRow = Math.min(page * effectivePageSize, total);
-  const pages = pageWindow(page, pageCount);
-
-  return (
-    <div className="flex flex-col gap-3 border-t border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <label className="flex items-center gap-2 text-[12px] text-text-secondary">
-          <span>Rows per page</span>
-          <select
-            value={pageSize}
-            disabled={disabled}
-            onChange={(event) => onPageSizeChange(Number(event.target.value))}
-            aria-label="Rows per page"
-            className="h-8 rounded-input-lg border border-border-strong bg-surface px-2 text-[13px] font-medium text-text-primary outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:opacity-60"
-          >
-            {pageSizeOptions.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-        </label>
-        <p className="text-[12px] text-text-secondary">
-          Showing <span className="font-medium text-text-primary">{firstRow}</span>–
-          <span className="font-medium text-text-primary">{lastRow}</span> of{' '}
-          <span className="font-medium text-text-primary">{total}</span>
-        </p>
-      </div>
-      <nav className="flex items-center gap-1" aria-label="Pagination">
-        <PageButton
-          label="Previous"
-          disabled={disabled || page <= 1}
-          onClick={() => onChange(page - 1)}
-        >
-          ‹
-        </PageButton>
-        {pages.map((entry, index) =>
-          entry === 'ellipsis' ? (
-            <span
-              key={`gap-${index}`}
-              className="px-1.5 text-[13px] text-text-muted"
-              aria-hidden
-            >
-              …
-            </span>
-          ) : (
-            <PageButton
-              key={entry}
-              label={`Page ${entry}`}
-              active={entry === page}
-              disabled={disabled}
-              onClick={() => onChange(entry)}
-            >
-              {entry}
-            </PageButton>
-          ),
-        )}
-        <PageButton
-          label="Next"
-          disabled={disabled || page >= pageCount}
-          onClick={() => onChange(page + 1)}
-        >
-          ›
-        </PageButton>
-      </nav>
-    </div>
-  );
-}
-
-function PageButton({
-  children,
-  label,
-  active = false,
-  disabled = false,
-  onClick,
-}: {
-  children: React.ReactNode;
-  label: string;
-  active?: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      aria-label={label}
-      aria-current={active ? 'page' : undefined}
-      className={`inline-flex h-8 min-w-8 items-center justify-center rounded-input-lg border px-2.5 text-[13px] font-medium transition ${
-        active
-          ? 'border-primary bg-primary text-text-on-primary'
-          : 'border-border-strong bg-surface text-text-secondary hover:bg-surface-alt'
-      } disabled:cursor-not-allowed disabled:opacity-40`}
-    >
-      {children}
-    </button>
-  );
-}
-
-// A compact page list: always shows first & last, the current page and its
-// neighbours, and 'ellipsis' markers for the gaps in between.
-function pageWindow(current: number, pageCount: number): Array<number | 'ellipsis'> {
-  if (pageCount <= 7) {
-    return Array.from({ length: pageCount }, (_, i) => i + 1);
-  }
-  const pages = new Set<number>([1, pageCount, current, current - 1, current + 1]);
-  const sorted = [...pages].filter((p) => p >= 1 && p <= pageCount).sort((a, b) => a - b);
-  const result: Array<number | 'ellipsis'> = [];
-  let previous = 0;
-  for (const p of sorted) {
-    if (p - previous > 1) result.push('ellipsis');
-    result.push(p);
-    previous = p;
-  }
-  return result;
 }
 
 function ClientRow({ client }: { client: CrmClientSummary }) {

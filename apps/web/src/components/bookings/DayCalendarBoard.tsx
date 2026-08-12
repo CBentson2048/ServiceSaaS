@@ -22,9 +22,6 @@ function CalendarEmptyIcon(props: SVGProps<SVGSVGElement>) {
 // Vertical zoom: taller hour rows make appointment blocks easier to read and
 // let the board fill the (now much wider) right-hand content area.
 const HOUR_PX = 60;
-// Each hour is ruled into four 15-minute rows to match the 15-minute booking
-// grid. QUARTER_PX is the pixel height of one 15-minute slot.
-const QUARTER_PX = HOUR_PX / 4;
 const MIN_BLOCK_PX = 30;
 const DEFAULT_START_HOUR = 9;
 const DEFAULT_END_HOUR = 18;
@@ -49,12 +46,20 @@ interface ColumnModel {
   utilisationPercent: number | null;
 }
 
-const SLOT_SNAP_MINUTES = 15;
+// Fallback when the location hasn't provided a slot size (or provided one the
+// hour can't be ruled by). Matches the platform default in location settings.
+const DEFAULT_SLOT_MINUTES = 15;
+// Floor for a dragged tile's REAL duration and the smallest surviving slice on
+// resize. Deliberately a constant, NOT the slot size: appointments shorter
+// than one slot legitimately exist (30-min services at a 60-min location), and
+// flooring at the slot size made drags inflate them — misplacing moves and
+// silently swallowing resizes.
+const MIN_DRAG_SLICE_MINUTES = 15;
 
 export interface AddAppointmentInput {
   staffProfileId: string;
   staffName: string;
-  /** ISO timestamp of the clicked slot start (snapped to 15 minutes). */
+  /** ISO timestamp of the clicked slot start (snapped to the location's slot size). */
   startAt: string;
 }
 
@@ -77,6 +82,12 @@ interface SlotMenuState {
 
 interface DayCalendarBoardProps {
   day: Date;
+  /**
+   * The location's configured diary granularity (15/30/60 minutes). Rules the
+   * gridlines and drives every snap: click-to-book, drag-move, drag-resize and
+   * bookout durations. Defaults to 15 when absent.
+   */
+  slotMinutes?: number;
   staff: RotaStaffSummary[];
   shifts: RotaShift[];
   leave: RotaLeaveIndicator[];
@@ -261,6 +272,7 @@ const DRAG_THRESHOLD_PX = 4;
  */
 export function DayCalendarBoard({
   day,
+  slotMinutes = DEFAULT_SLOT_MINUTES,
   staff,
   shifts,
   leave,
@@ -406,12 +418,20 @@ export function DayCalendarBoard({
     ? allColumns
     : allColumns.filter((column) => column.bookings.length > 0);
 
+  // The configured slot size must rule an hour evenly for the grid math to
+  // hold; anything else (or junk) falls back to the platform default.
+  const slotSnapMinutes =
+    slotMinutes > 0 && 60 % slotMinutes === 0 ? slotMinutes : DEFAULT_SLOT_MINUTES;
+  const slotsPerHour = 60 / slotSnapMinutes;
+  // Pixel height of one slot row at the current granularity.
+  const slotPx = HOUR_PX / slotsPerHour;
+
   const { startHour, endHour } = resolveWindow(columns, day);
   const hours = range(startHour, endHour);
   const totalHeight = (endHour - startHour) * HOUR_PX;
-  // Internal 15-minute gridline positions. Index 0 (top edge) and the final
-  // tick (bottom edge) are skipped — the header/board borders cover those.
-  const quarterTicks = range(1, (endHour - startHour) * 4);
+  // Internal slot gridline positions. Index 0 (top edge) and the final tick
+  // (bottom edge) are skipped — the header/board borders cover those.
+  const slotTicks = range(1, (endHour - startHour) * slotsPerHour);
 
   function openSlotMenu(event: React.MouseEvent<HTMLDivElement>, column: ColumnModel) {
     // A drag just ended over this column — swallow the trailing click.
@@ -422,9 +442,23 @@ export function DayCalendarBoard({
     const gridRect = event.currentTarget.getBoundingClientRect();
     const boardRect = board.getBoundingClientRect();
     const minutesFromStart = ((event.clientY - gridRect.top) / HOUR_PX) * 60;
+    const clickedAbsolute = startHour * 60 + minutesFromStart;
+    // Snap on the grid anchored to the SHIFT the click lands in — the same
+    // anchor the availability engine steps by — so the proposed time is always
+    // one the engine actually offers (a 09:15 shift at 60-minute slots books
+    // 09:15/10:15, not 09:00/10:00). Off-shift clicks fall back to the clock
+    // grid. Floor, not round: a click anywhere inside a slot cell targets THAT
+    // cell's start, which at 60-minute slots is what the eye expects.
+    const containingShift = column.shifts.find((shift) => {
+      const shiftStart = minutesOfDayLocal(shift.scheduledStartAt);
+      const shiftEnd = minutesOfDayLocal(shift.scheduledEndAt);
+      return clickedAbsolute >= shiftStart && clickedAbsolute < shiftEnd;
+    });
+    const anchorMin = containingShift ? minutesOfDayLocal(containingShift.scheduledStartAt) : 0;
     const absoluteMinutes = Math.max(
       0,
-      Math.round((startHour * 60 + minutesFromStart) / SLOT_SNAP_MINUTES) * SLOT_SNAP_MINUTES,
+      anchorMin +
+        Math.floor(Math.max(0, clickedAbsolute - anchorMin) / slotSnapMinutes) * slotSnapMinutes,
     );
     const start = new Date(
       day.getFullYear(),
@@ -457,7 +491,7 @@ export function DayCalendarBoard({
     return ((clientY - rect.top - HEADER_HEIGHT_PX) / HOUR_PX) * 60;
   }
 
-  const snap = (minutes: number) => Math.round(minutes / SLOT_SNAP_MINUTES) * SLOT_SNAP_MINUTES;
+  const snap = (minutes: number) => Math.round(minutes / slotSnapMinutes) * slotSnapMinutes;
 
   // Minutes-from-window-start → an ISO timestamp on the shown day.
   function minutesToIso(minutesFromWindow: number): string {
@@ -491,7 +525,7 @@ export function DayCalendarBoard({
     const originStartMin = clamp(minutesFromWindowStart(booking.startsAt, startHour), 0, windowMinutes);
     let originEndMin = minutesFromWindowStart(booking.endsAt, startHour);
     if (originEndMin <= originStartMin) originEndMin = originStartMin + (booking.durationMinutes ?? 30);
-    const originDurationMin = Math.max(SLOT_SNAP_MINUTES, originEndMin - originStartMin);
+    const originDurationMin = Math.max(MIN_DRAG_SLICE_MINUTES, originEndMin - originStartMin);
     const grabOffsetMin = pointerToMinutes(event.clientY) - originStartMin;
     // The resize handle grabs the LAST occupied slice, so a resize can't drag its
     // bottom above its own top — the total can't shrink below that slice's start.
@@ -575,7 +609,7 @@ export function DayCalendarBoard({
         const maxEnd = shift ? Math.max(shift.endMin, originEndMin) : windowMinutes;
         // Nor above the last slice's top (+ one slot) — that slice is what grows/
         // shrinks. Capped at maxEnd so the clamp window can never invert past the roster.
-        const minEnd = Math.min(current.lastRunStartMin + SLOT_SNAP_MINUTES, maxEnd);
+        const minEnd = Math.min(current.lastRunStartMin + MIN_DRAG_SLICE_MINUTES, maxEnd);
         const snappedEnd = clamp(snap(rawEnd), minEnd, maxEnd);
         const next: DragState = { ...current, previewDurationMin: snappedEnd - current.originStartMin };
         dragRef.current = next;
@@ -680,8 +714,8 @@ export function DayCalendarBoard({
       ? minutesFromWindowStart(absence.endsAt, startHour)
       : originStartMin + 30;
     if (originEndMin <= originStartMin) originEndMin = originStartMin + 30;
-    originEndMin = clamp(originEndMin, originStartMin + SLOT_SNAP_MINUTES, windowMinutes);
-    const originDurationMin = Math.max(SLOT_SNAP_MINUTES, originEndMin - originStartMin);
+    originEndMin = clamp(originEndMin, originStartMin + MIN_DRAG_SLICE_MINUTES, windowMinutes);
+    const originDurationMin = Math.max(MIN_DRAG_SLICE_MINUTES, originEndMin - originStartMin);
     const grabOffsetMin = pointerToMinutes(event.clientY) - originStartMin;
 
     const initial: AbsenceDragState = {
@@ -738,7 +772,7 @@ export function DayCalendarBoard({
         setAbsenceDrag(next);
       } else {
         const rawEnd = pointerToMinutes(moveEvent.clientY);
-        const minEnd = current.originStartMin + SLOT_SNAP_MINUTES;
+        const minEnd = current.originStartMin + MIN_DRAG_SLICE_MINUTES;
         const snappedEnd = clamp(snap(rawEnd), minEnd, windowMinutes);
         const next: AbsenceDragState = { ...current, previewDurationMin: snappedEnd - current.originStartMin };
         absenceDragRef.current = next;
@@ -894,7 +928,7 @@ export function DayCalendarBoard({
                   boundary reads strongest, then the half-hour, then the
                   quarters — all in a light-black tint so appointment tiles
                   stay dominant. */}
-              <QuarterHourGridlines ticks={quarterTicks} />
+              <SlotGridlines ticks={slotTicks} slotsPerHour={slotsPerHour} slotPx={slotPx} />
 
               {/* Working-hours shading. */}
               {column.shifts.map((shift) => {
@@ -1323,6 +1357,7 @@ export function DayCalendarBoard({
         {slotMenu ? (
           <SlotMenu
             state={slotMenu}
+            slotMinutes={slotSnapMinutes}
             bookOutTypes={bookOutTypes}
             onClose={() => setSlotMenu(null)}
             onAddAppointment={
@@ -1361,24 +1396,35 @@ export function DayCalendarBoard({
 }
 
 /**
- * Horizontal 15-minute gridlines, absolutely positioned within a relative,
+ * Horizontal slot gridlines, absolutely positioned within a relative,
  * fixed-height container (the time axis or a stylist column). Ticks are
- * 15-minute indices from the window start; every 4th tick is an hour
- * boundary and every 2nd is the half-hour. Lines are drawn in a light-black
- * tint with the hour strongest so the ruling stays subtle under tiles.
+ * slot indices from the window start at the location's configured
+ * granularity; hour boundaries are drawn strongest, the half-hour (when the
+ * granularity rules one) mid-weight, so the ruling stays subtle under tiles.
  */
-function QuarterHourGridlines({ ticks }: { ticks: number[] }) {
+function SlotGridlines({
+  ticks,
+  slotsPerHour,
+  slotPx,
+}: {
+  ticks: number[];
+  slotsPerHour: number;
+  slotPx: number;
+}) {
   return (
     <>
       {ticks.map((tick) => {
-        const isHour = tick % 4 === 0;
-        const isHalf = tick % 4 === 2;
+        const isHour = tick % slotsPerHour === 0;
+        // The half-hour only exists as a distinct tick at sub-30-minute
+        // granularities (15-min: tick 2 of 4). At 30/60 every non-hour line
+        // (if any) stays lightest.
+        const isHalf = slotsPerHour >= 4 && tick % slotsPerHour === slotsPerHour / 2;
         const color = isHour ? 'rgba(0,0,0,0.16)' : isHalf ? 'rgba(0,0,0,0.10)' : 'rgba(0,0,0,0.06)';
         return (
           <div
             key={`grid-${tick}`}
             className="pointer-events-none absolute inset-x-0"
-            style={{ top: tick * QUARTER_PX, height: 0, borderTop: `1px solid ${color}` }}
+            style={{ top: tick * slotPx, height: 0, borderTop: `1px solid ${color}` }}
             aria-hidden
           />
         );
@@ -1389,19 +1435,26 @@ function QuarterHourGridlines({ ticks }: { ticks: number[] }) {
 
 function SlotMenu({
   state,
+  slotMinutes,
   bookOutTypes,
   onClose,
   onAddAppointment,
   onAddBookout,
 }: {
   state: SlotMenuState;
+  slotMinutes: number;
   bookOutTypes?: BookOutType[];
   onClose: () => void;
   onAddAppointment?: () => void;
   onAddBookout?: (minutes: number, notes?: string, bookOutTypeId?: string) => void;
 }) {
   const [bookoutMode, setBookoutMode] = useState(false);
-  const [minutes, setMinutes] = useState(30);
+  // Bookout durations are multiples of the location's slot size, up to 4h.
+  // Default to ~30 minutes, or one slot where a slot is longer than that.
+  const durationOptions = [1, 2, 3, 4, 6, 8, 12, 16]
+    .map((n) => n * slotMinutes)
+    .filter((m, index, all) => m <= 240 && all.indexOf(m) === index);
+  const [minutes, setMinutes] = useState(Math.max(30, slotMinutes));
   const [note, setNote] = useState('');
   const activeTypes = (bookOutTypes ?? []).filter((type) => type.isActive);
   const [bookOutTypeId, setBookOutTypeId] = useState<string>('');
@@ -1460,7 +1513,7 @@ function SlotMenu({
                 onChange={(event) => setMinutes(Number(event.target.value))}
                 className="mt-1 h-9 w-full rounded-input border border-border bg-surface px-2 text-[13px] text-text-primary outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
               >
-                {[15, 30, 45, 60, 90, 120].map((m) => (
+                {durationOptions.map((m) => (
                   <option key={m} value={m}>
                     {m} min
                   </option>
@@ -2231,6 +2284,13 @@ function resolveWindow(columns: ColumnModel[], day: Date): { startHour: number; 
   const startHour = clamp(Math.min(minHour, DEFAULT_START_HOUR), 0, 23);
   const endHour = clamp(Math.max(maxHour, DEFAULT_END_HOUR, startHour + 1), startHour + 1, 24);
   return { startHour, endHour };
+}
+
+// Minutes past local midnight for an ISO timestamp — the unit the click grid
+// and shift anchoring share (the board is drawn in local clock hours).
+function minutesOfDayLocal(iso: string): number {
+  const date = new Date(iso);
+  return date.getHours() * 60 + date.getMinutes();
 }
 
 function minutesFromWindowStart(iso: string, startHour: number): number {

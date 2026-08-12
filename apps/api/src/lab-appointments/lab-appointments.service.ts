@@ -33,11 +33,14 @@ import type {
   StaffBookingServiceLine,
   StaffBookingSummary,
   BookingSegmentSummary,
+  BillRecord,
   VisitBillResponse,
 } from '@sheer/domain';
 import {
   calculateAppointmentBillingTax,
+  calculateTaxBreakdown,
   calculateTaxForCategory,
+  taxAppliesToCategory,
   userHasAnyRole,
   userHasRole,
   type LocationTaxSettings,
@@ -243,6 +246,43 @@ interface PatchTestRow {
   expires_at: string | null;
 }
 
+// Stored bill snapshot rows (billing.bills / billing.bill_lines, 0085).
+interface BillRow {
+  id: string;
+  business_id: string;
+  location_id: string;
+  visit_id: string;
+  appointment_id: string | null;
+  client_profile_id: string | null;
+  staff_profile_id: string | null;
+  bill_number: number;
+  status: 'paid' | 'voided';
+  net_cents: number;
+  tax_cents: number;
+  gross_cents: number;
+  discount_cents: number;
+  deposit_applied_cents: number;
+  balance_collected_cents: number;
+  currency_code: string;
+  tax_label: string | null;
+  tax_rate_percent: number | string;
+  occurred_at: string;
+  created_at: string;
+}
+
+interface BillLineRow {
+  id: string;
+  bill_id: string;
+  sequence_no: number;
+  line_type: string;
+  description: string;
+  staff_profile_id: string | null;
+  net_cents: number;
+  tax_cents: number;
+  gross_cents: number;
+  tax_rate_percent: number | string;
+}
+
 interface ScopedAppointmentQuery<TQuery> {
   eq: (column: string, value: unknown) => TQuery;
   in: (column: string, values: readonly unknown[]) => TQuery;
@@ -293,6 +333,11 @@ const VISIT_COLUMNS =
 const REBOOKING_VISIT_COLUMNS = `${VISIT_COLUMNS},rebooking_outcomes(id,rebooked_appointment_id,rebook_source,rebooked_at)`;
 const SALON_PAYMENT_COLUMNS =
   'id,appointment_id,visit_id,payment_method,amount_cents,currency_code,paid_at,confirmed_by_user_profile_id,confirmed_by_staff_profile_id,notes';
+
+const BILL_COLUMNS =
+  'id,business_id,location_id,visit_id,appointment_id,client_profile_id,staff_profile_id,bill_number,status,net_cents,tax_cents,gross_cents,discount_cents,deposit_applied_cents,balance_collected_cents,currency_code,tax_label,tax_rate_percent,occurred_at,created_at';
+const BILL_LINE_COLUMNS =
+  'id,bill_id,sequence_no,line_type,description,staff_profile_id,net_cents,tax_cents,gross_cents,tax_rate_percent';
 
 @Injectable()
 export class LabAppointmentsService {
@@ -1541,8 +1586,22 @@ export class LabAppointmentsService {
       }
     }
 
-    const clientsById = await this.fetchClientProfiles(actor.businessId, [paidAppointment.client_profile_id]);
+    // Freeze the itemised bill the moment the visit is settled (0085). Also
+    // runs on an alreadyPaid replay so a visit whose earlier bill write failed
+    // is repaired the next time its payment is confirmed — anchored to the
+    // recorded payments, never to a possibly-drifted recomputation.
     const paidCents = payments.reduce((sum, payment) => sum + payment.amount_cents, 0);
+    const bill = await this.ensureBillForVisit(
+      appointment,
+      visit,
+      billing,
+      taxSettings,
+      paidAt,
+      paidCents,
+      actor,
+    );
+
+    const clientsById = await this.fetchClientProfiles(actor.businessId, [paidAppointment.client_profile_id]);
     const responseBilling: AppointmentPaymentConfirmationResponse['billing'] = {
       ...billing,
       balanceDueCents: Math.max(0, billing.balanceDueCents - paidCents),
@@ -1558,6 +1617,7 @@ export class LabAppointmentsService {
         route: `/checkout/visits/${paidVisit.id}`,
         message: 'In-salon payment confirmed. Visit is paid and settled.',
       },
+      bill,
       billing: responseBilling,
       // Largest tender first for the legacy single-payment field; the full
       // list carries the split (one record per method).
@@ -1590,6 +1650,22 @@ export class LabAppointmentsService {
     const clientsById = await this.fetchClientProfiles(actor.businessId, [appointment.client_profile_id]);
     const client = clientsById.get(appointment.client_profile_id);
 
+    // The stored bill is the immutable record; visits paid before 0085 get
+    // theirs frozen lazily on first view (today's recomputation is the best
+    // available snapshot for them, and it only ever happens once per visit).
+    let bill = await this.fetchStoredBill(visit.id);
+    if (!bill && visit.checkout_status === 'paid') {
+      bill = await this.ensureBillForVisit(
+        appointment,
+        visit,
+        billing,
+        taxSettings,
+        visit.paid_at ?? visit.completed_at ?? new Date().toISOString(),
+        paidCents,
+        actor,
+      );
+    }
+
     return {
       appointment: toBookingDetail(appointment, client),
       visit: toVisitSummary(visit, appointment, client),
@@ -1601,6 +1677,7 @@ export class LabAppointmentsService {
           ? 'Visit is paid and settled.'
           : 'Service is complete. Collect the remaining balance in salon.',
       },
+      bill,
       billing: {
         ...billing,
         balanceDueCents: Math.max(0, billing.balanceDueCents - paidCents),
@@ -1608,6 +1685,250 @@ export class LabAppointmentsService {
       payments: payments.map(toPaymentRecord),
       alreadyCompleted: Boolean(visit.completed_at),
     };
+  }
+
+  /**
+   * Freezes the bill for a paid visit into billing.bills (0085): the exact
+   * itemised gross lines the till displayed, each split into net/tax at the
+   * tax rate frozen with the bill, plus header totals that match the collected
+   * figures to the penny. Idempotent per visit (the RPC hands back an existing
+   * bill) and deliberately fail-soft — payment is already recorded by the time
+   * this runs, so a bill-write failure logs loudly and is repaired on the next
+   * read instead of failing the checkout.
+   *
+   * `ledgerPaidCents` is the sum of the visit's actual billing.salon_payments
+   * rows — the ground truth a bill certifies. On the first-payment path it
+   * always equals the recomputed balance due (the tender gate enforces it),
+   * but bills written LATER (lazy repair, backfill, alreadyPaid replay) run
+   * against a summary recomputed with today's prices/tax/deposit statuses,
+   * which may have drifted since the money was taken. In that case the header
+   * is anchored to the ledger and an explicit `adjustment` line reconciles the
+   * itemisation — a bill must never certify takings that never happened.
+   */
+  private async ensureBillForVisit(
+    appointment: AppointmentRow,
+    visit: VisitRow,
+    billing: AppointmentCompletionResponse['billing'],
+    taxSettings: LocationTaxSettings,
+    occurredAt: string,
+    ledgerPaidCents: number,
+    actor?: AuthUser,
+  ): Promise<BillRecord | undefined> {
+    try {
+      // Only billable line types carry onto the bill: their gross amounts sum
+      // to exactly billing.totalCents (stray/legacy types are excluded from
+      // the totals, so they must not appear as lines either).
+      const billableLines = billing.lineItems.filter(
+        (item) => taxCategoryForLineType(item.lineType) !== null,
+      );
+      const lines: Array<{
+        sequence_no: number;
+        line_type: string;
+        description: string;
+        staff_profile_id: string | null;
+        net_cents: number;
+        tax_cents: number;
+        gross_cents: number;
+        tax_rate_percent: number;
+        source_ref: Record<string, unknown>;
+      }> = billableLines.map((item, index) => {
+        const category = taxCategoryForLineType(item.lineType) as TaxableCategory;
+        const rate =
+          taxSettings.taxEnabled && taxAppliesToCategory(taxSettings.appliesTo, category)
+            ? taxSettings.taxRatePercent
+            : 0;
+        // Display lines are always gross (tax-inclusive); splitting each at
+        // the snapshot rate keeps net + tax == the till price per line.
+        const breakdown = calculateTaxBreakdown(item.amountCents, rate, 'gross');
+        return {
+          sequence_no: index + 1,
+          line_type: item.lineType,
+          description: item.description,
+          staff_profile_id: appointment.assigned_staff_profile_id ?? null,
+          net_cents: breakdown.netCents,
+          tax_cents: breakdown.taxCents,
+          gross_cents: item.amountCents,
+          tax_rate_percent: rate,
+          source_ref: { appointment_id: appointment.id },
+        };
+      });
+      const depositAppliedCents = Math.min(billing.depositPaidCents, billing.totalCents);
+      let grossCents = billing.totalCents;
+      let balanceCollectedCents = billing.balanceDueCents;
+      if (ledgerPaidCents !== billing.balanceDueCents) {
+        // The recomputation no longer matches the money actually taken. Anchor
+        // the header to the ledger and absorb the difference in one explicit
+        // adjustment line so the stored lines still sum to the stored gross.
+        balanceCollectedCents = ledgerPaidCents;
+        grossCents = ledgerPaidCents + depositAppliedCents;
+        const adjustmentCents = grossCents - billing.totalCents;
+        if (adjustmentCents !== 0) {
+          lines.push({
+            sequence_no: lines.length + 1,
+            line_type: 'adjustment',
+            description: 'Adjustment — reconciled to payments taken',
+            staff_profile_id: null,
+            net_cents: adjustmentCents,
+            tax_cents: 0,
+            gross_cents: adjustmentCents,
+            tax_rate_percent: 0,
+            source_ref: {
+              appointment_id: appointment.id,
+              reason: 'ledger_reconciliation',
+              recomputed_total_cents: billing.totalCents,
+            },
+          });
+        }
+      }
+      const netCents = lines.reduce((sum, line) => sum + line.net_cents, 0);
+      const taxCents = lines.reduce((sum, line) => sum + line.tax_cents, 0);
+
+      const { data, error } = await this.admin.schema('billing').rpc('record_bill', {
+        p_bill: {
+          business_id: appointment.business_id,
+          location_id: appointment.location_id,
+          visit_id: visit.id,
+          appointment_id: appointment.id,
+          client_profile_id: appointment.client_profile_id,
+          staff_profile_id: appointment.assigned_staff_profile_id ?? null,
+          status: 'paid',
+          net_cents: netCents,
+          tax_cents: taxCents,
+          gross_cents: grossCents,
+          discount_cents: 0,
+          deposit_applied_cents: depositAppliedCents,
+          balance_collected_cents: balanceCollectedCents,
+          currency_code: billing.currencyCode,
+          tax_label: taxSettings.taxEnabled ? taxSettings.taxLabel ?? null : null,
+          tax_rate_percent: taxSettings.taxEnabled ? taxSettings.taxRatePercent : 0,
+          occurred_at: occurredAt,
+          created_by_user_profile_id: actor?.id ?? null,
+        },
+        p_lines: lines,
+      });
+      if (error) {
+        this.logger.error(`record_bill failed for visit ${visit.id}: ${error.message}`);
+        return undefined;
+      }
+      const result = first(
+        data as Array<{ id: string; bill_number: number; created: boolean }> | null,
+      );
+      if (!result) return undefined;
+      if (result.created && actor) {
+        await this.audit.record(actor, {
+          action: 'bill.recorded',
+          entityType: 'bill',
+          entityId: result.id,
+          locationId: appointment.location_id,
+          after: {
+            billNumber: result.bill_number,
+            grossCents,
+            depositAppliedCents,
+            balanceCollectedCents,
+          },
+          metadata: {
+            appointmentId: appointment.id,
+            visitId: visit.id,
+            clientProfileId: appointment.client_profile_id,
+          },
+        });
+      }
+      return await this.fetchStoredBill(visit.id);
+    } catch (err: unknown) {
+      this.logger.error(`ensureBillForVisit failed for visit ${visit.id}: ${String(err)}`);
+      return undefined;
+    }
+  }
+
+  private async fetchStoredBill(visitId: string): Promise<BillRecord | undefined> {
+    const { data: billRow, error } = await this.admin
+      .schema('billing')
+      .from('bills')
+      .select(BILL_COLUMNS)
+      .eq('visit_id', visitId)
+      .maybeSingle<BillRow>();
+    if (error) {
+      this.logger.error(`fetchStoredBill failed: ${error.message}`);
+      return undefined;
+    }
+    if (!billRow) return undefined;
+    const { data: lineRows, error: lineError } = await this.admin
+      .schema('billing')
+      .from('bill_lines')
+      .select(BILL_LINE_COLUMNS)
+      .eq('bill_id', billRow.id)
+      .order('sequence_no', { ascending: true })
+      .returns<BillLineRow[]>();
+    if (lineError) {
+      this.logger.error(`fetchStoredBill lines failed: ${lineError.message}`);
+      return undefined;
+    }
+    return toBillRecord(billRow, lineRows ?? []);
+  }
+
+  /**
+   * One-off backfill (scripts/backfill-bills.ts): freezes a stored bill for
+   * every paid visit that predates 0085 through the same snapshot path as
+   * checkout. Already-billed visits are skipped; failures are counted, logged
+   * and left for the lazy per-view repair rather than aborting the run.
+   */
+  async backfillBills(): Promise<{ scanned: number; created: number; failed: number }> {
+    // Paginate explicitly: PostgREST caps every response at the project's
+    // max-rows (1000 by default), and supabase-js returns the capped page
+    // WITHOUT an error — an unpaged query would silently skip every paid
+    // visit past the cap while the script reports success.
+    const PAGE_SIZE = 500;
+    const visits: VisitRow[] = [];
+    for (let from = 0; ; from += PAGE_SIZE) {
+      const { data, error } = await this.admin
+        .schema('booking')
+        .from('visits')
+        .select(VISIT_COLUMNS)
+        .eq('checkout_status', 'paid')
+        .order('id', { ascending: true })
+        .range(from, from + PAGE_SIZE - 1)
+        .returns<VisitRow[]>();
+      if (error) {
+        throw new InternalServerErrorException(`backfillBills: unable to list paid visits: ${error.message}`);
+      }
+      const page = data ?? [];
+      visits.push(...page);
+      if (page.length < PAGE_SIZE) break;
+    }
+    let created = 0;
+    let failed = 0;
+    for (const visit of visits) {
+      if (!visit.appointment_id) continue;
+      const existing = await this.fetchStoredBill(visit.id);
+      if (existing) continue;
+      const { data: appointment, error: appointmentError } = await this.admin
+        .schema('booking')
+        .from('appointments')
+        .select(DETAIL_COLUMNS)
+        .eq('id', visit.appointment_id)
+        .maybeSingle<AppointmentRow>();
+      if (appointmentError || !appointment) {
+        failed += 1;
+        continue;
+      }
+      const [lineItems, taxSettings, payments] = await Promise.all([
+        this.fetchVisitLineItems(visit.id),
+        this.taxSettings.resolveLocationTaxSettings(appointment.business_id, appointment.location_id),
+        this.fetchSalonPaymentsForVisit(visit.id),
+      ]);
+      const billing = buildBillingSummary(appointment, lineItems, taxSettings);
+      const bill = await this.ensureBillForVisit(
+        appointment,
+        visit,
+        billing,
+        taxSettings,
+        visit.paid_at ?? visit.completed_at ?? visit.created_at,
+        payments.reduce((sum, payment) => sum + payment.amount_cents, 0),
+      );
+      if (bill) created += 1;
+      else failed += 1;
+    }
+    return { scanned: visits.length, created, failed };
   }
 
   async linkStylistRebooking(
@@ -2807,6 +3128,42 @@ function normalizeTenders(input: AppointmentPaymentConfirmationRequest): Appoint
     seenMethods.add(tender.paymentMethod);
   }
   return tenders;
+}
+
+function toBillRecord(row: BillRow, lines: BillLineRow[]): BillRecord {
+  return {
+    id: row.id,
+    billNumber: Number(row.bill_number),
+    businessId: row.business_id,
+    locationId: row.location_id,
+    visitId: row.visit_id,
+    appointmentId: row.appointment_id ?? undefined,
+    clientProfileId: row.client_profile_id ?? undefined,
+    staffProfileId: row.staff_profile_id ?? undefined,
+    status: row.status,
+    netCents: row.net_cents,
+    taxCents: row.tax_cents,
+    grossCents: row.gross_cents,
+    discountCents: row.discount_cents,
+    depositAppliedCents: row.deposit_applied_cents,
+    balanceCollectedCents: row.balance_collected_cents,
+    currencyCode: row.currency_code,
+    taxLabel: row.tax_label ?? undefined,
+    taxRatePercent: Number(row.tax_rate_percent),
+    occurredAt: row.occurred_at,
+    createdAt: row.created_at,
+    lines: lines.map((line) => ({
+      id: line.id,
+      sequenceNo: line.sequence_no,
+      lineType: line.line_type,
+      description: line.description,
+      staffProfileId: line.staff_profile_id ?? undefined,
+      netCents: line.net_cents,
+      taxCents: line.tax_cents,
+      grossCents: line.gross_cents,
+      taxRatePercent: Number(line.tax_rate_percent),
+    })),
+  };
 }
 
 function toPaymentRecord(row: SalonPaymentRow): AppointmentPaymentRecord {

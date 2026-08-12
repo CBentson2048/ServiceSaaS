@@ -27,7 +27,8 @@ type QueryCall =
   | { method: 'limit'; args: unknown[] }
   | { method: 'maybeSingle'; args: unknown[] }
   | { method: 'single'; args: unknown[] }
-  | { method: 'returns'; args: unknown[] };
+  | { method: 'returns'; args: unknown[] }
+  | { method: 'rpc'; args: unknown[] };
 
 interface MockSupabaseClient {
   queries: MockQuery[];
@@ -56,6 +57,7 @@ interface MockQuery {
   maybeSingle: jest.Mock;
   single: jest.Mock;
   returns: jest.Mock;
+  rpc: jest.Mock;
 }
 
 const mockedCreateClient = createClient as jest.MockedFunction<typeof createClient>;
@@ -389,6 +391,10 @@ describe('LabAppointmentsService — appointment completion', () => {
       { data: [salonPaymentRow()], error: null },
       { data: paid, error: null },
       { data: visitRow({ status: 'paid', checkout_status: 'paid', paid_at: '2026-05-13T10:05:00.000Z' }), error: null },
+      // Stored-bill snapshot (0085): record_bill RPC, then the bill + lines read-back.
+      { data: [{ id: 'bill_1', bill_number: 1, created: true }], error: null },
+      { data: billRow(), error: null },
+      { data: [], error: null },
       { data: [clientProfileRow()], error: null },
     ]);
     const service = createService(client);
@@ -404,6 +410,28 @@ describe('LabAppointmentsService — appointment completion', () => {
     expect(result.payments).toHaveLength(1);
     expect(result.billing.balanceDueCents).toBe(0);
     expect(client.queries.some((query) => query.calls.some((call) => call.method === 'from' && call.args[0] === 'stock_movements'))).toBe(false);
+
+    // The bill is frozen at payment with the exact figures the till collected.
+    expect(result.bill?.billNumber).toBe(1);
+    const rpcCall = client.queries.flatMap((query) => query.calls).find((call) => call.method === 'rpc');
+    expect(rpcCall?.args[0]).toBe('record_bill');
+    const rpcPayload = rpcCall?.args[1] as {
+      p_bill: Record<string, unknown>;
+      p_lines: Array<Record<string, unknown>>;
+    };
+    expect(rpcPayload.p_bill).toMatchObject({
+      visit_id: 'visit_1',
+      gross_cents: 5000,
+      deposit_applied_cents: 0,
+      balance_collected_cents: 5000,
+      status: 'paid',
+    });
+    expect(rpcPayload.p_lines.length).toBeGreaterThan(0);
+    const lineGrossTotal = rpcPayload.p_lines.reduce(
+      (sum, line) => sum + Number(line.gross_cents ?? 0),
+      0,
+    );
+    expect(lineGrossTotal).toBe(5000);
   });
 
   it('splits payment across cash and card, recording one payment row per tender', async () => {
@@ -421,6 +449,10 @@ describe('LabAppointmentsService — appointment completion', () => {
       { data: insertedRows, error: null },
       { data: paid, error: null },
       { data: visitRow({ status: 'paid', checkout_status: 'paid', paid_at: '2026-05-13T10:05:00.000Z' }), error: null },
+      // Stored-bill snapshot (0085): record_bill RPC, then the bill + lines read-back.
+      { data: [{ id: 'bill_1', bill_number: 1, created: true }], error: null },
+      { data: billRow(), error: null },
+      { data: [], error: null },
       { data: [clientProfileRow()], error: null },
     ]);
     const service = createService(client);
@@ -469,6 +501,11 @@ describe('LabAppointmentsService — appointment completion', () => {
       { data: visitRow({ status: 'paid', checkout_status: 'paid', paid_at: '2026-05-13T10:05:00.000Z' }), error: null },
       { data: lineItems(), error: null },
       { data: [salonPaymentRow()], error: null },
+      // Replays also run the bill snapshot (idempotent — the RPC returns the
+      // already-stored bill, repairing any visit whose first write failed).
+      { data: [{ id: 'bill_1', bill_number: 1, created: false }], error: null },
+      { data: billRow(), error: null },
+      { data: [], error: null },
       { data: [clientProfileRow()], error: null },
     ]);
     const service = createService(client);
@@ -479,6 +516,7 @@ describe('LabAppointmentsService — appointment completion', () => {
     });
 
     expect(result.alreadyPaid).toBe(true);
+    expect(result.bill?.billNumber).toBe(1);
     expect(client.queries.some((query) => query.calls.some((call) => call.method === 'insert'))).toBe(false);
   });
 });
@@ -983,6 +1021,12 @@ function createMockQuery(result: unknown): MockQuery {
     query.calls.push({ method: 'returns', args });
     return Promise.resolve(query.result);
   });
+  // RPCs are awaited directly (no trailing .returns()/.single()), so the mock
+  // resolves the configured result immediately.
+  query.rpc = jest.fn((...args: unknown[]) => {
+    query.calls.push({ method: 'rpc', args });
+    return Promise.resolve(query.result);
+  });
 
   return query;
 }
@@ -1071,6 +1115,32 @@ function salonPaymentRow(overrides: Record<string, unknown> = {}) {
     confirmed_by_user_profile_id: 'user_1',
     confirmed_by_staff_profile_id: 'staff_1',
     notes: null,
+    ...overrides,
+  };
+}
+
+function billRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'bill_1',
+    business_id: 'business_1',
+    location_id: 'location_1',
+    visit_id: 'visit_1',
+    appointment_id: 'appointment_1',
+    client_profile_id: 'client_1',
+    staff_profile_id: 'staff_1',
+    bill_number: 1,
+    status: 'paid',
+    net_cents: 5000,
+    tax_cents: 0,
+    gross_cents: 5000,
+    discount_cents: 0,
+    deposit_applied_cents: 0,
+    balance_collected_cents: 5000,
+    currency_code: 'GBP',
+    tax_label: null,
+    tax_rate_percent: 0,
+    occurred_at: '2026-05-13T10:05:00.000Z',
+    created_at: '2026-05-13T10:05:00.000Z',
     ...overrides,
   };
 }

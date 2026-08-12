@@ -68,7 +68,11 @@ import type {
   ListCrmClientNotesResponse,
   ListCrmClientPatchTestsResponse,
   ListCrmClientVisitsResponse,
+  ListBillsResponse,
+  ListClientDuplicatesResponse,
   ListCrmClientsResponse,
+  MergeClientsRequest,
+  MergeClientsResponse,
   SearchCrmClientsResponse,
   ListCrmVisitPhotosResponse,
   ListLeaveRequestsResponse,
@@ -453,6 +457,55 @@ export async function listCrmClients(
   return request<ListCrmClientsResponse>(`/crm/clients${query ? `?${query}` : ''}`, {
     accessToken,
   });
+}
+
+/** Clients sharing an email or phone within the business (possible duplicates). */
+export async function listClientDuplicates(
+  accessToken: string,
+): Promise<ListClientDuplicatesResponse> {
+  return request<ListClientDuplicatesResponse>('/crm/clients/duplicates', { accessToken });
+}
+
+/**
+ * Merges a duplicate client into the surviving one: all history repointed,
+ * duplicate tombstoned. Irreversible — the UI confirms before calling.
+ */
+export async function mergeCrmClients(
+  accessToken: string,
+  primaryClientId: string,
+  payload: MergeClientsRequest,
+): Promise<MergeClientsResponse> {
+  return request<MergeClientsResponse>(
+    `/crm/clients/${encodeURIComponent(primaryClientId)}/merge`,
+    { method: 'POST', accessToken, body: payload },
+  );
+}
+
+/**
+ * Bill finder: filter stored bills by client, date range, stylist, amount and
+ * bill number. Filters combine with AND semantics; paginated server-side.
+ */
+export async function listBills(
+  accessToken: string,
+  params: {
+    locationId?: string;
+    clientProfileId?: string;
+    staffProfileId?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    amountMinCents?: number;
+    amountMaxCents?: number;
+    billNumber?: number;
+    page?: number;
+    pageSize?: number;
+  } = {},
+): Promise<ListBillsResponse> {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== '') search.set(key, String(value));
+  }
+  const query = search.toString();
+  return request<ListBillsResponse>(`/bills${query ? `?${query}` : ''}`, { accessToken });
 }
 
 /**

@@ -11,6 +11,8 @@ import type {
   ListCrmClientVisitsResponse,
   ListCrmClientsResponse,
   ListCrmVisitPhotosResponse,
+  ListClientDuplicatesResponse,
+  MergeClientsResponse,
   SearchCrmClientsResponse,
 } from '@sheer/domain';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -24,6 +26,7 @@ import {
   CreateCrmPatchTestDto,
   CreateCrmVisitPhotoDto,
   ListCrmClientsQueryDto,
+  MergeClientsDto,
   SearchCrmClientsQueryDto,
   UpdateCrmClientDto,
 } from './dto';
@@ -51,6 +54,24 @@ export class CrmController {
     @Query() query: SearchCrmClientsQueryDto,
   ): Promise<SearchCrmClientsResponse> {
     return this.crm.searchClients(actor, query);
+  }
+
+  // Also before `clients/:id` for the same literal-segment reason.
+  @Get('clients/duplicates')
+  @RequireRoles('owner', 'manager')
+  listDuplicates(@CurrentUser() actor: AuthUser): Promise<ListClientDuplicatesResponse> {
+    return this.crm.listDuplicates(actor);
+  }
+
+  @Post('clients/:id/merge')
+  @RequireRoles('owner', 'manager')
+  @RequirePermissions('crm.manage')
+  mergeClients(
+    @CurrentUser() actor: AuthUser,
+    @Param('id') id: string,
+    @Body() body: MergeClientsDto,
+  ): Promise<MergeClientsResponse> {
+    return this.crm.mergeClients(actor, id, body.duplicateClientId);
   }
 
   @Post('clients')

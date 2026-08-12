@@ -282,6 +282,7 @@ export type Permission =
   | 'rota.view'
   | 'rota.manage'
   | 'retail.record'
+  | 'bills.view'
   // Team / staff
   | 'staff.view'
   | 'staff.manage'
@@ -338,6 +339,10 @@ export const PERMISSION_CATALOG: readonly PermissionDefinition[] = [
   { key: 'rota.view', label: 'View rota', description: 'View working hours and rota coverage without changing shifts.', kind: 'feature', group: 'Operations' },
   { key: 'bookings.manage', label: 'Manage bookings', description: 'Create and manage appointments (needs read access to clients, services and rota).', kind: 'feature', group: 'Front of house', requires: ['crm.view', 'services.view', 'rota.view'] },
   { key: 'retail.record', label: 'Record retail sales', description: 'Take retail sales at the till.', kind: 'feature', group: 'Front of house' },
+  // Seeded into core.security_levels by migration 0086 — this catalog entry is the
+  // mandatory other half (auth.service / owner-security-levels strip keys missing
+  // from ALL_PERMISSIONS on read and save).
+  { key: 'bills.view', label: 'Bill finder', description: 'Search and open the stored bills of completed visits.', kind: 'feature', group: 'Front of house' },
   { key: 'inventory.manage', label: 'Manage inventory', description: 'Manage products and stock.', kind: 'feature', group: 'Operations' },
   { key: 'services.manage', label: 'Manage services', description: 'Manage the service catalogue.', kind: 'feature', group: 'Operations', requires: ['services.view'] },
   { key: 'rota.manage', label: 'Manage rota', description: 'Manage schedules and shifts.', kind: 'feature', group: 'Operations', requires: ['rota.view'] },
@@ -453,6 +458,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'crm.view',
     'crm.manage',
     'retail.record',
+    'bills.view',
     'inventory.manage',
     'services.view',
     'services.manage',
@@ -538,6 +544,9 @@ export const SYSTEM_SECURITY_LEVELS: readonly SystemSecurityLevelDefinition[] = 
       'crm.view',
       'crm.manage',
       'retail.record',
+      // The bill finder is a front-desk tool ("a client is on the phone about a
+      // charge") — read-only over stored bills, no reports or pay visibility.
+      'bills.view',
       'services.view',
       'rota.view',
     ],
@@ -979,6 +988,14 @@ export interface LocationOpeningHoursEntry {
 }
 
 export type LocationDepositType = 'none' | 'fixed_amount' | 'percentage';
+
+/**
+ * The closed set of per-location diary granularities. Single source of truth
+ * for the settings UI select, the API DTO validation and the DB check
+ * constraint (0084) — change all three together or not at all.
+ */
+export const APPOINTMENT_SLOT_OPTIONS = [15, 30, 60] as const;
+export type AppointmentSlotMinutes = (typeof APPOINTMENT_SLOT_OPTIONS)[number];
 
 export interface LocationRecordSettings {
   locationId: string;
@@ -2025,10 +2042,95 @@ export interface AppointmentCompletionCheckout {
   message: string;
 }
 
+export type BillLineType =
+  | 'service'
+  | 'product_usage'
+  | 'retail'
+  | 'deposit_credit'
+  | 'discount'
+  /** Reconciles a late-written bill to the payments ledger (see ensureBillForVisit). */
+  | 'adjustment';
+
+/** One itemised line of a stored bill, exactly as the till displayed it. */
+export interface BillLineRecord {
+  id: string;
+  sequenceNo: number;
+  lineType: BillLineType | string;
+  description: string;
+  staffProfileId?: string;
+  netCents: number;
+  taxCents: number;
+  grossCents: number;
+  /** Tax rate frozen onto this line when the bill was recorded. */
+  taxRatePercent: number;
+}
+
+/**
+ * The immutable bill snapshot stored when a visit's payment is confirmed
+ * (billing.bills, 0085). Unlike the recomputed `billing` block, these figures
+ * never change after the till closes — they are what money reporting reads.
+ */
+export interface BillRecord {
+  id: string;
+  /** Human-readable per-business sequence (render as e.g. "#000123"). */
+  billNumber: number;
+  businessId: string;
+  locationId: string;
+  visitId: string;
+  appointmentId?: string;
+  clientProfileId?: string;
+  staffProfileId?: string;
+  status: 'paid' | 'voided';
+  netCents: number;
+  taxCents: number;
+  grossCents: number;
+  discountCents: number;
+  /** Deposit credit consumed by this bill (explicit deposit redemption). */
+  depositAppliedCents: number;
+  /** What the till actually collected (gross minus deposit applied). */
+  balanceCollectedCents: number;
+  currencyCode: string;
+  taxLabel?: string;
+  taxRatePercent: number;
+  occurredAt: string;
+  createdAt: string;
+  lines: BillLineRecord[];
+}
+
+/** One row of the bill finder: the stored bill plus display names stitched in. */
+export interface BillFinderItem {
+  id: string;
+  billNumber: number;
+  visitId: string;
+  locationId: string;
+  clientProfileId?: string;
+  clientName?: string;
+  staffProfileId?: string;
+  staffName?: string;
+  status: 'paid' | 'voided';
+  grossCents: number;
+  depositAppliedCents: number;
+  balanceCollectedCents: number;
+  currencyCode: string;
+  occurredAt: string;
+}
+
+export interface ListBillsResponse {
+  bills: BillFinderItem[];
+  /** Same offset-pagination shape the CRM table uses. */
+  pagination: CrmClientsPagination;
+}
+
 export interface AppointmentCompletionResponse {
   appointment: StaffBookingDetail;
   visit: CrmVisitSummary;
   checkout: AppointmentCompletionCheckout;
+  /**
+   * The stored bill for this visit (0085). Present once payment has been
+   * confirmed; absent on pre-payment completion responses and for legacy
+   * visits until their bill is backfilled.
+   */
+  bill?: BillRecord;
   billing: {
     lineItems: AppointmentCompletionLineItem[];
     serviceTotalCents: number;
@@ -4133,6 +4235,51 @@ export interface UpdateCrmClientRequest {
   marketingOptIn?: boolean;
   tags?: string[];
   notesSummary?: string | null;
+  /**
+   * Confirms an email change that collides with another client's email
+   * (shared-inbox case). Without it such an edit 409s, mirroring create.
+   */
+  allowDuplicate?: boolean;
+}
+
+/**
+ * Payload carried in the 409 ConflictException when a create/update matches an
+ * existing client by email or phone. `client` is the full summary so a till
+ * flow can adopt the existing record in place ("Use this client").
+ */
+export interface DuplicateClientConflict {
+  message: string;
+  matchedBy: 'email' | 'phone';
+  existingClient: {
+    id: string;
+    displayName: string;
+    clientCode: string;
+  };
+  client?: CrmClientSummary;
+}
+
+/** Clients sharing an email or phone within the business (possible duplicates). */
+export interface ClientDuplicateGroup {
+  matchType: 'email' | 'phone';
+  /** The shared value as stored (email, or the first row's phone rendering). */
+  value: string;
+  clients: CrmClientSearchResult[];
+}
+
+export interface ListClientDuplicatesResponse {
+  groups: ClientDuplicateGroup[];
+}
+
+export interface MergeClientsRequest {
+  /** The tombstoned profile whose history moves onto the surviving client. */
+  duplicateClientId: string;
+}
+
+export interface MergeClientsResponse {
+  /** The surviving client after the merge (contact gaps filled). */
+  client: CrmClientSummary;
+  /** Rows repointed per table, e.g. { "booking.appointments": 4 }. */
+  movedRecords: Record<string, number>;
 }
 
 export interface CreateCrmClientNoteRequest {
@@ -4347,6 +4494,13 @@ export interface WeeklyRotaResponse {
   absences: RotaAbsenceIndicator[];
   /** Echoed location holiday-notice rule (in days). */
   holidayNoticeDays: number;
+  /**
+   * The location's configured diary granularity (15/30/60). Carried on the
+   * rota response because the appointment book is the rota's primary consumer
+   * and every diary viewer may read the rota, while the owner-only location
+   * settings endpoint is gated too narrowly to serve the grid.
+   */
+  appointmentSlotMinutes: number;
   /** Echoes the actor's role so the client can branch UI without re-querying /auth/me. */
   scope: 'owner' | 'manager';
 }

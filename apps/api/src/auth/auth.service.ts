@@ -37,6 +37,7 @@ import {
   userHasRole,
 } from '@sheer/domain';
 import type { ClientBookingAccountDto, ClientBookingLoginDto, CreateCustomerAccountDto } from './dto';
+import { normalizeE164 } from '../communications/phone';
 import { EmailService } from '../email/email.service';
 import { renderPasswordResetEmail } from '../email/templates/password-reset.template';
 
@@ -1104,6 +1105,7 @@ export class AuthService {
         .select(clientProfileColumns)
         .eq('business_id', businessId)
         .is('user_profile_id', null)
+        .is('merged_into_id', null)
         .eq('email', input.email)
         .order('updated_at', { ascending: false })
         .limit(1)
@@ -1112,6 +1114,31 @@ export class AuthService {
         throw new InternalServerErrorException('Unable to load client profile');
       }
       if (unlinked) existing = unlinked;
+    }
+
+    // Email missed (staff recorded a different address, or none): fall back to
+    // the phone number — the strongest identity signal a salon holds. Adopt
+    // only on a SINGLE unambiguous match; two candidates mean a human must
+    // merge instead, so a fresh profile is created rather than guessing.
+    if (!existing && input.phone) {
+      const normalizedPhone = normalizeE164(input.phone) ?? input.phone.trim();
+      if (normalizedPhone) {
+        const { data: byPhone, error: phoneAdoptError } = await this.admin
+          .schema('core')
+          .from('client_profiles')
+          .select(clientProfileColumns)
+          .eq('business_id', businessId)
+          .is('user_profile_id', null)
+          .is('merged_into_id', null)
+          .eq('phone', normalizedPhone)
+          .order('updated_at', { ascending: false })
+          .limit(2)
+          .returns<ClientProfileRow[]>();
+        if (phoneAdoptError) {
+          throw new InternalServerErrorException('Unable to load client profile');
+        }
+        if ((byPhone ?? []).length === 1) existing = byPhone![0];
+      }
     }
 
     const payload = {

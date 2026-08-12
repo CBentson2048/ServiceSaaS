@@ -73,6 +73,17 @@ export function VisitBillPage() {
               <div className="mt-1 text-[13px] text-text-secondary">
                 {bill.visit.serviceSummary ?? 'Service visit'} · {formatVisitDate(bill.visit.occurredAt)}
               </div>
+              {bill.bill ? (
+                // The permanent record: this bill is frozen as it was settled
+                // and can be referenced by its number on the phone or in the books.
+                <div className="mt-1 text-[12px] font-medium text-text-secondary">
+                  Bill #{formatBillNumber(bill.bill.billNumber)}
+                  <span className="mx-1.5 text-text-muted">·</span>
+                  <span className="text-text-muted">
+                    Recorded {formatVisitDate(bill.bill.occurredAt)}
+                  </span>
+                </div>
+              ) : null}
             </div>
             <StatusBadge
               label={isPaid ? 'Paid' : 'Awaiting payment'}
@@ -106,4 +117,8 @@ function formatVisitDate(occurredAt: string): string {
   const date = new Date(occurredAt);
   if (Number.isNaN(date.getTime())) return occurredAt;
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'full', timeStyle: 'short' }).format(date);
+}
+
+function formatBillNumber(billNumber: number): string {
+  return String(billNumber).padStart(6, '0');
 }

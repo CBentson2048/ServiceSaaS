@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { AccountModule } from './account/account.module';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
+import { BillsModule } from './bills/bills.module';
 import { CommunicationsModule } from './communications/communications.module';
 import { RequestResponseLoggingMiddleware } from './common/request-response-logging.middleware';
 import { CrmModule } from './crm/crm.module';
@@ -50,6 +51,7 @@ import { validateEnv } from './config/env.validation';
     AuthModule,
     AccountModule,
     AuditModule,
+    BillsModule,
     CommunicationsModule,
     OwnerOnboardingModule,
     ProfileModule,

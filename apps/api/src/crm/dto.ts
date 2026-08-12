@@ -176,6 +176,16 @@ export class UpdateCrmClientDto {
   @IsString()
   @MaxLength(500)
   notesSummary?: string | null;
+
+  /** Confirms an email edit that collides with another client (shared inbox). */
+  @IsOptional()
+  @IsBoolean()
+  allowDuplicate?: boolean;
+}
+
+export class MergeClientsDto {
+  @IsUUID()
+  duplicateClientId!: string;
 }
 
 export class CreateCrmNoteDto {

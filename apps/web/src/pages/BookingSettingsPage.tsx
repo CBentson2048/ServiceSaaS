@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, Navigate, useSearchParams } from 'react-router-dom';
+import { Link, Navigate, useParams } from 'react-router-dom';
 import type {
   LocationCommunicationSettings,
   OwnerBookingService,
@@ -21,6 +21,8 @@ import {
   updateServiceUpgradeSuggestion,
 } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
+import { useLocationRouteSync } from '../components/LocationScopeContext';
+import { LocationSettingsTabs } from '../components/locations/LocationSettingsTabs';
 import { userHasPermission } from '@sheer/domain';
 
 type RuleFormState = {
@@ -49,8 +51,12 @@ const GLOBAL_SCOPE = '__global__';
 export function BookingSettingsPage() {
   const auth = useAuth();
   const accessToken = auth.session?.accessToken;
-  const [searchParams, setSearchParams] = useSearchParams();
-  const locationFilter = searchParams.get('locationId') ?? '';
+  // Location-scoped since the settings-hub consolidation: the location comes
+  // from /locations/:id/booking-settings and syncs with the sidebar picker.
+  // Rules may still be marked Global via their per-rule scope select.
+  const params = useParams<{ id: string }>();
+  useLocationRouteSync(params.id, '/booking-settings');
+  const locationFilter = params.id ?? '';
   const [settings, setSettings] = useState<OwnerBookingSettingsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -179,44 +185,32 @@ export function BookingSettingsPage() {
     }
   }
 
-  function changeLocationFilter(value: string) {
-    const next = new URLSearchParams(searchParams);
-    if (value) next.set('locationId', value);
-    else next.delete('locationId');
-    setSearchParams(next, { replace: true });
-    setRuleForm((current) => ({ ...current, locationId: value || GLOBAL_SCOPE }));
-    setUpgradeForm((current) => ({ ...current, locationId: value || GLOBAL_SCOPE }));
-  }
-
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-6 lg:px-8">
       <nav className="mb-4 text-[12px] text-text-secondary">
         <Link to="/locations" className="hover:text-text-primary">Locations</Link>
         <span className="mx-1.5">/</span>
+        {locationFilter ? (
+          <>
+            <Link to={`/locations/${locationFilter}`} className="hover:text-text-primary">
+              {settings?.locations.find((location) => location.id === locationFilter)?.name ??
+                'Location'}
+            </Link>
+            <span className="mx-1.5">/</span>
+          </>
+        ) : null}
         <span className="text-text-primary">Booking settings</span>
       </nav>
 
-      <header className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-[22px] font-semibold leading-7 text-text-primary">Booking settings</h1>
-          <p className="mt-1 text-[13px] text-text-secondary">
-            Configure mandatory finishing services and upgrade prompts for public booking.
-          </p>
-        </div>
-        <label className="text-[12px] font-medium text-text-secondary">
-          Location scope
-          <select
-            value={locationFilter}
-            onChange={(event) => changeLocationFilter(event.target.value)}
-            className="mt-1 h-10 w-full rounded-input-lg border border-border-strong bg-surface px-3 text-[13px] text-text-primary outline-none focus:border-primary sm:w-72"
-          >
-            <option value="">All locations / global rules</option>
-            {settings?.locations.map((location) => (
-              <option key={location.id} value={location.id}>{location.name}</option>
-            ))}
-          </select>
-        </label>
+      <header className="mb-5">
+        <h1 className="text-[22px] font-semibold leading-7 text-text-primary">Booking settings</h1>
+        <p className="mt-1 text-[13px] text-text-secondary">
+          WhatsApp notifications, mandatory finishing services and upgrade prompts for this
+          salon&apos;s bookings. Rules can also be scoped Global to apply at every location.
+        </p>
       </header>
+
+      {locationFilter ? <LocationSettingsTabs locationId={locationFilter} /> : null}
 
       {message ? <Notice tone="success" text={message} /> : null}
       {error ? <Notice tone="danger" text={error} /> : null}

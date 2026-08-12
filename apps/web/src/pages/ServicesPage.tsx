@@ -456,13 +456,27 @@ export function ServicesPage() {
               </span>
             </label>
           ) : (
-            <TextInput
-              label="Duration (minutes)"
-              type="number"
-              value={form.estimatedDurationMinutes}
-              onChange={(value) => setForm((current) => ({ ...current, estimatedDurationMinutes: value }))}
-              required
-            />
+            <div>
+              <TextInput
+                label="Duration (minutes)"
+                type="number"
+                value={form.estimatedDurationMinutes}
+                onChange={(value) => setForm((current) => ({ ...current, estimatedDurationMinutes: value }))}
+                required
+              />
+              {/* Soft alignment hint (Week 5 slot sizes): 15 divides every
+                  configurable slot size, so off-multiples always sit off-grid
+                  somewhere. Non-blocking — off-grid durations stay bookable. */}
+              {(() => {
+                const minutes = Number(form.estimatedDurationMinutes);
+                return Number.isInteger(minutes) && minutes > 0 && minutes % 15 !== 0 ? (
+                  <span className="mt-1 block text-[11px] text-warning">
+                    Not a multiple of 15 — this duration will not line up with the appointment
+                    book&apos;s time grid at any location.
+                  </span>
+                ) : null;
+              })()}
+            </div>
           )}
           <TextInput
             label="Price"
@@ -525,7 +539,7 @@ export function ServicesPage() {
             </label>
             <p className="mt-1 pl-6 text-[11px] leading-relaxed text-text-tertiary">
               After a client completes an appointment with this service, automatically message them to
-              rebook. Skipped if they've already booked their next visit.
+              rebook. Skipped if they&apos;ve already booked their next visit.
             </p>
             {form.rebookingNudgeEnabled ? (
               <div className="mt-2 pl-6">

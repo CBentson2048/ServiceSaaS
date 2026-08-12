@@ -11,6 +11,7 @@ import { ConfigService } from '@nestjs/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type {
   AuthUser,
+  ClientDuplicateGroup,
   CreateCrmAllergyRecordRequest,
   CreateCrmClientNoteRequest,
   CreateCrmClientRequest,
@@ -35,11 +36,14 @@ import type {
   ListCrmClientVisitsResponse,
   ListCrmClientsResponse,
   ListCrmVisitPhotosResponse,
+  ListClientDuplicatesResponse,
+  MergeClientsResponse,
   SearchCrmClientsResponse,
   UpdateCrmClientRequest,
 } from '@sheer/domain';
 import { userHasRole, userHasAnyRole } from '@sheer/domain';
 import type { ListCrmClientsQueryDto, SearchCrmClientsQueryDto } from './dto';
+import { AuditService } from '../audit/audit.service';
 import {
   LabFormulaService,
   type LabClientFormulaHistoryRecord,
@@ -260,6 +264,7 @@ export class CrmService {
   constructor(
     config: ConfigService,
     private readonly labFormulas: LabFormulaService,
+    private readonly audit: AuditService,
   ) {
     const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
@@ -322,6 +327,8 @@ export class CrmService {
       // so the client can render real pagination, not just the current slice.
       .select(CLIENT_COLUMNS, { count: 'exact' })
       .eq('business_id', actor.businessId)
+      // Tombstoned (merged) profiles stay out of every list.
+      .is('merged_into_id', null)
       .order('updated_at', { ascending: false })
       .range(from, to);
     if (locationIds) request = request.in('primary_location_id', locationIds);
@@ -499,18 +506,17 @@ export class CrmService {
     // client_profile_id is the join key for the whole footprint (visits, notes,
     // allergies, patch tests, messages), so a duplicate splits history and,
     // worse, hides allergy/patch-test alerts. Staff can override for a genuine
-    // shared-inbox case via allowDuplicate.
-    if (email && !input.allowDuplicate) {
-      const existing = await this.findClientByEmail(actor.businessId, email);
-      if (existing) {
-        throw new ConflictException({
-          message: `A client with this email already exists: ${existing.first_name} ${existing.last_name} (${existing.client_code}). Open the existing record or create anyway.`,
-          existingClient: {
-            id: existing.id,
-            displayName: `${existing.first_name} ${existing.last_name}`.trim(),
-            clientCode: existing.client_code,
-          },
-        });
+    // shared-inbox / shared-phone case via allowDuplicate. Phone matches too:
+    // the till flow often has ONLY a phone number, and the phone is the
+    // strongest identity signal a walk-in gives.
+    if (!input.allowDuplicate) {
+      if (email) {
+        const existing = await this.findClientByEmail(actor.businessId, email);
+        if (existing) throw duplicateClientConflict(existing, 'email');
+      }
+      if (phone) {
+        const existing = await this.findClientByPhone(actor.businessId, phone);
+        if (existing) throw duplicateClientConflict(existing, 'phone');
       }
     }
 
@@ -649,6 +655,17 @@ export class CrmService {
         : existing.communication_preference;
     assertPreferenceReachable(nextPreference, nextEmail, nextPhone);
 
+    // An email edit gets the same duplicate guard as create — without it, two
+    // profiles created separately could silently converge on one email here.
+    const emailChanged =
+      nextEmail && nextEmail.toLowerCase() !== (existing.email ?? '').toLowerCase();
+    if (emailChanged && !input.allowDuplicate) {
+      const collision = await this.findClientByEmail(actor.businessId, nextEmail);
+      if (collision && collision.id !== clientId) {
+        throw duplicateClientConflict(collision, 'email');
+      }
+    }
+
     const { data, error } = await this.admin
       .schema('core')
       .from('client_profiles')
@@ -664,6 +681,120 @@ export class CrmService {
     }
 
     return { client: toClientSummary(data) };
+  }
+
+  /**
+   * Scans every readable client for shared emails / shared phone numbers (the
+   * same last-9-digits equivalence the search uses). Backs the Client Hub's
+   * "possible duplicates" banner and the merge tool.
+   */
+  async listDuplicates(actor: AuthUser): Promise<ListClientDuplicatesResponse> {
+    this.assertManagerOrOwner(actor);
+    const locationIds = this.resolveReadableLocationIds(actor, undefined);
+    if (locationIds && locationIds.length === 0) return { groups: [] };
+
+    // Page explicitly — PostgREST caps unpaged reads at max-rows (1000).
+    const PAGE = 500;
+    const rows: ClientProfileRow[] = [];
+    for (let from = 0; ; from += PAGE) {
+      let request = this.admin
+        .schema('core')
+        .from('client_profiles')
+        .select(CLIENT_COLUMNS)
+        .eq('business_id', actor.businessId)
+        .is('merged_into_id', null)
+        .order('id', { ascending: true })
+        .range(from, from + PAGE - 1);
+      if (locationIds) request = request.in('primary_location_id', locationIds);
+      const { data, error } = await request.returns<ClientProfileRow[]>();
+      if (error) {
+        this.logger.error(`listDuplicates scan failed: ${error.message}`);
+        throw new InternalServerErrorException('Unable to scan for duplicate clients');
+      }
+      const page = data ?? [];
+      rows.push(...page);
+      if (page.length < PAGE) break;
+    }
+
+    const byEmail = new Map<string, ClientProfileRow[]>();
+    const byPhone = new Map<string, ClientProfileRow[]>();
+    for (const row of rows) {
+      const email = row.email?.trim().toLowerCase();
+      if (email) byEmail.set(email, [...(byEmail.get(email) ?? []), row]);
+      const suffix = row.phone ? phoneSuffix9(row.phone) : null;
+      if (suffix) byPhone.set(suffix, [...(byPhone.get(suffix) ?? []), row]);
+    }
+
+    const groups: ClientDuplicateGroup[] = [];
+    const seenMemberSets = new Set<string>();
+    const memberKey = (members: ClientProfileRow[]) =>
+      members.map((member) => member.id).sort().join(',');
+    for (const [value, members] of byEmail) {
+      if (members.length < 2) continue;
+      seenMemberSets.add(memberKey(members));
+      groups.push({ matchType: 'email', value, clients: members.map(toDuplicateEntry) });
+    }
+    for (const [, members] of byPhone) {
+      if (members.length < 2) continue;
+      // A pair already grouped by email doesn't need a second, identical
+      // phone group — only phone-only matches add information.
+      if (seenMemberSets.has(memberKey(members))) continue;
+      groups.push({
+        matchType: 'phone',
+        value: members[0].phone ?? '',
+        clients: members.map(toDuplicateEntry),
+      });
+    }
+    groups.sort((a, b) => b.clients.length - a.clients.length);
+    return { groups: groups.slice(0, 50) };
+  }
+
+  /**
+   * Merges a duplicate profile into a surviving one via the crm.merge_clients
+   * RPC (0087): every FK repointed, login link moved, contact gaps filled,
+   * duplicate tombstoned — one transaction. The actor must be able to read
+   * both records; the merge is audited as `client.merged`.
+   */
+  async mergeClients(
+    actor: AuthUser,
+    primaryId: string,
+    duplicateId: string,
+  ): Promise<MergeClientsResponse> {
+    this.assertManagerOrOwner(actor);
+    if (primaryId === duplicateId) {
+      throw new BadRequestException('Choose two different clients to merge');
+    }
+    const [primary, duplicate] = await Promise.all([
+      this.fetchClientForActor(actor, primaryId),
+      this.fetchClientForActor(actor, duplicateId),
+    ]);
+
+    const { data, error } = await this.admin.schema('crm').rpc('merge_clients', {
+      p_business_id: actor.businessId,
+      p_primary_id: primaryId,
+      p_duplicate_id: duplicateId,
+    });
+    if (error) {
+      this.logger.error(`merge_clients failed: ${error.message}`);
+      throw new BadRequestException(error.message || 'Unable to merge clients');
+    }
+    const movedRecords = ((data as { moved?: Record<string, number> } | null)?.moved) ?? {};
+
+    await this.audit.record(actor, {
+      action: 'client.merged',
+      entityType: 'client',
+      entityId: primaryId,
+      locationId: primary.primary_location_id ?? undefined,
+      before: {
+        duplicateClientId: duplicateId,
+        duplicateClientCode: duplicate.client_code,
+        duplicateDisplayName: `${duplicate.first_name} ${duplicate.last_name}`.trim(),
+      },
+      metadata: { movedRecords },
+    });
+
+    const refreshed = await this.fetchClientForActor(actor, primaryId);
+    return { client: toClientSummary(refreshed), movedRecords };
   }
 
   async listVisits(actor: AuthUser, clientId: string): Promise<ListCrmClientVisitsResponse> {
@@ -1359,17 +1490,48 @@ export class CrmService {
     businessId: string,
     email: string,
   ): Promise<ClientProfileRow | null> {
-    // email is stored as citext, so this match is case-insensitive.
+    // email is stored as citext, so this match is case-insensitive. Tombstoned
+    // (merged) profiles are excluded — a conflict must point at a live record.
     const { data, error } = await this.admin
       .schema('core')
       .from('client_profiles')
-      .select('id,client_code,first_name,last_name')
+      .select(CLIENT_COLUMNS)
       .eq('business_id', businessId)
       .eq('email', email)
+      .is('merged_into_id', null)
       .limit(1)
       .maybeSingle<ClientProfileRow>();
     if (error) {
       this.logger.error(`findClientByEmail failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to check for existing client');
+    }
+    return data ?? null;
+  }
+
+  /**
+   * Duplicate check by phone: the search RPC (0083/0087) does the
+   * format-insensitive digit matching, then the candidates are narrowed to a
+   * true last-9-digits match so "…160" typed alone can never trigger a false
+   * conflict. Returns the full row so the conflict can carry a usable summary.
+   */
+  private async findClientByPhone(
+    businessId: string,
+    phone: string,
+  ): Promise<ClientProfileRow | null> {
+    const targetSuffix = phoneSuffix9(phone);
+    if (!targetSuffix) return null;
+    const { rows } = await this.runClientSearch(businessId, null, phone, 5, 0);
+    const match = rows.find((row) => phoneSuffix9(row.phone ?? '') === targetSuffix);
+    if (!match) return null;
+    const { data, error } = await this.admin
+      .schema('core')
+      .from('client_profiles')
+      .select(CLIENT_COLUMNS)
+      .eq('business_id', businessId)
+      .eq('id', match.id)
+      .maybeSingle<ClientProfileRow>();
+    if (error) {
+      this.logger.error(`findClientByPhone failed: ${error.message}`);
       throw new InternalServerErrorException('Unable to check for existing client');
     }
     return data ?? null;
@@ -1678,6 +1840,49 @@ function cleanOptional(
   const trimmed = value.trim();
   if (!trimmed) return null;
   return options.lowercase ? trimmed.toLowerCase() : trimmed;
+}
+
+/** 409 payload shared by every duplicate-client guard (create + email edit). */
+function duplicateClientConflict(
+  row: ClientProfileRow,
+  matchedBy: 'email' | 'phone',
+): ConflictException {
+  const displayName = `${row.first_name} ${row.last_name}`.trim();
+  return new ConflictException({
+    message: `A client with this ${
+      matchedBy === 'email' ? 'email' : 'phone number'
+    } already exists: ${displayName} (${row.client_code}). Use the existing record or create anyway.`,
+    matchedBy,
+    existingClient: { id: row.id, displayName, clientCode: row.client_code },
+    // Full summary so a till flow can adopt the existing client in place.
+    client: toClientSummary(row),
+  });
+}
+
+/**
+ * Last 9 digits after dropping an international dial prefix ("00…") and a
+ * trunk zero — the same equivalence the search RPC (0083) applies, so the
+ * phone duplicate guard and phone search can never disagree.
+ */
+function phoneSuffix9(value: string): string | null {
+  let digits = value.replace(/\D/g, '');
+  if (digits.startsWith('00')) digits = digits.slice(2);
+  else if (digits.startsWith('0')) digits = digits.slice(1);
+  if (digits.length < 9) return null;
+  return digits.slice(-9);
+}
+
+function toDuplicateEntry(row: ClientProfileRow): CrmClientSearchResult {
+  return {
+    id: row.id,
+    clientCode: row.client_code,
+    firstName: row.first_name,
+    lastName: row.last_name,
+    displayName: `${row.first_name} ${row.last_name}`.trim(),
+    email: row.email ?? undefined,
+    phone: row.phone ?? undefined,
+    primaryLocationId: row.primary_location_id ?? undefined,
+  };
 }
 
 function toClientSearchResult(row: ClientSearchRpcRow): CrmClientSearchResult {

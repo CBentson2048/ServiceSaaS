@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useSearchParams } from 'react-router-dom';
 import { ProtectedRoute } from './auth/ProtectedRoute';
 import { DashboardLayout } from './layouts/DashboardLayout';
 import { AcceptInvitationPage } from './pages/AcceptInvitationPage';
@@ -47,6 +47,7 @@ import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { RetailSalesPage } from './pages/RetailSalesPage';
+import { BillsPage } from './pages/BillsPage';
 import { RotaPage } from './pages/RotaPage';
 import { NewWeekRotaPage } from './pages/NewWeekRotaPage';
 import { ServiceCategoriesPage } from './pages/ServiceCategoriesPage';
@@ -217,6 +218,16 @@ export function App() {
             element={
               <ProtectedRoute
                 allowedRoles={['owner', 'manager']}
+                requiredPermissions={['bills.view']}
+              />
+            }
+          >
+            <Route path="/bills" element={<BillsPage />} />
+          </Route>
+          <Route
+            element={
+              <ProtectedRoute
+                allowedRoles={['owner', 'manager']}
                 requiredPermissions={['report.performance.view']}
               />
             }
@@ -299,7 +310,9 @@ export function App() {
               />
             }
           >
-            <Route path="/settings/booking" element={<BookingSettingsPage />} />
+            <Route path="/locations/:id/booking-settings" element={<BookingSettingsPage />} />
+            {/* Legacy URL from before the location settings hub — redirects into it. */}
+            <Route path="/settings/booking" element={<LegacyBookingSettingsRedirect />} />
           </Route>
           <Route
             element={
@@ -337,5 +350,21 @@ export function App() {
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+  );
+}
+
+/**
+ * /settings/booking predates the location settings hub. Old links carrying
+ * ?locationId= land on that location's Booking tab; bare links go to the
+ * locations list to pick one.
+ */
+function LegacyBookingSettingsRedirect() {
+  const [searchParams] = useSearchParams();
+  const locationId = searchParams.get('locationId');
+  return (
+    <Navigate
+      to={locationId ? `/locations/${encodeURIComponent(locationId)}/booking-settings` : '/locations'}
+      replace
+    />
   );
 }

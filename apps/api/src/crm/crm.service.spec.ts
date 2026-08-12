@@ -11,6 +11,7 @@ import type { ConfigService } from '@nestjs/config';
 import { createClient } from '@supabase/supabase-js';
 import type { AuthUser } from '@sheer/domain';
 import { CrmService } from './crm.service';
+import type { AuditService } from '../audit/audit.service';
 import type { LabFormulaService } from '../lab-formula/lab-formula.service';
 
 jest.mock('@supabase/supabase-js', () => ({
@@ -19,21 +20,32 @@ jest.mock('@supabase/supabase-js', () => ({
 
 const mockedCreateClient = createClient as jest.MockedFunction<typeof createClient>;
 
-// Minimal chainable stub covering both persistClient chains:
-//  - duplicate lookup: schema.from.select.eq.eq.limit.maybeSingle()
-//  - insert:           schema.from.insert.select.single()
-// `existingByEmail` is what the duplicate lookup resolves to (null = none).
-function createMockAdmin(existingByEmail: Record<string, unknown> | null = null) {
-  const captured: { insertPayload?: Record<string, unknown> } = {};
+// Minimal chainable stub covering the persistClient chains:
+//  - duplicate lookups: schema.from.select.eq[.is].eq.limit.maybeSingle()
+//  - phone search:      schema.rpc('search_clients') → `rpcRows`
+//  - insert:            schema.from.insert.select.single()
+// `existingByEmail` is what a maybeSingle lookup resolves to (null = none) —
+// it doubles as the full-row fetch behind a phone match.
+function createMockAdmin(
+  existingByEmail: Record<string, unknown> | null = null,
+  rpcRows: Array<Record<string, unknown>> = [],
+) {
+  const captured: { insertPayload?: Record<string, unknown>; updatePayload?: Record<string, unknown> } = {};
   const query: Record<string, unknown> = {};
   Object.assign(query, {
     schema: () => query,
     from: () => query,
     select: () => query,
     eq: () => query,
+    is: () => query,
     limit: () => query,
+    rpc: async () => ({ data: rpcRows, error: null }),
     insert: (payload: Record<string, unknown>) => {
       captured.insertPayload = payload;
+      return query;
+    },
+    update: (payload: Record<string, unknown>) => {
+      captured.updatePayload = payload;
       return query;
     },
     maybeSingle: async () => ({ data: existingByEmail, error: null }),
@@ -65,8 +77,11 @@ function createMockAdmin(existingByEmail: Record<string, unknown> | null = null)
   return { query, captured };
 }
 
-function createService(existingByEmail: Record<string, unknown> | null = null) {
-  const mock = createMockAdmin(existingByEmail);
+function createService(
+  existingByEmail: Record<string, unknown> | null = null,
+  rpcRows: Array<Record<string, unknown>> = [],
+) {
+  const mock = createMockAdmin(existingByEmail, rpcRows);
   mockedCreateClient.mockReturnValue(mock.query as never);
   const config = { getOrThrow: jest.fn(() => 'test') } as unknown as ConfigService;
   // CrmService reuses LabFormulaService only for the client-detail formula panel,
@@ -75,7 +90,8 @@ function createService(existingByEmail: Record<string, unknown> | null = null) {
   const labFormulas = {
     historyForClient: jest.fn(async () => []),
   } as unknown as LabFormulaService;
-  return { service: new CrmService(config, labFormulas), captured: mock.captured };
+  const audit = { record: jest.fn(async () => undefined) } as unknown as AuditService;
+  return { service: new CrmService(config, labFormulas, audit), captured: mock.captured };
 }
 
 // Search harness: captures every `schema('crm').rpc('search_clients', …)` call
@@ -95,7 +111,8 @@ function createSearchService(rpcRows: Array<Record<string, unknown>> = []) {
   const labFormulas = {
     historyForClient: jest.fn(async () => []),
   } as unknown as LabFormulaService;
-  return { service: new CrmService(config, labFormulas), rpcCalls };
+  const audit = { record: jest.fn(async () => undefined) } as unknown as AuditService;
+  return { service: new CrmService(config, labFormulas, audit), rpcCalls };
 }
 
 describe('CrmService — permissions and search', () => {
@@ -323,6 +340,60 @@ describe('CrmService — create client dedup and preference guards', () => {
     });
 
     expect(captured.insertPayload?.email).toBe('jane@example.com');
+  });
+
+  it('rejects a create whose phone already belongs to another client', async () => {
+    const fullRow = {
+      id: 'existing_1',
+      client_code: 'ZZZZ9999',
+      first_name: 'Existing',
+      last_name: 'Client',
+      phone: '+447700900123',
+    };
+    const { service, captured } = createService(fullRow, [
+      { id: 'existing_1', phone: '+447700900123', total_count: 1 },
+    ]);
+
+    await expect(
+      service.createClient(actor(), {
+        firstName: 'Jane',
+        lastName: 'Doe',
+        // Local rendering of the same number — the digit-suffix match catches it.
+        phone: '07700 900123',
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(captured.insertPayload).toBeUndefined();
+  });
+
+  it('a similar-but-different phone does not trigger the duplicate guard', async () => {
+    const { service, captured } = createService(null, [
+      // The search RPC substring match can surface near-misses; the guard's
+      // suffix-9 comparison must reject them.
+      { id: 'existing_1', phone: '+447700900999', total_count: 1 },
+    ]);
+
+    await service.createClient(actor(), {
+      firstName: 'Jane',
+      lastName: 'Doe',
+      phone: '+447700900123',
+    });
+
+    expect(captured.insertPayload?.phone).toBe('+447700900123');
+  });
+
+  it('allowDuplicate bypasses the phone duplicate guard', async () => {
+    const { service, captured } = createService(null, [
+      { id: 'existing_1', phone: '+447700900123', total_count: 1 },
+    ]);
+
+    await service.createClient(actor(), {
+      firstName: 'Jane',
+      lastName: 'Doe',
+      phone: '+447700900123',
+      allowDuplicate: true,
+    });
+
+    expect(captured.insertPayload?.phone).toBe('+447700900123');
   });
 
   it('rejects an SMS preference when no phone is provided', async () => {

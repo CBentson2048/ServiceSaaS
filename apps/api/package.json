@@ -12,6 +12,7 @@
     "lint": "eslint \"src/**/*.ts\"",
     "typecheck": "tsc --noEmit",
     "test": "jest --passWithNoTests",
+    "backfill-bills": "ts-node --transpile-only scripts/backfill-bills.ts",
     "create-test-users": "ts-node --transpile-only scripts/create-test-users.ts",
     "seed-loh-pay-template": "ts-node --transpile-only scripts/seed-loh-pay-template.ts"
   },

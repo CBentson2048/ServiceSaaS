@@ -2,12 +2,53 @@
  * Public booking flow — test scaffold.
  *
  * The current repo pattern records required service cases as `it.todo`
- * until the Jest data harness exists.
+ * until the Jest data harness exists. `availableSlotsInShift` is pure and
+ * exported, so the slot-stepping behaviour is tested directly.
  */
+import { availableSlotsInShift } from './public-booking.service';
 describe('PublicBookingService — availability', () => {
   it.todo('availability uses rota.shifts as the source of bookable time');
   it.todo('availability uses the sum of selected services estimated_duration_minutes as appointment length');
-  it.todo('availability uses location appointment_slot_minutes only as start increments');
+
+  it('steps slot starts by appointment_slot_minutes anchored to the shift start', () => {
+    const shift = {
+      id: 'shift_1',
+      staff_profile_id: 'staff_1',
+      scheduled_start_at: '2026-08-10T09:15:00.000Z',
+      scheduled_end_at: '2026-08-10T12:00:00.000Z',
+    };
+    const start = new Date(shift.scheduled_start_at);
+    const end = new Date(shift.scheduled_end_at);
+    // A plain 60-minute service fully occupies the stylist for its whole span.
+    const fullyOccupied = [{ startMs: 0, endMs: 60 * 60_000 }];
+
+    // 60-minute slots on a 09:15 shift start at 09:15, not the next clock
+    // hour — the epoch-anchored grid this replaces offered 10:00 first and
+    // silently discarded the shift's opening 45 minutes.
+    const hourly = availableSlotsInShift(
+      start, end, shift, [], [], [], [], 60, fullyOccupied, 60, false,
+    );
+    expect(hourly.map((slot) => slot.toISOString())).toEqual([
+      '2026-08-10T09:15:00.000Z',
+      '2026-08-10T10:15:00.000Z',
+    ]);
+
+    // 15-minute slots: every quarter step from the shift start whose full
+    // duration still fits before the shift end (09:15 → 11:00 inclusive).
+    const quarterly = availableSlotsInShift(
+      start, end, shift, [], [], [], [], 60, fullyOccupied, 15, false,
+    );
+    expect(quarterly[0].toISOString()).toBe('2026-08-10T09:15:00.000Z');
+    expect(quarterly[1].toISOString()).toBe('2026-08-10T09:30:00.000Z');
+    expect(quarterly).toHaveLength(8);
+
+    // A mid-shift search window still lands on the shift-anchored grid: the
+    // first slot at or after 10:05 on a 09:15 + n×30 grid is 10:15.
+    const midDay = availableSlotsInShift(
+      new Date('2026-08-10T10:05:00.000Z'), end, shift, [], [], [], [], 60, fullyOccupied, 30, false,
+    );
+    expect(midDay[0].toISOString()).toBe('2026-08-10T10:15:00.000Z');
+  });
   it.todo('shift breaks remove otherwise-valid slots');
   it.todo('approved leave removes otherwise-valid slots');
   it.todo('absence events remove otherwise-valid slots');

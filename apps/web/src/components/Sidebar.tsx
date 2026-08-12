@@ -79,6 +79,13 @@ const NAV: NavItem[] = [
     permission: 'retail.record',
   },
   {
+    to: '/bills',
+    label: 'Bills',
+    icon: ReceiptIcon,
+    allowedRoles: ['owner', 'manager'],
+    permission: 'bills.view',
+  },
+  {
     to: '/sheer-lab',
     label: 'Qlooqo Lab',
     icon: BeakerIcon,
@@ -146,13 +153,6 @@ const NAV: NavItem[] = [
     icon: TagIcon,
     allowedRoles: ['owner', 'manager'],
     permission: 'account.manage',
-  },
-  {
-    to: '/settings/booking',
-    label: 'Booking settings',
-    icon: GearIcon,
-    allowedRoles: ['owner', 'manager'],
-    permission: 'settings.booking.manage',
   },
   {
     to: '/audit-log',
@@ -506,6 +506,15 @@ function ChevronDownIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+function ReceiptIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Svg {...props}>
+      <path d="M5 2.5h10v14l-2-1.4-1.7 1.4-1.6-1.4L8 16.5l-1.7-1.4-1.3 1.4v-14Z" />
+      <path d="M7.5 6.5h5M7.5 9.5h5M7.5 12.5h3" />
+    </Svg>
+  );
+}
+
 function DashboardIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Svg {...props}>
@@ -627,15 +636,6 @@ function TagIcon(props: SVGProps<SVGSVGElement>) {
     <Svg {...props}>
       <path d="M10.5 3H4v6.5l7 7 6.5-6.5-7-7Z" />
       <circle cx="7.2" cy="6.2" r="1.1" />
-    </Svg>
-  );
-}
-
-function GearIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <Svg {...props}>
-      <circle cx="10" cy="10" r="2.5" />
-      <path d="M10 2.8v2M10 15.2v2M2.8 10h2M15.2 10h2M4.9 4.9l1.4 1.4M13.7 13.7l1.4 1.4M15.1 4.9l-1.4 1.4M6.3 13.7l-1.4 1.4" />
     </Svg>
   );
 }

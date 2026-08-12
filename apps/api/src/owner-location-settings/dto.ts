@@ -21,6 +21,7 @@ import type {
   FixedCostCategory,
   LocationDepositType,
 } from '@sheer/domain';
+import { APPOINTMENT_SLOT_OPTIONS } from '@sheer/domain';
 
 const DEPOSIT_TYPES: LocationDepositType[] = ['none', 'fixed_amount', 'percentage'];
 const FIXED_COST_CATEGORIES: FixedCostCategory[] = [
@@ -71,10 +72,11 @@ export class UpdateLocationRecordSettingsDto {
   @Max(1000)
   chairCount?: number;
 
+  // Closed set (15/30/60) — mirrors the 0084 DB check constraint. The old
+  // 1–480 range let unbookable granularities (7, 13…) reach the diary.
   @IsOptional()
   @IsInt()
-  @Min(1)
-  @Max(480)
+  @IsIn([...APPOINTMENT_SLOT_OPTIONS])
   appointmentSlotMinutes?: number;
 
   @IsOptional()

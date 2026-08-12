@@ -141,6 +141,7 @@ interface UserProfileRow {
 interface LocationSettingsRow {
   location_id: string;
   holiday_notice_days: number;
+  appointment_slot_minutes?: number;
 }
 
 interface BreakDefaultsRow {
@@ -170,6 +171,8 @@ type AuditEntity = 'shift' | 'shift_break' | 'leave_request' | 'absence_event' |
 
 const DEFAULT_HOLIDAY_NOTICE_DAYS = 30;
 const DEFAULT_BREAK_MINUTES = 30;
+// Mirrors the DB default on core.location_settings.appointment_slot_minutes.
+const DEFAULT_SLOT_MINUTES = 15;
 
 @Injectable()
 export class RotaService {
@@ -218,7 +221,7 @@ export class RotaService {
     const startIso = startOfWeek.toISOString();
     const endIso = endOfWeek.toISOString();
 
-    const [staff, shifts, breaks, leave, absences, holidayNoticeDays, bookOutTypesById] =
+    const [staff, shifts, breaks, leave, absences, bookingSettings, bookOutTypesById] =
       await Promise.all([
         this.fetchLocationStaff(actor.businessId, locationId),
         this.fetchShiftsInRange(actor.businessId, locationId, startIso, endIso),
@@ -232,7 +235,7 @@ export class RotaService {
           toIsoDate(endOfWeek),
         ),
         this.fetchAbsencesOverlapping(actor.businessId, locationId, startIso, endIso),
-        this.fetchHolidayNoticeDays(locationId),
+        this.fetchLocationBookingSettings(locationId),
         this.fetchBookOutTypesMap(actor.businessId),
       ]);
 
@@ -260,7 +263,8 @@ export class RotaService {
         reason: row.reason ?? undefined,
       })),
       absences: absences.map((row) => toRotaAbsenceIndicator(row, bookOutTypesById)),
-      holidayNoticeDays,
+      holidayNoticeDays: bookingSettings.holidayNoticeDays,
+      appointmentSlotMinutes: bookingSettings.appointmentSlotMinutes,
       scope: userHasRole(actor, 'owner') ? 'owner' : 'manager',
     };
   }
@@ -2130,6 +2134,31 @@ export class RotaService {
       throw new InternalServerErrorException('Unable to load location settings');
     }
     return data?.holiday_notice_days ?? DEFAULT_HOLIDAY_NOTICE_DAYS;
+  }
+
+  /**
+   * Weekly-rota variant of {@link fetchHolidayNoticeDays}: also carries the
+   * location's diary granularity so the appointment book can rule its grid
+   * without a second settings round-trip (and without widening access to the
+   * owner-gated location-settings endpoint).
+   */
+  private async fetchLocationBookingSettings(
+    locationId: string,
+  ): Promise<{ holidayNoticeDays: number; appointmentSlotMinutes: number }> {
+    const { data, error } = await this.admin
+      .schema('core')
+      .from('location_settings')
+      .select('location_id,holiday_notice_days,appointment_slot_minutes')
+      .eq('location_id', locationId)
+      .maybeSingle<LocationSettingsRow>();
+    if (error) {
+      this.logger.error(`fetchLocationBookingSettings failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load location settings');
+    }
+    return {
+      holidayNoticeDays: data?.holiday_notice_days ?? DEFAULT_HOLIDAY_NOTICE_DAYS,
+      appointmentSlotMinutes: data?.appointment_slot_minutes ?? DEFAULT_SLOT_MINUTES,
+    };
   }
 
   private async fetchLocationStaff(

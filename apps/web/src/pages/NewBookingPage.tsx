@@ -21,6 +21,7 @@ import {
   searchStaffBookingClients,
 } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
+import { DuplicateClientHint } from '../components/clients/DuplicateClientHint';
 import { useLocationScope } from '../components/LocationScopeContext';
 
 type CommPreference = 'whatsapp' | 'sms' | 'email';
@@ -89,6 +90,7 @@ export function NewBookingPage() {
   const [selectedClient, setSelectedClient] = useState<CrmClientSummary | null>(null);
   const [showNewClient, setShowNewClient] = useState(false);
   const [newClient, setNewClient] = useState<NewClientForm>(emptyNewClient);
+  const [duplicateConflict, setDuplicateConflict] = useState<DuplicateConflictState | null>(null);
   const [creatingClient, setCreatingClient] = useState(false);
 
   // Services
@@ -320,6 +322,10 @@ export function NewBookingPage() {
 
   async function handleCreateClient(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    await submitNewClient(false);
+  }
+
+  async function submitNewClient(allowDuplicate: boolean) {
     if (!accessToken) return;
     if (!newClient.firstName.trim() || !newClient.lastName.trim()) {
       setError('Client first and last name are required');
@@ -327,6 +333,7 @@ export function NewBookingPage() {
     }
     setCreatingClient(true);
     setError(null);
+    setDuplicateConflict(null);
     try {
       const { client } = await createStaffBookingClient(accessToken, {
         firstName: newClient.firstName.trim(),
@@ -336,11 +343,17 @@ export function NewBookingPage() {
         primaryLocationId: locationId,
         communicationPreference: newClient.communicationPreference,
         source: 'staff_booking',
+        allowDuplicate: allowDuplicate || undefined,
       });
       selectClient(client);
       setNewClient(emptyNewClient);
     } catch (err) {
-      setError(messageFrom(err, 'Could not create client'));
+      // A duplicate match is a decision, not an error: offer the existing
+      // client for selection (the usual intent) alongside an explicit
+      // create-anyway — never force staff to blank the email to proceed.
+      const conflict = extractDuplicateConflict(err);
+      if (conflict) setDuplicateConflict(conflict);
+      else setError(messageFrom(err, 'Could not create client'));
     } finally {
       setCreatingClient(false);
     }
@@ -531,6 +544,52 @@ export function NewBookingPage() {
               value={newClient.email}
               onChange={(value) => setNewClient((c) => ({ ...c, email: value }))}
             />
+            <DuplicateClientHint
+              email={newClient.email}
+              phone={newClient.phone}
+              onUse={(client) =>
+                selectClient({
+                  // The lean search row carries everything the booking flow
+                  // reads (id, names, contact, preference is absent → default).
+                  ...client,
+                  businessId: '',
+                  marketingOptIn: false,
+                  tags: [],
+                  createdAt: '',
+                  updatedAt: '',
+                  alertCounts: { activeAllergies: 0, expiredPatchTests: 0 },
+                })
+              }
+            />
+            {duplicateConflict ? (
+              <div className="rounded-input-lg border border-danger-border bg-danger-soft px-4 py-3 text-[13px] sm:col-span-2">
+                <p className="text-danger">{duplicateConflict.message}</p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  {duplicateConflict.client ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const existing = duplicateConflict.client!;
+                        setDuplicateConflict(null);
+                        setNewClient(emptyNewClient);
+                        selectClient(existing);
+                      }}
+                      className="rounded-pill bg-primary px-4 py-1.5 text-[12px] font-semibold text-text-on-primary transition hover:bg-primary-deep"
+                    >
+                      Use {duplicateConflict.displayName}
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    disabled={creatingClient}
+                    onClick={() => void submitNewClient(true)}
+                    className="rounded-pill border border-danger-border px-4 py-1.5 text-[12px] font-semibold text-danger transition hover:bg-danger-soft disabled:opacity-60"
+                  >
+                    {creatingClient ? 'Creating…' : 'Create anyway'}
+                  </button>
+                </div>
+              </div>
+            ) : null}
             <div className="flex items-end justify-end gap-2 sm:col-span-2">
               <button
                 type="button"
@@ -1005,6 +1064,36 @@ function messageFrom(err: unknown, fallback: string): string {
   if (err instanceof ApiRequestError) return err.message;
   if (err instanceof Error) return err.message;
   return fallback;
+}
+
+interface DuplicateConflictState {
+  message: string;
+  displayName: string;
+  clientCode: string;
+  /** Full summary when the server supplied one — enables "Use this client". */
+  client?: CrmClientSummary;
+}
+
+// Pull the duplicate-client payload out of a 409 Conflict body. Defensive:
+// any shape mismatch yields null and the plain error path takes over.
+function extractDuplicateConflict(err: unknown): DuplicateConflictState | null {
+  if (!(err instanceof ApiRequestError) || err.status !== 409) return null;
+  const details = err.details;
+  if (!details || typeof details !== 'object') return null;
+  const record = details as { message?: unknown; existingClient?: unknown; client?: unknown };
+  const existing = record.existingClient as
+    | { displayName?: unknown; clientCode?: unknown }
+    | undefined;
+  if (!existing || typeof existing.displayName !== 'string' || typeof existing.clientCode !== 'string') {
+    return null;
+  }
+  return {
+    message:
+      typeof record.message === 'string' ? record.message : 'A matching client already exists.',
+    displayName: existing.displayName,
+    clientCode: existing.clientCode,
+    client: (record.client as CrmClientSummary | undefined) ?? undefined,
+  };
 }
 
 function todayIso(): string {

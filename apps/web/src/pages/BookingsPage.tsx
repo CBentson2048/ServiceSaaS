@@ -809,6 +809,7 @@ export function BookingsPage() {
         ) : (
           <DayCalendarBoard
             day={day}
+            slotMinutes={rota?.appointmentSlotMinutes}
             staff={rota?.staff ?? []}
             shifts={rota?.shifts ?? []}
             leave={rota?.leave ?? []}

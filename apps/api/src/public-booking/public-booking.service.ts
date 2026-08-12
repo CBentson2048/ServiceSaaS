@@ -266,6 +266,10 @@ const BOOKING_ATTEMPT_SERVICE_COLUMNS =
 const LEAVE_COLUMNS = 'staff_profile_id,start_date,end_date';
 const ABSENCE_COLUMNS = 'staff_profile_id,starts_at,ends_at,book_out_type_id';
 const LOOKAHEAD_DAYS = 28;
+// Earliest same-day booking: now + this many minutes. Fixed (not the slot
+// size) so changing a location's diary granularity never changes how soon a
+// client may book — see the comment at the searchStart computation.
+const MIN_SAME_DAY_LEAD_MINUTES = 15;
 const BOOKING_ATTEMPT_TTL_MINUTES = 15;
 
 @Injectable()
@@ -1098,9 +1102,15 @@ export class PublicBookingService {
       { startMs: 0, endMs: durationMinutes * 60_000 },
     ];
     const now = new Date();
+    // Same-day lead time is a FIXED floor, deliberately not the slot size:
+    // coupling them meant switching a location to 60-minute slots silently
+    // quadrupled the earliest bookable time. 15 minutes preserves the
+    // behaviour every location had before slot sizes became configurable.
+    // (location_settings.same_day_booking_cutoff_minutes exists and is the
+    // natural future owner of this value — wiring it is a product decision.)
     const searchStart = options.dateFrom
       ? new Date(Math.max(options.dateFrom.getTime(), now.getTime()))
-      : new Date(now.getTime() + slotMinutes * 60_000);
+      : new Date(now.getTime() + MIN_SAME_DAY_LEAD_MINUTES * 60_000);
     const searchEnd =
       options.dateTo ?? new Date(now.getTime() + LOOKAHEAD_DAYS * 24 * 60 * 60_000);
 
@@ -2414,7 +2424,9 @@ function toLocationSummary(row: LocationRow): PublicBookingLocationSummary {
   };
 }
 
-function availableSlotsInShift(
+// Exported for direct unit testing of the slot-stepping/anchoring behaviour —
+// the service's data fetching is not involved at this level.
+export function availableSlotsInShift(
   start: Date,
   end: Date,
   shift: ShiftRow,
@@ -2432,7 +2444,11 @@ function availableSlotsInShift(
 ): Date[] {
   const slotMs = slotMinutes * 60_000;
   const durationMs = durationMinutes * 60_000;
-  let cursor = roundUpToIncrement(start, slotMs);
+  // Anchor the slot grid to the SHIFT start, not the Unix epoch: an epoch
+  // anchor only coincides with clock hours by luck — at 60-minute slots a
+  // 09:15 shift would have offered 10:00 first (45 bookable minutes lost) and
+  // half-hour-offset timezones would misalign with the diary grid entirely.
+  let cursor = roundUpToAnchor(start, new Date(shift.scheduled_start_at), slotMs);
   const busy = [
     ...breaks.map((row) => ({ start: new Date(row.started_at), end: new Date(row.ended_at) })),
     ...occupiedIntervals,
@@ -2589,8 +2605,14 @@ function toIsoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-function roundUpToIncrement(date: Date, incrementMs: number): Date {
-  return new Date(Math.ceil(date.getTime() / incrementMs) * incrementMs);
+/**
+ * The first instant at or after `date` that sits on the grid defined by
+ * `anchor + n × incrementMs`. `date` at or before the anchor returns the
+ * anchor itself (slot stepping never starts before the shift does).
+ */
+function roundUpToAnchor(date: Date, anchor: Date, incrementMs: number): Date {
+  const offsetMs = Math.max(0, date.getTime() - anchor.getTime());
+  return new Date(anchor.getTime() + Math.ceil(offsetMs / incrementMs) * incrementMs);
 }
 
 function earliest(values: string[]): string | undefined {

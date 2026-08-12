@@ -8,6 +8,7 @@ import type {
   LocationRecordSettings,
 } from '@sheer/domain';
 import {
+  APPOINTMENT_SLOT_OPTIONS,
   FIXED_COST_CADENCE_LABELS,
   FIXED_COST_CATEGORY_LABELS,
   monthlyEquivalentFixedCost,
@@ -24,11 +25,18 @@ import {
 } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
 import { useLocationRouteSync } from '../components/LocationScopeContext';
+import { LocationSettingsTabs } from '../components/locations/LocationSettingsTabs';
 
 const WEEKDAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const FIELD =
   'w-full rounded-input-lg border border-border-strong bg-surface px-3 py-2 text-[13px] text-text-primary outline-none focus:border-primary';
 const LABEL = 'mb-1 block text-[12px] font-medium text-text-secondary';
+// Compact fixed-width variant for the opening-hours time inputs — FIELD is
+// w-full, and a trailing w-32 merely *conflicts* with it (Tailwind resolves by
+// stylesheet order, not className order), which is what previously stretched
+// the time boxes across the page.
+const TIME_FIELD =
+  'h-9 w-[6.5rem] rounded-input-lg border border-border-strong bg-surface px-2.5 text-[13px] text-text-primary outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20';
 
 const CATEGORIES = Object.keys(FIXED_COST_CATEGORY_LABELS) as FixedCostCategory[];
 const CADENCES = Object.keys(FIXED_COST_CADENCE_LABELS) as FixedCostCadence[];
@@ -64,6 +72,10 @@ export function LocationRecordSettingsPage() {
   const locationId = params.id;
 
   const [settings, setSettings] = useState<LocationRecordSettings | null>(null);
+  // JSON snapshot of the last loaded/saved settings — the dirty flag behind
+  // the sticky save bar. Fixed costs are excluded on purpose: they persist
+  // row-by-row through their own endpoints and never need this Save.
+  const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
   const [fixedCosts, setFixedCosts] = useState<LocationFixedCost[]>([]);
   const [monthlyTotal, setMonthlyTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -93,6 +105,7 @@ export function LocationRecordSettingsPage() {
         getEffectiveFixedCosts(accessToken, { locationId }),
       ]);
       setSettings(settingsRes.settings);
+      setSavedSnapshot(JSON.stringify(settingsRes.settings));
       setFixedCosts(costsRes.fixedCosts);
       setMonthlyTotal(effectiveRes.monthlyEquivalentTotal);
     } catch (err) {
@@ -123,10 +136,34 @@ export function LocationRecordSettingsPage() {
     );
   }
 
+  /** Applies one day's opens/closes times to every day currently marked open. */
+  function copyHoursToOpenDays(weekday: number) {
+    setSettings((prev) => {
+      if (!prev) return prev;
+      const source = prev.openingHours.find((entry) => entry.weekday === weekday);
+      if (!source) return prev;
+      return {
+        ...prev,
+        openingHours: prev.openingHours.map((entry) =>
+          entry.isOpen ? { ...entry, opensAt: source.opensAt, closesAt: source.closesAt } : entry,
+        ),
+      };
+    });
+  }
+
   async function saveSettings() {
     if (!accessToken || !settings || !locationId) return;
     if (settings.payrollCriticalPercent < settings.payrollWarningPercent) {
       setError('Payroll critical % must be greater than or equal to the warning %.');
+      return;
+    }
+    const invalidDay = settings.openingHours.find(
+      (entry) => entry.isOpen && !closesAfterOpens(entry),
+    );
+    if (invalidDay) {
+      setError(
+        `${WEEKDAY_LABELS[invalidDay.weekday]}: closing time must be after the opening time.`,
+      );
       return;
     }
     setSaving(true);
@@ -153,6 +190,7 @@ export function LocationRecordSettingsPage() {
         sundayReportSendHour: settings.sundayReportSendHour,
       });
       setSettings(res.settings);
+      setSavedSnapshot(JSON.stringify(res.settings));
       setNotice('Settings saved.');
     } catch (err) {
       setError(err instanceof ApiRequestError ? err.message : 'Unable to save settings');
@@ -265,6 +303,8 @@ export function LocationRecordSettingsPage() {
         </p>
       </header>
 
+      {locationId ? <LocationSettingsTabs locationId={locationId} /> : null}
+
       {error ? (
         <div className="mb-4 rounded-input-lg border border-danger-border bg-danger-soft px-4 py-3 text-[13px] text-danger">
           {error}
@@ -284,8 +324,8 @@ export function LocationRecordSettingsPage() {
         <div className="space-y-5">
           {/* Opening hours */}
           <Section title="Opening hours" subtitle="Trading hours used by utilisation and reporting.">
-            <div className="space-y-2">
-              {[1, 2, 3, 4, 5, 6, 0].map((weekday) => {
+            <div className="overflow-hidden rounded-input-lg border border-border">
+              {[1, 2, 3, 4, 5, 6, 0].map((weekday, index) => {
                 const entry =
                   settings.openingHours.find((item) => item.weekday === weekday) ?? {
                     weekday,
@@ -293,35 +333,90 @@ export function LocationRecordSettingsPage() {
                     opensAt: '09:00',
                     closesAt: '18:00',
                   };
+                const invalid = entry.isOpen && !closesAfterOpens(entry);
                 return (
-                  <div key={weekday} className="flex flex-wrap items-center gap-3">
-                    <label className="flex w-32 items-center gap-2 text-[13px] text-text-primary">
-                      <input
-                        type="checkbox"
-                        checked={entry.isOpen}
-                        onChange={(e) => patchHours(weekday, { isOpen: e.target.checked })}
-                      />
-                      {WEEKDAY_LABELS[weekday]}
+                  <div
+                    key={weekday}
+                    className={`flex min-h-12 flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2 ${
+                      index > 0 ? 'border-t border-border-divider' : ''
+                    } ${entry.isOpen ? '' : 'bg-surface-alt/40'}`}
+                  >
+                    <label className="flex w-36 shrink-0 cursor-pointer items-center gap-3">
+                      <span className="relative inline-flex h-5 w-9 shrink-0">
+                        <input
+                          type="checkbox"
+                          checked={entry.isOpen}
+                          onChange={(e) => patchHours(weekday, { isOpen: e.target.checked })}
+                          aria-label={`Open on ${WEEKDAY_LABELS[weekday]}`}
+                          className="peer sr-only"
+                        />
+                        <span
+                          aria-hidden
+                          className="absolute inset-0 rounded-pill bg-border-strong transition-colors peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary/40"
+                        />
+                        <span
+                          aria-hidden
+                          className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-surface shadow transition-transform peer-checked:translate-x-4"
+                        />
+                      </span>
+                      <span
+                        className={`text-[13px] font-medium ${
+                          entry.isOpen ? 'text-text-primary' : 'text-text-secondary'
+                        }`}
+                      >
+                        {WEEKDAY_LABELS[weekday]}
+                      </span>
                     </label>
-                    <input
-                      type="time"
-                      value={entry.opensAt}
-                      disabled={!entry.isOpen}
-                      onChange={(e) => patchHours(weekday, { opensAt: e.target.value })}
-                      className={`${FIELD} w-32 disabled:opacity-50`}
-                    />
-                    <span className="text-text-muted">to</span>
-                    <input
-                      type="time"
-                      value={entry.closesAt}
-                      disabled={!entry.isOpen}
-                      onChange={(e) => patchHours(weekday, { closesAt: e.target.value })}
-                      className={`${FIELD} w-32 disabled:opacity-50`}
-                    />
+
+                    {entry.isOpen ? (
+                      <>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="time"
+                            value={entry.opensAt}
+                            onChange={(e) => patchHours(weekday, { opensAt: e.target.value })}
+                            aria-label={`${WEEKDAY_LABELS[weekday]} opening time`}
+                            className={`${TIME_FIELD} ${invalid ? '!border-danger-border' : ''}`}
+                          />
+                          <span className="text-[12px] text-text-muted" aria-hidden>
+                            –
+                          </span>
+                          <input
+                            type="time"
+                            value={entry.closesAt}
+                            onChange={(e) => patchHours(weekday, { closesAt: e.target.value })}
+                            aria-label={`${WEEKDAY_LABELS[weekday]} closing time`}
+                            className={`${TIME_FIELD} ${invalid ? '!border-danger-border' : ''}`}
+                          />
+                        </div>
+                        {invalid ? (
+                          <span className="text-[12px] text-danger">
+                            Closing must be after opening.
+                          </span>
+                        ) : (
+                          <span className="hidden text-[12px] text-text-muted sm:block">
+                            {formatDayLength(entry)}
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => copyHoursToOpenDays(weekday)}
+                          title={`Apply ${WEEKDAY_LABELS[weekday]}'s hours to every open day`}
+                          className="ml-auto hidden rounded-pill px-2.5 py-1 text-[12px] font-medium text-text-secondary transition hover:bg-surface-alt hover:text-text-primary sm:block"
+                        >
+                          Copy to all
+                        </button>
+                      </>
+                    ) : (
+                      <span className="rounded-pill bg-surface-alt px-2.5 py-1 text-[12px] font-medium text-text-muted">
+                        Closed
+                      </span>
+                    )}
                   </div>
                 );
               })}
             </div>
+            <p className="mt-2 text-[12px] text-text-secondary">{weeklySummary(settings.openingHours)}</p>
           </Section>
 
           {/* Capacity & booking */}
@@ -331,14 +426,30 @@ export function LocationRecordSettingsPage() {
                 label="Working chairs"
                 value={settings.chairCount}
                 min={0}
+                max={1000}
+                integer
                 onChange={(v) => patchSettings({ chairCount: v })}
               />
-              <NumberField
-                label="Appointment slot (minutes)"
-                value={settings.appointmentSlotMinutes}
-                min={1}
-                onChange={(v) => patchSettings({ appointmentSlotMinutes: v })}
-              />
+              <div>
+                <label className={LABEL}>Appointment slot size</label>
+                <select
+                  className={FIELD}
+                  value={settings.appointmentSlotMinutes}
+                  onChange={(e) =>
+                    patchSettings({ appointmentSlotMinutes: Number(e.target.value) })
+                  }
+                >
+                  {APPOINTMENT_SLOT_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option} minutes
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[12px] text-text-secondary">
+                  Rules this salon&apos;s appointment book grid, click-to-book snapping and online
+                  booking times.
+                </p>
+              </div>
               <div>
                 <label className={LABEL}>Default deposit</label>
                 <select
@@ -463,21 +574,11 @@ export function LocationRecordSettingsPage() {
                 value={settings.sundayReportSendHour}
                 min={0}
                 max={23}
+                integer
                 onChange={(v) => patchSettings({ sundayReportSendHour: v })}
               />
             </div>
           </Section>
-
-          <div className="flex items-center justify-end gap-3">
-            <button
-              type="button"
-              onClick={saveSettings}
-              disabled={saving}
-              className="inline-flex h-10 items-center justify-center rounded-pill bg-primary px-6 text-[13px] font-semibold text-text-on-primary transition hover:bg-primary-deep disabled:opacity-60"
-            >
-              {saving ? 'Saving…' : 'Save settings'}
-            </button>
-          </div>
 
           {/* Fixed costs */}
           <Section
@@ -650,6 +751,41 @@ export function LocationRecordSettingsPage() {
               </div>
             </div>
           </Section>
+
+          {/* Sticky save bar: appears only while there are unsaved changes, so
+              it is reachable from anywhere on this long page and its scope is
+              self-evident (fixed costs save independently and never arm it). */}
+          {settings && savedSnapshot !== null && JSON.stringify(settings) !== savedSnapshot ? (
+            <div className="sticky bottom-4 z-30">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-card-lg border border-border bg-surface/95 px-4 py-3 shadow-modal backdrop-blur">
+                <p className="text-[13px] text-text-secondary">
+                  <span className="font-medium text-text-primary">Unsaved changes</span> — the
+                  settings above are not saved yet.
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={saving}
+                    onClick={() => {
+                      setSettings(JSON.parse(savedSnapshot) as LocationRecordSettings);
+                      setError(null);
+                    }}
+                    className="inline-flex h-9 items-center justify-center rounded-pill border border-border-strong bg-surface px-4 text-[13px] font-medium text-text-secondary transition hover:bg-surface-alt disabled:opacity-60"
+                  >
+                    Discard
+                  </button>
+                  <button
+                    type="button"
+                    onClick={saveSettings}
+                    disabled={saving}
+                    className="inline-flex h-9 items-center justify-center rounded-pill bg-primary px-5 text-[13px] font-semibold text-text-on-primary transition hover:bg-primary-deep disabled:opacity-60"
+                  >
+                    {saving ? 'Saving…' : 'Save settings'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
       )}
     </div>
@@ -685,6 +821,7 @@ function NumberField({
   min,
   max,
   disabled,
+  integer,
 }: {
   label: string;
   value: number;
@@ -692,6 +829,12 @@ function NumberField({
   min?: number;
   max?: number;
   disabled?: boolean;
+  /**
+   * Whole-number fields (counts, hours): steps by 1, truncates any typed
+   * decimals and clamps into [min, max] — the matching API DTOs are @IsInt,
+   * so letting "1.5 chairs" through only produced a raw 400 on save.
+   */
+  integer?: boolean;
 }) {
   return (
     <div>
@@ -702,13 +845,56 @@ function NumberField({
         value={Number.isFinite(value) ? value : ''}
         min={min}
         max={max}
-        step="0.01"
+        step={integer ? 1 : '0.01'}
         disabled={disabled}
         onChange={(e) => {
-          const parsed = Number.parseFloat(e.target.value);
-          onChange(Number.isFinite(parsed) ? parsed : 0);
+          const parsed = integer
+            ? Number.parseInt(e.target.value, 10)
+            : Number.parseFloat(e.target.value);
+          let next = Number.isFinite(parsed) ? parsed : 0;
+          if (integer) {
+            if (min !== undefined) next = Math.max(min, next);
+            if (max !== undefined) next = Math.min(max, next);
+          }
+          onChange(next);
         }}
       />
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Opening-hours helpers. 'HH:MM' strings compare safely only via minutes.
+// ---------------------------------------------------------------------------
+
+function timeToMinutes(value: string): number {
+  const [hours, minutes] = value.split(':').map(Number);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return Number.NaN;
+  return hours * 60 + minutes;
+}
+
+function closesAfterOpens(entry: Pick<LocationOpeningHoursEntry, 'opensAt' | 'closesAt'>): boolean {
+  const opens = timeToMinutes(entry.opensAt);
+  const closes = timeToMinutes(entry.closesAt);
+  return Number.isFinite(opens) && Number.isFinite(closes) && closes > opens;
+}
+
+/** "8.5h" — the trading length of one open day, shown beside its times. */
+function formatDayLength(entry: Pick<LocationOpeningHoursEntry, 'opensAt' | 'closesAt'>): string {
+  if (!closesAfterOpens(entry)) return '';
+  const minutes = timeToMinutes(entry.closesAt) - timeToMinutes(entry.opensAt);
+  const hours = minutes / 60;
+  return `${Number.isInteger(hours) ? hours : hours.toFixed(1)}h`;
+}
+
+/** "Open 6 days · 51h per week" — the at-a-glance line under the day list. */
+function weeklySummary(entries: LocationOpeningHoursEntry[]): string {
+  const open = entries.filter((entry) => entry.isOpen);
+  if (open.length === 0) return 'Closed all week.';
+  const totalMinutes = open
+    .filter((entry) => closesAfterOpens(entry))
+    .reduce((sum, entry) => sum + timeToMinutes(entry.closesAt) - timeToMinutes(entry.opensAt), 0);
+  const hours = totalMinutes / 60;
+  const rendered = Number.isInteger(hours) ? String(hours) : hours.toFixed(1);
+  return `Open ${open.length} day${open.length === 1 ? '' : 's'} · ${rendered}h per week.`;
 }

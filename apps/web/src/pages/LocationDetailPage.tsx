@@ -22,6 +22,7 @@ import {
 } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
 import { useLocationRouteSync } from '../components/LocationScopeContext';
+import { LocationSettingsTabs } from '../components/locations/LocationSettingsTabs';
 
 export function LocationDetailPage() {
   const auth = useAuth();
@@ -31,7 +32,6 @@ export function LocationDetailPage() {
   useLocationRouteSync(params.id);
   const accessToken = auth.session?.accessToken;
   const canManageLocations = userHasPermission(auth.user, 'locations.manage');
-  const canManageLocationSettings = userHasPermission(auth.user, 'settings.location.manage');
   const canManageBookingSettings = userHasPermission(auth.user, 'settings.booking.manage');
   const canManageBillingSettings = userHasPermission(auth.user, 'settings.billing.manage');
   const canManageTaxSettings = userHasPermission(auth.user, 'settings.tax.manage');
@@ -99,14 +99,6 @@ export function LocationDetailPage() {
             </div>
             <div className="flex items-center gap-2">
               <StatusPill active={location.isActive} />
-              {canManageLocationSettings ? (
-                <Link
-                  to={`/locations/${location.id}/record-settings`}
-                  className="inline-flex h-9 items-center justify-center rounded-pill border border-border-strong bg-surface px-4 text-[13px] font-medium text-text-secondary transition hover:bg-surface-alt"
-                >
-                  Record settings
-                </Link>
-              ) : null}
               {canManageLocations ? (
                 <Link
                   to={`/locations/${location.id}/edit`}
@@ -117,6 +109,9 @@ export function LocationDetailPage() {
               ) : null}
             </div>
           </header>
+
+          {/* All of this location's settings surfaces as one tabbed hub. */}
+          <LocationSettingsTabs locationId={location.id} />
 
           {/* Salon Code — public-facing, immutable identifier */}
           <SalonCodeCard code={location.publicCode} />
@@ -132,26 +127,6 @@ export function LocationDetailPage() {
               <SummaryRow label="Address" value={joinAddress(location)} placeholder="No address on file" />
               <SummaryRow label="Country" value={location.countryCode} />
             </dl>
-          </section>
-
-          {/* Booking config */}
-          <section className="rounded-card-lg border border-border bg-surface px-5 py-5">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <h2 className="text-[14px] font-semibold text-text-primary">Booking configuration</h2>
-                <p className="mt-1 text-[13px] text-text-secondary">
-                  Mandatory finishing services and upgrade prompts for public booking.
-                </p>
-              </div>
-              {canManageBookingSettings ? (
-                <Link
-                  to={`/settings/booking?locationId=${encodeURIComponent(location.id)}`}
-                  className="inline-flex h-9 shrink-0 items-center justify-center rounded-pill bg-primary px-4 text-[13px] font-semibold text-text-on-primary transition hover:bg-primary-deep"
-                >
-                  Booking settings
-                </Link>
-              ) : null}
-            </div>
           </section>
 
           {/* Product auto-billing */}
