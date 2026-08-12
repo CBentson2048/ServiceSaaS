@@ -86,6 +86,13 @@ const NAV: NavItem[] = [
     permission: 'bills.view',
   },
   {
+    to: '/end-of-day',
+    label: 'End of day',
+    icon: CashDrawerIcon,
+    allowedRoles: ['owner', 'manager'],
+    permission: 'eod.manage',
+  },
+  {
     to: '/sheer-lab',
     label: 'Qlooqo Lab',
     icon: BeakerIcon,
@@ -502,6 +509,16 @@ function ChevronDownIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Svg {...props}>
       <path d="m5 8 5 5 5-5" />
+    </Svg>
+  );
+}
+
+function CashDrawerIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Svg {...props}>
+      <rect x="3" y="8.5" width="14" height="8" rx="1.5" />
+      <path d="M3 12h5.5m3 0H17M8.5 12a1.5 1.5 0 0 0 3 0" />
+      <path d="M5.5 8.5v-3A1.5 1.5 0 0 1 7 4h6a1.5 1.5 0 0 1 1.5 1.5v3" />
     </Svg>
   );
 }

@@ -45,6 +45,37 @@ export function VisitBillPage() {
   const isPaid = bill?.checkout.status === 'paid';
   const paidTotalCents = (bill?.payments ?? []).reduce((sum, payment) => sum + payment.amountCents, 0);
 
+  // VAT breakdown for staff (this page is owner/manager-gated). Client-facing
+  // line items stay all-in by design; this block reveals how much of the total
+  // is tax. The STORED bill is authoritative when present — its per-line rate
+  // was frozen at settlement, so later tax changes never rewrite history; a
+  // not-yet-settled visit falls back to the live rollup.
+  const vat = (() => {
+    const stored = bill?.bill;
+    if (stored && stored.taxCents > 0) {
+      return {
+        label: stored.taxLabel?.trim() || 'VAT',
+        ratePercent: stored.taxRatePercent,
+        netCents: stored.netCents,
+        taxCents: stored.taxCents,
+        grossCents: stored.grossCents,
+        currencyCode: stored.currencyCode,
+      };
+    }
+    const live = bill?.billing.tax;
+    if (live && live.enabled && live.taxCents > 0) {
+      return {
+        label: live.label?.trim() || 'VAT',
+        ratePercent: live.ratePercent,
+        netCents: live.netCents,
+        taxCents: live.taxCents,
+        grossCents: live.grossCents,
+        currencyCode: bill!.billing.currencyCode,
+      };
+    }
+    return null;
+  })();
+
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-6 lg:px-8">
       <nav className="mb-4 text-[12px] text-text-secondary">
@@ -93,6 +124,30 @@ export function VisitBillPage() {
 
           <ItemisedBill billing={bill.billing} />
 
+          {vat ? (
+            <div className="mt-4 rounded-input-lg border border-border bg-surface-alt/40 px-5 py-3">
+              <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.08em] text-text-muted">
+                Tax breakdown
+              </p>
+              <div className="flex items-center justify-between text-[12px] text-text-secondary">
+                <span>Net (excl. {vat.label})</span>
+                <span className="tabular-nums">{formatMoney(vat.netCents, vat.currencyCode)}</span>
+              </div>
+              <div className="mt-1 flex items-center justify-between text-[12px] text-text-secondary">
+                <span>
+                  {vat.label} ({formatRate(vat.ratePercent)})
+                </span>
+                <span className="tabular-nums">{formatMoney(vat.taxCents, vat.currencyCode)}</span>
+              </div>
+              <div className="mt-1.5 flex items-center justify-between border-t border-border-divider pt-1.5 text-[13px]">
+                <span className="font-medium text-text-secondary">Total (incl. {vat.label})</span>
+                <span className="font-semibold text-text-primary tabular-nums">
+                  {formatMoney(vat.grossCents, vat.currencyCode)}
+                </span>
+              </div>
+            </div>
+          ) : null}
+
           <BillPayments payments={bill.payments} />
 
           {bill.payments.length > 0 ? (
@@ -121,4 +176,10 @@ function formatVisitDate(occurredAt: string): string {
 
 function formatBillNumber(billNumber: number): string {
   return String(billNumber).padStart(6, '0');
+}
+
+function formatRate(ratePercent: number): string {
+  const rate = Number(ratePercent);
+  if (!Number.isFinite(rate)) return `${ratePercent}%`;
+  return `${Number.isInteger(rate) ? rate : rate.toFixed(2)}%`;
 }

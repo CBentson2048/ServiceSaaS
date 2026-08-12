@@ -8,6 +8,7 @@ import { CommunicationsModule } from './communications/communications.module';
 import { RequestResponseLoggingMiddleware } from './common/request-response-logging.middleware';
 import { CrmModule } from './crm/crm.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { EodModule } from './eod/eod.module';
 import { HealthModule } from './health/health.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { LabAppointmentsModule } from './lab-appointments/lab-appointments.module';
@@ -52,6 +53,7 @@ import { validateEnv } from './config/env.validation';
     AccountModule,
     AuditModule,
     BillsModule,
+    EodModule,
     CommunicationsModule,
     OwnerOnboardingModule,
     ProfileModule,

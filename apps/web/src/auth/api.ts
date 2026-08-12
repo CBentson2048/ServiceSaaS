@@ -68,6 +68,11 @@ import type {
   ListCrmClientNotesResponse,
   ListCrmClientPatchTestsResponse,
   ListCrmClientVisitsResponse,
+  AddEodPettyCashRequest,
+  EodDayResponse,
+  ListEodDaysResponse,
+  OpenEodDayRequest,
+  UpdateEodDayRequest,
   ListBillsResponse,
   ListClientDuplicatesResponse,
   ListCrmClientsResponse,
@@ -455,6 +460,71 @@ export async function listCrmClients(
   if (params.pageSize) search.set('pageSize', String(params.pageSize));
   const query = search.toString();
   return request<ListCrmClientsResponse>(`/crm/clients${query ? `?${query}` : ''}`, {
+    accessToken,
+  });
+}
+
+// -------------------- End of day (cash-up) --------------------
+
+export async function openEodDay(
+  accessToken: string,
+  payload: OpenEodDayRequest,
+): Promise<EodDayResponse> {
+  return request<EodDayResponse>('/eod/open', { method: 'POST', accessToken, body: payload });
+}
+
+export async function getEodDay(
+  accessToken: string,
+  params: { locationId: string; businessDate?: string },
+): Promise<EodDayResponse> {
+  const search = new URLSearchParams({ locationId: params.locationId });
+  if (params.businessDate) search.set('businessDate', params.businessDate);
+  return request<EodDayResponse>(`/eod/day?${search.toString()}`, { accessToken });
+}
+
+export async function listEodDays(
+  accessToken: string,
+  params: { locationId: string; limit?: number },
+): Promise<ListEodDaysResponse> {
+  const search = new URLSearchParams({ locationId: params.locationId });
+  if (params.limit) search.set('limit', String(params.limit));
+  return request<ListEodDaysResponse>(`/eod/days?${search.toString()}`, { accessToken });
+}
+
+export async function refreshEodDay(accessToken: string, id: string): Promise<EodDayResponse> {
+  return request<EodDayResponse>(`/eod/${encodeURIComponent(id)}/refresh`, {
+    method: 'POST',
+    accessToken,
+  });
+}
+
+export async function updateEodDay(
+  accessToken: string,
+  id: string,
+  payload: UpdateEodDayRequest,
+): Promise<EodDayResponse> {
+  return request<EodDayResponse>(`/eod/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    accessToken,
+    body: payload,
+  });
+}
+
+export async function addEodPettyCash(
+  accessToken: string,
+  id: string,
+  payload: AddEodPettyCashRequest,
+): Promise<EodDayResponse> {
+  return request<EodDayResponse>(`/eod/${encodeURIComponent(id)}/petty-cash`, {
+    method: 'POST',
+    accessToken,
+    body: payload,
+  });
+}
+
+export async function signOffEodDay(accessToken: string, id: string): Promise<EodDayResponse> {
+  return request<EodDayResponse>(`/eod/${encodeURIComponent(id)}/sign-off`, {
+    method: 'POST',
     accessToken,
   });
 }

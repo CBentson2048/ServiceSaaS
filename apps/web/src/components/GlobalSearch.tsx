@@ -10,6 +10,16 @@ import { ALL_LOCATIONS, useLocationScope } from './LocationScopeContext';
 
 const MIN_TERM_LENGTH = 2;
 const PALETTE_PAGE_SIZE = 8;
+const OPEN_EVENT = 'qlooqo:open-client-search';
+
+/**
+ * Opens the client-search palette from anywhere in the app (the quick-action
+ * toolbar's Client Search button). A DOM event keeps the callers decoupled
+ * from the palette's internal state.
+ */
+export function openGlobalClientSearch(): void {
+  window.dispatchEvent(new CustomEvent(OPEN_EVENT));
+}
 
 /**
  * Global client search (Week 5): a top-bar trigger plus a Ctrl/⌘-K palette that
@@ -46,7 +56,8 @@ export function GlobalSearch() {
 
   const canSearch = Boolean(user && userHasPermission(user, 'crm.view'));
 
-  // Ctrl/⌘-K opens (or closes) the palette from anywhere in the dashboard.
+  // Ctrl/⌘-K opens (or closes) the palette from anywhere in the dashboard;
+  // the quick-action toolbar opens it via the custom event.
   useEffect(() => {
     if (!canSearch) return;
     function onKeyDown(event: KeyboardEvent) {
@@ -55,8 +66,15 @@ export function GlobalSearch() {
         setOpen((current) => !current);
       }
     }
+    function onOpenEvent() {
+      setOpen(true);
+    }
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    window.addEventListener(OPEN_EVENT, onOpenEvent);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener(OPEN_EVENT, onOpenEvent);
+    };
   }, [canSearch]);
 
   useEffect(() => {

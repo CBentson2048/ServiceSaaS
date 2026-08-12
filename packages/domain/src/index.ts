@@ -283,6 +283,8 @@ export type Permission =
   | 'rota.manage'
   | 'retail.record'
   | 'bills.view'
+  | 'eod.manage'
+  | 'eod.sign_off'
   // Team / staff
   | 'staff.view'
   | 'staff.manage'
@@ -343,6 +345,9 @@ export const PERMISSION_CATALOG: readonly PermissionDefinition[] = [
   // mandatory other half (auth.service / owner-security-levels strip keys missing
   // from ALL_PERMISSIONS on read and save).
   { key: 'bills.view', label: 'Bill finder', description: 'Search and open the stored bills of completed visits.', kind: 'feature', group: 'Front of house' },
+  // Seeded into core.security_levels by migration 0088 (blocker B1 pairing).
+  { key: 'eod.manage', label: 'End of day', description: 'Open the trading day, enter counted takings, float and petty cash.', kind: 'feature', group: 'Front of house' },
+  { key: 'eod.sign_off', label: 'End of day sign-off', description: 'Sign off the daily cash-up, freezing its variance permanently.', kind: 'feature', group: 'Front of house', requires: ['eod.manage'] },
   { key: 'inventory.manage', label: 'Manage inventory', description: 'Manage products and stock.', kind: 'feature', group: 'Operations' },
   { key: 'services.manage', label: 'Manage services', description: 'Manage the service catalogue.', kind: 'feature', group: 'Operations', requires: ['services.view'] },
   { key: 'rota.manage', label: 'Manage rota', description: 'Manage schedules and shifts.', kind: 'feature', group: 'Operations', requires: ['rota.view'] },
@@ -459,6 +464,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'crm.manage',
     'retail.record',
     'bills.view',
+    'eod.manage',
+    'eod.sign_off',
     'inventory.manage',
     'services.view',
     'services.manage',
@@ -547,6 +554,8 @@ export const SYSTEM_SECURITY_LEVELS: readonly SystemSecurityLevelDefinition[] = 
       // The bill finder is a front-desk tool ("a client is on the phone about a
       // charge") — read-only over stored bills, no reports or pay visibility.
       'bills.view',
+      // Receptionists run the till count; sign-off stays a management act.
+      'eod.manage',
       'services.view',
       'rota.view',
     ],
@@ -2098,6 +2107,87 @@ export interface BillRecord {
 }
 
 /** One row of the bill finder: the stored bill plus display names stitched in. */
+// --- End of day (cash-up) — Week 5 -----------------------------------------
+
+export interface EodPettyCashEntry {
+  id: string;
+  amountCents: number;
+  reason: string;
+  recordedByUserProfileId?: string;
+  createdAt: string;
+}
+
+/**
+ * One location's cash-up for one trading day (billing.eod_reconciliations).
+ * Expected figures are auto-fed from checkout records; counted figures are
+ * entered at the till; sign-off freezes `varianceCents` permanently.
+ */
+export interface EodReconciliation {
+  id: string;
+  businessId: string;
+  locationId: string;
+  /** Location-local trading date, YYYY-MM-DD. */
+  businessDate: string;
+  status: 'open' | 'signed_off';
+  openingFloatCents: number;
+  expectedCashCents?: number;
+  countedCashCents?: number;
+  expectedCardCents?: number;
+  countedCardCents?: number;
+  /** Retail rows recorded without a payment method — never guessed into cash/card. */
+  unclassifiedRetailCents: number;
+  depositsCollectedCents: number;
+  depositsRedeemedCents: number;
+  /** Manual until the refund/void data model exists. */
+  voidsCents: number;
+  refundsCents: number;
+  pettyCashOutCents: number;
+  /** (counted cash + card) − (expected cash + card); frozen at sign-off. */
+  varianceCents?: number;
+  notes?: string;
+  signedOffByUserProfileId?: string;
+  signedOffAt?: string;
+  currencyCode: string;
+  createdAt: string;
+  updatedAt: string;
+  pettyCash: EodPettyCashEntry[];
+}
+
+export interface EodDayResponse {
+  /** Null when the day has not been opened yet. */
+  day: EodReconciliation | null;
+  /** Visits completed but not yet paid inside this trading day (warning). */
+  openVisits: number;
+  /** The location's configured acceptable till variance, in cents. */
+  cashVarianceThresholdCents: number;
+  /** Money categories the platform does not capture automatically yet. */
+  notCaptured: string[];
+}
+
+export interface OpenEodDayRequest {
+  locationId: string;
+  /** Defaults to today in the location's timezone. */
+  businessDate?: string;
+}
+
+export interface UpdateEodDayRequest {
+  openingFloatCents?: number;
+  countedCashCents?: number | null;
+  countedCardCents?: number | null;
+  voidsCents?: number;
+  refundsCents?: number;
+  notes?: string | null;
+}
+
+export interface AddEodPettyCashRequest {
+  amountCents: number;
+  reason: string;
+}
+
+export interface ListEodDaysResponse {
+  days: EodReconciliation[];
+}
+
 export interface BillFinderItem {
   id: string;
   billNumber: number;

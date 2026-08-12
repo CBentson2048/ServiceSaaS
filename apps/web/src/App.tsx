@@ -48,6 +48,7 @@ import { ProfilePage } from './pages/ProfilePage';
 import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { RetailSalesPage } from './pages/RetailSalesPage';
 import { BillsPage } from './pages/BillsPage';
+import { EndOfDayPage } from './pages/EndOfDayPage';
 import { RotaPage } from './pages/RotaPage';
 import { NewWeekRotaPage } from './pages/NewWeekRotaPage';
 import { ServiceCategoriesPage } from './pages/ServiceCategoriesPage';
@@ -223,6 +224,16 @@ export function App() {
             }
           >
             <Route path="/bills" element={<BillsPage />} />
+          </Route>
+          <Route
+            element={
+              <ProtectedRoute
+                allowedRoles={['owner', 'manager']}
+                requiredPermissions={['eod.manage']}
+              />
+            }
+          >
+            <Route path="/end-of-day" element={<EndOfDayPage />} />
           </Route>
           <Route
             element={
