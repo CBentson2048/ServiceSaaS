@@ -16,6 +16,7 @@
     "seed-loh-pay-template": "ts-node --transpile-only scripts/seed-loh-pay-template.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.116.0",
     "@nestjs/common": "^10.4.4",
     "@nestjs/config": "^3.2.3",
     "@nestjs/core": "^10.4.4",
