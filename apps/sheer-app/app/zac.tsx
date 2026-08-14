@@ -44,6 +44,9 @@ const STYLIST_STARTERS = [
 /** Friendly labels for evidence sources — users should never read code names. */
 const EVIDENCE_SOURCE_LABELS: Record<string, string> = {
   'report.dashboard': 'Dashboard KPIs',
+  'kpi.engine': 'KPI engine',
+  'kpi.personal': 'Your own KPI snapshot',
+  'booking.schedule': 'Your own diary',
   'auth.context': 'Your signed-in access scope',
   'zac.registry': 'Connected capability check',
   'zac.intent': 'Question understanding',
@@ -132,9 +135,6 @@ export default function ZacScreen() {
           <View style={s.topBarInfo}>
             <View style={s.titleRow}>
               <Text style={s.title}>ZAC</Text>
-              <View style={s.foundationBadge}>
-                <Text style={s.foundationBadgeText}>FOUNDATION MODE</Text>
-              </View>
             </View>
             <Text style={s.subtitle}>
               {isStylist ? 'AI assistant for QLOOQO' : 'AI business assistant for QLOOQO'}

@@ -2,6 +2,7 @@ import { Outlet } from 'react-router-dom';
 import { Sidebar } from '../components/Sidebar';
 import { TopBar } from '../components/TopBar';
 import { LocationScopeProvider } from '../components/LocationScopeContext';
+import { ZacChatWidget } from '../components/zac/ZacChatWidget';
 
 export function DashboardLayout() {
   return (
@@ -14,6 +15,9 @@ export function DashboardLayout() {
             <Outlet />
           </main>
         </div>
+        {/* Floating assistant on every dashboard page; self-gated on zac.access
+            and hidden on /zac where the full console lives. */}
+        <ZacChatWidget />
       </div>
     </LocationScopeProvider>
   );
