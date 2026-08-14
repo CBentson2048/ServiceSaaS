@@ -31,7 +31,9 @@ export type ZacSpineEventName =
   | 'question_asked'
   | 'answer_delivered'
   | 'source_used'
-  | 'cost_recorded';
+  | 'cost_recorded'
+  /** Live narration failed (refusal/unavailable); the deterministic answer served instead. */
+  | 'model_fallback';
 
 export interface ZacSpineEventMetadata {
   trace_id: string;

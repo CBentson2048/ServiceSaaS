@@ -68,15 +68,7 @@ export class ZacResponseBuilderService {
       attribution_seed: null,
       memory_updates: [],
       tool_calls: toolCalls,
-      cost_metadata: {
-        provider: completion.provider,
-        model: completion.model,
-        input_tokens: completion.inputTokens,
-        output_tokens: completion.outputTokens,
-        reasoning_tokens: completion.reasoningTokens,
-        estimated_cost_usd: completion.estimatedCostUsd,
-        cache_hit: false,
-      },
+      cost_metadata: this.costMetadata(completion),
       technical_details: this.technicalDetails(visibleTools, completion),
       trace_id: traceId,
     };
@@ -98,15 +90,7 @@ export class ZacResponseBuilderService {
       attribution_seed: null,
       memory_updates: [],
       tool_calls: [trace],
-      cost_metadata: {
-        provider: completion.provider,
-        model: completion.model,
-        input_tokens: completion.inputTokens,
-        output_tokens: completion.outputTokens,
-        reasoning_tokens: completion.reasoningTokens,
-        estimated_cost_usd: completion.estimatedCostUsd,
-        cache_hit: false,
-      },
+      cost_metadata: this.costMetadata(completion),
       technical_details: this.technicalDetails(visibleTools, completion),
       trace_id: traceId,
     } satisfies Partial<ZacResponse>;
@@ -185,15 +169,7 @@ export class ZacResponseBuilderService {
       attribution_seed: null,
       memory_updates: [],
       tool_calls: [],
-      cost_metadata: {
-        provider: completion.provider,
-        model: completion.model,
-        input_tokens: completion.inputTokens,
-        output_tokens: completion.outputTokens,
-        reasoning_tokens: completion.reasoningTokens,
-        estimated_cost_usd: completion.estimatedCostUsd,
-        cache_hit: false,
-      },
+      cost_metadata: this.costMetadata(completion),
       technical_details: {
         ...this.technicalDetails(visibleTools, completion),
         detected_intent: 'staff.members',
@@ -305,6 +281,21 @@ export class ZacResponseBuilderService {
     };
   }
 
+  /**
+   * A live narration replaces ONLY the prose. Evidence, confidence,
+   * limitations and next step still come from the tool's presentation —
+   * confidence stays derived, never model-guessed — and `foundation_mode`
+   * flips false because the answer text is now live.
+   */
+  buildNarratedResponse(input: ToolBackedResponseInput & { narratedAnswer: string }): ZacResponse {
+    const response = this.buildToolBackedResponse(input);
+    return {
+      ...response,
+      answer: input.narratedAnswer,
+      technical_details: { ...response.technical_details, foundation_mode: false },
+    };
+  }
+
   private costMetadata(completion: ZacModelCompletion): ZacResponse['cost_metadata'] {
     return {
       provider: completion.provider,
@@ -313,7 +304,7 @@ export class ZacResponseBuilderService {
       output_tokens: completion.outputTokens,
       reasoning_tokens: completion.reasoningTokens,
       estimated_cost_usd: completion.estimatedCostUsd,
-      cache_hit: false,
+      cache_hit: completion.cacheReadInputTokens > 0,
     };
   }
 

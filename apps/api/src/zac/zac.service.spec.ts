@@ -7,6 +7,11 @@ import type { LabAppointmentsService } from '../lab-appointments/lab-appointment
 import { ZacContextService } from './context/zac-context.service';
 import type { ZacCostTelemetryService } from './measurement/zac-cost-telemetry.service';
 import { StubZacModelProvider } from './models/providers/stub-zac-provider';
+import {
+  ZacModelIncompleteError,
+  ZacModelRefusedError,
+} from './models/zac-model-provider.interface';
+import type { ZacModelProvider } from './models/zac-model-provider.interface';
 import { ZacResponseBuilderService } from './responses/zac-response-builder.service';
 import { ZacRoleProfileService } from './roles/zac-role-profile.service';
 import { ZacToolRegistryService } from './tools/zac-tool-registry.service';
@@ -39,6 +44,70 @@ const KPI_FIXTURE: DashboardKpisResponse = {
   summary: KPI_SUMMARY,
   byLocation: [{ locationId: 'loc-1', locationName: 'Main', ...KPI_SUMMARY }],
 };
+
+const STYLIST_PERF_FIXTURE = {
+  rangeStart: '2026-07-21T00:00:00.000Z',
+  rangeEnd: '2026-07-28T00:00:00.000Z',
+  scope: 'owner',
+  stylists: [
+    {
+      stylistName: 'Maya Chen',
+      locationId: 'loc-1',
+      locationName: 'Main',
+      hourlyRate: 1450,
+      totalBookings: 24,
+      completedBookings: 22,
+      cancelledBookings: 2,
+      noShowBookings: 0,
+      rebookedVisits: 12,
+      rebookingRatePercent: 55,
+      revenueCents: 84000,
+      averageBookingValueCents: 3818,
+      currencyCode: 'GBP',
+    },
+  ],
+} as unknown as Awaited<ReturnType<DashboardService['stylistPerformance']>>;
+
+const STYLIST_LIST_FIXTURE = {
+  periodStart: '2026-07-29T00:00:00.000Z',
+  periodEnd: '2026-08-05T00:00:00.000Z',
+  period: 'month',
+  scope: 'owner',
+  locations: [{ id: 'loc-1', name: 'Main' }],
+  commissionReadyCount: 1,
+  stylists: [
+    {
+      stylistName: 'Maya Chen',
+      locationName: 'Main',
+      currencyCode: 'GBP',
+      hoursWorked: 32,
+      serviceTargetProgressPercent: 104,
+      retailTargetProgressPercent: 88,
+      rebooking: { rebookingRatePercent: 55, thresholdPercent: 50 },
+      rebookingKpiMet: true,
+      retailKpiMet: true,
+      averageBillKpiMet: true,
+      allKpisMet: true,
+      commission: { tier: 'tier_3_5x', ratePercent: 15 },
+      notes: [],
+    },
+    {
+      stylistName: 'Jordan Blake',
+      locationName: 'Main',
+      currencyCode: 'GBP',
+      hoursWorked: 28,
+      serviceTargetProgressPercent: 61,
+      retailTargetProgressPercent: 22,
+      rebooking: { rebookingRatePercent: 33, thresholdPercent: 50 },
+      rebookingKpiMet: false,
+      retailKpiMet: false,
+      averageBillKpiMet: true,
+      allKpisMet: false,
+      commission: { tier: 'below_3x', ratePercent: 0 },
+      notes: [],
+    },
+  ],
+} as unknown as Awaited<ReturnType<KpiService['stylistList']>>;
 
 function makeActor(overrides: Partial<AuthUser> = {}): AuthUser {
   return {
@@ -120,6 +189,7 @@ function makeService(
     today: jest.fn().mockResolvedValue(MY_SCHEDULE_FIXTURE),
     list: jest.fn().mockResolvedValue(MY_SCHEDULE_LIST_FIXTURE),
   },
+  provider: ZacModelProvider = new StubZacModelProvider(),
 ): {
   service: ZacService;
   telemetry: { recordCostEvent: jest.Mock; recordSpineEvent: jest.Mock };
@@ -138,10 +208,36 @@ function makeService(
     ),
     new ZacResponseBuilderService(),
     telemetry as unknown as ZacCostTelemetryService,
-    new StubZacModelProvider(),
+    provider,
   );
 
   return { service, telemetry };
+}
+
+const NARRATED_ANSWER =
+  'Your salon took £1250.00 this week — a solid result, with a 39% rebooking rate.';
+
+/** A live-provider fake: narrates, reports cache activity, priced like a real call. */
+function makeNarratingProvider(
+  overrides: Partial<ZacModelProvider & { complete: jest.Mock }> = {},
+): ZacModelProvider & { complete: jest.Mock } {
+  return {
+    name: 'anthropic',
+    model: 'claude-opus-5',
+    narrates: true,
+    complete: jest.fn().mockResolvedValue({
+      text: NARRATED_ANSWER,
+      provider: 'anthropic',
+      model: 'claude-opus-5',
+      inputTokens: 900,
+      outputTokens: 120,
+      reasoningTokens: 0,
+      cacheReadInputTokens: 600,
+      cacheCreationInputTokens: 0,
+      estimatedCostUsd: 0.0078,
+    }),
+    ...overrides,
+  };
 }
 
 describe('ZacService', () => {
@@ -177,9 +273,9 @@ describe('ZacService', () => {
       'source_used',
       expect.objectContaining({ tool: 'context.capabilities', status: 'ok' }),
     );
-    expect(telemetry.recordCostEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ provider: 'stub', task_type: 'qa', tool_calls_used: 1 }),
-    );
+    // No real model call happened (stub never narrates, context.* is never
+    // narrated) — and cost events are one-per-model-call, so none fires.
+    expect(telemetry.recordCostEvent).not.toHaveBeenCalled();
   });
 
   it('never leaks the question text into telemetry events', async () => {
@@ -356,6 +452,66 @@ describe('ZacService', () => {
       expect(response.tool_calls[0].tool).toBe('context.capabilities');
       expect(response.response_type).toBe('Explanation');
     });
+
+    it('routes "top rated member" questions to the stylist performance tool', async () => {
+      const stylistPerformance = jest.fn().mockResolvedValue(STYLIST_PERF_FIXTURE);
+      const { service } = makeService(undefined, {
+        kpis: jest.fn().mockResolvedValue(KPI_FIXTURE),
+        stylistPerformance,
+      } as Partial<DashboardService>);
+
+      const response = await service.ask(makeActor(), {
+        question: 'Who is the top rated member of my business?',
+      });
+
+      expect(response.tool_calls[0]).toMatchObject({
+        tool: 'report.stylist_performance',
+        status: 'ok',
+      });
+      expect(response.answer).toContain('Maya Chen');
+      expect(response.limitations.join(' ')).toMatch(/no client ratings/i);
+      expect(stylistPerformance).toHaveBeenCalledTimes(1);
+    });
+
+    it('routes below-target staff questions to the KPI summary tool with the period', async () => {
+      const stylistList = jest.fn().mockResolvedValue(STYLIST_LIST_FIXTURE);
+      const { service } = makeService(undefined, undefined, {
+        myKpi: jest.fn().mockResolvedValue(MY_KPI_FIXTURE),
+        stylistList,
+      } as Partial<KpiService>);
+
+      const response = await service.ask(makeActor(), {
+        question: 'Which stylists are below rebooking target this month?',
+      });
+
+      expect(response.tool_calls[0]).toMatchObject({ tool: 'report.kpi_summary', status: 'ok' });
+      expect(stylistList).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ period: 'month' }));
+      expect(response.answer).toContain('Jordan Blake (33%)');
+      // makeActor holds no report.commission.view — commission must be stripped.
+      expect(JSON.stringify(response)).not.toMatch(/commission_tier|tier_3_5x/);
+    });
+
+    it('routes plain rebooking questions to the rebooking summary tool', async () => {
+      const { service } = makeService();
+
+      const response = await service.ask(makeActor(), { question: "How's my rebooking rate?" });
+
+      expect(response.tool_calls[0]).toMatchObject({
+        tool: 'report.rebooking_summary',
+        status: 'ok',
+      });
+      expect(response.answer).toContain('39%');
+    });
+
+    it('keeps business questions on business health, not the staff tools', async () => {
+      const { service } = makeService();
+
+      const response = await service.ask(makeActor(), {
+        question: 'How is my business performing?',
+      });
+
+      expect(response.tool_calls[0].tool).toBe('report.business_health');
+    });
   });
 
   describe('staff/team/member intent (unavailable-safe)', () => {
@@ -398,9 +554,8 @@ describe('ZacService', () => {
         'source_used',
         expect.anything(),
       );
-      expect(telemetry.recordCostEvent).toHaveBeenCalledWith(
-        expect.objectContaining({ tool_calls_used: 0 }),
-      );
+      // Staff questions dispatch nothing and call no model — no cost event.
+      expect(telemetry.recordCostEvent).not.toHaveBeenCalled();
     });
 
     it('contains no staff, pay or performance data anywhere in the response', async () => {
@@ -733,11 +888,246 @@ describe('ZacService', () => {
           'context.capabilities',
           'report.business_health',
         ]),
-        disabled_tools: expect.arrayContaining(['report.kpi_summary']),
+        disabled_tools: expect.arrayContaining(['report.utilisation_summary']),
         provider: 'stub',
         model: 'zac-stub-1',
       });
       expect(response.answer).not.toContain('zac-stub-1');
+    });
+  });
+
+  describe('live narration (narrating provider)', () => {
+    function narratingService(provider = makeNarratingProvider()) {
+      const { service, telemetry } = makeService(undefined, undefined, undefined, undefined, provider);
+      return { service, telemetry, provider };
+    }
+
+    it('narrates a tool-backed answer from the evidence, after dispatch', async () => {
+      const { service, telemetry, provider } = narratingService();
+
+      const response = await service.ask(makeActor(), { question: 'How is my business doing?' });
+
+      // One call, made with the tool's verified figures as the evidence pack.
+      expect(provider.complete).toHaveBeenCalledTimes(1);
+      const modelRequest = provider.complete.mock.calls[0][0];
+      expect(modelRequest.evidencePack.toolName).toBe('report.business_health');
+      expect(modelRequest.evidencePack.toolAnswer).toContain('£1250.00');
+      expect(modelRequest.question).toBe('How is my business doing?');
+
+      // The model's prose becomes the answer; everything derived stays deterministic.
+      expect(response.answer).toBe(NARRATED_ANSWER);
+      expect(response.response_type).toBe('Insight');
+      expect(response.evidence[0].source_type).toBe('report.dashboard');
+      expect(response.confidence).toBe('medium');
+      expect(response.technical_details.foundation_mode).toBe(false);
+      expect(response.cost_metadata).toMatchObject({
+        provider: 'anthropic',
+        model: 'claude-opus-5',
+        cache_hit: true,
+      });
+
+      expect(telemetry.recordCostEvent).toHaveBeenCalledTimes(1);
+      expect(telemetry.recordCostEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: 'anthropic',
+          model: 'claude-opus-5',
+          input_tokens: 900,
+          output_tokens: 120,
+          cache_hit: true,
+          tool_calls_used: 1,
+        }),
+      );
+    });
+
+    it('narrates stylist personal coaching the same way', async () => {
+      // Coaching-grounded narration: every figure exists in the coaching evidence.
+      const coachingAnswer = 'Your rebooking rate is 35% and you have taken £720.00 — a good focus.';
+      const provider = makeNarratingProvider();
+      provider.complete.mockResolvedValue({
+        text: coachingAnswer,
+        provider: 'anthropic',
+        model: 'claude-opus-5',
+        inputTokens: 700,
+        outputTokens: 90,
+        reasoningTokens: 0,
+        cacheReadInputTokens: 0,
+        cacheCreationInputTokens: 700,
+        estimatedCostUsd: 0.006,
+      });
+      const { service } = narratingService(provider);
+
+      const stylist = makeActor({
+        roles: ['stylist'],
+        primaryRole: 'stylist',
+        allowedLocationIds: ['loc-1'],
+        locations: [{ id: 'loc-1', name: 'Main' }],
+        staffProfileId: 'staff-1',
+        permissions: ['zac.access', 'bookings.manage'],
+      });
+      const response = await service.ask(stylist, { question: 'What should I focus on today?' });
+
+      expect(provider.complete).toHaveBeenCalledTimes(1);
+      expect(provider.complete.mock.calls[0][0].evidencePack.toolName).toBe('kpi.personal_coaching');
+      expect(response.answer).toBe(coachingAnswer);
+      expect(response.technical_details.foundation_mode).toBe(false);
+    });
+
+    it('rejects an ungrounded narration — fabricated figures never ship under the evidence banner', async () => {
+      const provider = makeNarratingProvider();
+      provider.complete.mockResolvedValue({
+        ...(await makeNarratingProvider().complete()),
+        text: 'Your salon took £9999.00 this week — up 250% on last month!',
+      });
+      const { service, telemetry } = narratingService(provider);
+
+      const response = await service.ask(makeActor(), { question: 'How is my business doing?' });
+
+      // Deterministic answer served; the fabricated figure never reaches the user.
+      expect(response.answer).toContain('£1250.00');
+      expect(response.answer).not.toContain('9999');
+      expect(response.technical_details.foundation_mode).toBe(true);
+      expect(telemetry.recordSpineEvent).toHaveBeenCalledWith(
+        'model_fallback',
+        expect.objectContaining({ reason: 'ungrounded' }),
+      );
+      // The call happened and billed — the cost event still fires.
+      expect(telemetry.recordCostEvent).toHaveBeenCalledTimes(1);
+    });
+
+    it('accepts reformatted-but-grounded figures (£1,250 matches £1250.00)', async () => {
+      const provider = makeNarratingProvider();
+      provider.complete.mockResolvedValue({
+        ...(await makeNarratingProvider().complete()),
+        text: 'Takings were £1,250 this week, with 39% of visits rebooked.',
+      });
+      const { service } = narratingService(provider);
+
+      const response = await service.ask(makeActor(), { question: 'How is my business doing?' });
+
+      expect(response.answer).toContain('£1,250');
+      expect(response.technical_details.foundation_mode).toBe(false);
+    });
+
+    it('serves the deterministic answer for a truncated narration while still billing the call', async () => {
+      const truncatedCompletion = {
+        text: 'This week the salon took £1,2',
+        provider: 'anthropic',
+        model: 'claude-opus-5',
+        inputTokens: 900,
+        outputTokens: 8192,
+        reasoningTokens: 0,
+        cacheReadInputTokens: 600,
+        cacheCreationInputTokens: 0,
+        estimatedCostUsd: 0.21,
+      };
+      const provider = makeNarratingProvider({
+        complete: jest
+          .fn()
+          .mockRejectedValue(new ZacModelIncompleteError('stop_reason max_tokens', truncatedCompletion)),
+      });
+      const { service, telemetry } = narratingService(provider);
+
+      const response = await service.ask(makeActor(), { question: 'How is my business doing?' });
+
+      expect(response.answer).toContain('£1250.00');
+      expect(response.answer).not.toContain('£1,2 ');
+      expect(response.technical_details.foundation_mode).toBe(true);
+      expect(telemetry.recordSpineEvent).toHaveBeenCalledWith(
+        'model_fallback',
+        expect.objectContaining({ reason: 'truncated' }),
+      );
+      expect(telemetry.recordCostEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ output_tokens: 8192, estimated_cost_usd: 0.21 }),
+      );
+    });
+
+    it('degrades to the deterministic answer when the provider fails, with a fallback event and no cost event', async () => {
+      const provider = makeNarratingProvider({
+        complete: jest.fn().mockRejectedValue(new Error('anthropic 529')),
+      });
+      const { service, telemetry } = narratingService(provider);
+
+      const response = await service.ask(makeActor(), { question: 'How is my business doing?' });
+
+      // Exactly the pre-provider deterministic answer.
+      expect(response.answer).toContain('£1250.00');
+      expect(response.technical_details.foundation_mode).toBe(true);
+      expect(telemetry.recordSpineEvent).toHaveBeenCalledWith(
+        'model_fallback',
+        expect.objectContaining({ tool: 'report.business_health', reason: 'unavailable' }),
+      );
+      expect(telemetry.recordCostEvent).not.toHaveBeenCalled();
+    });
+
+    it('records a refusal fallback distinctly', async () => {
+      const provider = makeNarratingProvider({
+        complete: jest.fn().mockRejectedValue(new ZacModelRefusedError('declined')),
+      });
+      const { service, telemetry } = narratingService(provider);
+
+      const response = await service.ask(makeActor(), { question: 'How is my business doing?' });
+
+      expect(response.answer).toContain('£1250.00');
+      expect(telemetry.recordSpineEvent).toHaveBeenCalledWith(
+        'model_fallback',
+        expect.objectContaining({ reason: 'refusal' }),
+      );
+    });
+
+    it('falls back deterministically on an empty narration', async () => {
+      const provider = makeNarratingProvider();
+      provider.complete.mockResolvedValue({
+        ...(await makeNarratingProvider().complete()),
+        text: '   ',
+      });
+      const { service, telemetry } = narratingService(provider);
+
+      const response = await service.ask(makeActor(), { question: 'How is my business doing?' });
+
+      expect(response.answer).toContain('£1250.00');
+      expect(response.technical_details.foundation_mode).toBe(true);
+      // The call DID happen and returned usage — it is still a cost event.
+      expect(telemetry.recordCostEvent).toHaveBeenCalledTimes(1);
+    });
+
+    it('never calls the model for capability, staff, or stylist-restricted turns', async () => {
+      const { service, provider } = narratingService();
+      const stylist = makeActor({
+        roles: ['stylist'],
+        primaryRole: 'stylist',
+        staffProfileId: 'staff-1',
+        permissions: ['zac.access', 'bookings.manage'],
+      });
+
+      await service.ask(makeActor(), { question: 'What can you help me with?' });
+      await service.ask(makeActor(), { question: 'staff list' });
+      await service.ask(stylist, { question: 'Show business revenue.' });
+
+      expect(provider.complete).not.toHaveBeenCalled();
+    });
+
+    it('never calls the non-narrating stub provider at all', async () => {
+      const stub = new StubZacModelProvider();
+      const completeSpy = jest.spyOn(stub, 'complete');
+      const { service } = makeService(undefined, undefined, undefined, undefined, stub);
+
+      await service.ask(makeActor(), { question: 'How is my business doing?' });
+
+      expect(completeSpy).not.toHaveBeenCalled();
+    });
+
+    it('keeps the question and narrated answer out of telemetry with a live provider', async () => {
+      const { service, telemetry } = narratingService();
+      const question = 'How is my business doing? Client Jane Smith mentioned something private.';
+
+      await service.ask(makeActor(), { question });
+
+      const payloads = [
+        ...telemetry.recordSpineEvent.mock.calls.map((call) => JSON.stringify(call)),
+        ...telemetry.recordCostEvent.mock.calls.map((call) => JSON.stringify(call)),
+      ].join(' ');
+      expect(payloads).not.toContain('Jane Smith');
+      expect(payloads).not.toContain(NARRATED_ANSWER);
     });
   });
 });

@@ -11,9 +11,98 @@ const LIVE_TOOLS: ZacToolName[] = [
   'context.location_summary',
   'context.capabilities',
   'report.business_health',
+  'report.stylist_performance',
+  'report.kpi_summary',
+  'report.rebooking_summary',
   'kpi.personal_coaching',
   'schedule.my_appointments',
 ];
+
+const STYLIST_PERF_FIXTURE = {
+  rangeStart: '2026-07-21T00:00:00.000Z',
+  rangeEnd: '2026-07-28T00:00:00.000Z',
+  scope: 'owner',
+  stylists: [
+    {
+      staffProfileId: 'staff-1',
+      stylistName: 'Maya Chen',
+      locationId: 'loc-1',
+      locationName: 'Main',
+      hourlyRate: 1450,
+      contractedHours: 32,
+      totalBookings: 24,
+      completedBookings: 22,
+      cancelledBookings: 2,
+      noShowBookings: 0,
+      rebookedVisits: 12,
+      rebookingRatePercent: 55,
+      revenueCents: 84000,
+      averageBookingValueCents: 3818,
+      currencyCode: 'GBP',
+    },
+    {
+      staffProfileId: 'staff-2',
+      stylistName: 'Jordan Blake',
+      locationId: 'loc-1',
+      locationName: 'Main',
+      hourlyRate: 1300,
+      totalBookings: 18,
+      completedBookings: 15,
+      cancelledBookings: 3,
+      noShowBookings: 0,
+      rebookedVisits: 5,
+      rebookingRatePercent: 33,
+      revenueCents: 52000,
+      averageBookingValueCents: 3466,
+      currencyCode: 'GBP',
+    },
+  ],
+} as unknown as Awaited<ReturnType<DashboardService['stylistPerformance']>>;
+
+const STYLIST_LIST_FIXTURE = {
+  periodStart: '2026-07-29T00:00:00.000Z',
+  periodEnd: '2026-08-05T00:00:00.000Z',
+  period: 'week',
+  scope: 'owner',
+  locations: [{ id: 'loc-1', name: 'Main' }],
+  commissionReadyCount: 1,
+  stylists: [
+    {
+      staffProfileId: 'staff-1',
+      stylistName: 'Maya Chen',
+      locationId: 'loc-1',
+      locationName: 'Main',
+      currencyCode: 'GBP',
+      hoursWorked: 32,
+      serviceTargetProgressPercent: 104,
+      retailTargetProgressPercent: 88,
+      rebooking: { rebookingRatePercent: 55, thresholdPercent: 50 },
+      rebookingKpiMet: true,
+      retailKpiMet: true,
+      averageBillKpiMet: true,
+      allKpisMet: true,
+      commission: { tier: 'tier_3_5x', ratePercent: 15 },
+      notes: [],
+    },
+    {
+      staffProfileId: 'staff-2',
+      stylistName: 'Jordan Blake',
+      locationId: 'loc-1',
+      locationName: 'Main',
+      currencyCode: 'GBP',
+      hoursWorked: 28,
+      serviceTargetProgressPercent: 61,
+      retailTargetProgressPercent: 22,
+      rebooking: { rebookingRatePercent: 33, thresholdPercent: 50 },
+      rebookingKpiMet: false,
+      retailKpiMet: false,
+      averageBillKpiMet: true,
+      allKpisMet: false,
+      commission: { tier: 'below_3x', ratePercent: 0 },
+      notes: ['no_hours_worked'],
+    },
+  ],
+} as unknown as Awaited<ReturnType<KpiService['stylistList']>>;
 
 const MY_KPI_FIXTURE = {
   periodStart: '2026-07-29T00:00:00.000Z',
@@ -182,7 +271,7 @@ describe('ZacToolRegistryService', () => {
     }
   });
 
-  it('enables exactly the six live tools; everything else stays disabled', () => {
+  it('enables exactly the nine live tools; everything else stays disabled', () => {
     const everything = registry.buildFor(
       actorWith(['owner', 'manager', 'stylist'], [...OWNER_ALL.permissions, 'bookings.manage']),
     );
@@ -411,12 +500,95 @@ describe('ZacToolRegistryService', () => {
     const { result } = await registry.dispatch(
       OWNER_ALL,
       contextWith({ roleContext: 'owner', roles: ['owner'] }),
-      'report.kpi_summary',
+      'report.utilisation_summary',
       {},
     );
 
     expect(result.status).toBe('not_connected');
     expect(result.data).toBeNull();
+  });
+
+  describe('staff performance tools (Week 3)', () => {
+    it('ranks stylists via the guarded dashboard reducer and never leaks pay fields', async () => {
+      const stylistPerformance = jest.fn().mockResolvedValue(STYLIST_PERF_FIXTURE);
+      const liveRegistry = makeRegistry({
+        stylistPerformance,
+      } as Partial<DashboardService>);
+      const actor = actorWith(['owner'], ['zac.access', 'report.performance.view']);
+
+      const { result } = await liveRegistry.dispatch(
+        actor,
+        contextWith({ roleContext: 'owner', roles: ['owner'] }),
+        'report.stylist_performance',
+        {},
+      );
+
+      expect(result.status).toBe('ok');
+      expect(stylistPerformance).toHaveBeenCalledWith(
+        actor,
+        expect.objectContaining({ locationId: undefined }),
+      );
+      expect(result.presentation?.answer).toContain('Maya Chen');
+      expect(result.presentation?.answer).toContain('£840.00');
+      expect(result.presentation?.answer).toContain('55% rebooking');
+      // Honest about what "top" means: no ratings exist.
+      expect(result.presentation?.limitations.join(' ')).toMatch(/no client ratings/i);
+      // Pay-adjacent fields are stripped unconditionally from the data payload
+      // (the limitations PROSE may mention pay to say it is excluded).
+      expect(JSON.stringify(result.data)).not.toMatch(/hourly|contracted|benchmark|1450|1300/i);
+    });
+
+    it('summarises KPIs with commission stripped without report.commission.view', async () => {
+      const stylistList = jest.fn().mockResolvedValue(STYLIST_LIST_FIXTURE);
+      const liveRegistry = makeRegistry(undefined, { stylistList } as Partial<KpiService>);
+      const actor = actorWith(['manager'], ['zac.access', 'report.performance.view']);
+
+      const { result } = await liveRegistry.dispatch(
+        actor,
+        contextWith(),
+        'report.kpi_summary',
+        { period: 'week' },
+      );
+
+      expect(result.status).toBe('ok');
+      expect(stylistList).toHaveBeenCalledWith(actor, expect.objectContaining({ period: 'week' }));
+      expect(result.presentation?.answer).toContain('1 of 2 stylists meet all three KPIs');
+      expect(result.presentation?.answer).toContain('Jordan Blake (33%)');
+      expect(result.presentation?.responseType).toBe('Watch Point');
+      expect(JSON.stringify(result)).not.toMatch(/commission_tier|commission_rate|tier_3_5x/);
+    });
+
+    it('includes commission tier only with report.commission.view', async () => {
+      const stylistList = jest.fn().mockResolvedValue(STYLIST_LIST_FIXTURE);
+      const liveRegistry = makeRegistry(undefined, { stylistList } as Partial<KpiService>);
+
+      const { result } = await liveRegistry.dispatch(
+        actorWith(['owner'], ['zac.access', 'report.commission.view']),
+        contextWith({ roleContext: 'owner', roles: ['owner'] }),
+        'report.kpi_summary',
+        {},
+      );
+
+      expect(result.status).toBe('ok');
+      expect(JSON.stringify(result.data)).toContain('commission_tier');
+    });
+
+    it('summarises rebooking with the stylist/client split from dashboard KPIs', async () => {
+      const kpis = jest.fn().mockResolvedValue(KPI_FIXTURE);
+      const liveRegistry = makeRegistry({ kpis } as Partial<DashboardService>);
+
+      const { result } = await liveRegistry.dispatch(
+        actorWith(['owner'], ['zac.access', 'report.dashboard.view']),
+        contextWith({ roleContext: 'owner', roles: ['owner'] }),
+        'report.rebooking_summary',
+        {},
+      );
+
+      expect(result.status).toBe('ok');
+      expect(result.presentation?.answer).toContain('39%');
+      expect(result.presentation?.answer).toContain('10 were rebooked by stylists');
+      expect(result.presentation?.limitations.join(' ')).toMatch(/no-show/i);
+    });
   });
 
   it('dispatch denies the stylist-self tool when the actor has no staff profile', async () => {
