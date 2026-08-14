@@ -10,17 +10,18 @@ import { ZacFeatureGuard } from './zac-feature.guard';
 import { ZacService } from './zac.service';
 
 /**
- * ZAC Phase 1 Week 1 surface. Dark-launched: routes 404 unless `ZAC_ENABLED=true`
- * (plus the optional business allowlist, checked post-auth). `zac.access` opens
- * the feature only — every data tool independently re-checks the underlying
- * permission it needs, so this controller never widens report/QLAB/stock access.
+ * ZAC surface. On by default since general availability; `ZAC_ENABLED=false` is
+ * the kill-switch (plus the optional business allowlist, checked post-auth).
+ * `zac.access` opens the feature only — every data tool independently re-checks
+ * the underlying permission it needs, so this controller never widens
+ * report/QLAB/stock access.
  */
 @Controller('zac')
 @UseGuards(ZacFeatureGuard, SupabaseAuthGuard, RolesGuard, PermissionsGuard)
 // Stylists are admitted to the SURFACE only; the registry gives them a
 // stylist-safe tool catalogue and the router adds self-scope/restricted
-// handling. zac.access is still required — stylists do NOT hold it by default
-// (granting it is a product rollout decision, not a code default).
+// handling. zac.access is still required — all staff roles hold it by default
+// since GA, but owners can withdraw it per security level.
 @RequireRoles('owner', 'manager', 'stylist')
 @RequirePermissions('zac.access')
 export class ZacController {

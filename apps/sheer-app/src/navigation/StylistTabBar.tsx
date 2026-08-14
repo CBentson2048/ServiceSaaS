@@ -26,9 +26,9 @@ const TABS: StylistTab[] = [
   { key: 'profile', label: 'Profile', href: '/profile', icon: 'person-outline', activeIcon: 'person' },
 ];
 
-// Shown only to stylists holding the zac.access permission — granting it is an
-// explicit per-security-level decision, so most stylists will not see this tab
-// during the dark launch.
+// Shown to stylists holding the zac.access permission. Every staff role holds
+// it by default since ZAC went generally available, so most stylists see this
+// tab — an owner can still withdraw it per security level.
 const ZAC_TAB: StylistTab = {
   key: 'zac',
   label: 'ZAC',

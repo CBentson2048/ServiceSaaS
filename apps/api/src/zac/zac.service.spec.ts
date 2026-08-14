@@ -291,11 +291,18 @@ describe('ZacService', () => {
     expect(allTelemetryPayloads).not.toContain(question);
   });
 
-  it('hides ZAC entirely (404) when the global flag is off', async () => {
-    const { service } = makeService({ ZAC_ENABLED: undefined });
+  it('hides ZAC entirely (404) when the kill-switch is thrown', async () => {
+    const { service } = makeService({ ZAC_ENABLED: 'false' });
 
     await expect(service.ask(makeActor(), { question: 'hello' })).rejects.toThrow(NotFoundException);
     expect(() => service.health(makeActor())).toThrow(NotFoundException);
+  });
+
+  it('serves ZAC when the flag is unset — on by default since general availability', async () => {
+    const { service } = makeService({});
+
+    const response = await service.ask(makeActor(), { question: 'hello' });
+    expect(response.trace_id).toBeTruthy();
   });
 
   it('hides ZAC (404) from businesses outside the rollout allowlist', async () => {
@@ -786,8 +793,8 @@ describe('ZacService', () => {
       expect(response.technical_details.connected_tools).not.toContain('report.business_health');
     });
 
-    it('keeps the flag and allowlist gates intact for stylists', async () => {
-      const off = makeService({ ZAC_ENABLED: undefined });
+    it('keeps the kill-switch and allowlist gates intact for stylists', async () => {
+      const off = makeService({ ZAC_ENABLED: 'false' });
       await expect(off.service.ask(makeStylist(), { question: 'hi' })).rejects.toThrow(NotFoundException);
 
       const excluded = makeService({ ZAC_ENABLED: 'true', ZAC_ALLOWED_BUSINESS_IDS: 'biz-9' });
