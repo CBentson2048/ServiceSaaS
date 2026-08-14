@@ -48,14 +48,15 @@ export class ZacToolRegistryService {
         tools.filter((tool) => this.actorMayUse(actor, tool)),
       ),
       new BusinessHealthSummaryTool(dashboard),
+      // Staff-performance tools (Week 3): dashboard reducers + KPI engine.
+      new StylistPerformanceTool(dashboard),
+      new KpiSummaryTool(kpi),
+      new RebookingSummaryTool(dashboard),
       // Stylist-self tools: both self-scoped twice (tool contract + service).
       new PersonalStylistCoachingTool(kpi),
       new MyScheduleTool(labAppointments),
       // Skeletons for later weeks — registered but disabled.
-      new KpiSummaryTool(),
-      new RebookingSummaryTool(),
       new UtilisationSummaryTool(),
-      new StylistPerformanceTool(),
       new QlabColourAnalyticsTool(),
       new InventoryStockStatusTool(),
     ];

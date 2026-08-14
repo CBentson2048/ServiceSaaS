@@ -1,47 +1,24 @@
 import { useState } from 'react';
-import type { FormEvent, KeyboardEvent, SVGProps } from 'react';
+import type { FormEvent, KeyboardEvent } from 'react';
 import { AppButton, AppCard, StatusBadge } from '../design';
-import type { StatusTone } from '../design';
 import { useAuth } from '../auth/AuthProvider';
-import { ApiRequestError, askZac } from '../auth/api';
+import { askZac } from '../auth/api';
 import type { ZacAskResponse } from '../auth/api';
-
-const STARTER_QUESTIONS = [
-  'What can you help me with?',
-  'How is my business doing?',
-  'Which locations can you see?',
-  'What business context do you have?',
-  'Members of my business?',
-  'Which tools are connected?',
-];
+import {
+  ZAC_EVIDENCE_SOURCE_LABELS,
+  ZAC_RESPONSE_TYPE_BADGES,
+  ZAC_STARTER_QUESTIONS,
+  ZacAvatar,
+  SparkGlyph,
+  SourceGlyph,
+  extractQuotedQuestion,
+  formatEvidenceDate,
+  zacFriendlyError,
+} from '../components/zac/zac-presentation';
+import type { ZacAskError } from '../components/zac/zac-presentation';
 
 const FIELD =
   'w-full resize-y rounded-input-lg border border-border-strong bg-surface px-3.5 py-2.5 text-[14px] leading-6 text-text-primary outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-surface-alt';
-
-/** Friendly labels for evidence sources — users should never need to read code names. */
-const EVIDENCE_SOURCE_LABELS: Record<string, string> = {
-  'report.dashboard': 'Dashboard KPIs',
-  'auth.context': 'Your signed-in access scope',
-  'zac.registry': 'Connected capability check',
-  'zac.intent': 'Question understanding',
-  'zac.foundation': 'ZAC foundation',
-  'zac.access_boundary': 'Your role’s access level',
-};
-
-const RESPONSE_TYPE_BADGES: Record<string, { label: string; tone: StatusTone }> = {
-  Insight: { label: 'Insight', tone: 'success' },
-  'Coaching Point': { label: 'Coaching point', tone: 'neutral' },
-  Opportunity: { label: 'Opportunity', tone: 'success' },
-  Risk: { label: 'Risk', tone: 'danger' },
-  'Watch Point': { label: 'Watch point', tone: 'warning' },
-  Explanation: { label: 'Explanation', tone: 'neutral' },
-  'Refusal / Insufficient Data': { label: 'Data not connected yet', tone: 'warning' },
-};
-
-interface AskError {
-  kind: 'notice' | 'error';
-  text: string;
-}
 
 export function ZacPage() {
   const auth = useAuth();
@@ -49,7 +26,7 @@ export function ZacPage() {
 
   const [question, setQuestion] = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<AskError | null>(null);
+  const [error, setError] = useState<ZacAskError | null>(null);
   const [response, setResponse] = useState<ZacAskResponse | null>(null);
   const [askedQuestion, setAskedQuestion] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -69,7 +46,7 @@ export function ZacPage() {
     } catch (err) {
       setResponse(null);
       setAskedQuestion(null);
-      setError(friendlyError(err));
+      setError(zacFriendlyError(err));
     } finally {
       setLoading(false);
     }
@@ -98,7 +75,7 @@ export function ZacPage() {
     }
   }
 
-  const badge = response ? RESPONSE_TYPE_BADGES[response.response_type] : undefined;
+  const badge = response ? ZAC_RESPONSE_TYPE_BADGES[response.response_type] : undefined;
   const followUp = response?.suggested_next_step
     ? extractQuotedQuestion(response.suggested_next_step)
     : null;
@@ -110,7 +87,6 @@ export function ZacPage() {
         <div>
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-[22px] font-semibold leading-7 text-text-primary">ZAC</h1>
-            <StatusBadge label="Foundation mode" tone="neutral" />
           </div>
           <p className="mt-0.5 text-[13px] text-text-secondary">
             AI business assistant for QLOOQO
@@ -161,7 +137,7 @@ export function ZacPage() {
               Try asking
             </div>
             <div className="flex flex-wrap gap-2">
-              {STARTER_QUESTIONS.map((starter) => (
+              {ZAC_STARTER_QUESTIONS.map((starter) => (
                 <button
                   key={starter}
                   type="button"
@@ -273,8 +249,8 @@ export function ZacPage() {
                         <li key={index} className="flex items-start gap-2 text-[13px] leading-5 text-text-secondary">
                           <SourceGlyph className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary-deep" />
                           <span>
-                            {EVIDENCE_SOURCE_LABELS[item.source_type] ?? item.source_type}
-                            {item.as_of ? ` · data up to ${formatDate(item.as_of)}` : ''}
+                            {ZAC_EVIDENCE_SOURCE_LABELS[item.source_type] ?? item.source_type}
+                            {item.as_of ? ` · data up to ${formatEvidenceDate(item.as_of)}` : ''}
                           </span>
                         </li>
                       ))}
@@ -332,52 +308,8 @@ export function ZacPage() {
   );
 }
 
-function ZacAvatar({ className }: { className?: string }) {
-  return (
-    <span
-      className={`inline-flex items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary-deep text-text-on-primary shadow-card ${className ?? ''}`}
-      aria-hidden
-    >
-      <SparkGlyph className="h-[45%] w-[45%]" />
-    </span>
-  );
-}
 
-function SparkGlyph(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg
-      viewBox="0 0 20 20"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.8}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-      {...props}
-    >
-      <path d="M10 3.5 11.6 8l4.4 1.6-4.4 1.6L10 15.6 8.4 11.2 4 9.6 8.4 8 10 3.5Z" />
-      <path d="M15.5 3v3M14 4.5h3" />
-    </svg>
-  );
-}
 
-function SourceGlyph(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg
-      viewBox="0 0 20 20"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.6}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-      {...props}
-    >
-      <circle cx="10" cy="10" r="6.5" />
-      <path d="m7.5 10 1.8 1.8 3.2-3.6" />
-    </svg>
-  );
-}
 
 function AnswerSkeleton() {
   return (
@@ -399,36 +331,5 @@ function AnswerSkeleton() {
   );
 }
 
-function friendlyError(err: unknown): AskError {
-  if (err instanceof ApiRequestError) {
-    if (err.status === 404) {
-      return {
-        kind: 'notice',
-        text: 'ZAC is not switched on for this business yet. It is being rolled out gradually — check back soon.',
-      };
-    }
-    if (err.status === 403) {
-      return {
-        kind: 'notice',
-        text: 'ZAC is not enabled for your role yet. Ask the business owner to grant ZAC access on your security level.',
-      };
-    }
-    if (err.status === 401) {
-      return { kind: 'error', text: 'Your session has expired — please sign in again.' };
-    }
-    return { kind: 'error', text: err.message };
-  }
-  return { kind: 'error', text: 'Something went wrong talking to ZAC. Please try again.' };
-}
 
-/** First double-quoted question inside the next-step copy, offered as a one-click follow-up. */
-function extractQuotedQuestion(text: string): string | null {
-  const match = text.match(/"([^"]{4,120}\?)"/);
-  return match ? match[1] : null;
-}
 
-function formatDate(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
-}

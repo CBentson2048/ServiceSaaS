@@ -1,9 +1,11 @@
-# ZAC — Phase 0 Documentation
+# ZAC — Phase 0 & Phase 1 Documentation
 
-**ZAC** is the proposed **server-side, permission-aware, evidence-grounded intelligence layer inside QLOOQO** — an assistant that explains, coaches, and recommends for owners, managers, and stylists, grounded in QLOOQO's own data.
+**ZAC** is the **server-side, permission-aware, evidence-grounded intelligence layer inside QLOOQO** — an assistant that explains, coaches, and recommends for owners, managers, and stylists, grounded in QLOOQO's own data.
 
-> ### ⚠️ Documentation only — nothing here is implemented
-> Everything in this folder is **Phase 0 discovery and architecture planning**. No ZAC code, NestJS module, database migration, permission, `zac` schema, environment variable, or package change exists in the repository. Module paths, schemas, and file trees named in these documents are **proposed future designs**, not existing artifacts. Do not treat any of it as built.
+> ### ℹ️ Phase 0 = planning · Phase 1 = built (dark-launched)
+> The **`phase-0-*` documents are discovery and architecture planning**: they describe proposed designs, and some details in them were superseded during the build.
+>
+> **Phase 1 is implemented** and lives behind the `ZAC_ENABLED` feature flag: `apps/api/src/zac/` (module, guarded `POST /zac/ask` + `GET /zac/health`, permission-aware tool registry, live model provider), the `zac.access` permission, migrations `0076`/`0077`/`0080` (**authored — apply status tracked separately**), the web console at `/zac` plus the floating assistant, and the mobile ZAC screen. Where a Phase 0 document and the code disagree, **the code is the source of truth**.
 
 ---
 

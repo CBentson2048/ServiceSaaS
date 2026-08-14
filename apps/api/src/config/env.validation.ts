@@ -277,6 +277,47 @@ export class EnvConfig {
   @IsOptional()
   @IsString()
   ZAC_ALLOWED_BUSINESS_IDS?: string;
+
+  /**
+   * Anthropic API key for the ZAC live model provider. Optional: when unset,
+   * ZAC binds the deterministic stub provider (local dev, CI, dark builds) and
+   * every answer stays template-composed — no network call, no key needed.
+   */
+  @IsOptional()
+  @IsString()
+  ANTHROPIC_API_KEY?: string;
+
+  /** ZAC model id (defaults to claude-opus-5 in code) — a config choice, not a code edit. */
+  @IsOptional()
+  @IsString()
+  ZAC_MODEL_ID?: string;
+
+  /** Max output tokens per ZAC narration (default 8192; the cap covers thinking + text). */
+  @IsOptional()
+  @IsString()
+  ZAC_MODEL_MAX_TOKENS?: string;
+
+  /**
+   * Live-provider pricing in USD per million tokens (decision D33: configurable
+   * planning constants, never hardcoded vendor prices). Set from the provider's
+   * official pricing page at deploy time; unset = cost estimates report 0 and
+   * the provider logs a startup warning.
+   */
+  @IsOptional()
+  @IsString()
+  ZAC_PRICE_INPUT_USD_PER_MTOK?: string;
+
+  @IsOptional()
+  @IsString()
+  ZAC_PRICE_OUTPUT_USD_PER_MTOK?: string;
+
+  @IsOptional()
+  @IsString()
+  ZAC_PRICE_CACHE_READ_USD_PER_MTOK?: string;
+
+  @IsOptional()
+  @IsString()
+  ZAC_PRICE_CACHE_WRITE_USD_PER_MTOK?: string;
 }
 
 /**

@@ -17,6 +17,8 @@ import type {
 export class StubZacModelProvider implements ZacModelProvider {
   readonly name = 'stub';
   readonly model = 'zac-stub-1';
+  /** Stub text is never user-facing, so the orchestrator skips calling it. */
+  readonly narrates = false;
 
   async complete(request: ZacModelRequest): Promise<ZacModelCompletion> {
     const text = `Foundation-mode acknowledgment (${request.roleContext} lens, ${request.availableToolNames.length} planned tools). The user-facing answer is composed by the response builder.`;
@@ -31,6 +33,8 @@ export class StubZacModelProvider implements ZacModelProvider {
       inputTokens,
       outputTokens,
       reasoningTokens: 0,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
       estimatedCostUsd: estimateModelCostUsd(ZAC_STUB_PRICING, inputTokens, outputTokens),
     };
   }
