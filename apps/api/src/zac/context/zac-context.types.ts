@@ -31,4 +31,11 @@ export interface ZacActingContext {
   requestSource: ZacRequestSource;
   timezone: string;
   locale: string;
+  /**
+   * False when this conversation already holds an assistant turn — greeting
+   * and self-introduction copy is suppressed everywhere downstream. Resolved
+   * from persisted conversation state each turn; defaults to true (stateless
+   * turns behave exactly as before conversations existed).
+   */
+  firstAssistantTurn: boolean;
 }

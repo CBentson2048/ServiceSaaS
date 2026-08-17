@@ -33,7 +33,21 @@ export type ZacSpineEventName =
   | 'source_used'
   | 'cost_recorded'
   /** Live narration failed (refusal/unavailable); the deterministic answer served instead. */
-  | 'model_fallback';
+  | 'model_fallback'
+  /** A persisted conversation was created for this turn. */
+  | 'conversation_created'
+  /** The turn continued an existing conversation owned by the acting user. */
+  | 'conversation_reused'
+  /** A memory item was stored (metadata only: kind, scope, topic — never content). */
+  | 'memory_created'
+  /** Older memories were replaced by a newer statement of the same kind+topic. */
+  | 'memory_superseded'
+  /** Memories were surfaced into a recall answer or a prompt (count only). */
+  | 'memory_retrieved'
+  /** A remember-request was refused (sensitive content, or memory unavailable). */
+  | 'memory_declined'
+  /** A ZAC-owned write failed; the turn degraded instead of erroring. */
+  | 'persistence_failed';
 
 export interface ZacSpineEventMetadata {
   trace_id: string;

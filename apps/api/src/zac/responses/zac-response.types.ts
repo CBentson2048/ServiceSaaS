@@ -91,6 +91,12 @@ export interface ZacResponse {
   cost_metadata: ZacCostMetadata;
   technical_details: ZacTechnicalDetails;
   trace_id: string;
+  /**
+   * The persisted conversation this turn belongs to. Clients send it back as
+   * `conversationId` to continue the thread. Null only when conversation
+   * storage was unavailable and the turn ran stateless (fail-soft).
+   */
+  conversation_id: string | null;
 }
 
 /** Operational check response: reachable + which provider would answer. No model call. */

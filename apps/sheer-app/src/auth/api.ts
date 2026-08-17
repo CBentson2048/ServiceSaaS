@@ -570,6 +570,12 @@ export interface ZacTechnicalDetails {
   detected_intent?: string;
 }
 
+export interface ZacMemoryUpdate {
+  scope: string;
+  kind: string;
+  summary: string;
+}
+
 export interface ZacAskResponse {
   answer: string;
   role_context: 'owner' | 'manager' | 'stylist';
@@ -580,16 +586,18 @@ export interface ZacAskResponse {
   suggested_next_step: string | null;
   measurement_hook: string | null;
   attribution_seed: unknown;
-  memory_updates: unknown[];
+  memory_updates: ZacMemoryUpdate[];
   tool_calls: ZacToolCallTrace[];
   cost_metadata: ZacCostMetadata;
   technical_details: ZacTechnicalDetails;
   trace_id: string;
+  /** Send back as `conversationId` to continue the thread; null = the turn ran stateless. */
+  conversation_id: string | null;
 }
 
 export async function askZac(
   accessToken: string,
-  payload: { question: string; locationId?: string },
+  payload: { question: string; conversationId?: string; locationId?: string },
 ): Promise<ZacAskResponse> {
   return request<ZacAskResponse>('/zac/ask', {
     method: 'POST',

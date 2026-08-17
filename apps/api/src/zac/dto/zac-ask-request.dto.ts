@@ -8,7 +8,12 @@ export class ZacAskRequestDto {
   @MaxLength(2000)
   question!: string;
 
-  /** Conversation to continue. Accepted for contract stability; unused until conversation persistence lands. */
+  /**
+   * Conversation to continue. Validated against the authenticated acting user
+   * (owner + business + active status) — a foreign or unknown id gets the same
+   * 404, leaking nothing. Absent = a new conversation is created and returned
+   * as `conversation_id` on the response.
+   */
   @IsOptional()
   @IsUUID()
   conversationId?: string;

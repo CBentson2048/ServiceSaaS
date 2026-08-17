@@ -1,4 +1,18 @@
-# ZAC storage — apply & verification runbook (migrations 0076 / 0077 / 0079)
+# ZAC storage — apply & verification runbook (migrations 0076 / 0077 / 0079 / 0089)
+
+> **Update (2026-08-17):** ZAC's conversation + context-memory build now READS
+> AND WRITES these tables at runtime (`zac.conversations`, `zac.messages`,
+> `zac.memory_items`) — see
+> [`phase-1-conversation-memory.md`](phase-1-conversation-memory.md). Two
+> consequences for this runbook:
+> 1. Migration **`0089_zac_memory_lifecycle.sql`** (memory `status` /
+>    `superseded_by_id` / `topic` + active-lookup index, additive) joins the
+>    apply list after 0079/0081.
+> 2. Step 2 (Exposed Schemas) is no longer only about silent telemetry:
+>    without it, conversations degrade to stateless turns
+>    (`conversation_id: null`, `persistence_failed` spine events) and
+>    explicit "remember this" requests fail with a visible, honest
+>    "I couldn't save that" answer. The failure mode is now user-visible.
 
 Owner: engineering · Applies to: `dev-test`, then `develop` → `staging` → `production`
 
@@ -138,7 +152,10 @@ supabase db push          # applies 0078 (payroll) and 0079 (zac), in order
 order is safe; `db push` applies them in numeric order regardless.
 
 On a fresh environment with none of these applied, the natural order 0076 → 0077 →
-0078 → 0079 produces the correct end state.
+0078 → 0079 produces the correct end state. The later ZAC migrations follow the
+same flow: `0081` (zac.access for manager/stylist system levels) and `0089`
+(memory lifecycle columns) are both additive and apply cleanly via `db push` in
+numeric order.
 
 ---
 

@@ -5,7 +5,12 @@ import { DashboardModule } from '../dashboard/dashboard.module';
 import { KpiModule } from '../kpi/kpi.module';
 import { LabAppointmentsModule } from '../lab-appointments/lab-appointments.module';
 import { ZacContextService } from './context/zac-context.service';
+import { ZacConversationService } from './conversation/zac-conversation.service';
 import { ZacCostTelemetryService } from './measurement/zac-cost-telemetry.service';
+import { ZacMemoryExtractionService } from './memory/zac-memory-extraction.service';
+import { ZacMemoryService } from './memory/zac-memory.service';
+import { ZacConversationStore } from './persistence/zac-conversation.store';
+import { ZacMemoryStore } from './persistence/zac-memory.store';
 import { AnthropicZacModelProvider } from './models/providers/anthropic-zac-provider';
 import { StubZacModelProvider } from './models/providers/stub-zac-provider';
 import { ZAC_MODEL_PROVIDER } from './models/zac-model-provider.interface';
@@ -19,10 +24,12 @@ import { ZacRolloutService } from './zac-rollout.service';
 import { ZacService } from './zac.service';
 
 /**
- * ZAC Phase 1 backend (Week 2). Tools reach business data ONLY through
- * existing guarded QLOOQO services (DashboardModule here), called with the
- * resolved actor — ZAC never opens its own reasoning-readable DB client for
- * business data.
+ * ZAC Phase 1 backend. Tools reach business data ONLY through existing guarded
+ * QLOOQO services (DashboardModule here), called with the resolved actor —
+ * ZAC never opens its own reasoning-readable DB client for business data.
+ * The stores write exclusively to ZAC-OWNED tables (zac.conversations,
+ * zac.messages, zac.memory_items): safe summaries and scoped memory, never
+ * operational records.
  */
 @Module({
   imports: [AuthModule, DashboardModule, KpiModule, LabAppointmentsModule],
@@ -35,6 +42,11 @@ import { ZacService } from './zac.service';
     ZacToolRegistryService,
     ZacResponseBuilderService,
     ZacCostTelemetryService,
+    ZacConversationStore,
+    ZacMemoryStore,
+    ZacConversationService,
+    ZacMemoryExtractionService,
+    ZacMemoryService,
     {
       provide: ZAC_MODEL_PROVIDER,
       inject: [ConfigService],

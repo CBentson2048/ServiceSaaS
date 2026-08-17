@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { FormEvent, KeyboardEvent } from 'react';
 import { AppButton, AppCard, StatusBadge } from '../design';
 import { useAuth } from '../auth/AuthProvider';
-import { askZac } from '../auth/api';
+import { ApiRequestError, askZac } from '../auth/api';
 import type { ZacAskResponse } from '../auth/api';
 import {
   ZAC_EVIDENCE_SOURCE_LABELS,
@@ -30,6 +30,10 @@ export function ZacPage() {
   const [response, setResponse] = useState<ZacAskResponse | null>(null);
   const [askedQuestion, setAskedQuestion] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  // Backend conversation for this console session: follow-up asks continue the
+  // same thread server-side. Component state only — never persisted, so it
+  // cannot leak to another signed-in user.
+  const [conversationId, setConversationId] = useState<string | null>(null);
 
   async function ask(text: string) {
     const trimmed = text.trim();
@@ -39,17 +43,39 @@ export function ZacPage() {
     setError(null);
     setCopied(false);
     try {
-      const result = await askZac(accessToken, { question: trimmed });
+      const result = await askZac(accessToken, {
+        question: trimmed,
+        conversationId: conversationId ?? undefined,
+      });
+      setConversationId(result.conversation_id ?? conversationId);
       setResponse(result);
       setAskedQuestion(trimmed);
       setQuestion('');
     } catch (err) {
       setResponse(null);
       setAskedQuestion(null);
-      setError(zacFriendlyError(err));
+      // A 404 while continuing a thread means THIS conversation is gone — drop
+      // it so the next ask starts fresh instead of retrying a dead id.
+      if (conversationId && err instanceof ApiRequestError && err.status === 404) {
+        setConversationId(null);
+        setError({
+          kind: 'notice',
+          text: "That conversation is no longer available, so I've started a fresh one — please ask again.",
+        });
+      } else {
+        setError(zacFriendlyError(err));
+      }
     } finally {
       setLoading(false);
     }
+  }
+
+  function startNewConversation() {
+    setConversationId(null);
+    setResponse(null);
+    setAskedQuestion(null);
+    setError(null);
+    setCopied(false);
   }
 
   function onSubmit(event: FormEvent) {
@@ -121,15 +147,27 @@ export function ZacPage() {
             <span className="text-[11px] text-text-subtle">
               Enter to ask · Shift+Enter for a new line
             </span>
-            <AppButton
-              type="submit"
-              variant="primary"
-              loading={loading}
-              disabled={!question.trim() || !accessToken}
-              leadingIcon={<SparkGlyph className="h-3.5 w-3.5" />}
-            >
-              Ask ZAC
-            </AppButton>
+            <div className="flex items-center gap-2">
+              {conversationId ? (
+                <button
+                  type="button"
+                  onClick={startNewConversation}
+                  disabled={loading}
+                  className="rounded-pill border border-border px-3 py-1.5 text-[12px] text-text-secondary transition hover:border-border-strong hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  New conversation
+                </button>
+              ) : null}
+              <AppButton
+                type="submit"
+                variant="primary"
+                loading={loading}
+                disabled={!question.trim() || !accessToken}
+                leadingIcon={<SparkGlyph className="h-3.5 w-3.5" />}
+              >
+                Ask ZAC
+              </AppButton>
+            </div>
           </div>
 
           <div className="mt-4 border-t border-border-divider pt-4">

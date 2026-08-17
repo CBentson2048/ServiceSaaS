@@ -1,22 +1,40 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import type { AuthUser, DashboardKpisResponse } from '@sheer/domain';
+import {
+  createSupabaseFake,
+  createSupabaseFakeState,
+  type SupabaseFakeState,
+} from '../common/testing/supabase-fake';
 import type { DashboardService } from '../dashboard/dashboard.service';
 import type { KpiService } from '../kpi/kpi.service';
 import type { LabAppointmentsService } from '../lab-appointments/lab-appointments.service';
 import { ZacContextService } from './context/zac-context.service';
+import { ZacConversationService } from './conversation/zac-conversation.service';
 import type { ZacCostTelemetryService } from './measurement/zac-cost-telemetry.service';
+import { ZacMemoryExtractionService } from './memory/zac-memory-extraction.service';
+import { ZacMemoryService } from './memory/zac-memory.service';
 import { StubZacModelProvider } from './models/providers/stub-zac-provider';
 import {
   ZacModelIncompleteError,
   ZacModelRefusedError,
 } from './models/zac-model-provider.interface';
 import type { ZacModelProvider } from './models/zac-model-provider.interface';
+import { ZacConversationStore } from './persistence/zac-conversation.store';
+import { ZacMemoryStore } from './persistence/zac-memory.store';
 import { ZacResponseBuilderService } from './responses/zac-response-builder.service';
 import { ZacRoleProfileService } from './roles/zac-role-profile.service';
 import { ZacToolRegistryService } from './tools/zac-tool-registry.service';
 import { ZacRolloutService } from './zac-rollout.service';
 import { ZacService } from './zac.service';
+
+// The ZAC stores follow the platform convention (private service-role client
+// built in the constructor); the payroll specs' shared fake replaces it.
+jest.mock('@supabase/supabase-js', () => ({
+  createClient: jest.fn(() => {
+    return (globalThis as { __supabaseFake?: unknown }).__supabaseFake;
+  }),
+}));
 
 const KPI_SUMMARY = {
   totalRevenueCents: 125000,
@@ -190,13 +208,21 @@ function makeService(
     list: jest.fn().mockResolvedValue(MY_SCHEDULE_LIST_FIXTURE),
   },
   provider: ZacModelProvider = new StubZacModelProvider(),
+  state: SupabaseFakeState = createSupabaseFakeState(),
 ): {
   service: ZacService;
   telemetry: { recordCostEvent: jest.Mock; recordSpineEvent: jest.Mock };
+  state: SupabaseFakeState;
 } {
-  const config = { get: jest.fn((key: string) => env[key]) } as unknown as ConfigService;
+  (globalThis as { __supabaseFake?: unknown }).__supabaseFake = createSupabaseFake(state);
+  const config = {
+    get: jest.fn((key: string) => env[key]),
+    getOrThrow: jest.fn((key: string) => env[key] ?? `fake-${key}`),
+  } as unknown as ConfigService;
   const telemetry = { recordCostEvent: jest.fn(), recordSpineEvent: jest.fn() };
+  const telemetryService = telemetry as unknown as ZacCostTelemetryService;
 
+  const memoryExtraction = new ZacMemoryExtractionService();
   const service = new ZacService(
     new ZacRolloutService(config),
     new ZacContextService(),
@@ -207,11 +233,14 @@ function makeService(
       labAppointments as LabAppointmentsService,
     ),
     new ZacResponseBuilderService(),
-    telemetry as unknown as ZacCostTelemetryService,
+    telemetryService,
+    new ZacConversationService(new ZacConversationStore(config), telemetryService),
+    memoryExtraction,
+    new ZacMemoryService(new ZacMemoryStore(config), memoryExtraction, telemetryService),
     provider,
   );
 
-  return { service, telemetry };
+  return { service, telemetry, state };
 }
 
 const NARRATED_ANSWER =
@@ -1135,6 +1164,499 @@ describe('ZacService', () => {
       ].join(' ');
       expect(payloads).not.toContain('Jane Smith');
       expect(payloads).not.toContain(NARRATED_ANSWER);
+    });
+  });
+
+  describe('conversation continuity (persisted)', () => {
+    it('creates a conversation on the first ask and reuses it when the client sends the id back', async () => {
+      const { service, telemetry, state } = makeService();
+
+      const first = await service.ask(makeActor(), { question: 'What can you help me with?' });
+      expect(first.conversation_id).toBeTruthy();
+      expect(telemetry.recordSpineEvent).toHaveBeenCalledWith(
+        'conversation_created',
+        expect.objectContaining({ conversation_id: first.conversation_id }),
+      );
+
+      const second = await service.ask(makeActor(), {
+        question: 'How is my business doing?',
+        conversationId: first.conversation_id!,
+      });
+
+      expect(second.conversation_id).toBe(first.conversation_id);
+      expect(state.tables.get('zac.conversations')).toHaveLength(1);
+      expect(telemetry.recordSpineEvent).toHaveBeenCalledWith(
+        'conversation_reused',
+        expect.objectContaining({ conversation_id: first.conversation_id }),
+      );
+    });
+
+    it('persists structural safe summaries only — never the words of either side', async () => {
+      const { service, state } = makeService();
+
+      await service.ask(makeActor(), {
+        question: 'How is my business doing? Client Jane Smith is unhappy.',
+      });
+
+      const messages = state.tables.get('zac.messages') ?? [];
+      expect(messages).toHaveLength(2);
+      const serialised = JSON.stringify(messages);
+      expect(serialised).not.toContain('Jane Smith');
+      expect(serialised).not.toContain('unhappy');
+      expect(messages.find((row) => row['role'] === 'user')!['content_redacted']).toBe(
+        'Asked a question routed to report.business_health.',
+      );
+    });
+
+    it("rejects another user's conversation with an existence-hiding 404", async () => {
+      const { service } = makeService();
+      const first = await service.ask(makeActor(), { question: 'What can you help me with?' });
+
+      const otherUser = makeActor({
+        id: 'user-2',
+        profile: { id: 'profile-9', email: 'two@example.com', fullName: 'Owner Two' },
+      } as Partial<AuthUser>);
+      await expect(
+        service.ask(otherUser, {
+          question: 'How is my business doing?',
+          conversationId: first.conversation_id!,
+        }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('rejects a conversation from another business with the same 404', async () => {
+      const { service } = makeService();
+      const foreign = await service.ask(makeActor({ businessId: 'biz-2' }), {
+        question: 'What can you help me with?',
+      });
+
+      await expect(
+        service.ask(makeActor(), {
+          question: 'How is my business doing?',
+          conversationId: foreign.conversation_id!,
+        }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('rejects an unknown conversation id without leaking whether it exists', async () => {
+      const { service } = makeService();
+
+      await expect(
+        service.ask(makeActor(), {
+          question: 'How is my business doing?',
+          conversationId: '00000000-0000-0000-0000-000000000000',
+        }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('still answers (statelessly, loudly) when conversation storage is down', async () => {
+      const { service, telemetry } = makeService();
+      const fake = (globalThis as { __supabaseFake?: { schema: unknown } }).__supabaseFake!;
+      fake.schema = () => {
+        throw new Error('PGRST106 Invalid schema: zac');
+      };
+
+      const response = await service.ask(makeActor(), { question: 'How is my business doing?' });
+
+      expect(response.answer.length).toBeGreaterThan(0);
+      expect(response.conversation_id).toBeNull();
+      expect(telemetry.recordSpineEvent).toHaveBeenCalledWith(
+        'persistence_failed',
+        expect.objectContaining({ operation: 'conversation_create' }),
+      );
+    });
+  });
+
+  describe('introduction behaviour (Luke scenario 2)', () => {
+    it('introduces ZAC on the first turn, then answers without reintroducing itself', async () => {
+      const { service } = makeService();
+      const actor = makeActor({
+        profile: { id: 'profile-1', email: 'owner@example.com', fullName: 'Owner One', firstName: 'Owner' },
+      } as Partial<AuthUser>);
+
+      const first = await service.ask(actor, { question: 'What can you help me with?' });
+      expect(first.answer).toContain("I'm ZAC");
+      expect(first.answer).toContain('Hi Owner');
+
+      const second = await service.ask(actor, {
+        question: 'What should I focus on?',
+        conversationId: first.conversation_id!,
+      });
+      expect(second.answer).not.toContain("I'm ZAC");
+      expect(second.answer).not.toContain('Hi Owner');
+      expect(second.answer.length).toBeGreaterThan(0);
+    });
+
+    it('still answers "Who are you?" with ZAC identity mid-conversation', async () => {
+      const { service } = makeService();
+      const first = await service.ask(makeActor(), { question: 'What can you help me with?' });
+
+      const identity = await service.ask(makeActor(), {
+        question: 'Who are you?',
+        conversationId: first.conversation_id!,
+      });
+
+      expect(identity.answer).toContain("I'm ZAC");
+    });
+
+    it('tells a narrating provider when the conversation is continuing', async () => {
+      const provider = makeNarratingProvider();
+      const { service } = makeService(undefined, undefined, undefined, undefined, provider);
+
+      const first = await service.ask(makeActor(), { question: 'How is my business doing?' });
+      await service.ask(makeActor(), {
+        question: 'How is my business doing?',
+        conversationId: first.conversation_id!,
+      });
+
+      const firstRequest = provider.complete.mock.calls[0][0];
+      const secondRequest = provider.complete.mock.calls[1][0];
+      expect(firstRequest.conversationState.firstAssistantTurn).toBe(true);
+      expect(secondRequest.conversationState.firstAssistantTurn).toBe(false);
+    });
+  });
+
+  describe('memory: Luke acceptance scenario 1 (rebooking goal)', () => {
+    const GOAL_QUESTION =
+      'My main goal this month is to increase rebooking to 60%. Please remember that.';
+
+    it('persists the goal, acknowledges it, and reports it in memory_updates', async () => {
+      const kpis = jest.fn().mockResolvedValue(KPI_FIXTURE);
+      const { service, state } = makeService(undefined, { kpis } as Partial<DashboardService>);
+
+      const response = await service.ask(makeActor(), { question: GOAL_QUESTION });
+
+      expect(response.answer).toContain('60%');
+      expect(response.memory_updates).toEqual([
+        {
+          scope: 'business_owner',
+          kind: 'business_goal',
+          summary: 'My main goal this month is to increase rebooking to 60%.',
+        },
+      ]);
+      expect(response.tool_calls).toEqual([]);
+      expect(kpis).not.toHaveBeenCalled();
+      const rows = state.tables.get('zac.memory_items') ?? [];
+      expect(rows).toHaveLength(1);
+      expect(rows[0]['visibility_scope']).toBe('business_owner');
+    });
+
+    it('answers "What goal did I just give you?" from persisted memory, with no report tool', async () => {
+      const kpis = jest.fn().mockResolvedValue(KPI_FIXTURE);
+      const { service } = makeService(undefined, { kpis } as Partial<DashboardService>);
+
+      const first = await service.ask(makeActor(), { question: GOAL_QUESTION });
+      const recall = await service.ask(makeActor(), {
+        question: 'What goal did I just give you?',
+        conversationId: first.conversation_id!,
+      });
+
+      expect(recall.answer).toContain('rebooking');
+      expect(recall.answer).toContain('60%');
+      expect(recall.answer).not.toContain('55%');
+      expect(recall.tool_calls).toEqual([]);
+      expect(kpis).not.toHaveBeenCalled();
+      expect(recall.evidence[0].source_type).toBe('zac.memory');
+    });
+
+    it('survives a process restart — a fresh service over the same storage still remembers', async () => {
+      const { service, state } = makeService();
+      await service.ask(makeActor(), { question: GOAL_QUESTION });
+
+      // New service instance, same persistent storage: simulates an API restart.
+      const { service: restarted } = makeService(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined as unknown as ZacModelProvider,
+        state,
+      );
+      const response = await restarted.ask(makeActor(), {
+        question: 'What do you remember about my business?',
+      });
+
+      expect(response.answer).toContain('60%');
+      expect(response.answer).toContain('rebooking');
+    });
+  });
+
+  describe('memory: preferences and goal replacement', () => {
+    it('remembers a communication preference and recalls it', async () => {
+      const { service } = makeService();
+
+      const stored = await service.ask(makeActor(), {
+        question: 'Please remember that I prefer concise answers.',
+      });
+      expect(stored.memory_updates).toEqual([
+        { scope: 'user_private', kind: 'user_preference', summary: 'I prefer concise answers.' },
+      ]);
+
+      const recall = await service.ask(makeActor(), {
+        question: 'What communication preference have I given you?',
+        conversationId: stored.conversation_id!,
+      });
+      expect(recall.answer).toContain('concise');
+    });
+
+    it('replaces a goal instead of keeping two contradictory active goals', async () => {
+      const { service, state } = makeService();
+
+      const first = await service.ask(makeActor(), { question: 'My rebooking goal is 55%.' });
+      await service.ask(makeActor(), {
+        question: 'Update that goal to 60%.',
+        conversationId: first.conversation_id!,
+      });
+
+      const recall = await service.ask(makeActor(), {
+        question: 'What are my current goals?',
+        conversationId: first.conversation_id!,
+      });
+      expect(recall.answer).toContain('60%');
+      expect(recall.answer).not.toContain('55%');
+
+      const rows = state.tables.get('zac.memory_items') ?? [];
+      expect(rows.filter((row) => row['status'] === 'active')).toHaveLength(1);
+      expect(rows.filter((row) => row['status'] === 'superseded')).toHaveLength(1);
+    });
+  });
+
+  describe('memory privacy through the full ask pipeline', () => {
+    function makeStylistActor(overrides: Partial<AuthUser> = {}): AuthUser {
+      return makeActor({
+        id: 'stylist-user-1',
+        roles: ['stylist'],
+        primaryRole: 'stylist',
+        staffProfileId: 'staff-1',
+        allowedLocationIds: ['loc-1'],
+        locations: [{ id: 'loc-1', name: 'Main' }],
+        profile: { id: 'profile-2', email: 'stylist@example.com', fullName: 'Maya Chen', firstName: 'Maya' },
+        permissions: ['zac.access', 'bookings.manage'],
+        ...overrides,
+      } as Partial<AuthUser>);
+    }
+
+    it("keeps a stylist's coaching focus private from owners and managers — the hard rule", async () => {
+      const { service } = makeService();
+
+      const stored = await service.ask(makeStylistActor(), {
+        question:
+          'Please remember that I struggle with asking clients to rebook and want coaching on it.',
+      });
+      expect(stored.memory_updates[0]).toMatchObject({
+        scope: 'stylist_private',
+        kind: 'coaching_focus',
+      });
+
+      // The stylist can retrieve it.
+      const own = await service.ask(makeStylistActor(), {
+        question: 'What do you remember about me?',
+      });
+      expect(own.answer).toContain('rebook');
+
+      // Owner and manager get nothing — not via team, business or me questions.
+      for (const question of [
+        'What do you remember about the team?',
+        'What do you remember about my business?',
+        'What do you remember about me?',
+      ]) {
+        const forOwner = await service.ask(makeActor(), { question });
+        expect(forOwner.answer).not.toContain('struggle');
+        const manager = makeActor({
+          id: 'manager-1',
+          roles: ['manager'],
+          primaryRole: 'manager',
+          profile: { id: 'profile-3', email: 'mgr@example.com', fullName: 'Man Ager' },
+        } as Partial<AuthUser>);
+        const forManager = await service.ask(manager, { question });
+        expect(forManager.answer).not.toContain('struggle');
+      }
+    });
+
+    it("keeps one user's personal memory invisible to a colleague in the same business", async () => {
+      const { service } = makeService();
+      await service.ask(makeActor(), { question: 'Please remember that I prefer concise answers.' });
+
+      const colleague = makeActor({
+        id: 'user-2',
+        profile: { id: 'profile-9', email: 'two@example.com', fullName: 'Owner Two' },
+      } as Partial<AuthUser>);
+      const response = await service.ask(colleague, {
+        question: 'What do you remember about me?',
+      });
+
+      expect(response.answer).not.toContain('concise');
+      expect(response.answer).toContain("don't have anything saved");
+    });
+
+    it('keeps memory strictly inside its business', async () => {
+      const { service } = makeService();
+      await service.ask(makeActor(), { question: 'My rebooking goal is 60%.' });
+
+      const otherBusinessOwner = makeActor({ businessId: 'biz-2' });
+      const response = await service.ask(otherBusinessOwner, {
+        question: 'What do you remember about my business?',
+      });
+
+      expect(response.answer).toContain("don't have anything saved");
+      expect(response.answer).not.toContain('My rebooking goal');
+    });
+
+    it('applies CURRENT permissions — a demoted owner loses business memory on the next request', async () => {
+      const { service } = makeService();
+      const stored = await service.ask(makeActor(), { question: 'My rebooking goal is 60%.' });
+
+      // Same person, same conversation — but the role is now stylist only.
+      const demoted = makeActor({
+        roles: ['stylist'],
+        primaryRole: 'stylist',
+        staffProfileId: 'staff-1',
+        permissions: ['zac.access', 'bookings.manage'],
+      } as Partial<AuthUser>);
+      const response = await service.ask(demoted, {
+        question: 'What do you remember about my business?',
+        conversationId: stored.conversation_id!,
+      });
+
+      expect(response.answer).toContain("don't have anything saved");
+      expect(response.answer).not.toContain('My rebooking goal');
+    });
+
+    it('declines to remember sensitive content and stores nothing', async () => {
+      const { service, telemetry, state } = makeService();
+
+      const response = await service.ask(makeActor(), {
+        question: 'Please remember that my password is hunter2.',
+      });
+
+      expect(response.response_type).toBe('Refusal / Insufficient Data');
+      expect(response.answer).toContain("never store");
+      expect(response.memory_updates).toEqual([]);
+      expect(state.tables.get('zac.memory_items') ?? []).toHaveLength(0);
+      expect(telemetry.recordSpineEvent).toHaveBeenCalledWith(
+        'memory_declined',
+        expect.objectContaining({ reason: 'sensitive_content' }),
+      );
+    });
+
+    it('never presents a memory read failure as "nothing saved"', async () => {
+      const { service } = makeService();
+      const fake = (globalThis as { __supabaseFake?: { schema: unknown } }).__supabaseFake!;
+      fake.schema = () => {
+        throw new Error('storage down');
+      };
+
+      const response = await service.ask(makeActor(), {
+        question: 'What do you remember about my business?',
+      });
+
+      expect(response.answer).toContain("can't reach my memory");
+      expect(response.answer).not.toContain("don't have anything saved");
+    });
+
+    it('never claims a memory was stored when storage is down', async () => {
+      const { service, state } = makeService();
+      const fake = (globalThis as { __supabaseFake?: { schema: unknown } }).__supabaseFake!;
+      fake.schema = () => {
+        throw new Error('storage down');
+      };
+
+      const response = await service.ask(makeActor(), {
+        question: 'Please remember that my rebooking goal is 60%.',
+      });
+
+      expect(response.answer).toContain("couldn't save");
+      expect(response.memory_updates).toEqual([]);
+      expect(state.tables.get('zac.memory_items') ?? []).toHaveLength(0);
+    });
+  });
+
+  describe('memory inside live narration', () => {
+    it('passes relevant memory to the provider as user-stated context and allows its figures', async () => {
+      const provider = makeNarratingProvider();
+      provider.complete.mockResolvedValue({
+        text: 'Your stated goal is 60% — keep pushing toward it.',
+        provider: 'anthropic',
+        model: 'claude-opus-5',
+        inputTokens: 900,
+        outputTokens: 80,
+        reasoningTokens: 0,
+        cacheReadInputTokens: 0,
+        cacheCreationInputTokens: 0,
+        estimatedCostUsd: 0.005,
+      });
+      const { service } = makeService(undefined, undefined, undefined, undefined, provider);
+
+      const stored = await service.ask(makeActor(), { question: 'My rebooking goal is 60%.' });
+      const response = await service.ask(makeActor(), {
+        question: 'How can I improve my rebooking?',
+        conversationId: stored.conversation_id!,
+      });
+
+      const modelRequest = provider.complete.mock.calls[0][0];
+      expect(modelRequest.memoryContext).toEqual([
+        { kind: 'business_goal', summary: 'My rebooking goal is 60%.' },
+      ]);
+      // 60% exists only in the memory context — grounded via the memory allowance.
+      expect(response.answer).toBe('Your stated goal is 60% — keep pushing toward it.');
+    });
+
+    it('rejects a memory figure presented as a measurement — attribution is structural, not prompt-trusted', async () => {
+      const provider = makeNarratingProvider();
+      provider.complete.mockResolvedValue({
+        // 60 exists ONLY in memory, and this sentence presents it as a live
+        // reading, not the user's stated goal — must fall back.
+        text: 'Your rebooking rate is currently 60%.',
+        provider: 'anthropic',
+        model: 'claude-opus-5',
+        inputTokens: 900,
+        outputTokens: 80,
+        reasoningTokens: 0,
+        cacheReadInputTokens: 0,
+        cacheCreationInputTokens: 0,
+        estimatedCostUsd: 0.005,
+      });
+      const { service, telemetry } = makeService(undefined, undefined, undefined, undefined, provider);
+
+      const stored = await service.ask(makeActor(), { question: 'Please remember that we aim for 60 percent rebooking.' });
+      const response = await service.ask(makeActor(), {
+        question: 'How can I improve my rebooking?',
+        conversationId: stored.conversation_id!,
+      });
+
+      expect(response.answer).not.toBe('Your rebooking rate is currently 60%.');
+      expect(telemetry.recordSpineEvent).toHaveBeenCalledWith(
+        'model_fallback',
+        expect.objectContaining({ reason: 'ungrounded' }),
+      );
+    });
+
+    it('still rejects narration figures that exist in neither evidence nor memory', async () => {
+      const provider = makeNarratingProvider();
+      provider.complete.mockResolvedValue({
+        text: 'You will certainly hit 75% next month.',
+        provider: 'anthropic',
+        model: 'claude-opus-5',
+        inputTokens: 900,
+        outputTokens: 80,
+        reasoningTokens: 0,
+        cacheReadInputTokens: 0,
+        cacheCreationInputTokens: 0,
+        estimatedCostUsd: 0.005,
+      });
+      const { service, telemetry } = makeService(undefined, undefined, undefined, undefined, provider);
+
+      const stored = await service.ask(makeActor(), { question: 'My rebooking goal is 60%.' });
+      const response = await service.ask(makeActor(), {
+        question: 'How can I improve my rebooking?',
+        conversationId: stored.conversation_id!,
+      });
+
+      expect(response.answer).not.toContain('75%');
+      expect(telemetry.recordSpineEvent).toHaveBeenCalledWith(
+        'model_fallback',
+        expect.objectContaining({ reason: 'ungrounded' }),
+      );
     });
   });
 });

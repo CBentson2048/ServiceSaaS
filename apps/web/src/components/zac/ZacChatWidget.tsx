@@ -4,7 +4,7 @@ import { useLocation } from 'react-router-dom';
 import { userHasPermission } from '@sheer/domain';
 import { StatusBadge } from '../../design';
 import { useAuth } from '../../auth/AuthProvider';
-import { askZac } from '../../auth/api';
+import { ApiRequestError, askZac } from '../../auth/api';
 import type { ZacAskResponse } from '../../auth/api';
 import {
   ZAC_EVIDENCE_SOURCE_LABELS,
@@ -48,6 +48,11 @@ export function ZacChatWidget() {
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  // Backend conversation for this widget session. A ref (not state): the ask
+  // callback reads it without re-creating, and it lives only in memory for the
+  // signed-in user — never persisted client-side, so it cannot leak across
+  // accounts on a shared machine.
+  const conversationRef = useRef<string | null>(null);
 
   // Keep the newest turn in view as the conversation grows.
   useEffect(() => {
@@ -59,6 +64,14 @@ export function ZacChatWidget() {
     if (open) inputRef.current?.focus();
   }, [open]);
 
+  // A different signed-in user must never continue the previous user's thread.
+  const userId = auth.user?.id ?? null;
+  useEffect(() => {
+    conversationRef.current = null;
+    setTurns([]);
+    setError(null);
+  }, [userId]);
+
   const ask = useCallback(
     async (text: string) => {
       const trimmed = text.trim();
@@ -68,11 +81,27 @@ export function ZacChatWidget() {
       setQuestion('');
       setLoading(true);
       setError(null);
+      const sentConversationId = conversationRef.current;
       try {
-        const response = await askZac(accessToken, { question: trimmed });
+        const response = await askZac(accessToken, {
+          question: trimmed,
+          conversationId: sentConversationId ?? undefined,
+        });
+        conversationRef.current = response.conversation_id ?? conversationRef.current;
         setTurns((current) => [...current, { id: turnSeq++, role: 'zac', response }]);
       } catch (err) {
-        setError(zacFriendlyError(err));
+        // A 404 while continuing a thread means THIS conversation is gone or
+        // not continuable — drop it so the next ask starts fresh, instead of
+        // showing the rollout copy and retrying a dead id forever.
+        if (sentConversationId && err instanceof ApiRequestError && err.status === 404) {
+          conversationRef.current = null;
+          setError({
+            kind: 'notice',
+            text: "That conversation is no longer available, so I've started a fresh one — please ask again.",
+          });
+        } else {
+          setError(zacFriendlyError(err));
+        }
       } finally {
         setLoading(false);
         inputRef.current?.focus();
@@ -125,11 +154,16 @@ export function ZacChatWidget() {
         {turns.length > 0 ? (
           <button
             type="button"
+            // Disabled while a reply is in flight: clearing mid-request would
+            // let the resolving ask silently resurrect the abandoned thread.
+            disabled={loading}
             onClick={() => {
               setTurns([]);
               setError(null);
+              // A cleared chat is a NEW conversation — continuity ends here.
+              conversationRef.current = null;
             }}
-            className="rounded-pill border border-border px-2.5 py-1 text-[11px] text-text-secondary transition hover:border-border-strong hover:text-text-primary"
+            className="rounded-pill border border-border px-2.5 py-1 text-[11px] text-text-secondary transition hover:border-border-strong hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
           >
             Clear
           </button>

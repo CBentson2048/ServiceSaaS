@@ -2,10 +2,10 @@
 
 **ZAC** is the **server-side, permission-aware, evidence-grounded intelligence layer inside QLOOQO** — an assistant that explains, coaches, and recommends for owners, managers, and stylists, grounded in QLOOQO's own data.
 
-> ### ℹ️ Phase 0 = planning · Phase 1 = built (dark-launched)
+> ### ℹ️ Phase 0 = planning · Phase 1 = built
 > The **`phase-0-*` documents are discovery and architecture planning**: they describe proposed designs, and some details in them were superseded during the build.
 >
-> **Phase 1 is implemented** and lives behind the `ZAC_ENABLED` feature flag: `apps/api/src/zac/` (module, guarded `POST /zac/ask` + `GET /zac/health`, permission-aware tool registry, live model provider), the `zac.access` permission, migrations `0076`/`0077`/`0080` (**authored — apply status tracked separately**), the web console at `/zac` plus the floating assistant, and the mobile ZAC screen. Where a Phase 0 document and the code disagree, **the code is the source of truth**.
+> **Phase 1 is implemented** and lives behind the `ZAC_ENABLED` kill-switch: `apps/api/src/zac/` (module, guarded `POST /zac/ask` + `GET /zac/health`, permission-aware tool registry, live model provider, **persisted conversations + scoped context memory** — see [`phase-1-conversation-memory.md`](phase-1-conversation-memory.md)), the `zac.access` permission, migrations `0076`/`0077`/`0080`/`0081`/`0089` (**authored — apply status tracked in the storage runbook**), the web console at `/zac` plus the floating assistant, and the mobile ZAC screen. Where a Phase 0 document and the code disagree, **the code is the source of truth**.
 
 ---
 
@@ -24,6 +24,7 @@
 | [`phase-0-sign-off-walkthrough.md`](phase-0-sign-off-walkthrough.md) | **Phase 0 Sign-Off Walkthrough** provides the live review agenda, proof-of-architecture scenarios, realistic test data, acceptance checklist, Cosan technical confirmation checklist and Luke approval checklist for Phase 0 approval before Phase 1 MVP planning. |
 | [`phase-0-sign-off-speaker-notes.md`](phase-0-sign-off-speaker-notes.md) | Speaker notes for Oleksandr to use during the live Phase 0 sign-off walkthrough, including opening script, scenario narration, Value Created explanation, Cost per Intelligence explanation, Cosan technical confirmation prompt and Luke approval prompt. |
 | [`phase-0-future-integration-notes.md`](phase-0-future-integration-notes.md) | The bridge to the codebase: where ZAC attaches to existing modules/guards/endpoints, the proposed `zac` schema, and a suggested integration sequence — **for a future authorised phase, not now.** |
+| [`phase-1-conversation-memory.md`](phase-1-conversation-memory.md) | **Implemented** — persisted conversations, the ask-API conversation contract, the typed/scoped context-memory system (capture, supersession, retrieval, privacy rules), grounding of memory vs evidence, and the required Supabase configuration. |
 
 **Suggested reading order:** Day 1 Discovery Report → Day 2 Core Architecture → Day 3 Knowledge, Tools & Outcome Memory → Day 4 Value Created & Cost per Intelligence → Day 5 Final Package & Roadmap → Decision Log → Acceptance Criteria → Phase 1 MVP Roadmap → Future Integration Notes.
 

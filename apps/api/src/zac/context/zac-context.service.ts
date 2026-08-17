@@ -34,6 +34,9 @@ export class ZacContextService {
       requestSource: request.requestSource ?? 'web_dashboard',
       timezone: actor.timezone ?? 'Europe/London',
       locale: 'en-GB',
+      // Refined after conversation resolution; true keeps stateless turns
+      // greeting exactly as they always have.
+      firstAssistantTurn: true,
     };
   }
 

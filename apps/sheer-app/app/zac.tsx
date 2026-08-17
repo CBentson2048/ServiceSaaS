@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Platform,
@@ -82,6 +82,10 @@ export default function ZacScreen() {
   const [response, setResponse] = useState<ZacAskResponse | null>(null);
   const [askedQuestion, setAskedQuestion] = useState<string | null>(null);
   const [devOpen, setDevOpen] = useState(false);
+  // Backend conversation for this screen session (matches the web contract).
+  // A ref, read inside the ask callback without re-creating it; in-memory only,
+  // so it can never leak to another signed-in account.
+  const conversationRef = useRef<string | null>(null);
 
   const ask = useCallback(
     async (text: string) => {
@@ -91,21 +95,45 @@ export default function ZacScreen() {
       setLoading(true);
       setError(null);
       setDevOpen(false);
+      const sentConversationId = conversationRef.current;
       try {
-        const result = await api.askZac(accessToken, { question: trimmed });
+        const result = await api.askZac(accessToken, {
+          question: trimmed,
+          conversationId: sentConversationId ?? undefined,
+        });
+        conversationRef.current = result.conversation_id ?? conversationRef.current;
         setResponse(result);
         setAskedQuestion(trimmed);
         setQuestion('');
       } catch (err) {
         setResponse(null);
         setAskedQuestion(null);
-        setError(friendlyError(err));
+        // A 404 while continuing a thread means THIS conversation is gone —
+        // drop the id so the next ask starts fresh instead of dead-ending on
+        // the rollout copy forever.
+        if (sentConversationId && err instanceof ApiError && err.status === 404) {
+          conversationRef.current = null;
+          setError({
+            kind: 'notice',
+            text: "That conversation is no longer available, so I've started a fresh one — please ask again.",
+          });
+        } else {
+          setError(friendlyError(err));
+        }
       } finally {
         setLoading(false);
       }
     },
     [accessToken, loading],
   );
+
+  const startNewConversation = useCallback(() => {
+    conversationRef.current = null;
+    setResponse(null);
+    setAskedQuestion(null);
+    setError(null);
+    setDevOpen(false);
+  }, []);
 
   const badge = response ? RESPONSE_TYPE_BADGES[response.response_type] : undefined;
   const followUp = response?.suggested_next_step
@@ -140,6 +168,17 @@ export default function ZacScreen() {
               {isStylist ? 'AI assistant for QLOOQO' : 'AI business assistant for QLOOQO'}
             </Text>
           </View>
+          {response || error ? (
+            <Pressable
+              onPress={startNewConversation}
+              disabled={loading}
+              style={({ pressed }) => [s.newChatBtn, pressed && s.pressed]}
+              accessibilityRole="button"
+              accessibilityLabel="Start a new conversation"
+            >
+              <Text style={s.newChatLabel}>New chat</Text>
+            </Pressable>
+          ) : null}
         </View>
 
         <ScrollView
@@ -452,6 +491,14 @@ const s = StyleSheet.create({
     letterSpacing: 0.8,
   },
   subtitle: { color: 'rgba(255,255,255,0.5)', fontSize: 13, fontWeight: '500', marginTop: 1 },
+  newChatBtn: {
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: BORDER,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  newChatLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 12, fontWeight: '600' },
 
   scrollView: { flex: 1 },
   scroll: { paddingHorizontal: spacing.lg, paddingBottom: spacing['4xl'], gap: spacing.base },

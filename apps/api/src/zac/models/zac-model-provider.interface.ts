@@ -41,6 +41,26 @@ export interface ZacModelEvidencePack {
 }
 
 /**
+ * User-stated context memory entering one narration — clearly separated from
+ * tool evidence so a remembered aspiration can never masquerade as a live
+ * figure. Summaries are already redacted; providers must never log them.
+ */
+export interface ZacModelMemoryItem {
+  /** e.g. 'business_goal' — lets the prompt label it honestly. */
+  kind: string;
+  /** The redacted safe summary, e.g. 'Increase rebooking to 60% this month.' */
+  summary: string;
+}
+
+/** Continuity signals for one turn — safe metadata only, no transcript text. */
+export interface ZacModelConversationState {
+  /** False = a prior assistant turn exists; do not greet or reintroduce ZAC. */
+  firstAssistantTurn: boolean;
+  /** Structural summaries of recent turns (oldest first), e.g. 'Asked about business health (week)'. */
+  recentTurnSummaries: string[];
+}
+
+/**
  * One model turn. The question text lives only in memory for the request —
  * providers must never log or persist it.
  */
@@ -55,6 +75,10 @@ export interface ZacModelRequest {
    * (capability/foundation turns), answer honestly about capabilities only.
    */
   evidencePack?: ZacModelEvidencePack;
+  /** User-stated memory relevant to this turn; NEVER merged into evidence. */
+  memoryContext?: ZacModelMemoryItem[];
+  /** Absent on legacy/stateless turns — providers then behave as before. */
+  conversationState?: ZacModelConversationState;
 }
 
 export interface ZacModelCompletion {

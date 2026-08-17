@@ -238,6 +238,7 @@ function contextWith(overrides: Partial<ZacActingContext> = {}): ZacActingContex
     requestSource: 'web_dashboard',
     timezone: 'Europe/London',
     locale: 'en-GB',
+    firstAssistantTurn: true,
     ...overrides,
   };
 }

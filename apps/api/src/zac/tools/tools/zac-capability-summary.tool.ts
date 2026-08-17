@@ -39,16 +39,21 @@ export class ZacCapabilitySummaryTool implements ZacReadOnlyTool {
   async execute(
     actor: AuthUser,
     context: ZacActingContext,
-    _input: Record<string, unknown>,
+    input: Record<string, unknown>,
   ): Promise<ZacToolResult> {
     const visible = this.listVisibleTools(actor).filter((tool) => tool.name !== this.name);
     const connected = visible.filter((tool) => tool.enabled);
     const planned = visible.filter((tool) => !tool.enabled);
 
+    // Greeting + "I'm ZAC" appear on a conversation's first assistant turn
+    // only — except when the user explicitly asked who ZAC is, where identity
+    // IS the answer (the orchestrator sets introduceIdentity for that intent).
+    const introduce = context.firstAssistantTurn || input['introduceIdentity'] === true;
+
     const answer =
       context.roleContext === 'stylist'
-        ? this.composeStylistAnswer(context, connected)
-        : this.composeBusinessAnswer(context, connected);
+        ? this.composeStylistAnswer(context, connected, introduce)
+        : this.composeBusinessAnswer(context, connected, introduce);
 
     return {
       status: 'ok',
@@ -91,7 +96,11 @@ export class ZacCapabilitySummaryTool implements ZacReadOnlyTool {
   }
 
   /** Owner/manager framing: the business console. */
-  private composeBusinessAnswer(context: ZacActingContext, connected: ZacReadOnlyTool[]): string {
+  private composeBusinessAnswer(
+    context: ZacActingContext,
+    connected: ZacReadOnlyTool[],
+    introduce: boolean,
+  ): string {
     const greeting = context.actorFirstName ? `Hi ${context.actorFirstName} 👋` : 'Hi 👋';
     const connectedLines = [
       '• Your business context — which business and locations I can see, and what your role lets me look at.',
@@ -104,8 +113,7 @@ export class ZacCapabilitySummaryTool implements ZacReadOnlyTool {
     }
 
     return [
-      greeting,
-      "I'm ZAC, your AI business assistant for QLOOQO.",
+      ...(introduce ? [greeting, "I'm ZAC, your AI business assistant for QLOOQO."] : []),
       `Here's what I can help with right now:\n${connectedLines.join('\n')}`,
       "As I continue to develop, I'll also help with revenue, team productivity, appointments, utilisation, retention, rebooking, retail performance, QLAB colour usage and costs, stock, inventory, trends and growth opportunities.",
       "I'm still in foundation mode: beyond the sources above, I don't yet have access to your live business data, and I'll always tell you when an answer isn't based on your salon's information.",
@@ -119,7 +127,11 @@ export class ZacCapabilitySummaryTool implements ZacReadOnlyTool {
    * and states the access boundary plainly. Connected lines are derived from
    * the actor's actual visible tool set — never hardcoded claims.
    */
-  private composeStylistAnswer(context: ZacActingContext, connected: ZacReadOnlyTool[]): string {
+  private composeStylistAnswer(
+    context: ZacActingContext,
+    connected: ZacReadOnlyTool[],
+    introduce: boolean,
+  ): string {
     const greeting = context.actorFirstName ? `Hi ${context.actorFirstName} 👋` : 'Hi 👋';
 
     const connectedLines: string[] = [];
@@ -133,8 +145,7 @@ export class ZacCapabilitySummaryTool implements ZacReadOnlyTool {
     }
 
     return [
-      greeting,
-      "I'm ZAC, your AI assistant for QLOOQO.",
+      ...(introduce ? [greeting, "I'm ZAC, your AI assistant for QLOOQO."] : []),
       connectedLines.length > 0
         ? `For stylists, I can already help with:\n${connectedLines.join('\n')}`
         : "For stylists, I'm here to help with your own workday: your appointments, personal coaching, rebooking habits, retail opportunities and service improvement — wherever those read-only tools are connected.",
