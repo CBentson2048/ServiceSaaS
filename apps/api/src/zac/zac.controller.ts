@@ -1,11 +1,25 @@
-import { Body, Controller, Get, HttpCode, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import type { AuthUser } from '@sheer/domain';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { PermissionsGuard, RequirePermissions } from '../auth/permissions.guard';
 import { RequireRoles, RolesGuard } from '../auth/roles.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { ZacAskRequestDto } from './dto/zac-ask-request.dto';
-import type { ZacHealthResponse, ZacResponse } from './responses/zac-response.types';
+import { ZacFeedbackRequestDto } from './dto/zac-feedback-request.dto';
+import type {
+  ZacFeedbackResponse,
+  ZacHealthResponse,
+  ZacResponse,
+} from './responses/zac-response.types';
 import { ZacFeatureGuard } from './zac-feature.guard';
 import { ZacService } from './zac.service';
 
@@ -32,6 +46,23 @@ export class ZacController {
   @HttpCode(200)
   ask(@CurrentUser() actor: AuthUser, @Body() body: ZacAskRequestDto): Promise<ZacResponse> {
     return this.zac.ask(actor, body);
+  }
+
+  /**
+   * Useful/not-useful feedback on a persisted output. One active vote per
+   * user per output (a change updates in place). Fail-closed: an output the
+   * actor may not access — other business, other user's private answer —
+   * is the same 404 as one that never existed. Fail-hard: a storage failure
+   * surfaces as an error, never a false success.
+   */
+  @Post('outputs/:outputId/feedback')
+  @HttpCode(200)
+  feedback(
+    @CurrentUser() actor: AuthUser,
+    @Param('outputId', new ParseUUIDPipe()) outputId: string,
+    @Body() body: ZacFeedbackRequestDto,
+  ): Promise<ZacFeedbackResponse> {
+    return this.zac.submitFeedback(actor, outputId, body);
   }
 
   /** Operational check for the dark launch. No model call, no business data. */

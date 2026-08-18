@@ -4,7 +4,7 @@ import { useLocation } from 'react-router-dom';
 import { userHasPermission } from '@sheer/domain';
 import { StatusBadge } from '../../design';
 import { useAuth } from '../../auth/AuthProvider';
-import { ApiRequestError, askZac } from '../../auth/api';
+import { ApiRequestError, askZac, submitZacFeedback } from '../../auth/api';
 import type { ZacAskResponse } from '../../auth/api';
 import {
   ZAC_EVIDENCE_SOURCE_LABELS,
@@ -16,6 +16,7 @@ import {
   extractQuotedQuestion,
   formatEvidenceDate,
   zacFriendlyError,
+  ZacFeedbackControls,
 } from './zac-presentation';
 import type { ZacAskError } from './zac-presentation';
 
@@ -218,7 +219,18 @@ export function ZacChatWidget() {
               </div>
             </div>
           ) : (
-            <ZacAnswerBubble key={turn.id} response={turn.response} onAsk={(q) => void ask(q)} />
+            <ZacAnswerBubble
+              key={turn.id}
+              response={turn.response}
+              onAsk={(q) => void ask(q)}
+              onFeedback={
+                accessToken
+                  ? async (outputId, rating) => {
+                      await submitZacFeedback(accessToken, outputId, rating);
+                    }
+                  : undefined
+              }
+            />
           ),
         )}
 
@@ -271,9 +283,11 @@ export function ZacChatWidget() {
 function ZacAnswerBubble({
   response,
   onAsk,
+  onFeedback,
 }: {
   response: ZacAskResponse;
   onAsk: (question: string) => void;
+  onFeedback?: (outputId: string, rating: 'useful' | 'not_useful') => Promise<void>;
 }) {
   const badge = ZAC_RESPONSE_TYPE_BADGES[response.response_type];
   const followUp = response.suggested_next_step
@@ -295,6 +309,14 @@ function ZacAnswerBubble({
         <p className="whitespace-pre-line text-[13px] leading-5 text-text-primary">
           {response.answer}
         </p>
+
+        {response.output_id && onFeedback ? (
+          <ZacFeedbackControls
+            key={response.output_id}
+            outputId={response.output_id}
+            submit={onFeedback}
+          />
+        ) : null}
 
         {followUp ? (
           <button

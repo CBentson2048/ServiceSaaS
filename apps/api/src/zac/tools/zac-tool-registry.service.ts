@@ -8,6 +8,7 @@ import {
 import type { AuthUser } from '@sheer/domain';
 import { DashboardService } from '../../dashboard/dashboard.service';
 import { KpiService } from '../../kpi/kpi.service';
+import { UtilisationService } from '../../kpi/utilisation.service';
 import { LabAppointmentsService } from '../../lab-appointments/lab-appointments.service';
 import type { ZacActingContext } from '../context/zac-context.types';
 import { BusinessContextSummaryTool } from './tools/business-context-summary.tool';
@@ -38,6 +39,7 @@ export class ZacToolRegistryService {
     dashboard: DashboardService,
     kpi: KpiService,
     labAppointments: LabAppointmentsService,
+    utilisation: UtilisationService,
   ) {
     const tools: ZacReadOnlyTool[] = [
       // Live tools. Context tools read only the guard-resolved acting context;
@@ -55,8 +57,9 @@ export class ZacToolRegistryService {
       // Stylist-self tools: both self-scoped twice (tool contract + service).
       new PersonalStylistCoachingTool(kpi),
       new MyScheduleTool(labAppointments),
-      // Skeletons for later weeks — registered but disabled.
-      new UtilisationSummaryTool(),
+      // The final Core MVP tool: canonical utilisation over rota + bookings.
+      new UtilisationSummaryTool(utilisation),
+      // Optional/deferred skeletons — registered but disabled.
       new QlabColourAnalyticsTool(),
       new InventoryStockStatusTool(),
     ];
@@ -80,6 +83,18 @@ export class ZacToolRegistryService {
    */
   buildFor(actor: Pick<AuthUser, 'roles' | 'permissions'>): ZacReadOnlyTool[] {
     return this.tools.filter((tool) => this.actorMayUse(actor, tool));
+  }
+
+  /**
+   * Tools the actor's ROLE would allow but their EFFECTIVE permissions do not —
+   * the honest "your role could, your current security level does not" set for
+   * permission explainability. Descriptive only: nothing here is dispatchable,
+   * and dispatch re-checks permissions regardless.
+   */
+  permissionGapsFor(actor: Pick<AuthUser, 'roles' | 'permissions'>): ZacReadOnlyTool[] {
+    return this.tools.filter(
+      (tool) => userHasAnyRole(actor, tool.allowedRoles) && !this.actorMayUse(actor, tool),
+    );
   }
 
   /**

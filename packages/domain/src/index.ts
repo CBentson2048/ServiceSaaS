@@ -4767,7 +4767,21 @@ export interface DailyUtilisation {
   utilisationPercent: number | null;
 }
 
-function normaliseIntervalsMs(intervals: UtilisationIntervalMs[]): UtilisationIntervalMs[] {
+/**
+ * Appointment statuses that occupy the stylist's time and so count toward the
+ * utilisation numerator. Cancelled / rejected / no-show bookings free the slot.
+ * Shared by the web calendar badge and the server utilisation summary so the
+ * two surfaces can never disagree about what "booked" means.
+ */
+export const UTILISATION_BOOKED_STATUSES = [
+  'pending',
+  'accepted',
+  'checked_in',
+  'awaiting_payment',
+  'paid',
+] as const;
+
+export function normaliseIntervalsMs(intervals: UtilisationIntervalMs[]): UtilisationIntervalMs[] {
   const valid = intervals.filter((i) => i.endMs > i.startMs).sort((a, b) => a.startMs - b.startMs);
   const merged: UtilisationIntervalMs[] = [];
   for (const interval of valid) {
@@ -4778,7 +4792,7 @@ function normaliseIntervalsMs(intervals: UtilisationIntervalMs[]): UtilisationIn
   return merged;
 }
 
-function subtractIntervalsMs(a: UtilisationIntervalMs[], b: UtilisationIntervalMs[]): UtilisationIntervalMs[] {
+export function subtractIntervalsMs(a: UtilisationIntervalMs[], b: UtilisationIntervalMs[]): UtilisationIntervalMs[] {
   const cuts = normaliseIntervalsMs(b);
   let current = normaliseIntervalsMs(a);
   for (const cut of cuts) {
@@ -4796,7 +4810,7 @@ function subtractIntervalsMs(a: UtilisationIntervalMs[], b: UtilisationIntervalM
   return current;
 }
 
-function totalIntervalMs(intervals: UtilisationIntervalMs[]): number {
+export function totalIntervalMs(intervals: UtilisationIntervalMs[]): number {
   return intervals.reduce((sum, i) => sum + Math.max(0, i.endMs - i.startMs), 0);
 }
 

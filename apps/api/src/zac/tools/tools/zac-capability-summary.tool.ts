@@ -111,6 +111,11 @@ export class ZacCapabilitySummaryTool implements ZacReadOnlyTool {
         '• A basic business health snapshot — bookings, revenue and rebooking activity from your dashboard KPIs.',
       );
     }
+    if (connected.some((tool) => tool.name === 'report.utilisation_summary')) {
+      connectedLines.push(
+        '• Utilisation and diary gaps — booked time against rostered available hours, quiet days and unbooked windows.',
+      );
+    }
 
     return [
       ...(introduce ? [greeting, "I'm ZAC, your AI business assistant for QLOOQO."] : []),

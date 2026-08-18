@@ -1,4 +1,5 @@
 import type { ZacRoleContext } from '../context/zac-context.types';
+import type { ZacRequestMode } from '../routing/zac-request-mode.types';
 import type { ZacEvidenceItem } from '../responses/zac-response.types';
 import type { ZacToolName } from '../tools/zac-tool.types';
 
@@ -8,9 +9,18 @@ export const ZAC_MODEL_PROVIDER = 'ZAC_MODEL_PROVIDER';
 /**
  * The model declined the request via its safety classifiers. Callers treat this
  * exactly like any other provider failure: fall back to the deterministic
- * tool-backed answer — never surface a raw refusal to the user.
+ * tool-backed answer — never surface a raw refusal to the user. A refusal is
+ * still a BILLED call: when usage is known, the completion (empty text) rides
+ * on the error so the cost spine records it, mirroring ZacModelIncompleteError.
  */
-export class ZacModelRefusedError extends Error {}
+export class ZacModelRefusedError extends Error {
+  constructor(
+    message: string,
+    readonly completion?: ZacModelCompletion,
+  ) {
+    super(message);
+  }
+}
 
 /**
  * The call completed but the narration is unusable (e.g. truncated at the
@@ -79,6 +89,20 @@ export interface ZacModelRequest {
   memoryContext?: ZacModelMemoryItem[];
   /** Absent on legacy/stateless turns — providers then behave as before. */
   conversationState?: ZacModelConversationState;
+  /**
+   * How this turn is being answered. Advisory modes (general_advice,
+   * hypothetical, conversational) carry no evidence pack: the provider must
+   * instruct the model to reason without claiming live business figures.
+   * Absent = narration behaviour (back-compat).
+   */
+  mode?: ZacRequestMode;
+}
+
+/** Outcome of one model classification call — mode may be null (unusable output). */
+export interface ZacModeClassification {
+  mode: string | null;
+  /** Usage/cost of the call, for honest telemetry. Null if the call never billed. */
+  completion: ZacModelCompletion | null;
 }
 
 export interface ZacModelCompletion {
@@ -104,4 +128,12 @@ export interface ZacModelProvider {
    */
   readonly narrates: boolean;
   complete(request: ZacModelRequest): Promise<ZacModelCompletion>;
+  /**
+   * Optional: classify an AMBIGUOUS question into the closed request-mode
+   * enum. The returned string is untrusted — callers validate it against the
+   * enum and fall back deterministically on anything else. Providers must
+   * treat the question with the same privacy contract as complete() (never
+   * logged or persisted). Absent on the stub: no key, no classification.
+   */
+  classifyMode?(question: string, roleContext: ZacRoleContext): Promise<ZacModeClassification>;
 }

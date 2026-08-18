@@ -1,6 +1,7 @@
 import type { AuthUser, DashboardKpisResponse, Permission, UserRole } from '@sheer/domain';
 import type { DashboardService } from '../../dashboard/dashboard.service';
 import type { KpiService } from '../../kpi/kpi.service';
+import type { UtilisationService } from '../../kpi/utilisation.service';
 import type { LabAppointmentsService } from '../../lab-appointments/lab-appointments.service';
 import type { ZacActingContext } from '../context/zac-context.types';
 import { ZacToolRegistryService } from './zac-tool-registry.service';
@@ -14,6 +15,7 @@ const LIVE_TOOLS: ZacToolName[] = [
   'report.stylist_performance',
   'report.kpi_summary',
   'report.rebooking_summary',
+  'report.utilisation_summary',
   'kpi.personal_coaching',
   'schedule.my_appointments',
 ];
@@ -189,6 +191,40 @@ const KPI_SUMMARY = {
   currencyCode: 'GBP',
 };
 
+
+const UTILISATION_FIXTURE = {
+  scope: 'owner',
+  period: 'week',
+  rangeStart: '2026-08-10T00:00:00.000Z',
+  rangeEnd: '2026-08-17T00:00:00.000Z',
+  locations: [{ id: 'loc-1', name: 'Main' }],
+  overall: { availableMinutes: 2400, bookedMinutes: 1464, utilisationPercent: 61, staffDayCount: 10 },
+  previousPeriod: { availableMinutes: 2400, bookedMinutes: 1368, utilisationPercent: 57 },
+  byLocation: [
+    { locationId: 'loc-1', locationName: 'Main', availableMinutes: 2400, bookedMinutes: 1464, utilisationPercent: 61 },
+  ],
+  byWeekday: [
+    { weekday: 'Tuesday', availableMinutes: 480, bookedMinutes: 216, utilisationPercent: 45 },
+    { weekday: 'Friday', availableMinutes: 480, bookedMinutes: 384, utilisationPercent: 80 },
+  ],
+  quietestWeekday: 'Tuesday',
+  busiestWeekday: 'Friday',
+  largestGaps: [
+    {
+      locationId: 'loc-1',
+      locationName: 'Main',
+      staffName: 'Maya Chen',
+      date: '2026-08-11',
+      weekday: 'Tuesday',
+      startIso: '2026-08-11T13:00:00.000Z',
+      endIso: '2026-08-11T16:00:00.000Z',
+      minutes: 180,
+    },
+  ],
+  warningThresholdPercent: 60,
+  dataQuality: [],
+} as unknown as Awaited<ReturnType<UtilisationService['summary']>>;
+
 const KPI_FIXTURE: DashboardKpisResponse = {
   rangeStart: '2026-07-21T00:00:00.000Z',
   rangeEnd: '2026-07-28T00:00:00.000Z',
@@ -202,6 +238,7 @@ function makeRegistry(
   dashboard?: Partial<DashboardService>,
   kpi?: Partial<KpiService>,
   labAppointments?: Partial<LabAppointmentsService>,
+  utilisation?: Partial<UtilisationService>,
 ): ZacToolRegistryService {
   const dashboardFake = dashboard ?? { kpis: jest.fn().mockResolvedValue(KPI_FIXTURE) };
   const kpiFake = kpi ?? { myKpi: jest.fn().mockResolvedValue(MY_KPI_FIXTURE) };
@@ -211,10 +248,14 @@ function makeRegistry(
       today: jest.fn().mockResolvedValue(MY_SCHEDULE_FIXTURE),
       list: jest.fn().mockResolvedValue(MY_SCHEDULE_LIST_FIXTURE),
     };
+  const utilisationFake = utilisation ?? {
+    summary: jest.fn().mockResolvedValue(UTILISATION_FIXTURE),
+  };
   return new ZacToolRegistryService(
     dashboardFake as DashboardService,
     kpiFake as KpiService,
     labFake as LabAppointmentsService,
+    utilisationFake as UtilisationService,
   );
 }
 
@@ -501,12 +542,29 @@ describe('ZacToolRegistryService', () => {
     const { result } = await registry.dispatch(
       OWNER_ALL,
       contextWith({ roleContext: 'owner', roles: ['owner'] }),
-      'report.utilisation_summary',
+      'qlab.colour_analytics',
       {},
     );
 
     expect(result.status).toBe('not_connected');
     expect(result.data).toBeNull();
+  });
+
+  it('dispatches the live utilisation tool through the guarded service', async () => {
+    const summary = jest.fn().mockResolvedValue(UTILISATION_FIXTURE);
+    const liveRegistry = makeRegistry(undefined, undefined, undefined, { summary });
+
+    const { result } = await liveRegistry.dispatch(
+      OWNER_ALL,
+      contextWith({ roleContext: 'owner', roles: ['owner'] }),
+      'report.utilisation_summary',
+      { period: 'week' },
+    );
+
+    expect(summary).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe('ok');
+    expect(result.presentation?.answer).toContain('61%');
+    expect(result.presentation?.answer).toContain('Tuesday');
   });
 
   describe('staff performance tools (Week 3)', () => {

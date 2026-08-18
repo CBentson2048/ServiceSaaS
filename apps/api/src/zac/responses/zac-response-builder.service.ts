@@ -4,12 +4,32 @@ import type { ZacMemoryItem, ZacMemoryRecallSubject } from '../memory/zac-memory
 import { ZAC_MEMORY_KIND_LABELS } from '../memory/zac-memory.types';
 import type { ZacModelCompletion } from '../models/zac-model-provider.interface';
 import type { ZacRoleProfile } from '../roles/zac-role-profile.types';
+import type { ZacRequestMode } from '../routing/zac-request-mode.types';
 import type {
   ZacReadOnlyTool,
   ZacToolDispatchTrace,
+  ZacToolName,
   ZacToolResult,
 } from '../tools/zac-tool.types';
 import type { ZacEvidenceItem, ZacResponse, ZacTechnicalDetails } from './zac-response.types';
+
+/** Advisory modes: answered by reasoning, never by an operational tool. */
+type ZacAdvisoryMode = Extract<ZacRequestMode, 'general_advice' | 'hypothetical' | 'conversational'>;
+
+/** Human labels for permission explainability — categories, never record details. */
+const TOOL_AREA_LABELS: Partial<Record<ZacToolName, string>> = {
+  'context.business_summary': 'your business context — name, locations and what your role covers',
+  'context.location_summary': 'the locations you can see',
+  'report.business_health': 'business health snapshots — bookings, revenue and rebooking activity',
+  'report.kpi_summary': 'team KPI standing against targets',
+  'report.rebooking_summary': 'rebooking rates and sources',
+  'report.stylist_performance': 'stylist performance summaries',
+  'report.utilisation_summary': 'utilisation reporting',
+  'qlab.colour_analytics': 'QLAB colour usage and waste analytics',
+  'inventory.stock_status': 'stock levels and low-stock alerts',
+  'schedule.my_appointments': 'your own diary (today and tomorrow)',
+  'kpi.personal_coaching': 'your own KPIs and personal coaching',
+};
 
 interface ControlledTestResponseInput {
   context: ZacActingContext;
@@ -553,6 +573,246 @@ export class ZacResponseBuilderService {
       source_ref: `memory:${item.kind}:${item.topic}`,
       as_of: item.updatedAt,
       entities_used: [],
+    };
+  }
+
+  /**
+   * A model-reasoned answer for an advisory mode (general advice, hypothetical,
+   * conversational). No tool ran, and the response says so structurally: the
+   * evidence is a zac.reasoning marker, never QLOOQO evidence, and the
+   * limitations state exactly where the figures may come from.
+   */
+  buildAdvisoryResponse(
+    input: MemoryResponseBaseInput & { mode: ZacAdvisoryMode; narratedAnswer: string },
+  ): ZacResponse {
+    const { context, visibleTools, completion, traceId, mode, narratedAnswer } = input;
+
+    const limitations: Record<ZacAdvisoryMode, string[]> = {
+      general_advice: [
+        'This is general guidance — no QLOOQO business data was read for this answer.',
+        'Ask about your own figures (e.g. "How is my business doing?") for a data-backed view.',
+      ],
+      hypothetical: [
+        'This answers the scenario you supplied — the figures come from your question (and your stated goals), not from live QLOOQO data.',
+        'No QLOOQO business data was read for this answer.',
+      ],
+      conversational: [
+        'This continues our conversation — no fresh QLOOQO business data was read for this answer.',
+      ],
+    };
+
+    return {
+      conversation_id: input.conversationId,
+      answer: narratedAnswer,
+      role_context: context.roleContext,
+      response_type: mode === 'hypothetical' ? 'Coaching Point' : 'Explanation',
+      evidence: [
+        {
+          source_type: 'zac.reasoning',
+          source_ref: `advisory:${mode}`,
+          as_of: null,
+          entities_used: [],
+        },
+      ],
+      confidence: 'medium',
+      limitations: limitations[mode],
+      suggested_next_step:
+        mode === 'conversational'
+          ? null
+          : 'Want this grounded in your own numbers? Ask me about your live figures.',
+      measurement_hook: null,
+      attribution_seed: null,
+      memory_updates: [],
+      tool_calls: [],
+      cost_metadata: this.costMetadata(completion),
+      technical_details: {
+        ...this.technicalDetails(visibleTools, completion),
+        foundation_mode: false,
+      },
+      trace_id: traceId,
+    };
+  }
+
+  /**
+   * Honest fallback when an advisory mode cannot run (no narrating provider,
+   * or the call failed): say what ZAC can't do right now instead of forcing an
+   * unrelated tool or inventing advice.
+   */
+  buildAdvisoryUnavailableResponse(
+    input: MemoryResponseBaseInput & { mode: ZacAdvisoryMode },
+  ): ZacResponse {
+    const { context, profile, visibleTools, completion, traceId, mode } = input;
+
+    // Accurate for every arrival path: provider absent, call failed, OR the
+    // answer was rejected by a safety check — in all cases no reliable
+    // reasoned answer exists right now, and ZAC won't guess.
+    const answer =
+      mode === 'conversational'
+        ? 'Happy to keep chatting — I can\'t go deeper on that right now, but for anything detailed, ask me about your business data directly (for example "How is my business doing?").'
+        : [
+            mode === 'hypothetical'
+              ? "I can't give you a reliable answer to your scenario just now, and I won't guess."
+              : "I can't give you reliable general advice just now, and I won't guess.",
+            'I can still answer from your connected business data — try "How is my business doing?" or "What can you help me with?".',
+          ].join('\n\n');
+
+    return {
+      conversation_id: input.conversationId,
+      answer,
+      role_context: context.roleContext,
+      response_type: 'Refusal / Insufficient Data',
+      evidence: [
+        {
+          source_type: 'zac.reasoning',
+          source_ref: `advisory:${mode}:unavailable`,
+          as_of: null,
+          entities_used: [],
+        },
+      ],
+      confidence: 'high',
+      limitations: [
+        'No QLOOQO business data was read for this answer.',
+        `Data scope for live questions: ${profile.scopeDescription}`,
+      ],
+      suggested_next_step: 'Ask a question about your live business data instead.',
+      measurement_hook: null,
+      attribution_seed: null,
+      memory_updates: [],
+      tool_calls: [],
+      cost_metadata: this.costMetadata(completion),
+      technical_details: this.technicalDetails(visibleTools, completion),
+      trace_id: traceId,
+    };
+  }
+
+  /** Deterministic reply to a bare acknowledgement — no model, no tool, no cost. */
+  buildAcknowledgementResponse(input: MemoryResponseBaseInput): ZacResponse {
+    const { context, visibleTools, completion, traceId } = input;
+
+    return {
+      conversation_id: input.conversationId,
+      answer: "You're welcome! Anything else about your business I can help with?",
+      role_context: context.roleContext,
+      response_type: 'Explanation',
+      evidence: [
+        {
+          source_type: 'zac.reasoning',
+          source_ref: 'advisory:conversational',
+          as_of: null,
+          entities_used: [],
+        },
+      ],
+      confidence: 'high',
+      limitations: ['No QLOOQO business data was read for this answer.'],
+      suggested_next_step: null,
+      measurement_hook: null,
+      attribution_seed: null,
+      memory_updates: [],
+      tool_calls: [],
+      cost_metadata: this.costMetadata(completion),
+      technical_details: this.technicalDetails(visibleTools, completion),
+      trace_id: traceId,
+    };
+  }
+
+  /**
+   * Permission explainability, generated from the EFFECTIVE capability state
+   * of this exact request: the actor's resolved permissions filter the
+   * accessible tool set, permission gaps are computed against their role (not
+   * hardcoded per role name), and the privacy + read-only boundaries are the
+   * ones the code actually enforces. Descriptive only — nothing here grants,
+   * and dispatch re-checks everything regardless of what this answer says.
+   */
+  buildPermissionExplanationResponse(
+    input: MemoryResponseBaseInput & { gapTools: ZacReadOnlyTool[] },
+  ): ZacResponse {
+    const { context, profile, visibleTools, completion, traceId, gapTools } = input;
+
+    const label = (tool: ZacReadOnlyTool): string => TOOL_AREA_LABELS[tool.name] ?? tool.description;
+    const accessible = visibleTools.filter((tool) => tool.enabled && tool.name !== 'context.capabilities');
+    const comingSoon = visibleTools.filter((tool) => !tool.enabled);
+
+    const lines: string[] = [];
+    lines.push(
+      `Here's your current ZAC access as ${profile.displayName.toLowerCase()}${context.businessName ? ` at ${context.businessName}` : ''} — based on your effective permissions right now, not just your role name.`,
+    );
+    lines.push(
+      `Scope: ${profile.scopeDescription}${
+        context.accessibleLocations.length > 0
+          ? ` You can see ${context.accessibleLocations.length} location${context.accessibleLocations.length === 1 ? '' : 's'}.`
+          : ''
+      }`,
+    );
+
+    lines.push(
+      accessible.length > 0
+        ? `You CAN access, through me:\n${accessible.map((tool) => `• ${label(tool)}`).join('\n')}`
+        : 'Right now no live data areas are open to you through me — your capability questions and saved memories still work.',
+    );
+    if (comingSoon.length > 0) {
+      lines.push(
+        `Planned for your access, not connected yet:\n${comingSoon.map((tool) => `• ${label(tool)}`).join('\n')}`,
+      );
+    }
+
+    const boundaries: string[] = [];
+    // Unconnected skeletons are "coming soon" for everyone — only a CONNECTED
+    // tool the actor's permissions block is honestly a permission boundary.
+    for (const tool of gapTools.filter((tool) => tool.enabled)) {
+      boundaries.push(
+        `${label(tool)} — your role could hold this, but your current security level doesn't include the permission it needs.`,
+      );
+    }
+    if (context.roleContext === 'stylist') {
+      boundaries.push(
+        'business-wide reports, financials, other team members’ performance and client lists — owner and manager territory.',
+      );
+    }
+    if (context.roleContext === 'manager') {
+      boundaries.push('anything outside your assigned locations.');
+    }
+    boundaries.push('data belonging to other businesses — never, under any phrasing.');
+    lines.push(`You CANNOT access:\n${boundaries.map((boundary) => `• ${boundary}`).join('\n')}`);
+
+    lines.push(
+      context.roleContext === 'stylist'
+        ? 'Privacy: your coaching notes and preferences are saved privately to you — owners and managers can never read them through ZAC. In turn, colleagues’ private notes are never visible to you.'
+        : 'Privacy: stylists’ private coaching notes are never visible to you through ZAC, whatever your permissions — that boundary is fixed. Business goals and team themes saved for your scope are shared as designed.',
+    );
+
+    lines.push(
+      'And whatever your permissions, ZAC itself is read-only in Phase 1: I cannot create or change bookings, edit clients, change staff or stock, alter prices, take payments, or send messages.',
+    );
+
+    return {
+      conversation_id: input.conversationId,
+      answer: lines.join('\n\n'),
+      role_context: context.roleContext,
+      response_type: 'Explanation',
+      evidence: [
+        {
+          source_type: 'zac.permissions',
+          source_ref: 'effective-permission-context',
+          as_of: null,
+          entities_used: [],
+        },
+      ],
+      confidence: 'high',
+      limitations: [
+        'This reflects your effective permissions at this moment — security-level changes apply from your next question.',
+        'Describing an area never grants it: every data request is permission-checked again when it runs.',
+      ],
+      suggested_next_step:
+        accessible.length > 0
+          ? 'Ask about any of the areas above — or ask an owner to adjust your security level if something you need is missing.'
+          : 'Ask an owner to review your security level if you need data access through ZAC.',
+      measurement_hook: null,
+      attribution_seed: null,
+      memory_updates: [],
+      tool_calls: [],
+      cost_metadata: this.costMetadata(completion),
+      technical_details: this.technicalDetails(visibleTools, completion),
+      trace_id: traceId,
     };
   }
 }

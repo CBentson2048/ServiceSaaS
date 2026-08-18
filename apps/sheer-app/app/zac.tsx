@@ -105,6 +105,10 @@ export default function ZacScreen() {
         setResponse(result);
         setAskedQuestion(trimmed);
         setQuestion('');
+        // Fresh answer, fresh feedback state.
+        setFeedbackSelected(null);
+        setFeedbackFailed(false);
+        setFeedbackPermanent(false);
       } catch (err) {
         setResponse(null);
         setAskedQuestion(null);
@@ -133,7 +137,46 @@ export default function ZacScreen() {
     setAskedQuestion(null);
     setError(null);
     setDevOpen(false);
+    setFeedbackSelected(null);
+    setFeedbackFailed(false);
+    setFeedbackPermanent(false);
   }, []);
+
+  // Feedback state for the CURRENT answer (reset on every new response).
+  const [feedbackSelected, setFeedbackSelected] = useState<'useful' | 'not_useful' | null>(null);
+  const [feedbackSaving, setFeedbackSaving] = useState<'useful' | 'not_useful' | null>(null);
+  const [feedbackFailed, setFeedbackFailed] = useState(false);
+  const [feedbackPermanent, setFeedbackPermanent] = useState(false);
+
+  // Which output the feedback UI currently belongs to: a slow in-flight vote
+  // for answer A must never paint state onto answer B's row.
+  const feedbackOutputRef = useRef<string | null>(null);
+  feedbackOutputRef.current = response?.output_id ?? null;
+
+  const sendFeedback = useCallback(
+    async (rating: 'useful' | 'not_useful') => {
+      const outputId = response?.output_id;
+      if (!outputId || !accessToken || feedbackSaving) return;
+      setFeedbackSaving(rating);
+      setFeedbackFailed(false);
+      try {
+        await api.submitZacFeedback(accessToken, outputId, rating);
+        if (feedbackOutputRef.current === outputId) setFeedbackSelected(rating);
+      } catch (err) {
+        // Honest failure: never show a saved state the server rejected — and
+        // never paint a stale failure onto a different answer's row.
+        if (feedbackOutputRef.current === outputId) {
+          setFeedbackFailed(true);
+          setFeedbackPermanent(err instanceof ApiError && [401, 403, 404].includes(err.status));
+        }
+      } finally {
+        // Unconditional: a stale in-flight vote must never leave the new
+        // answer's buttons stuck on "Saving…".
+        setFeedbackSaving(null);
+      }
+    },
+    [accessToken, feedbackSaving, response],
+  );
 
   const badge = response ? RESPONSE_TYPE_BADGES[response.response_type] : undefined;
   const followUp = response?.suggested_next_step
@@ -301,6 +344,62 @@ export default function ZacScreen() {
                   </View>
 
                   <Text style={s.answerText}>{response.answer}</Text>
+
+                  {response.output_id ? (
+                    <View style={s.feedbackRow}>
+                      <Text style={s.feedbackLabel}>Was this useful?</Text>
+                      <Pressable
+                        onPress={() => void sendFeedback('useful')}
+                        disabled={feedbackSaving !== null}
+                        style={({ pressed }) => [
+                          s.feedbackBtn,
+                          feedbackSelected === 'useful' && s.feedbackBtnActive,
+                          pressed && s.pressed,
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Mark this answer useful"
+                      >
+                        <Text
+                          style={[
+                            s.feedbackBtnText,
+                            feedbackSelected === 'useful' && s.feedbackBtnTextActive,
+                          ]}
+                        >
+                          {feedbackSaving === 'useful' ? 'Saving…' : 'Useful'}
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => void sendFeedback('not_useful')}
+                        disabled={feedbackSaving !== null}
+                        style={({ pressed }) => [
+                          s.feedbackBtn,
+                          feedbackSelected === 'not_useful' && s.feedbackBtnActive,
+                          pressed && s.pressed,
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Mark this answer not useful"
+                      >
+                        <Text
+                          style={[
+                            s.feedbackBtnText,
+                            feedbackSelected === 'not_useful' && s.feedbackBtnTextActive,
+                          ]}
+                        >
+                          {feedbackSaving === 'not_useful' ? 'Saving…' : 'Not useful'}
+                        </Text>
+                      </Pressable>
+                      {feedbackSelected && !feedbackFailed ? (
+                        <Text style={s.feedbackNote}>Thanks — noted.</Text>
+                      ) : null}
+                      {feedbackFailed ? (
+                        <Text style={s.feedbackError}>
+                          {feedbackPermanent
+                            ? 'Feedback isn’t available for this answer.'
+                            : 'Couldn’t save — try again.'}
+                        </Text>
+                      ) : null}
+                    </View>
+                  ) : null}
 
                   {response.suggested_next_step ? (
                     <View style={s.nextStep}>
@@ -499,6 +598,26 @@ const s = StyleSheet.create({
     paddingVertical: spacing.xs,
   },
   newChatLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 12, fontWeight: '600' },
+  feedbackRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.base,
+  },
+  feedbackLabel: { color: 'rgba(255,255,255,0.5)', fontSize: 12 },
+  feedbackBtn: {
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: BORDER,
+    paddingHorizontal: spacing.base,
+    paddingVertical: spacing.xs,
+  },
+  feedbackBtnActive: { borderColor: BRAND, backgroundColor: 'rgba(124,77,255,0.18)' },
+  feedbackBtnText: { color: 'rgba(255,255,255,0.72)', fontSize: 12, fontWeight: '600' },
+  feedbackBtnTextActive: { color: palette.white },
+  feedbackNote: { color: 'rgba(255,255,255,0.5)', fontSize: 11.5 },
+  feedbackError: { color: '#ff8a80', fontSize: 11.5 },
 
   scrollView: { flex: 1 },
   scroll: { paddingHorizontal: spacing.lg, paddingBottom: spacing['4xl'], gap: spacing.base },

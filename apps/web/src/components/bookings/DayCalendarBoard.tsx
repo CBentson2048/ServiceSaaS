@@ -7,7 +7,7 @@ import type {
   RotaStaffSummary,
   StaffBookingSummary,
 } from '@sheer/domain';
-import { computeDailyUtilisation } from '@sheer/domain';
+import { computeDailyUtilisation, UTILISATION_BOOKED_STATUSES } from '@sheer/domain';
 import { formatTime, isSameLocalDay, toIsoDate } from '../rota/dateUtils';
 
 function CalendarEmptyIcon(props: SVGProps<SVGSVGElement>) {
@@ -2159,15 +2159,9 @@ function buildColumns(input: {
   return columns;
 }
 
-// Statuses that occupy the stylist's time and so count toward utilisation.
-// Cancelled / rejected / no-show appointments free the slot up again.
-const UTILISATION_BOOKED_STATUSES: StaffBookingSummary['status'][] = [
-  'pending',
-  'accepted',
-  'checked_in',
-  'awaiting_payment',
-  'paid',
-];
+// Statuses that occupy the stylist's time and so count toward utilisation —
+// the shared domain list, so web and the server utilisation summary agree.
+const BOOKED_STATUSES: readonly StaffBookingSummary['status'][] = UTILISATION_BOOKED_STATUSES;
 
 // Stylist-occupied milliseconds an appointment contributes on the given day.
 // Mirrors the calendar's per-service occupied runs (development/stylist-free
@@ -2235,7 +2229,7 @@ function columnUtilisation(
     }));
 
   const bookedMs = bookings
-    .filter((booking) => UTILISATION_BOOKED_STATUSES.includes(booking.status))
+    .filter((booking) => BOOKED_STATUSES.includes(booking.status))
     .reduce((sum, booking) => sum + bookingOccupiedMs(booking, dayStartMs, dayEndMs), 0);
 
   return computeDailyUtilisation({

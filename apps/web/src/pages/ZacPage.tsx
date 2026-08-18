@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { FormEvent, KeyboardEvent } from 'react';
 import { AppButton, AppCard, StatusBadge } from '../design';
 import { useAuth } from '../auth/AuthProvider';
-import { ApiRequestError, askZac } from '../auth/api';
+import { ApiRequestError, askZac, submitZacFeedback } from '../auth/api';
 import type { ZacAskResponse } from '../auth/api';
 import {
   ZAC_EVIDENCE_SOURCE_LABELS,
@@ -14,6 +14,7 @@ import {
   extractQuotedQuestion,
   formatEvidenceDate,
   zacFriendlyError,
+  ZacFeedbackControls,
 } from '../components/zac/zac-presentation';
 import type { ZacAskError } from '../components/zac/zac-presentation';
 
@@ -249,6 +250,15 @@ export function ZacPage() {
                 <p className="whitespace-pre-line text-[14px] leading-6 text-text-primary">
                   {response.answer}
                 </p>
+                {response.output_id && accessToken ? (
+                  <ZacFeedbackControls
+                    key={response.output_id}
+                    outputId={response.output_id}
+                    submit={async (outputId, rating) => {
+                      await submitZacFeedback(accessToken, outputId, rating);
+                    }}
+                  />
+                ) : null}
               </div>
             </div>
 

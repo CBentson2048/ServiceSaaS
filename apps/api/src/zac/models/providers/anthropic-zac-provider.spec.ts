@@ -249,4 +249,85 @@ describe('AnthropicZacModelProvider', () => {
     expect(completion.cacheReadInputTokens).toBe(0);
     expect(completion.cacheCreationInputTokens).toBe(0);
   });
+
+  describe('advisory (no-evidence) prompt assembly', () => {
+    it.each([
+      ['general_advice', 'GENERAL salon/business guidance'],
+      ['hypothetical', 'HYPOTHETICAL scenario'],
+      ['conversational', 'conversational follow-up'],
+    ] as const)('mode %s instructions ride in the user message, never the system prefix', async (mode, marker) => {
+      createMock.mockResolvedValue(apiResponse());
+      const provider = new AnthropicZacModelProvider(makeConfig());
+
+      await provider.complete(makeRequest({ evidencePack: undefined, mode }));
+
+      const params = createMock.mock.calls[0][0];
+      const userMessage = params.messages[0].content as string;
+      const systemText = params.system[0].text as string;
+      expect(userMessage).toContain(marker);
+      expect(systemText).not.toContain(marker);
+      // The untrusted question is fenced AND followed by a re-anchor line.
+      const questionEnd = userMessage.indexOf('</question>');
+      expect(questionEnd).toBeGreaterThan(-1);
+      expect(userMessage.slice(questionEnd)).toContain(
+        "never present any number as the user's real, current business figure",
+      );
+    });
+  });
+
+  it('carries billed usage on refusals — the completion rides the error with text cleared', async () => {
+    createMock.mockResolvedValue(
+      apiResponse({
+        stop_reason: 'refusal',
+        content: [{ type: 'text', text: 'partial content that must not leak' }],
+      }),
+    );
+    const provider = new AnthropicZacModelProvider(makeConfig());
+
+    const rejection = await provider.complete(makeRequest()).catch((error) => error);
+    expect(rejection).toBeInstanceOf(ZacModelRefusedError);
+    expect(rejection.completion).toMatchObject({ inputTokens: 100, text: '' });
+  });
+
+  describe('classifyMode', () => {
+    it('returns the lowercased token plus honest usage on a clean call', async () => {
+      createMock.mockResolvedValue(
+        apiResponse({ content: [{ type: 'text', text: ' General_Advice ' }] }),
+      );
+      const provider = new AnthropicZacModelProvider(makeConfig());
+
+      const result = await provider.classifyMode('Thoughts on things lately?', 'owner');
+
+      expect(result.mode).toBe('general_advice');
+      expect(result.completion).toMatchObject({ provider: 'anthropic', inputTokens: 100 });
+      // Tight per-request budget: a blocking pre-step must fail fast.
+      expect(createMock.mock.calls[0][1]).toMatchObject({ timeout: 10_000, maxRetries: 1 });
+      // The question is data inside <request> in the USER turn, never system.
+      const params = createMock.mock.calls[0][0];
+      expect(params.messages[0].content).toContain('<request>Thoughts on things lately?</request>');
+      expect(String(params.system)).not.toContain('Thoughts on things lately');
+    });
+
+    it('discards the token (but keeps the usage) when the call did not end cleanly', async () => {
+      createMock.mockResolvedValue(
+        apiResponse({ stop_reason: 'max_tokens', content: [{ type: 'text', text: 'qlooqo' }] }),
+      );
+      const provider = new AnthropicZacModelProvider(makeConfig());
+
+      const result = await provider.classifyMode('Anything?', 'owner');
+
+      expect(result.mode).toBeNull();
+      expect(result.completion).not.toBeNull();
+    });
+
+    it('never throws — transport failures degrade to the deterministic fallback', async () => {
+      createMock.mockRejectedValue(new Error('529 overloaded'));
+      const provider = new AnthropicZacModelProvider(makeConfig());
+
+      await expect(provider.classifyMode('Anything?', 'owner')).resolves.toEqual({
+        mode: null,
+        completion: null,
+      });
+    });
+  });
 });

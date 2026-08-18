@@ -2557,6 +2557,9 @@ export interface ZacTechnicalDetails {
   provider: string;
   model: string;
   detected_intent?: string;
+  /** How the turn was answered (e.g. 'qlooqo_data', 'general_advice', 'hypothetical'). */
+  request_mode?: string;
+  classification_source?: string;
 }
 
 export interface ZacMemoryUpdate {
@@ -2582,6 +2585,14 @@ export interface ZacAskResponse {
   trace_id: string;
   /** Send back as `conversationId` to continue the thread; null = the turn ran stateless. */
   conversation_id: string | null;
+  /** Persisted output id for feedback; null/absent when the turn produced no meaningful output. */
+  output_id?: string | null;
+}
+
+export interface ZacFeedbackResponse {
+  output_id: string;
+  rating: 'useful' | 'not_useful';
+  recorded: true;
 }
 
 export async function askZac(
@@ -2591,6 +2602,19 @@ export async function askZac(
   return request<ZacAskResponse>('/zac/ask', {
     method: 'POST',
     body: payload,
+    accessToken,
+  });
+}
+
+/** Useful/not-useful vote on a ZAC output. One active vote per user; resubmitting updates it. */
+export async function submitZacFeedback(
+  accessToken: string,
+  outputId: string,
+  rating: 'useful' | 'not_useful',
+): Promise<ZacFeedbackResponse> {
+  return request<ZacFeedbackResponse>(`/zac/outputs/${outputId}/feedback`, {
+    method: 'POST',
+    body: { rating },
     accessToken,
   });
 }

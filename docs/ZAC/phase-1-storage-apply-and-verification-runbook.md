@@ -137,7 +137,10 @@ Then confirm the CLI's view matches reality:
 supabase migration list --linked   # 0076/0077 applied; 0078/0079 pending
 ```
 
-> If 0077 is ever replayed for any reason, **re-apply 0079 immediately afterwards.**
+> If 0077 is ever replayed for any reason, **re-apply 0079 (file 0080) AND 0090
+> immediately afterwards** — a replay reinstates 0077's defective messages
+> policy and its owner-wide outputs/outcome policies, which 0080 and 0090
+> respectively correct.
 
 ---
 
@@ -153,9 +156,14 @@ order is safe; `db push` applies them in numeric order regardless.
 
 On a fresh environment with none of these applied, the natural order 0076 → 0077 →
 0078 → 0079 produces the correct end state. The later ZAC migrations follow the
-same flow: `0081` (zac.access for manager/stylist system levels) and `0089`
-(memory lifecycle columns) are both additive and apply cleanly via `db push` in
-numeric order.
+same flow: `0081` (zac.access for manager/stylist system levels), `0089`
+(memory lifecycle columns) and `0090` (measurement spine: output correlation
+columns, nullable cost estimates, feedback vote uniqueness, outputs privacy
+policy) are all additive and apply cleanly via `db push` in numeric order.
+Note 0090 makes the outputs/tool_calls/cost_events/feedback/outcome_events
+tables LIVE at runtime — the API writes the measurement spine every turn, and
+the useful/not-useful feedback endpoint fails hard (a visible error) if the
+schema is not applied/exposed.
 
 ---
 

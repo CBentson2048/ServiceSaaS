@@ -1,4 +1,8 @@
 import type { ZacRoleContext } from '../context/zac-context.types';
+import type {
+  ZacClassificationSource,
+  ZacRequestMode,
+} from '../routing/zac-request-mode.types';
 import type { ZacToolDispatchTrace } from '../tools/zac-tool.types';
 
 /** The seven ZAC response types (decision D19). */
@@ -69,6 +73,10 @@ export interface ZacTechnicalDetails {
   model: string;
   /** Set when an intent was recognised but its tool is not connected (e.g. 'staff.members'). */
   detected_intent?: string;
+  /** How this turn was answered (closed enum; decided server-side). */
+  request_mode?: ZacRequestMode;
+  /** Who decided the mode: deterministic rules, the model, or the safe default. */
+  classification_source?: ZacClassificationSource;
 }
 
 /**
@@ -97,6 +105,20 @@ export interface ZacResponse {
    * storage was unavailable and the turn ran stateless (fail-soft).
    */
   conversation_id: string | null;
+  /**
+   * The persisted output this answer produced — the id feedback is submitted
+   * against. Null when the turn produced no meaningful output (acknowledgement,
+   * refusal, meta answer) or output storage was unavailable. Stamped by the
+   * orchestrator after the measurement flush; opaque to clients.
+   */
+  output_id?: string | null;
+}
+
+/** Wire result of POST /zac/outputs/:outputId/feedback. */
+export interface ZacFeedbackResponse {
+  output_id: string;
+  rating: 'useful' | 'not_useful';
+  recorded: true;
 }
 
 /** Operational check response: reachable + which provider would answer. No model call. */

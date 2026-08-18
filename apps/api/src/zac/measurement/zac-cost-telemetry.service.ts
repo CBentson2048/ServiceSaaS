@@ -15,7 +15,7 @@ export interface ZacCostEvent {
   role_context: ZacRoleContext;
   provider: string;
   model: string;
-  task_type: 'qa';
+  task_type: 'qa' | 'classification';
   input_tokens: number;
   output_tokens: number;
   reasoning_tokens: number;
@@ -47,7 +47,17 @@ export type ZacSpineEventName =
   /** A remember-request was refused (sensitive content, or memory unavailable). */
   | 'memory_declined'
   /** A ZAC-owned write failed; the turn degraded instead of erroring. */
-  | 'persistence_failed';
+  | 'persistence_failed'
+  /** The turn's request mode was decided (mode + source metadata only). */
+  | 'request_classified'
+  /** A meaningful output row was persisted (ids/metadata only). */
+  | 'output_persisted'
+  /** A useful/not-useful vote was stored. */
+  | 'feedback_recorded'
+  /** An explicit outcome event was stored (never inferred). */
+  | 'outcome_recorded'
+  /** Real model usage persisted without a monetary estimate (ZAC_PRICE_* unset). */
+  | 'cost_estimate_unavailable';
 
 export interface ZacSpineEventMetadata {
   trace_id: string;

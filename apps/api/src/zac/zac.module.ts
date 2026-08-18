@@ -7,10 +7,13 @@ import { LabAppointmentsModule } from '../lab-appointments/lab-appointments.modu
 import { ZacContextService } from './context/zac-context.service';
 import { ZacConversationService } from './conversation/zac-conversation.service';
 import { ZacCostTelemetryService } from './measurement/zac-cost-telemetry.service';
+import { ZacMeasurementService } from './measurement/zac-measurement.service';
 import { ZacMemoryExtractionService } from './memory/zac-memory-extraction.service';
 import { ZacMemoryService } from './memory/zac-memory.service';
 import { ZacConversationStore } from './persistence/zac-conversation.store';
+import { ZacMeasurementStore } from './persistence/zac-measurement.store';
 import { ZacMemoryStore } from './persistence/zac-memory.store';
+import { ZacRequestModeClassifierService } from './routing/zac-request-mode-classifier.service';
 import { AnthropicZacModelProvider } from './models/providers/anthropic-zac-provider';
 import { StubZacModelProvider } from './models/providers/stub-zac-provider';
 import { ZAC_MODEL_PROVIDER } from './models/zac-model-provider.interface';
@@ -44,9 +47,12 @@ import { ZacService } from './zac.service';
     ZacCostTelemetryService,
     ZacConversationStore,
     ZacMemoryStore,
+    ZacMeasurementStore,
     ZacConversationService,
     ZacMemoryExtractionService,
     ZacMemoryService,
+    ZacRequestModeClassifierService,
+    ZacMeasurementService,
     {
       provide: ZAC_MODEL_PROVIDER,
       inject: [ConfigService],

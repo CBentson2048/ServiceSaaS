@@ -12,9 +12,16 @@ import { ZacContextService } from './context/zac-context.service';
 import { ZacConversationService } from './conversation/zac-conversation.service';
 import type { ZacConversationState } from './conversation/zac-conversation.service';
 import { ZacCostTelemetryService } from './measurement/zac-cost-telemetry.service';
+import type { ZacCostEvent } from './measurement/zac-cost-telemetry.service';
+import { ZacMeasurementService } from './measurement/zac-measurement.service';
 import { ZacMemoryExtractionService } from './memory/zac-memory-extraction.service';
 import { ZacMemoryService } from './memory/zac-memory.service';
 import { containsForbiddenMemoryContent } from './memory/zac-redaction';
+import { ZacRequestModeClassifierService } from './routing/zac-request-mode-classifier.service';
+import type {
+  ZacRequestClassification,
+  ZacRequestMode,
+} from './routing/zac-request-mode.types';
 import {
   ZAC_MODEL_PROVIDER,
   ZacModelIncompleteError,
@@ -23,17 +30,27 @@ import {
 import type { ZacModelEvidencePack } from './models/zac-model-provider.interface';
 import type { ZacModelProvider } from './models/zac-model-provider.interface';
 import { ZacResponseBuilderService } from './responses/zac-response-builder.service';
-import type { ZacHealthResponse, ZacResponse } from './responses/zac-response.types';
+import type {
+  ZacFeedbackResponse,
+  ZacHealthResponse,
+  ZacResponse,
+} from './responses/zac-response.types';
 import { ZacRoleProfileService } from './roles/zac-role-profile.service';
 import { ZacToolRegistryService } from './tools/zac-tool-registry.service';
 import { ZacRolloutService } from './zac-rollout.service';
 import type { ZacAskRequestDto } from './dto/zac-ask-request.dto';
+import type { ZacFeedbackRequestDto } from './dto/zac-feedback-request.dto';
 
-/** What one narration attempt produced. `liveCompletion` is set ONLY when a real model call succeeded. */
+/**
+ * What one narration attempt produced. `liveCompletion` is set whenever the
+ * call BILLED (success, truncation, refusal-with-usage); `latencyMs` measures
+ * the model call itself, not the turn.
+ */
 interface ZacNarration {
   completion: ZacModelCompletion;
   liveCompletion: ZacModelCompletion | null;
   narratedAnswer: string | null;
+  latencyMs: number;
 }
 
 @Injectable()
@@ -48,6 +65,8 @@ export class ZacService {
     private readonly conversations: ZacConversationService,
     private readonly memoryExtraction: ZacMemoryExtractionService,
     private readonly memory: ZacMemoryService,
+    private readonly requestModes: ZacRequestModeClassifierService,
+    private readonly measurement: ZacMeasurementService,
     @Inject(ZAC_MODEL_PROVIDER) private readonly modelProvider: ZacModelProvider,
   ) {}
 
@@ -95,6 +114,11 @@ export class ZacService {
       conversation_id: conversation.conversationId,
     });
 
+    // Every real model call this turn (narration, classification, truncated
+    // calls that still billed) collects here and flushes to zac.cost_events
+    // at the end of the turn, linked to the persisted output.
+    const costEvents: ZacCostEvent[] = [];
+
     const response = await this.answer(
       actor,
       context,
@@ -104,6 +128,7 @@ export class ZacService {
       request,
       traceId,
       startedAt,
+      costEvents,
     );
 
     // Structural summaries only (D32): intents and response types, never the
@@ -119,6 +144,16 @@ export class ZacService {
         response.cost_metadata.output_tokens > 0 ? response.cost_metadata.output_tokens : null,
     });
 
+    // Measurement spine (fail-soft): output record, tool-call metadata and
+    // cost events, all correlated by trace_id/conversation_id.
+    const measurement = await this.measurement.persistTurn(
+      context,
+      conversation,
+      traceId,
+      response,
+      costEvents,
+    );
+
     this.telemetry.recordSpineEvent('answer_delivered', {
       trace_id: traceId,
       business_id: context.businessId,
@@ -129,7 +164,7 @@ export class ZacService {
       conversation_id: conversation.conversationId,
     });
 
-    return response;
+    return { ...response, output_id: measurement.outputId };
   }
 
   /** Route one question to the memory paths or the tool/narration pipeline. */
@@ -142,6 +177,7 @@ export class ZacService {
     request: ZacAskRequestDto,
     traceId: string,
     startedAt: number,
+    costEvents: ZacCostEvent[],
   ): Promise<ZacResponse> {
     const question = request.question;
     const memoryBase = {
@@ -158,6 +194,11 @@ export class ZacService {
     //    coaching capture — not a restricted-topic refusal.
     const command = this.memoryExtraction.detectCommand(question, context.roleContext);
     if (command) {
+      const memoryMode: ZacRequestClassification = {
+        mode: 'memory',
+        source: 'deterministic',
+        dataInstruction: null,
+      };
       if (containsForbiddenMemoryContent(question)) {
         this.telemetry.recordSpineEvent('memory_declined', {
           trace_id: traceId,
@@ -166,7 +207,7 @@ export class ZacService {
           role_context: context.roleContext,
           reason: 'sensitive_content',
         });
-        return this.responseBuilder.buildMemoryDeclinedResponse(memoryBase);
+        return this.withMode(this.responseBuilder.buildMemoryDeclinedResponse(memoryBase), memoryMode);
       }
       try {
         const captured = await this.memory.capture(
@@ -175,11 +216,14 @@ export class ZacService {
           conversation.conversationId,
           traceId,
         );
-        return this.responseBuilder.buildMemoryStoredResponse({
-          ...memoryBase,
-          item: captured.item,
-          supersededCount: captured.supersededCount,
-        });
+        return this.withMode(
+          this.responseBuilder.buildMemoryStoredResponse({
+            ...memoryBase,
+            item: captured.item,
+            supersededCount: captured.supersededCount,
+          }),
+          memoryMode,
+        );
       } catch {
         // Never claim a memory was stored when it was not.
         this.telemetry.recordSpineEvent('memory_declined', {
@@ -189,18 +233,32 @@ export class ZacService {
           role_context: context.roleContext,
           reason: 'store_unavailable',
         });
-        return this.responseBuilder.buildMemoryUnavailableResponse(memoryBase);
+        return this.withMode(this.responseBuilder.buildMemoryUnavailableResponse(memoryBase), memoryMode);
       }
     }
 
-    // 2. Memory-recall questions answer from persisted memory — before the
-    //    staff intent (which would swallow "…about the team") and before the
-    //    stylist router (visibility rules already protect every scope).
-    const recallSubject = this.memoryExtraction.detectRecallSubject(question);
-    if (recallSubject) {
+    // 2. Request-mode classification: deterministic layers first (memory
+    //    recall, explicit data instructions, permission questions, hypothetical
+    //    and general framing, conversational follow-ups, own-data anchors); the
+    //    model may break ties for genuinely ambiguous questions, validated
+    //    against the closed enum; the fail-safe default is the full data
+    //    pipeline, which is exactly the pre-mode behaviour. The mode decides
+    //    HOW the question is answered — it can never grant data access, because
+    //    every tool dispatch re-checks role + permissions regardless.
+    const classification = await this.classifyRequest(
+      question,
+      context,
+      conversation,
+      traceId,
+      costEvents,
+    );
+
+    if (classification.mode === 'memory') {
+      const recallSubject = this.memoryExtraction.detectRecallSubject(question) ?? 'about_me';
+      let response: ZacResponse;
       try {
         const items = await this.memory.recall(context, recallSubject, traceId);
-        return this.responseBuilder.buildMemoryRecallResponse({
+        response = this.responseBuilder.buildMemoryRecallResponse({
           ...memoryBase,
           subject: recallSubject,
           items,
@@ -215,17 +273,51 @@ export class ZacService {
           role_context: context.roleContext,
           operation: 'memory_recall',
         });
-        return this.responseBuilder.buildMemoryRecallResponse({
+        response = this.responseBuilder.buildMemoryRecallResponse({
           ...memoryBase,
           subject: recallSubject,
           items: [],
           storageUnavailable: true,
         });
       }
+      return this.withMode(response, classification);
     }
 
-    // 3. Normal pipeline. Relevant memory (fail-soft) rides into narration as
-    //    user-stated context; conversation state suppresses reintroduction.
+    if (classification.mode === 'permission_capability') {
+      // Descriptive only, computed from THIS request's effective permissions —
+      // never from the role name, and never granting anything.
+      return this.withMode(
+        this.responseBuilder.buildPermissionExplanationResponse({
+          ...memoryBase,
+          gapTools: this.toolRegistry.permissionGapsFor(actor),
+        }),
+        classification,
+      );
+    }
+
+    if (
+      classification.mode === 'general_advice' ||
+      classification.mode === 'hypothetical' ||
+      classification.mode === 'conversational'
+    ) {
+      return this.withMode(
+        await this.answerAdvisory(
+          context,
+          profile,
+          visibleTools,
+          conversation,
+          question,
+          classification.mode,
+          traceId,
+          costEvents,
+        ),
+        classification,
+      );
+    }
+
+    // 3. qlooqo_data: the full permission-aware pipeline. Relevant memory
+    //    (fail-soft) rides into narration as user-stated context; conversation
+    //    state suppresses reintroduction.
     const relevantMemory = await this.memory.retrieveRelevant(context, question, traceId);
     const modelRequest: ZacModelRequest = {
       question,
@@ -241,12 +333,13 @@ export class ZacService {
 
     let response: ZacResponse;
     let liveCompletion: ZacModelCompletion | null = null;
+    let liveLatencyMs = 0;
 
     const resolvedIntent =
       context.roleContext === 'stylist' ? null : this.resolveIntent(question);
 
     if (context.roleContext === 'stylist') {
-      ({ response, liveCompletion } = await this.answerAsStylist(
+      ({ response, liveCompletion, liveLatencyMs } = await this.answerAsStylist(
         actor,
         context,
         profile,
@@ -298,6 +391,7 @@ export class ZacService {
       } else {
         const narration = await this.narrate(modelRequest, result, intentTool, context, traceId);
         liveCompletion = narration.liveCompletion;
+        liveLatencyMs = narration.latencyMs;
         const toolBackedInput = {
           context,
           profile,
@@ -318,29 +412,275 @@ export class ZacService {
     }
 
     // One cost event per REAL model call (the ZacCostEvent contract) — none
-    // when routing answered deterministically or the provider call failed.
+    // when routing answered deterministically or the provider call failed
+    // without known usage.
     if (liveCompletion) {
-      this.telemetry.recordCostEvent({
-        trace_id: traceId,
-        conversation_id: conversation.conversationId,
-        business_id: context.businessId,
-        location_id: context.locationId,
-        actor_user_id: context.actorUserId,
-        role_context: context.roleContext,
-        provider: liveCompletion.provider,
-        model: liveCompletion.model,
-        task_type: 'qa',
-        input_tokens: liveCompletion.inputTokens,
-        output_tokens: liveCompletion.outputTokens,
-        reasoning_tokens: liveCompletion.reasoningTokens,
-        estimated_cost_usd: liveCompletion.estimatedCostUsd,
-        latency_ms: Date.now() - startedAt,
-        tool_calls_used: response.tool_calls.length,
-        cache_hit: liveCompletion.cacheReadInputTokens > 0,
-      });
+      this.recordQaCostEvent(
+        context,
+        conversation,
+        liveCompletion,
+        response.tool_calls.length,
+        liveLatencyMs,
+        traceId,
+        costEvents,
+      );
     }
 
-    return response;
+    return this.withMode(response, classification);
+  }
+
+  /** Stamp the decided mode into technical_details — one place for every path. */
+  private withMode(response: ZacResponse, classification: ZacRequestClassification): ZacResponse {
+    return {
+      ...response,
+      technical_details: {
+        ...response.technical_details,
+        request_mode: classification.mode,
+        classification_source: classification.source,
+      },
+    };
+  }
+
+  /**
+   * Decide the request mode. Deterministic layers rule; the model may break a
+   * genuine tie into the CLOSED enum only (anything else — including invented
+   * modes — degrades to the qlooqo_data default, which is the pre-mode
+   * pipeline and therefore behaviour-preserving). Classification never touches
+   * authorisation: it selects a handler, and the handlers re-check permissions.
+   */
+  private async classifyRequest(
+    question: string,
+    context: ZacActingContext,
+    conversation: ZacConversationState,
+    traceId: string,
+    costEvents: ZacCostEvent[],
+  ): Promise<ZacRequestClassification> {
+    let classification =
+      this.requestModes.classify(question, context.roleContext) ?? null;
+
+    if (!classification && this.modelProvider.classifyMode) {
+      const classifyStartedAt = Date.now();
+      const result = await this.modelProvider
+        .classifyMode(question, context.roleContext)
+        .catch(() => ({ mode: null, completion: null }));
+      if (result.completion) {
+        const event: ZacCostEvent = {
+          trace_id: traceId,
+          conversation_id: conversation.conversationId,
+          business_id: context.businessId,
+          location_id: context.locationId,
+          actor_user_id: context.actorUserId,
+          role_context: context.roleContext,
+          provider: result.completion.provider,
+          model: result.completion.model,
+          task_type: 'classification',
+          input_tokens: result.completion.inputTokens,
+          output_tokens: result.completion.outputTokens,
+          reasoning_tokens: result.completion.reasoningTokens,
+          estimated_cost_usd: result.completion.estimatedCostUsd,
+          latency_ms: Date.now() - classifyStartedAt,
+          tool_calls_used: 0,
+          cache_hit: result.completion.cacheReadInputTokens > 0,
+        };
+        this.telemetry.recordCostEvent(event);
+        costEvents.push(event);
+      }
+      if (ZacRequestModeClassifierService.isValidMode(result.mode)) {
+        classification = { mode: result.mode, source: 'model', dataInstruction: null };
+      }
+    }
+
+    if (!classification) {
+      classification = { mode: 'qlooqo_data', source: 'fallback', dataInstruction: null };
+    }
+
+    this.telemetry.recordSpineEvent('request_classified', {
+      trace_id: traceId,
+      business_id: context.businessId,
+      actor_user_id: context.actorUserId,
+      role_context: context.roleContext,
+      request_mode: classification.mode,
+      classification_source: classification.source,
+      explicit_data_instruction: classification.dataInstruction,
+      conversation_id: conversation.conversationId,
+    });
+    return classification;
+  }
+
+  /**
+   * Advisory modes: general advice, hypothetical reasoning, conversational
+   * follow-ups. STRUCTURALLY tool-free — this method has no dispatch path, so
+   * no prompt phrasing can reach business data through it. One model call
+   * without an evidence pack; the model reasons from the question, the
+   * conversation summaries and the actor's own visible memory. A narration
+   * that presents any number as the user's live figure is rejected (the
+   * live-claim guard) and the honest deterministic fallback serves instead.
+   */
+  private async answerAdvisory(
+    context: ZacActingContext,
+    profile: ZacRoleProfile,
+    visibleTools: ZacReadOnlyTool[],
+    conversation: ZacConversationState,
+    question: string,
+    mode: Extract<ZacRequestMode, 'general_advice' | 'hypothetical' | 'conversational'>,
+    traceId: string,
+    costEvents: ZacCostEvent[],
+  ): Promise<ZacResponse> {
+    const base = {
+      context,
+      profile,
+      visibleTools,
+      completion: this.noModelCompletion(),
+      traceId,
+      conversationId: conversation.conversationId,
+    };
+
+    // Bare acknowledgements deserve a warm reply, not a model bill.
+    if (mode === 'conversational' && this.requestModes.isPureAcknowledgement(question)) {
+      return this.responseBuilder.buildAcknowledgementResponse(base);
+    }
+
+    if (!this.modelProvider.narrates) {
+      return this.responseBuilder.buildAdvisoryUnavailableResponse({ ...base, mode });
+    }
+
+    const relevantMemory = await this.memory.retrieveRelevant(context, question, traceId);
+    const modelRequest: ZacModelRequest = {
+      question,
+      roleContext: context.roleContext,
+      systemPromptSeed: profile.systemPromptSeed,
+      availableToolNames: visibleTools.map((tool) => tool.name),
+      memoryContext: relevantMemory.map((item) => ({ kind: item.kind, summary: item.content })),
+      conversationState: {
+        firstAssistantTurn: conversation.firstAssistantTurn,
+        recentTurnSummaries: conversation.recentSummaries,
+      },
+      mode,
+    };
+
+    const callStartedAt = Date.now();
+    try {
+      const completion = await this.modelProvider.complete(modelRequest);
+      const latencyMs = Date.now() - callStartedAt;
+      const trimmed = completion.text.trim();
+      this.recordQaCostEvent(context, conversation, completion, 0, latencyMs, traceId, costEvents);
+
+      if (trimmed.length === 0) {
+        // The call billed even though the text is unusable — keep honest usage.
+        return this.responseBuilder.buildAdvisoryUnavailableResponse({ ...base, completion, mode });
+      }
+      if (!this.isAdvisoryAnswerSafe(trimmed)) {
+        this.recordModelFallback(context, traceId, 'zac.advisory', 'live_claim');
+        return this.responseBuilder.buildAdvisoryUnavailableResponse({ ...base, completion, mode });
+      }
+      return this.responseBuilder.buildAdvisoryResponse({
+        ...base,
+        completion,
+        mode,
+        narratedAnswer: trimmed,
+      });
+    } catch (error) {
+      const latencyMs = Date.now() - callStartedAt;
+      if (error instanceof ZacModelIncompleteError) {
+        // Truncated: unusable text, but the call billed.
+        this.recordQaCostEvent(context, conversation, error.completion, 0, latencyMs, traceId, costEvents);
+        this.recordModelFallback(context, traceId, 'zac.advisory', 'truncated');
+        return this.responseBuilder.buildAdvisoryUnavailableResponse({
+          ...base,
+          completion: error.completion,
+          mode,
+        });
+      }
+      if (error instanceof ZacModelRefusedError) {
+        // Refusals bill too when usage is known — keep the cost on the spine.
+        if (error.completion) {
+          this.recordQaCostEvent(context, conversation, error.completion, 0, latencyMs, traceId, costEvents);
+        }
+        this.recordModelFallback(context, traceId, 'zac.advisory', 'refusal');
+        return this.responseBuilder.buildAdvisoryUnavailableResponse({
+          ...base,
+          completion: error.completion ?? base.completion,
+          mode,
+        });
+      }
+      this.recordModelFallback(context, traceId, 'zac.advisory', 'unavailable');
+      return this.responseBuilder.buildAdvisoryUnavailableResponse({ ...base, mode });
+    }
+  }
+
+  /**
+   * The live-claim guard for tool-free answers. Advisory modes have no
+   * evidence banner to protect, so derived arithmetic ("a 10-point gap") is
+   * legal — but a clause presenting a figure as the user's CURRENT, REAL
+   * business measurement is a lie by construction (no data was read) and is
+   * rejected structurally. Clause-scoped (newlines split too, so a bullet
+   * list never merges with its heading), claims bind to measurement nouns and
+   * verbs (harmless "your current process" phrasing passes), and spelled-out
+   * numbers count as figures.
+   */
+  private isAdvisoryAnswerSafe(narration: string): boolean {
+    // Measurement nouns only — process/approach/setup wording is harmless
+    // ("improve your current booking process"), so bare 'booking' is excluded;
+    // claimed rates/figures are still caught via 'rate'/'figure'/'number'.
+    const metricNoun =
+      '(?:rebooking|retail|revenue|sales?|takings?|turnover|utili[sz]ation|conversion|no.?show|retention|average bill|rate|figure|number|kpi|performance)';
+    const liveClaim = new RegExp(
+      [
+        // "your current rebooking rate ..." — a claimed live metric.
+        `\\byour (?:current|actual|live|real|latest)\\s+(?:[\\w-]+\\s+){0,2}${metricNoun}`,
+        // "your rebooking rate is/sits at ..." — present-tense measurement.
+        `\\byour\\s+(?:[\\w-]+\\s+){0,2}${metricNoun}s?\\s+(?:is|are|sits? at|stands? at|averages?)\\b`,
+        // "currently achieving/at ..." and "your salon takes/makes ..."
+        '\\bcurrently (?:at|achieving|running|sitting|doing|taking|averaging)\\b',
+        '\\byour (?:business|salon) (?:is (?:at|doing|taking|running)|takes|makes|earns|does|gets|averages)\\b',
+        '\\baccording to (?:your|the) (?:data|figures|numbers|qlooqo)\\b',
+        '\\byour qlooqo\\b',
+      ].join('|'),
+      'i',
+    );
+    const figure =
+      /\d|\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million)\b/i;
+
+    for (const clause of narration.split(/[.!?…\n]+/)) {
+      if (figure.test(clause) && liveClaim.test(clause)) return false;
+    }
+    return true;
+  }
+
+  /**
+   * Shared QA cost-event shape — one per real model call, on every path.
+   * Logged immediately AND buffered into the turn's sink for persistence.
+   * `latencyMs` is the MODEL CALL's own duration, not the turn's.
+   */
+  private recordQaCostEvent(
+    context: ZacActingContext,
+    conversation: ZacConversationState,
+    completion: ZacModelCompletion,
+    toolCallsUsed: number,
+    latencyMs: number,
+    traceId: string,
+    costEvents: ZacCostEvent[],
+  ): void {
+    const event: ZacCostEvent = {
+      trace_id: traceId,
+      conversation_id: conversation.conversationId,
+      business_id: context.businessId,
+      location_id: context.locationId,
+      actor_user_id: context.actorUserId,
+      role_context: context.roleContext,
+      provider: completion.provider,
+      model: completion.model,
+      task_type: 'qa',
+      input_tokens: completion.inputTokens,
+      output_tokens: completion.outputTokens,
+      reasoning_tokens: completion.reasoningTokens,
+      estimated_cost_usd: completion.estimatedCostUsd,
+      latency_ms: latencyMs,
+      tool_calls_used: toolCallsUsed,
+      cache_hit: completion.cacheReadInputTokens > 0,
+    };
+    this.telemetry.recordCostEvent(event);
+    costEvents.push(event);
   }
 
   /**
@@ -364,7 +704,12 @@ export class ZacService {
   ): Promise<ZacNarration> {
     const presentation = result.status === 'ok' ? result.presentation : undefined;
     if (!presentation || !this.modelProvider.narrates || !this.shouldNarrate(toolName)) {
-      return { completion: this.noModelCompletion(), liveCompletion: null, narratedAnswer: null };
+      return {
+        completion: this.noModelCompletion(),
+        liveCompletion: null,
+        narratedAnswer: null,
+        latencyMs: 0,
+      };
     }
 
     const evidencePack: ZacModelEvidencePack = {
@@ -374,12 +719,14 @@ export class ZacService {
       limitations: presentation.limitations,
     };
 
+    const callStartedAt = Date.now();
     try {
       const completion = await this.modelProvider.complete({ ...modelRequest, evidencePack });
+      const latencyMs = Date.now() - callStartedAt;
       const trimmed = completion.text.trim();
 
       if (trimmed.length === 0) {
-        return { completion, liveCompletion: completion, narratedAnswer: null };
+        return { completion, liveCompletion: completion, narratedAnswer: null, latencyMs };
       }
       // Invariant 1 is structural, not prompt-trusted: every number in the
       // narration must exist in the evidence pack — or in the user-stated
@@ -388,31 +735,48 @@ export class ZacService {
       // or injection-steered figure falls back to the deterministic answer.
       if (!this.isGroundedNarration(trimmed, evidencePack, modelRequest)) {
         this.recordModelFallback(context, traceId, toolName, 'ungrounded');
-        return { completion, liveCompletion: completion, narratedAnswer: null };
+        return { completion, liveCompletion: completion, narratedAnswer: null, latencyMs };
       }
-      return { completion, liveCompletion: completion, narratedAnswer: trimmed };
+      return { completion, liveCompletion: completion, narratedAnswer: trimmed, latencyMs };
     } catch (error) {
+      const latencyMs = Date.now() - callStartedAt;
       if (error instanceof ZacModelIncompleteError) {
         // Truncated narration: unusable text, but the call billed — keep the
         // real usage on the response and in the cost event.
         this.recordModelFallback(context, traceId, toolName, 'truncated');
-        return { completion: error.completion, liveCompletion: error.completion, narratedAnswer: null };
+        return {
+          completion: error.completion,
+          liveCompletion: error.completion,
+          narratedAnswer: null,
+          latencyMs,
+        };
       }
-      this.recordModelFallback(
-        context,
-        traceId,
-        toolName,
-        error instanceof ZacModelRefusedError ? 'refusal' : 'unavailable',
-      );
-      return { completion: this.noModelCompletion(), liveCompletion: null, narratedAnswer: null };
+      if (error instanceof ZacModelRefusedError) {
+        // A refusal is still a billed call when usage is known — keep it on
+        // the spine; the deterministic answer serves regardless.
+        this.recordModelFallback(context, traceId, toolName, 'refusal');
+        return {
+          completion: error.completion ?? this.noModelCompletion(),
+          liveCompletion: error.completion ?? null,
+          narratedAnswer: null,
+          latencyMs,
+        };
+      }
+      this.recordModelFallback(context, traceId, toolName, 'unavailable');
+      return {
+        completion: this.noModelCompletion(),
+        liveCompletion: null,
+        narratedAnswer: null,
+        latencyMs,
+      };
     }
   }
 
   private recordModelFallback(
     context: ZacActingContext,
     traceId: string,
-    toolName: ZacToolName,
-    reason: 'refusal' | 'unavailable' | 'truncated' | 'ungrounded',
+    toolName: ZacToolName | 'zac.advisory',
+    reason: 'refusal' | 'unavailable' | 'truncated' | 'ungrounded' | 'live_claim',
   ): void {
     this.telemetry.recordSpineEvent('model_fallback', {
       trace_id: traceId,
@@ -515,7 +879,11 @@ export class ZacService {
     modelRequest: ZacModelRequest,
     question: string,
     traceId: string,
-  ): Promise<{ response: ZacResponse; liveCompletion: ZacModelCompletion | null }> {
+  ): Promise<{
+    response: ZacResponse;
+    liveCompletion: ZacModelCompletion | null;
+    liveLatencyMs: number;
+  }> {
     const q = question.toLowerCase();
     const memoryBase = {
       context,
@@ -529,12 +897,12 @@ export class ZacService {
     // Own-work intents first: self markers beat topic keywords, so "how can I
     // improve MY rebooking" reads as personal, not restricted.
     const isPersonal =
-      /\bmy (day|week|appointments?|schedule|diary|rebooking|retail|performance|kpis?|numbers?|goals?|targets?)\b|what should i focus|how (can|do|should) i improve|how am i (doing|performing)|\bam i on track\b|\bappointments? (do|have) i\b|\b(do|have) i (have|got)\b.*(appointment|booking|client)|scheduled appointment/.test(
+      /\bmy (day|week|appointments?|schedule|diary|rebooking|retail|performance|utili[sz]ation|kpis?|numbers?|goals?|targets?)\b|what should i focus|how (can|do|should) i improve|\bhow can i improve\b|how am i (doing|performing)|\bwhat am i doing well\b|\bhighest.impact\b|\bbiggest impact\b|\bam i on track\b|\bappointments? (do|have) i\b|\b(do|have) i (have|got)\b.*(appointment|booking|client)|scheduled appointment/.test(
         q,
       );
     // Owner/manager territory: business-wide, money, team, other stylists, clients.
     const isRestricted =
-      /\b(payroll|salar(y|ies)|wages?|commissions?|\bpay\b)\b|\b(team|staff|colleagues?|members?|employees?)\b|other stylists?|which stylist|\bstylists\b|\bclients?\b|business (revenue|health|reports?|performance)|\b(revenue|profit|turnover|takings|sales)\b|\b(owner|manager) (report|dashboard)s?\b|whole business|how('s| is) the (business|salon)|\bstock\b|\binventory\b|\bqlab\b/.test(
+      /\b(payroll|salar(y|ies)|wages?|commissions?|\bpay\b)\b|\b(team|staff|colleagues?|members?|employees?)\b|other stylists?|which stylist|\bstylists\b|\bclients?\b|business (revenue|health|reports?|performance)|\b(revenue|profit|turnover|takings|sales)\b|\b(owner|manager) (report|dashboard)s?\b|whole business|how('s| is) the (business|salon)|\bstock\b|\binventory\b|\bqlab\b|\butili[sz]/.test(
         q,
       );
 
@@ -578,13 +946,14 @@ export class ZacService {
               narratedAnswer: narration.narratedAnswer,
             })
           : this.responseBuilder.buildToolBackedResponse(toolBackedInput);
-        return { response, liveCompletion: narration.liveCompletion };
+        return { response, liveCompletion: narration.liveCompletion, liveLatencyMs: narration.latencyMs };
       }
       // Degrade honestly: denied/unavailable/failed personal tools fall back to
       // the "not connected" personal answer, never an error.
       return {
         response: this.responseBuilder.buildStylistPersonalUnavailableResponse(memoryBase),
         liveCompletion: null,
+        liveLatencyMs: 0,
       };
     }
 
@@ -601,6 +970,7 @@ export class ZacService {
       return {
         response: this.responseBuilder.buildStylistRestrictedResponse(memoryBase),
         liveCompletion: null,
+        liveLatencyMs: 0,
       };
     }
 
@@ -645,6 +1015,7 @@ export class ZacService {
               conversationId: conversation.conversationId,
             }),
       liveCompletion: null,
+      liveLatencyMs: 0,
     };
   }
 
@@ -696,20 +1067,46 @@ export class ZacService {
       return 'report.stylist_performance';
     }
     // Staff KPI/target standing — below/behind/missing a target or threshold,
-    // or explicit KPI asks about the team.
+    // explicit KPI asks about the team, or the official "which team members
+    // need my attention" acceptance phrasing (answerable from KPI standing —
+    // no staff-list tool needed).
     if (
       /\b(stylists?|team|staff|members?|colleagues?|who)\b/.test(q) &&
-      /\bkpis?\b|(below|behind|under|missing|miss(es)?|not (meeting|hitting))\b.*\b(target|threshold|goal)s?\b|\btargets? (missed|not met)\b/.test(
+      (/\bkpis?\b|(below|behind|under|missing|miss(es)?|not (meeting|hitting))\b.*\b(target|threshold|goal)s?\b|\btargets? (missed|not met)\b/.test(
         q,
-      )
+      ) ||
+        /\bneeds? (my |our )?attention\b|\bworr(y|ied) about\b|\bstruggling\b/.test(q))
     ) {
       return 'report.kpi_summary';
+    }
+    // Utilisation and diary-gap questions — before business health, whose
+    // broad "doing" pattern would otherwise swallow them. The quiet/slow-day
+    // forms yield to an explicit OTHER subject ("rebooking has been slow this
+    // week" is a rebooking question, not a diary question).
+    const otherSubject = /\b(rebook\w*|revenue|sales|retail|takings|turnover|profit)\b/.test(q);
+    const dayWord = '(day|days|week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)';
+    const quietWord = '(quiet|quietest|empty|dead|slow|slowest|busiest)';
+    if (
+      /\butili[sz]/.test(q) ||
+      (!otherSubject &&
+        (new RegExp(`\\b${quietWord}\\b[^.?!]*\\b${dayWord}s?\\b`).test(q) ||
+          new RegExp(`\\b${dayWord}s?\\b[^.?!]*\\b${quietWord}\\b`).test(q) ||
+          /\bhow (full|busy) (is|was|are) (my|the|our) (diary|calendar|week|day|salon)\b/.test(q))) ||
+      /\bdiary gaps?\b|\bgaps? in (the|my|our) (diary|calendar|schedule)\b|\bunbooked\b/.test(q) ||
+      /\b(where are|show me|any) (the )?gaps?\b|\bgaps? (today|tomorrow|this week|next week)\b/.test(q)
+    ) {
+      return 'report.utilisation_summary';
     }
     if (/rebook/.test(q)) {
       return 'report.rebooking_summary';
     }
     if (
-      /how('s| is| are)?\s+(my|the|our)\s+(business|salon)|business health|\bdoing\b|performing|revenue|\bbookings?\b/.test(
+      /how('s| is| are)?\s+(my|the|our)\s+(business|salon)|business health|\bhow healthy\b|\bdoing\b|performing|revenue|\bbookings?\b/.test(
+        q,
+      ) ||
+      // Official Owner acceptance phrasings: money worries, attention and
+      // where-to-focus questions get the KPI-grounded health snapshot.
+      /\blos(e|ing) money\b|\bneeds? (my |our )?attention\b|\bwhat should (i|we) focus\b|\bfocus on (first|today)\b|\bone hour\b[^.?!]*\bfocus\b/.test(
         q,
       )
     ) {
@@ -723,7 +1120,7 @@ export class ZacService {
 
   /** Per-tool dispatch input, derived from the question — never from a model. */
   private toolInput(tool: ZacToolName, question: string): Record<string, unknown> {
-    if (tool === 'report.kpi_summary') {
+    if (tool === 'report.kpi_summary' || tool === 'report.utilisation_summary') {
       return { period: this.parsePeriod(question) };
     }
     if (tool === 'context.capabilities' && /who are you\b/i.test(question)) {
@@ -750,6 +1147,11 @@ export class ZacService {
     const tool = response.tool_calls[0]?.tool;
     if (tool) return `Asked a question routed to ${tool}.`;
     if (intent) return `Asked a question recognised as ${intent}.`;
+    const mode = response.technical_details.request_mode;
+    if (mode === 'general_advice') return 'Asked for general advice (no data read).';
+    if (mode === 'hypothetical') return 'Asked a hypothetical question (no data read).';
+    if (mode === 'conversational') return 'Sent a conversational follow-up.';
+    if (mode === 'permission_capability') return 'Asked about their access and permissions.';
     return `Asked a question (${Math.min(question.length, 2000)} chars).`;
   }
 
@@ -764,6 +1166,29 @@ export class ZacService {
     ]
       .filter(Boolean)
       .join(' ');
+  }
+
+  /**
+   * Useful/not-useful feedback on a persisted output. Fail-HARD by design:
+   * errors reach the controller so the client never sees a false success.
+   * Access is the output-visibility model (fail-closed 404), re-evaluated
+   * against the CURRENT acting context — never a role name.
+   */
+  async submitFeedback(
+    actor: AuthUser,
+    outputId: string,
+    request: ZacFeedbackRequestDto,
+  ): Promise<ZacFeedbackResponse> {
+    this.rollout.assertRolloutFor(actor);
+    const context = this.contextService.resolve(actor, {});
+    const result = await this.measurement.submitFeedback(
+      context,
+      outputId,
+      request.rating,
+      request.comment,
+      randomUUID(),
+    );
+    return { output_id: result.outputId, rating: result.rating, recorded: true };
   }
 
   /** Operational check: reachable + which provider would answer. Makes no model call. */
