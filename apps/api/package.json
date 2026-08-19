@@ -14,7 +14,8 @@
     "test": "jest --passWithNoTests",
     "backfill-bills": "ts-node --transpile-only scripts/backfill-bills.ts",
     "create-test-users": "ts-node --transpile-only scripts/create-test-users.ts",
-    "seed-loh-pay-template": "ts-node --transpile-only scripts/seed-loh-pay-template.ts"
+    "seed-loh-pay-template": "ts-node --transpile-only scripts/seed-loh-pay-template.ts",
+    "seed-week6-colour-prep": "ts-node --transpile-only scripts/seed-week6-colour-prep.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",
