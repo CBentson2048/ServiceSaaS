@@ -193,6 +193,10 @@ import type {
   PayStructurePreviewRequest,
   PayStructurePreviewResponse,
   PayStructureRulesInput,
+  ColourPrepResponse,
+  BarcodeLookupResponse,
+  RecordProductConsumptionRequest,
+  RecordProductConsumptionResponse,
 } from '@sheer/domain';
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL ?? 'http://localhost:3001').replace(/\/$/, '');
@@ -2725,4 +2729,38 @@ function extractErrorMessage(payload: unknown): string | undefined {
       .join(', ');
   }
   return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// V1.1 Week 6 — Colour Prep and barcode consumption
+// ---------------------------------------------------------------------------
+
+export async function getColourPrep(
+  accessToken: string,
+  params: { locationId: string; range?: string; from?: string; to?: string },
+): Promise<ColourPrepResponse> {
+  const search = new URLSearchParams({ locationId: params.locationId });
+  if (params.range) search.set('range', params.range);
+  if (params.from) search.set('from', params.from);
+  if (params.to) search.set('to', params.to);
+  return request<ColourPrepResponse>(`/colour-prep?${search.toString()}`, { accessToken });
+}
+
+export async function lookupInventoryBarcode(
+  accessToken: string,
+  params: { barcode: string; locationId: string },
+): Promise<BarcodeLookupResponse> {
+  const search = new URLSearchParams({ barcode: params.barcode, locationId: params.locationId });
+  return request<BarcodeLookupResponse>(`/inventory/scan?${search.toString()}`, { accessToken });
+}
+
+export async function recordProductConsumption(
+  accessToken: string,
+  payload: RecordProductConsumptionRequest,
+): Promise<RecordProductConsumptionResponse> {
+  return request<RecordProductConsumptionResponse>('/inventory/consumption', {
+    method: 'POST',
+    accessToken,
+    body: payload,
+  });
 }

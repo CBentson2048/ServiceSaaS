@@ -28,6 +28,7 @@ import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
 import { InventoryCategoriesPage } from './pages/InventoryCategoriesPage';
 import { InventoryManagementPage } from './pages/InventoryManagementPage';
 import { InventoryPage } from './pages/InventoryPage';
+import { ColourPrepPage } from './pages/ColourPrepPage';
 import { LandingPage } from './pages/LandingPage';
 import { LocationDetailPage } from './pages/LocationDetailPage';
 import { LocationRecordSettingsPage } from './pages/LocationRecordSettingsPage';
@@ -204,6 +205,16 @@ export function App() {
               <Route index element={<InventoryPage />} />
               <Route path="categories" element={<InventoryCategoriesPage />} />
             </Route>
+          </Route>
+          <Route
+            element={
+              <ProtectedRoute
+                allowedRoles={['owner', 'manager']}
+                requiredPermissions={['inventory.manage']}
+              />
+            }
+          >
+            <Route path="/colour-prep" element={<ColourPrepPage />} />
           </Route>
           <Route
             element={
