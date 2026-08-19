@@ -10,8 +10,11 @@ import {
   MaxLength,
   Min,
   MinLength,
+  IsIn,
+  IsPositive,
+  Max,
 } from 'class-validator';
-import type { InventoryStockMovementType } from '@sheer/domain';
+import type { InventoryStockMovementType, StockQuantityUnit, StockUnit } from '@sheer/domain';
 
 const MANUAL_MOVEMENT_TYPES = ['opening_balance', 'restock', 'manual_adjustment', 'retail_sale', 'correction'] as const;
 
@@ -78,6 +81,45 @@ export class UpsertInventoryProductDto {
   @IsNumber()
   @Min(0)
   lowStockThresholdGrams?: number | null;
+  /** What one unit of the stored stock quantity means for this product. */
+  @IsOptional()
+  @IsIn(['gram', 'millilitre', 'unit'], { message: "stockUnit must be 'gram', 'millilitre' or 'unit'" })
+  stockUnit?: StockUnit | null;
+
+  /** Base quantities in one sellable/orderable pack. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 3 })
+  @IsPositive({ message: 'packSize must be greater than zero' })
+  packSize?: number | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  barcode?: string | null;
+
+  // Product-use classification (0079). These columns have existed since 4 Aug
+  // but had no write path, which is why they were still dead columns. Week 6
+  // gives them one; applying lab_markup_percent to billing stays a separate CR.
+  @IsOptional()
+  @IsBoolean()
+  isSalonUse?: boolean | null;
+
+  @IsOptional()
+  @IsBoolean()
+  isLabUse?: boolean | null;
+
+  @IsOptional()
+  @IsBoolean()
+  isRetail?: boolean | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(1000)
+  labMarkupPercent?: number | null;
+
 }
 
 export class StockQueryDto {
@@ -222,4 +264,57 @@ export class UpdateInventoryCategoryDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+}
+
+/**
+ * Salon consumption of a product — what a barcode scan records. Either a
+ * productId or a barcode identifies the product; the service resolves and
+ * validates whichever is supplied against the caller's own business.
+ */
+export class RecordProductConsumptionDto {
+  @IsUUID('4', { message: 'locationId must be a valid location id' })
+  locationId!: string;
+
+  @IsOptional()
+  @IsUUID('4', { message: 'productId must be a valid product id' })
+  productId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  barcode?: string;
+
+  /** Positive amount consumed, expressed in `unit`. */
+  @IsNumber({ maxDecimalPlaces: 3 }, { message: 'quantity must be a number with at most 3 decimals' })
+  @IsPositive({ message: 'quantity must be greater than zero' })
+  quantity!: number;
+
+  @IsOptional()
+  @IsIn(['base', 'pack'], { message: "unit must be 'base' or 'pack'" })
+  unit?: StockQuantityUnit;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  reason?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  notes?: string;
+
+  /** Supplied by the client so a retried scan cannot deduct twice. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  idempotencyKey?: string;
+}
+
+export class BarcodeLookupQueryDto {
+  @IsString()
+  @MaxLength(64)
+  barcode!: string;
+
+  @IsUUID('4', { message: 'locationId must be a valid location id' })
+  locationId!: string;
 }

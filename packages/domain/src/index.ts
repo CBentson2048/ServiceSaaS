@@ -3193,6 +3193,24 @@ export interface InventoryProduct {
   retailPriceCents?: number;
   lowStockThresholdGrams: number;
   isActive: boolean;
+  /**
+   * What one unit of the stored stock quantity means for this product.
+   * `gram`/`millilitre` keep the historical gram semantics; `unit` means the
+   * stored quantity counts whole items.
+   */
+  stockUnit: StockUnit;
+  /** Base quantities in one sellable/orderable pack (a 100g tube = 100). */
+  packSize?: number;
+  /** Scannable identifier (EAN/UPC or supplier code); unique per business. */
+  barcode?: string;
+  /** Product-use classification (0079). Consumed by the salon itself. */
+  isSalonUse: boolean;
+  /** Product-use classification (0079). Used by QLOOQO Lab formulas. */
+  isLabUse: boolean;
+  /** Product-use classification (0079). Sold to clients to take home. */
+  isRetail: boolean;
+  /** Markup applied when billed through Lab usage. Stored even when off. */
+  labMarkupPercent?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -3268,6 +3286,13 @@ export interface UpsertInventoryProductRequest {
   defaultCostPerGramCents?: number | null;
   retailPriceCents?: number | null;
   lowStockThresholdGrams?: number | null;
+  stockUnit?: StockUnit | null;
+  packSize?: number | null;
+  barcode?: string | null;
+  isSalonUse?: boolean | null;
+  isLabUse?: boolean | null;
+  isRetail?: boolean | null;
+  labMarkupPercent?: number | null;
 }
 
 export interface ListInventoryStockResponse {
@@ -4897,4 +4922,144 @@ export interface CreateNewWeekResponse {
   weekStart: string;
   shiftsCreated: number;
   breaksCreated: number;
+}
+
+// ---------------------------------------------------------------------------
+// V1.1 Week 6 — stock units, barcode consumption and Colour Prep
+// ---------------------------------------------------------------------------
+
+/**
+ * What one unit of the stored stock quantity means for a product. The stored
+ * column is still named `quantity_on_hand_grams` for compatibility; renaming it
+ * is tracked as technical debt rather than done inside a delivery week.
+ */
+export type StockUnit = 'gram' | 'millilitre' | 'unit';
+
+/** How a caller expressed a quantity: in base units, or in whole packs. */
+export type StockQuantityUnit = 'base' | 'pack';
+
+export interface BarcodeLookupResponse {
+  product: InventoryProduct;
+  locationId: string;
+  quantityOnHandGrams: number;
+  lowStockThresholdGrams?: number;
+}
+
+export interface RecordProductConsumptionRequest {
+  locationId: string;
+  /** Either productId or barcode must be supplied. */
+  productId?: string;
+  barcode?: string;
+  /** Positive amount consumed, expressed in `unit`. */
+  quantity: number;
+  /** Defaults to `base`. `pack` multiplies by the product pack size. */
+  unit?: StockQuantityUnit;
+  reason?: string;
+  notes?: string;
+  /** Makes the call safe to retry: a repeat returns the original movement. */
+  idempotencyKey?: string;
+}
+
+export interface RecordProductConsumptionResponse {
+  movementId: string;
+  productId: string;
+  productName: string;
+  locationId: string;
+  quantityDeductedGrams: number;
+  quantityOnHandGrams: number;
+  lowStockThresholdGrams?: number;
+  /** True when this call replayed an earlier movement rather than deducting. */
+  idempotentReplay: boolean;
+}
+
+/** Planning window presets for Colour Prep. */
+export type ColourPrepRange = 'today' | 'this_week' | 'next_week' | 'custom';
+
+/**
+ * Stock verdict for one required product. `unmapped_product` and `not_stocked`
+ * exist so missing data can never be displayed as "enough stock" — the user has
+ * to be able to see that intervention is required.
+ */
+export type ColourPrepStockState =
+  | 'sufficient'
+  | 'low_stock'
+  | 'shortfall'
+  | 'not_stocked'
+  | 'unmapped_product';
+
+/**
+ * Whether a colour appointment resolved a formula. A first-time colour client
+ * has no formula and must still appear in the plan as needing consultation,
+ * never silently dropped.
+ */
+export type ColourPrepAppointmentState = 'formula_on_file' | 'no_formula_on_file';
+
+export interface ColourPrepAppointmentItem {
+  /** Undefined when the formula line was never linked to a catalogue product. */
+  productId?: string;
+  productName: string;
+  requiredGrams: number;
+}
+
+export interface ColourPrepAppointment {
+  appointmentId: string;
+  scheduledStartAt: string;
+  clientProfileId: string;
+  clientName: string;
+  /** Omitted when the caller may not see staff assignment. */
+  stylistName?: string;
+  serviceNames: string[];
+  billingCategories: ServiceBillingCategory[];
+  state: ColourPrepAppointmentState;
+  formulaId?: string;
+  formulaSavedAt?: string;
+  items: ColourPrepAppointmentItem[];
+}
+
+export interface ColourPrepProductRequirement {
+  productId?: string;
+  productName: string;
+  brand?: string;
+  stockUnit: StockUnit;
+  /** Sum across appointments, including the waste allowance uplift. */
+  requiredGrams: number;
+  onHandGrams: number;
+  /** max(0, required - onHand). */
+  shortfallGrams: number;
+  lowStockThresholdGrams?: number;
+  state: ColourPrepStockState;
+  appointmentCount: number;
+}
+
+export interface ColourPrepSummary {
+  appointmentCount: number;
+  appointmentsWithoutFormula: number;
+  productCount: number;
+  shortfallProductCount: number;
+  lowStockProductCount: number;
+  unmappedProductCount: number;
+}
+
+export interface ColourPrepPlan {
+  locationId: string;
+  locationName: string;
+  /** IANA zone the window was computed in (core.locations.timezone). */
+  timezone: string;
+  range: ColourPrepRange;
+  /** Inclusive window start as an ISO instant. */
+  from: string;
+  /** Exclusive window end as an ISO instant. */
+  to: string;
+  /** Window in local calendar dates, for display. */
+  fromDate: string;
+  toDate: string;
+  /** Uplift applied to required grams (core.location_settings). */
+  wasteAllowancePercent: number;
+  appointments: ColourPrepAppointment[];
+  products: ColourPrepProductRequirement[];
+  summary: ColourPrepSummary;
+}
+
+export interface ColourPrepResponse {
+  plan: ColourPrepPlan;
 }

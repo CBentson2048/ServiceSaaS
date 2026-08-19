@@ -20,6 +20,9 @@ import type {
   InventoryProductResponse,
   InventoryStockMovement,
   InventoryStockMutationResponse,
+  BarcodeLookupResponse,
+  RecordProductConsumptionResponse,
+  StockUnit,
   ListInventoryCategoriesResponse,
   ListInventoryLowStockResponse,
   ListInventoryMovementsResponse,
@@ -27,6 +30,7 @@ import type {
   ListInventoryStockResponse,
 } from '@sheer/domain';
 import { userHasPermission, userHasRole } from '@sheer/domain';
+import { resolveStockUnit, roundBaseQuantity, toBaseQuantity } from './unit-conversion';
 import { AuditService } from '../audit/audit.service';
 import type { LabRuntimeSession } from '../lab-session/lab-session.service';
 import type {
@@ -39,6 +43,7 @@ import type {
   StockQueryDto,
   UpdateInventoryCategoryDto,
   UpdateInventoryStockThresholdDto,
+  RecordProductConsumptionDto,
   UpsertInventoryProductDto,
 } from './dto';
 
@@ -56,6 +61,13 @@ interface ProductRow {
   retail_price_cents: number | null;
   low_stock_threshold_grams: number | string;
   is_active: boolean;
+  stock_unit: string | null;
+  pack_size: number | string | null;
+  barcode: string | null;
+  is_salon_use: boolean;
+  is_lab_use: boolean;
+  is_retail: boolean;
+  lab_markup_percent: number | string | null;
   created_at: string;
   updated_at: string;
 }
@@ -115,7 +127,7 @@ interface CategoryRow {
 }
 
 const PRODUCT_COLUMNS =
-  'id,business_id,brand,name,category_id,sku,size_value,size_unit,default_unit,default_cost_per_gram_cents,retail_price_cents,low_stock_threshold_grams,is_active,created_at,updated_at';
+  'id,business_id,brand,name,category_id,sku,size_value,size_unit,default_unit,default_cost_per_gram_cents,retail_price_cents,low_stock_threshold_grams,is_active,stock_unit,pack_size,barcode,is_salon_use,is_lab_use,is_retail,lab_markup_percent,created_at,updated_at';
 const STOCK_COLUMNS =
   'id,business_id,location_id,product_id,quantity_on_hand_grams,low_stock_threshold_grams,is_active,updated_at';
 const MOVEMENT_COLUMNS =
@@ -598,6 +610,181 @@ export class InventoryService {
     return this.updateStockThreshold(this.labActor(session), stockId, dto);
   }
 
+  // ---------------------------------------------------------------------------
+  // Week 6 — barcode consumption foundation
+  //
+  // The scan surface itself (wedge scanner field or camera) is Week 7 UI work.
+  // What Week 6 owns is the path underneath it: resolve a scanned identifier to
+  // exactly one product in the caller's business, then consume stock through the
+  // SAME authoritative RPC every other deduction uses, so barcode usage lands in
+  // the ledger with the same rules, alerts and provenance as everything else.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Resolve a scanned barcode to a product and its stock at one location.
+   * Fails loudly and distinguishably: an unknown code, an archived product and a
+   * product outside the caller's business are three different answers, never a
+   * silent empty result that a scanner UI would render as "nothing happened".
+   */
+  async lookupByBarcode(
+    actor: AuthUser,
+    barcode: string,
+    locationId: string,
+  ): Promise<BarcodeLookupResponse> {
+    await this.assertLocationScope(actor, locationId);
+
+    const code = barcode?.trim();
+    if (!code) throw new BadRequestException('barcode is required');
+
+    const { data, error } = await this.admin
+      .schema('inventory')
+      .from('products')
+      .select(PRODUCT_COLUMNS)
+      .eq('business_id', actor.businessId)
+      .eq('barcode', code)
+      .maybeSingle<ProductRow>();
+
+    if (error) {
+      this.logger.error(`lookupByBarcode failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to look up barcode');
+    }
+    if (!data) throw new NotFoundException(`No product matches barcode ${code}`);
+    if (!data.is_active) {
+      throw new ConflictException(`${data.name} is archived and cannot be used`);
+    }
+
+    const { data: stock, error: stockError } = await this.admin
+      .schema('inventory')
+      .from('location_stock')
+      .select('quantity_on_hand_grams,low_stock_threshold_grams')
+      .eq('location_id', locationId)
+      .eq('product_id', data.id)
+      .maybeSingle<{ quantity_on_hand_grams: number | string; low_stock_threshold_grams: number | string | null }>();
+
+    if (stockError) {
+      this.logger.error(`lookupByBarcode stock read failed: ${stockError.message}`);
+      throw new InternalServerErrorException('Unable to look up barcode');
+    }
+
+    const product = toProduct(data);
+    const threshold =
+      stock?.low_stock_threshold_grams ?? product.lowStockThresholdGrams ?? null;
+
+    return {
+      product,
+      locationId,
+      quantityOnHandGrams: stock ? Number(stock.quantity_on_hand_grams) : 0,
+      lowStockThresholdGrams: threshold === null ? undefined : Number(threshold),
+    };
+  }
+
+  /**
+   * Record salon consumption of a product — the action a barcode scan performs.
+   *
+   * Routes through `inventory.adjust_location_stock`, which owns the movement
+   * ledger, the low-stock alerts and the location's negative-stock policy. An
+   * `idempotencyKey` makes a retried scan safe: the RPC returns the original
+   * movement instead of deducting a second time.
+   */
+  async recordConsumption(
+    actor: AuthUser,
+    dto: RecordProductConsumptionDto,
+  ): Promise<RecordProductConsumptionResponse> {
+    await this.assertLocationScope(actor, dto.locationId);
+
+    if (!dto.productId && !dto.barcode) {
+      throw new BadRequestException('Either productId or barcode is required');
+    }
+
+    const product = dto.productId
+      ? await this.requireActiveProduct(actor.businessId, dto.productId)
+      : (await this.lookupByBarcode(actor, dto.barcode as string, dto.locationId)).product;
+
+    const baseQuantity = roundBaseQuantity(toBaseQuantity(product, dto.quantity, dto.unit ?? 'base'));
+
+    const { data, error } = await this.admin.schema('inventory').rpc('adjust_location_stock', {
+      p_payload: {
+        businessId: actor.businessId,
+        locationId: dto.locationId,
+        productId: product.id,
+        quantityDeltaGrams: -baseQuantity,
+        movementType: 'salon_consumption',
+        reason: dto.reason ?? 'salon_consumption',
+        notes: dto.notes ?? null,
+        referenceType: dto.barcode ? 'barcode_scan' : 'manual_consumption',
+        createdBy: actor.id,
+        idempotencyKey: dto.idempotencyKey ?? null,
+        metadata: dto.barcode ? { barcode: dto.barcode } : {},
+      },
+    });
+
+    if (error) {
+      this.logger.error(`recordConsumption failed: ${error.message}`);
+      // The RPC raises check_violation when a location forbids negative stock.
+      if (/insufficient stock/i.test(error.message)) {
+        throw new ConflictException(error.message);
+      }
+      throw new InternalServerErrorException('Unable to record product consumption');
+    }
+
+    const result = (data ?? {}) as {
+      movementId?: string;
+      quantityOnHandGrams?: number | string;
+      lowStockThresholdGrams?: number | string | null;
+      idempotentReplay?: boolean;
+    };
+    const replayed = result.idempotentReplay === true;
+
+    if (!replayed) {
+      await this.audit.record(actor, {
+        action: 'stock.adjusted',
+        entityType: 'stock',
+        entityId: product.id,
+        locationId: dto.locationId,
+        after: { quantityOnHandGrams: Number(result.quantityOnHandGrams ?? 0) },
+        metadata: {
+          movementType: 'salon_consumption',
+          quantityDeltaGrams: -baseQuantity,
+          productName: product.name,
+          barcode: dto.barcode ?? null,
+          reason: dto.reason ?? 'salon_consumption',
+        },
+      });
+    }
+
+    return {
+      movementId: result.movementId ?? '',
+      productId: product.id,
+      productName: product.name,
+      locationId: dto.locationId,
+      quantityDeductedGrams: replayed ? 0 : baseQuantity,
+      quantityOnHandGrams: Number(result.quantityOnHandGrams ?? 0),
+      lowStockThresholdGrams:
+        result.lowStockThresholdGrams === null || result.lowStockThresholdGrams === undefined
+          ? undefined
+          : Number(result.lowStockThresholdGrams),
+      idempotentReplay: replayed,
+    };
+  }
+
+  private async requireActiveProduct(businessId: string, productId: string): Promise<InventoryProduct> {
+    const { data, error } = await this.admin
+      .schema('inventory')
+      .from('products')
+      .select(PRODUCT_COLUMNS)
+      .eq('business_id', businessId)
+      .eq('id', productId)
+      .maybeSingle<ProductRow>();
+
+    if (error) {
+      this.logger.error(`requireActiveProduct failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load product');
+    }
+    if (!data) throw new NotFoundException('Product was not found');
+    if (!data.is_active) throw new ConflictException(`${data.name} is archived and cannot be used`);
+    return toProduct(data);
+  }
+
   private labActor(session: LabRuntimeSession): AuthUser {
     return {
       id: session.userProfileId,
@@ -846,6 +1033,13 @@ function toProductPatch(dto: UpsertInventoryProductDto): Record<string, unknown>
     default_cost_per_gram_cents: dto.defaultCostPerGramCents ?? null,
     retail_price_cents: dto.retailPriceCents ?? null,
     low_stock_threshold_grams: dto.lowStockThresholdGrams ?? 0,
+    stock_unit: dto.stockUnit ?? 'gram',
+    pack_size: dto.packSize ?? null,
+    barcode: clean(dto.barcode),
+    is_salon_use: dto.isSalonUse ?? false,
+    is_lab_use: dto.isLabUse ?? false,
+    is_retail: dto.isRetail ?? false,
+    lab_markup_percent: dto.labMarkupPercent ?? null,
   };
 }
 
@@ -870,6 +1064,17 @@ function toProduct(row: ProductRow, categoryNames?: Map<string, string>): Invent
     retailPriceCents: row.retail_price_cents ?? undefined,
     lowStockThresholdGrams: Number(row.low_stock_threshold_grams),
     isActive: row.is_active,
+    stockUnit: resolveStockUnit({
+      stockUnit: row.stock_unit as StockUnit | null,
+      packSize: row.pack_size === null ? null : Number(row.pack_size),
+      sizeValue: row.size_value === null ? null : Number(row.size_value),
+    }),
+    packSize: row.pack_size === null ? undefined : Number(row.pack_size),
+    barcode: row.barcode ?? undefined,
+    isSalonUse: row.is_salon_use,
+    isLabUse: row.is_lab_use,
+    isRetail: row.is_retail,
+    labMarkupPercent: row.lab_markup_percent === null ? undefined : Number(row.lab_markup_percent),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

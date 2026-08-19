@@ -9,6 +9,8 @@ import type {
   ListInventoryMovementsResponse,
   ListInventoryProductsResponse,
   ListInventoryStockResponse,
+  BarcodeLookupResponse,
+  RecordProductConsumptionResponse,
 } from '@sheer/domain';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { PermissionsGuard, RequirePermissions } from '../auth/permissions.guard';
@@ -26,6 +28,8 @@ import {
   UpdateInventoryCategoryDto,
   UpdateInventoryStockThresholdDto,
   UpsertInventoryProductDto,
+  BarcodeLookupQueryDto,
+  RecordProductConsumptionDto,
 } from './dto';
 import { InventoryService } from './inventory.service';
 
@@ -104,6 +108,25 @@ export class InventoryController {
   @Get('low-stock')
   listLowStock(@CurrentUser() actor: AuthUser, @Query('locationId') locationId?: string): Promise<ListInventoryLowStockResponse> {
     return this.inventory.listLowStock(actor, locationId);
+  }
+
+  // Week 6 — barcode consumption foundation. The scan surface (wedge scanner
+  // field or camera) is Week 7 UI; these are the API and domain rules under it.
+
+  @Get('scan')
+  async scanBarcode(
+    @CurrentUser() actor: AuthUser,
+    @Query() query: BarcodeLookupQueryDto,
+  ): Promise<BarcodeLookupResponse> {
+    return this.inventory.lookupByBarcode(actor, query.barcode, query.locationId);
+  }
+
+  @Post('consumption')
+  async recordConsumption(
+    @CurrentUser() actor: AuthUser,
+    @Body() body: RecordProductConsumptionDto,
+  ): Promise<RecordProductConsumptionResponse> {
+    return this.inventory.recordConsumption(actor, body);
   }
 
   @Get('categories')

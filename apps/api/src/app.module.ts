@@ -11,6 +11,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { EodModule } from './eod/eod.module';
 import { HealthModule } from './health/health.module';
 import { InventoryModule } from './inventory/inventory.module';
+import { ColourPrepModule } from './colour-prep/colour-prep.module';
 import { LabAppointmentsModule } from './lab-appointments/lab-appointments.module';
 import { LabBillingRulesModule } from './lab-billing-rules/lab-billing-rules.module';
 import { LabAnalyticsModule } from './lab-analytics/lab-analytics.module';
@@ -77,6 +78,7 @@ import { validateEnv } from './config/env.validation';
     RotaModule,
     ServicesModule,
     InventoryModule,
+    ColourPrepModule,
     HealthModule,
     MobileDashboardModule,
     LabDeviceModule,
