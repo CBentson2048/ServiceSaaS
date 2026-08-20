@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AuthModule } from '../auth/auth.module';
 import { ColourPrepController } from './colour-prep.controller';
 import { ColourPrepService } from './colour-prep.service';
 
@@ -8,6 +9,7 @@ import { ColourPrepService } from './colour-prep.service';
  * Owns no tables of its own.
  */
 @Module({
+  imports: [AuthModule],
   controllers: [ColourPrepController],
   providers: [ColourPrepService],
   exports: [ColourPrepService],
