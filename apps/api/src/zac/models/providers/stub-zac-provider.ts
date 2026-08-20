@@ -19,6 +19,12 @@ export class StubZacModelProvider implements ZacModelProvider {
   readonly model = 'zac-stub-1';
   /** Stub text is never user-facing, so the orchestrator skips calling it. */
   readonly narrates = false;
+  /**
+   * No key, no semantic routing. This is reported by /zac/health and by the
+   * deployment smoke test: a build routing on deterministic rules alone is a
+   * materially reduced ZAC and must never be presented as full Phase 1.
+   */
+  readonly semanticRouting = false;
 
   async complete(request: ZacModelRequest): Promise<ZacModelCompletion> {
     const text = `Foundation-mode acknowledgment (${request.roleContext} lens, ${request.availableToolNames.length} planned tools). The user-facing answer is composed by the response builder.`;

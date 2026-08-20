@@ -16,6 +16,15 @@ import type { ZacEvidenceItem, ZacResponse, ZacTechnicalDetails } from './zac-re
 /** Advisory modes: answered by reasoning, never by an operational tool. */
 type ZacAdvisoryMode = Extract<ZacRequestMode, 'general_advice' | 'hypothetical' | 'conversational'>;
 
+/**
+ * Why an advisory turn produced no answer. Kept distinct from
+ * operational-data failures on purpose: "my reasoning is unavailable" and
+ * "your business data is unavailable" are different facts, and reporting the
+ * second when the first happened is what made ZAC look like it could only
+ * ever talk about QLOOQO data.
+ */
+export type ZacAdvisoryFailureReason = 'provider_unavailable' | 'advisory_generation_failed';
+
 /** Human labels for permission explainability — categories, never record details. */
 const TOOL_AREA_LABELS: Partial<Record<ZacToolName, string>> = {
   'context.business_summary': 'your business context — name, locations and what your role covers',
@@ -583,14 +592,27 @@ export class ZacResponseBuilderService {
    * limitations state exactly where the figures may come from.
    */
   buildAdvisoryResponse(
-    input: MemoryResponseBaseInput & { mode: ZacAdvisoryMode; narratedAnswer: string },
+    input: MemoryResponseBaseInput & {
+      mode: ZacAdvisoryMode;
+      narratedAnswer: string;
+      /**
+       * True when the user explicitly excluded their own data this turn. ZAC
+       * then states the provenance but must NOT offer to look at their live
+       * figures: they just said not to, and answering their question with a
+       * nudge back to the data is the behaviour that failed acceptance.
+       */
+      dataExcluded?: boolean;
+    },
   ): ZacResponse {
     const { context, visibleTools, completion, traceId, mode, narratedAnswer } = input;
+    const dataExcluded = input.dataExcluded === true;
 
     const limitations: Record<ZacAdvisoryMode, string[]> = {
       general_advice: [
         'This is general guidance — no QLOOQO business data was read for this answer.',
-        'Ask about your own figures (e.g. "How is my business doing?") for a data-backed view.',
+        ...(dataExcluded
+          ? []
+          : ['Ask about your own figures (e.g. "How is my business doing?") for a data-backed view.']),
       ],
       hypothetical: [
         'This answers the scenario you supplied — the figures come from your question (and your stated goals), not from live QLOOQO data.',
@@ -617,7 +639,7 @@ export class ZacResponseBuilderService {
       confidence: 'medium',
       limitations: limitations[mode],
       suggested_next_step:
-        mode === 'conversational'
+        mode === 'conversational' || dataExcluded
           ? null
           : 'Want this grounded in your own numbers? Ask me about your live figures.',
       measurement_hook: null,
@@ -638,23 +660,32 @@ export class ZacResponseBuilderService {
    * or the call failed): say what ZAC can't do right now instead of forcing an
    * unrelated tool or inventing advice.
    */
+  /**
+   * An advisory turn that could not be reasoned. The copy is chosen by WHY it
+   * failed, because those are different truths and ZAC must tell the right one.
+   *
+   * In particular: a general or hypothetical question does not need QLOOQO
+   * data, so its failure must never be reported as missing business data or
+   * redirect the user to ask about their live figures. Doing that is the exact
+   * behaviour that failed the hosted acceptance test — the user asked ZAC to
+   * set the data aside, and ZAC replied that the data was unavailable.
+   */
   buildAdvisoryUnavailableResponse(
-    input: MemoryResponseBaseInput & { mode: ZacAdvisoryMode },
+    input: MemoryResponseBaseInput & { mode: ZacAdvisoryMode; failure: ZacAdvisoryFailureReason },
   ): ZacResponse {
-    const { context, profile, visibleTools, completion, traceId, mode } = input;
+    const { context, visibleTools, completion, traceId, mode, failure } = input;
 
-    // Accurate for every arrival path: provider absent, call failed, OR the
-    // answer was rejected by a safety check — in all cases no reliable
-    // reasoned answer exists right now, and ZAC won't guess.
+    const subject =
+      mode === 'hypothetical'
+        ? 'your scenario'
+        : mode === 'conversational'
+          ? 'that'
+          : 'that question';
+
     const answer =
-      mode === 'conversational'
-        ? 'Happy to keep chatting — I can\'t go deeper on that right now, but for anything detailed, ask me about your business data directly (for example "How is my business doing?").'
-        : [
-            mode === 'hypothetical'
-              ? "I can't give you a reliable answer to your scenario just now, and I won't guess."
-              : "I can't give you reliable general advice just now, and I won't guess.",
-            'I can still answer from your connected business data — try "How is my business doing?" or "What can you help me with?".',
-          ].join('\n\n');
+      failure === 'provider_unavailable'
+        ? `I can't reason about ${subject} at the moment — my language model isn't available in this environment. This isn't about your business data; it's my own reasoning that's offline. Please try again shortly.`
+        : `I can't give you a reliable answer to ${subject} just now, and I won't guess. Please try again, or rephrase it for me.`;
 
     return {
       conversation_id: input.conversationId,
@@ -664,17 +695,56 @@ export class ZacResponseBuilderService {
       evidence: [
         {
           source_type: 'zac.reasoning',
-          source_ref: `advisory:${mode}:unavailable`,
+          source_ref: `advisory:${mode}:${failure}`,
           as_of: null,
           entities_used: [],
         },
       ],
       confidence: 'high',
       limitations: [
-        'No QLOOQO business data was read for this answer.',
-        `Data scope for live questions: ${profile.scopeDescription}`,
+        // Deliberately NOT "no QLOOQO data was read": for an advisory turn
+        // that is true but irrelevant, and reads as an excuse about data.
+        failure === 'provider_unavailable'
+          ? "ZAC's reasoning model is not configured in this environment."
+          : 'ZAC could not produce a reliable answer for this request.',
       ],
-      suggested_next_step: 'Ask a question about your live business data instead.',
+      suggested_next_step: null,
+      measurement_hook: null,
+      attribution_seed: null,
+      memory_updates: [],
+      tool_calls: [],
+      cost_metadata: this.costMetadata(completion),
+      technical_details: this.technicalDetails(visibleTools, completion),
+      trace_id: traceId,
+    };
+  }
+
+  /**
+   * The router could not tell whether the user wanted a general answer or
+   * their live figures, so ZAC asks. Deterministic text, zero tool calls,
+   * zero model cost.
+   */
+  buildRoutingClarificationResponse(
+    input: MemoryResponseBaseInput & { clarificationPrompt: string },
+  ): ZacResponse {
+    const { context, visibleTools, completion, traceId, clarificationPrompt } = input;
+
+    return {
+      conversation_id: input.conversationId,
+      answer: clarificationPrompt,
+      role_context: context.roleContext,
+      response_type: 'Explanation',
+      evidence: [
+        {
+          source_type: 'zac.reasoning',
+          source_ref: 'routing:clarification',
+          as_of: null,
+          entities_used: [],
+        },
+      ],
+      confidence: 'high',
+      limitations: ['No QLOOQO business data was read — I have not answered yet.'],
+      suggested_next_step: 'Tell me which you would like and I will answer straight away.',
       measurement_hook: null,
       attribution_seed: null,
       memory_updates: [],

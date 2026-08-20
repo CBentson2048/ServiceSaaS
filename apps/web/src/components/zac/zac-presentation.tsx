@@ -41,6 +41,35 @@ export const ZAC_RESPONSE_TYPE_BADGES: Record<string, { label: string; tone: Sta
   'Refusal / Insufficient Data': { label: 'Data not connected yet', tone: 'warning' },
 };
 
+/** Modes that reason WITHOUT reading any QLOOQO business data. */
+const ADVISORY_MODES = new Set(['general_advice', 'hypothetical', 'conversational']);
+
+/**
+ * The badge for one answer.
+ *
+ * `response_type` alone is not enough for refusals. The API has a single
+ * `Refusal / Insufficient Data` type covering two very different situations,
+ * and labelling both "Data not connected yet" is wrong — and specifically
+ * wrong in the direction that failed client acceptance:
+ *
+ *   - a DATA question that found no connected source  → data really is missing
+ *   - an ADVICE or HYPOTHETICAL question that ZAC could not reason about
+ *     → nothing to do with their data; the user may even have asked ZAC to
+ *       set their data aside, and is then told their data is the problem
+ *
+ * The request mode distinguishes them, so the badge uses it.
+ */
+export function zacResponseBadge(response: {
+  response_type: string;
+  technical_details?: { request_mode?: string };
+}): { label: string; tone: StatusTone } | undefined {
+  const mode = response.technical_details?.request_mode;
+  if (response.response_type === 'Refusal / Insufficient Data' && mode && ADVISORY_MODES.has(mode)) {
+    return { label: 'Answer unavailable', tone: 'warning' };
+  }
+  return ZAC_RESPONSE_TYPE_BADGES[response.response_type];
+}
+
 export interface ZacAskError {
   kind: 'notice' | 'error';
   text: string;

@@ -6,7 +6,7 @@ import { ApiRequestError, askZac, submitZacFeedback } from '../auth/api';
 import type { ZacAskResponse } from '../auth/api';
 import {
   ZAC_EVIDENCE_SOURCE_LABELS,
-  ZAC_RESPONSE_TYPE_BADGES,
+  zacResponseBadge,
   ZAC_STARTER_QUESTIONS,
   ZacAvatar,
   SparkGlyph,
@@ -102,7 +102,7 @@ export function ZacPage() {
     }
   }
 
-  const badge = response ? ZAC_RESPONSE_TYPE_BADGES[response.response_type] : undefined;
+  const badge = response ? zacResponseBadge(response) : undefined;
   const followUp = response?.suggested_next_step
     ? extractQuotedQuestion(response.suggested_next_step)
     : null;
@@ -343,6 +343,19 @@ export function ZacPage() {
                 <div>
                   Provider: {response.technical_details.provider} · Model:{' '}
                   {response.technical_details.model} · Trace: {response.trace_id}
+                </div>
+                <div>
+                  Routing: {response.technical_details.request_mode ?? 'n/a'} ·{' '}
+                  {response.technical_details.classification_source ?? 'n/a'}
+                  {response.technical_details.reason_code
+                    ? ` · ${response.technical_details.reason_code}`
+                    : ''}
+                  {typeof response.technical_details.semantic_confidence === 'number'
+                    ? ` · confidence ${response.technical_details.semantic_confidence.toFixed(2)}`
+                    : ''}
+                  {response.technical_details.semantic_routing_available === false
+                    ? ' · semantic routing UNAVAILABLE'
+                    : ''}
                 </div>
                 <pre className="scroll-area max-h-72 overflow-auto rounded-input border border-border bg-surface p-3 text-[11px] leading-4 text-text-secondary">
                   {JSON.stringify(response, null, 2)}

@@ -4,6 +4,15 @@
 > (`apps/api/src/zac/routing/` + the orchestrator). Supersedes any earlier
 > statement that every meaningful ZAC question routes through a business tool:
 > **tool use is now conditional on the request mode.**
+>
+> **Routing has since been rebuilt.** Section 2 below describes the original
+> deterministic-only precedence. Classification is now hybrid — explicit
+> deterministic rules, then a **semantic intent classifier**, then a safe
+> fallback ladder — because the keyword approach recognised only the phrasings
+> someone had thought of and misrouted 44% of no-data questions into the data
+> pipeline. The closed mode set, the security boundary and the provenance rules
+> in this document are unchanged and still accurate.
+> **See [phase-1-semantic-router.md](./phase-1-semantic-router.md).**
 
 This layer resolves Luke's behavioural sign-off feedback: ZAC distinguishes
 *analyse my data* from *give me general advice* and *reason about a
@@ -57,9 +66,11 @@ forbidden tool, and advisory paths contain no dispatch code at all
 8. **Own-data anchors** — *my/our* + business noun, imperatives ("show
    business revenue"), staff-list phrases → `qlooqo_data`.
 9. **Ambiguous** → optional model tie-break (`classifyMode` on the provider):
-   one tiny call, output validated against the closed enum (invented modes are
-   discarded), priced as `task_type: 'classification'`. No model → the
-   fail-safe default `qlooqo_data`, which is exactly the pre-mode pipeline.
+   **superseded** — this bare-token tie-break, its "when in doubt choose
+   qlooqo_data" instruction and its hard `qlooqo_data` fallback are exactly
+   what failed the client acceptance test. Replaced by the three-layer
+   semantic router: see
+   [phase-1-semantic-router.md](./phase-1-semantic-router.md) §5–6.
 
 ## 3. Grounding by provenance
 

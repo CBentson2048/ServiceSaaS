@@ -68,17 +68,47 @@ export function estimateLiveModelCostUsd(
  * a startup warning instead so unpriced deployments are visible.
  */
 export function resolveZacModelPricing(config: ConfigService): ZacModelPricing {
-  const parse = (key: string): number | undefined => {
-    const raw = config.get<string>(key);
-    if (raw === undefined || raw.trim() === '') return undefined;
-    const value = Number(raw);
-    return Number.isFinite(value) && value >= 0 ? value : undefined;
+  return {
+    usdPerMillionInputTokens: parsePrice(config, 'ZAC_PRICE_INPUT_USD_PER_MTOK') ?? 0,
+    usdPerMillionOutputTokens: parsePrice(config, 'ZAC_PRICE_OUTPUT_USD_PER_MTOK') ?? 0,
+    usdPerMillionCacheReadTokens: parsePrice(config, 'ZAC_PRICE_CACHE_READ_USD_PER_MTOK'),
+    usdPerMillionCacheWriteTokens: parsePrice(config, 'ZAC_PRICE_CACHE_WRITE_USD_PER_MTOK'),
   };
+}
+
+/**
+ * Prices for the semantic ROUTING model, which is a different (cheaper) model
+ * from the narration one. Without this the classification cost events would be
+ * priced at the narration model's rates — a silently wrong number on the cost
+ * spine, overstating routing spend by whatever the tier gap is.
+ *
+ * Falls back per-field to the narration prices, so a deployment that has not
+ * configured router prices behaves exactly as before rather than reporting
+ * zero. Whether the fallback is in use is visible in the logs at startup.
+ */
+export function resolveZacRouterPricing(
+  config: ConfigService,
+  narrationPricing: ZacModelPricing,
+): { pricing: ZacModelPricing; configured: boolean } {
+  const input = parsePrice(config, 'ZAC_ROUTER_PRICE_INPUT_USD_PER_MTOK');
+  const output = parsePrice(config, 'ZAC_ROUTER_PRICE_OUTPUT_USD_PER_MTOK');
+  const cacheRead = parsePrice(config, 'ZAC_ROUTER_PRICE_CACHE_READ_USD_PER_MTOK');
+  const cacheWrite = parsePrice(config, 'ZAC_ROUTER_PRICE_CACHE_WRITE_USD_PER_MTOK');
 
   return {
-    usdPerMillionInputTokens: parse('ZAC_PRICE_INPUT_USD_PER_MTOK') ?? 0,
-    usdPerMillionOutputTokens: parse('ZAC_PRICE_OUTPUT_USD_PER_MTOK') ?? 0,
-    usdPerMillionCacheReadTokens: parse('ZAC_PRICE_CACHE_READ_USD_PER_MTOK'),
-    usdPerMillionCacheWriteTokens: parse('ZAC_PRICE_CACHE_WRITE_USD_PER_MTOK'),
+    configured: input !== undefined && output !== undefined,
+    pricing: {
+      usdPerMillionInputTokens: input ?? narrationPricing.usdPerMillionInputTokens,
+      usdPerMillionOutputTokens: output ?? narrationPricing.usdPerMillionOutputTokens,
+      usdPerMillionCacheReadTokens: cacheRead ?? narrationPricing.usdPerMillionCacheReadTokens,
+      usdPerMillionCacheWriteTokens: cacheWrite ?? narrationPricing.usdPerMillionCacheWriteTokens,
+    },
   };
+}
+
+function parsePrice(config: ConfigService, key: string): number | undefined {
+  const raw = config.get<string>(key);
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : undefined;
 }

@@ -1,5 +1,8 @@
 import type { ZacRoleContext } from '../context/zac-context.types';
-import type { ZacRequestMode } from '../routing/zac-request-mode.types';
+import type {
+  ZacClassifierFailure,
+  ZacRequestMode,
+} from '../routing/zac-request-mode.types';
 import type { ZacEvidenceItem } from '../responses/zac-response.types';
 import type { ZacToolName } from '../tools/zac-tool.types';
 
@@ -98,9 +101,38 @@ export interface ZacModelRequest {
   mode?: ZacRequestMode;
 }
 
-/** Outcome of one model classification call — mode may be null (unusable output). */
-export interface ZacModeClassification {
-  mode: string | null;
+/**
+ * Everything the semantic router is allowed to see. Deliberately tiny: the
+ * question, the role LENS (not identity, business or permissions) and at most
+ * a few structural turn summaries. No transcripts, no tool output, no client
+ * PII, no business records, no credentials.
+ */
+export interface ZacSemanticRouterInput {
+  question: string;
+  roleContext: ZacRoleContext;
+  /** Structural summaries only, e.g. 'Asked about business health (week)'. */
+  recentTurnSummaries?: string[];
+}
+
+/**
+ * Raw semantic-router output. Every field is `unknown` on purpose: this is
+ * model-generated and therefore untrusted. The routing service validates each
+ * field against the closed server-side enums before any of it can influence a
+ * decision — a provider can never hand back a usable mode by itself.
+ */
+export interface ZacSemanticRouterRawOutput {
+  mode?: unknown;
+  confidence?: unknown;
+  requires_live_business_data?: unknown;
+  reason_code?: unknown;
+}
+
+/** Outcome of one semantic classification call. */
+export interface ZacSemanticRouterOutcome {
+  /** Untrusted model output; null when nothing usable came back. */
+  raw: ZacSemanticRouterRawOutput | null;
+  /** Why it failed, when it did — kept distinct from data-availability failures. */
+  failure: ZacClassifierFailure | null;
   /** Usage/cost of the call, for honest telemetry. Null if the call never billed. */
   completion: ZacModelCompletion | null;
 }
@@ -127,13 +159,22 @@ export interface ZacModelProvider {
    * deterministic answers stay byte-identical without a live provider.
    */
   readonly narrates: boolean;
+  /**
+   * True when this provider can perform Layer 2 semantic intent
+   * classification. False means ZAC is running on deterministic rules alone —
+   * a materially reduced product, so /zac/health reports it and the hosted
+   * smoke test fails readiness on it.
+   */
+  readonly semanticRouting: boolean;
   complete(request: ZacModelRequest): Promise<ZacModelCompletion>;
   /**
-   * Optional: classify an AMBIGUOUS question into the closed request-mode
-   * enum. The returned string is untrusted — callers validate it against the
-   * enum and fall back deterministically on anything else. Providers must
-   * treat the question with the same privacy contract as complete() (never
-   * logged or persisted). Absent on the stub: no key, no classification.
+   * Optional: semantic intent classification for a request the deterministic
+   * layer could not resolve with certainty. Output is UNTRUSTED — callers
+   * validate every field against the closed enums and fall back safely on
+   * anything else. Providers must treat the question with the same privacy
+   * contract as complete() (never logged or persisted), must never throw
+   * (failures come back as a `failure` code), and must never receive or return
+   * tool names, permissions, actor identity or scope.
    */
-  classifyMode?(question: string, roleContext: ZacRoleContext): Promise<ZacModeClassification>;
+  classifyRequestMode?(input: ZacSemanticRouterInput): Promise<ZacSemanticRouterOutcome>;
 }

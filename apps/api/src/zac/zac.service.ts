@@ -18,9 +18,13 @@ import { ZacMemoryExtractionService } from './memory/zac-memory-extraction.servi
 import { ZacMemoryService } from './memory/zac-memory.service';
 import { containsForbiddenMemoryContent } from './memory/zac-redaction';
 import { ZacRequestModeClassifierService } from './routing/zac-request-mode-classifier.service';
+import {
+  ZacSemanticRouterService,
+  dataInstructionLabel,
+} from './routing/zac-semantic-router.service';
 import type {
+  ZacAdvisoryRequestMode,
   ZacRequestClassification,
-  ZacRequestMode,
 } from './routing/zac-request-mode.types';
 import {
   ZAC_MODEL_PROVIDER,
@@ -66,6 +70,7 @@ export class ZacService {
     private readonly memoryExtraction: ZacMemoryExtractionService,
     private readonly memory: ZacMemoryService,
     private readonly requestModes: ZacRequestModeClassifierService,
+    private readonly semanticRouter: ZacSemanticRouterService,
     private readonly measurement: ZacMeasurementService,
     @Inject(ZAC_MODEL_PROVIDER) private readonly modelProvider: ZacModelProvider,
   ) {}
@@ -77,9 +82,13 @@ export class ZacService {
    * routing → ONE permission-re-checked tool dispatch → live narration of the
    * tool's verified figures with relevant memory as clearly-labelled
    * user-stated context → answer-first response → safe turn persistence
-   * (structural summaries only, never free text). Routing stays keyword-based
-   * on purpose — the model narrates evidence AFTER dispatch, it never decides
-   * routing or computes numbers. Telemetry carries safe metadata only (never
+   * (structural summaries only, never free text). Request-mode routing is
+   * hybrid — explicit deterministic rules, then a semantic intent classifier
+   * for natural language, then a safe fallback ladder (see
+   * ZacSemanticRouterService). The classifier decides only WHICH HANDLER runs:
+   * it is validated against a closed enum, it can never widen authorisation,
+   * and the narration model still only narrates evidence AFTER dispatch and
+   * never computes numbers. Telemetry carries safe metadata only (never
    * the question, answer or memory text); cost events fire once per real model
    * call, and any provider failure degrades to the deterministic tool-backed
    * answer.
@@ -198,6 +207,10 @@ export class ZacService {
         mode: 'memory',
         source: 'deterministic',
         dataInstruction: null,
+        reasonCode: 'user_memory_recall',
+        confidence: null,
+        classifierFailure: null,
+        requiresLiveBusinessData: null,
       };
       if (containsForbiddenMemoryContent(question)) {
         this.telemetry.recordSpineEvent('memory_declined', {
@@ -295,6 +308,19 @@ export class ZacService {
       );
     }
 
+    // The router asks ONE question back only when two layers genuinely
+    // disagree about whether live data is needed. No tool runs, and the
+    // question is deterministic text — never a model call.
+    if (classification.source === 'clarification' && classification.clarificationPrompt) {
+      return this.withMode(
+        this.responseBuilder.buildRoutingClarificationResponse({
+          ...memoryBase,
+          clarificationPrompt: classification.clarificationPrompt,
+        }),
+        classification,
+      );
+    }
+
     if (
       classification.mode === 'general_advice' ||
       classification.mode === 'hypothetical' ||
@@ -308,6 +334,7 @@ export class ZacService {
           conversation,
           question,
           classification.mode,
+          classification.dataInstruction === 'ignore_data',
           traceId,
           costEvents,
         ),
@@ -429,7 +456,12 @@ export class ZacService {
     return this.withMode(response, classification);
   }
 
-  /** Stamp the decided mode into technical_details — one place for every path. */
+  /**
+   * Stamp the routing decision into technical_details — one place for every
+   * path. Safe metadata only: the closed mode, which layer decided, the closed
+   * reason code and the bounded confidence. Never the model's words, never a
+   * rationale, never chain-of-thought.
+   */
   private withMode(response: ZacResponse, classification: ZacRequestClassification): ZacResponse {
     return {
       ...response,
@@ -437,16 +469,26 @@ export class ZacService {
         ...response.technical_details,
         request_mode: classification.mode,
         classification_source: classification.source,
+        reason_code: classification.reasonCode,
+        ...(classification.confidence === null
+          ? {}
+          : { semantic_confidence: Number(classification.confidence.toFixed(2)) }),
+        semantic_routing_available: this.semanticRouter.semanticRoutingAvailable,
       },
     };
   }
 
   /**
-   * Decide the request mode. Deterministic layers rule; the model may break a
-   * genuine tie into the CLOSED enum only (anything else — including invented
-   * modes — degrades to the qlooqo_data default, which is the pre-mode
-   * pipeline and therefore behaviour-preserving). Classification never touches
-   * authorisation: it selects a handler, and the handlers re-check permissions.
+   * Decide the request mode via the hybrid router:
+   *
+   *   Layer 1  explicit deterministic intent  → short-circuit, no model call
+   *   Layer 2  semantic intent classification → reasons about MEANING
+   *   Layer 3  safe fallback ladder           → never blanket-forces live data
+   *
+   * Classification never touches authorisation. It selects a handler; the
+   * handlers re-check role and permissions on every dispatch, so no mode —
+   * however it was decided, and whatever the user typed to influence it —
+   * can widen what the actor may access.
    */
   private async classifyRequest(
     question: string,
@@ -455,45 +497,40 @@ export class ZacService {
     traceId: string,
     costEvents: ZacCostEvent[],
   ): Promise<ZacRequestClassification> {
-    let classification =
-      this.requestModes.classify(question, context.roleContext) ?? null;
+    const routed = await this.semanticRouter.route({
+      question,
+      roleContext: context.roleContext,
+      recentTurnSummaries: conversation.recentSummaries,
+    });
 
-    if (!classification && this.modelProvider.classifyMode) {
-      const classifyStartedAt = Date.now();
-      const result = await this.modelProvider
-        .classifyMode(question, context.roleContext)
-        .catch(() => ({ mode: null, completion: null }));
-      if (result.completion) {
-        const event: ZacCostEvent = {
-          trace_id: traceId,
-          conversation_id: conversation.conversationId,
-          business_id: context.businessId,
-          location_id: context.locationId,
-          actor_user_id: context.actorUserId,
-          role_context: context.roleContext,
-          provider: result.completion.provider,
-          model: result.completion.model,
-          task_type: 'classification',
-          input_tokens: result.completion.inputTokens,
-          output_tokens: result.completion.outputTokens,
-          reasoning_tokens: result.completion.reasoningTokens,
-          estimated_cost_usd: result.completion.estimatedCostUsd,
-          latency_ms: Date.now() - classifyStartedAt,
-          tool_calls_used: 0,
-          cache_hit: result.completion.cacheReadInputTokens > 0,
-        };
-        this.telemetry.recordCostEvent(event);
-        costEvents.push(event);
-      }
-      if (ZacRequestModeClassifierService.isValidMode(result.mode)) {
-        classification = { mode: result.mode, source: 'model', dataInstruction: null };
-      }
+    // The semantic call is a real, billed model call — it rides the same cost
+    // spine as narration, distinguished by task_type.
+    if (routed.completion) {
+      const event: ZacCostEvent = {
+        trace_id: traceId,
+        conversation_id: conversation.conversationId,
+        business_id: context.businessId,
+        location_id: context.locationId,
+        actor_user_id: context.actorUserId,
+        role_context: context.roleContext,
+        provider: routed.completion.provider,
+        model: routed.completion.model,
+        task_type: 'classification',
+        input_tokens: routed.completion.inputTokens,
+        output_tokens: routed.completion.outputTokens,
+        reasoning_tokens: routed.completion.reasoningTokens,
+        estimated_cost_usd: routed.completion.estimatedCostUsd,
+        latency_ms: routed.classifierLatencyMs ?? 0,
+        tool_calls_used: 0,
+        cache_hit: routed.completion.cacheReadInputTokens > 0,
+      };
+      this.telemetry.recordCostEvent(event);
+      costEvents.push(event);
     }
 
-    if (!classification) {
-      classification = { mode: 'qlooqo_data', source: 'fallback', dataInstruction: null };
-    }
+    const classification = routed.classification;
 
+    // Safe routing analytics: shape and decision only, never the question text.
     this.telemetry.recordSpineEvent('request_classified', {
       trace_id: traceId,
       business_id: context.businessId,
@@ -501,7 +538,13 @@ export class ZacService {
       role_context: context.roleContext,
       request_mode: classification.mode,
       classification_source: classification.source,
-      explicit_data_instruction: classification.dataInstruction,
+      reason_code: classification.reasonCode,
+      semantic_confidence: classification.confidence,
+      requires_live_business_data: classification.requiresLiveBusinessData,
+      explicit_data_instruction: dataInstructionLabel(classification.dataInstruction),
+      model_classifier_used: routed.classifierInvoked,
+      classifier_latency_ms: routed.classifierLatencyMs,
+      classifier_fallback: classification.classifierFailure,
       conversation_id: conversation.conversationId,
     });
     return classification;
@@ -522,7 +565,9 @@ export class ZacService {
     visibleTools: ZacReadOnlyTool[],
     conversation: ZacConversationState,
     question: string,
-    mode: Extract<ZacRequestMode, 'general_advice' | 'hypothetical' | 'conversational'>,
+    mode: ZacAdvisoryRequestMode,
+    /** The user explicitly excluded their own data this turn. */
+    dataExcluded: boolean,
     traceId: string,
     costEvents: ZacCostEvent[],
   ): Promise<ZacResponse> {
@@ -541,7 +586,14 @@ export class ZacService {
     }
 
     if (!this.modelProvider.narrates) {
-      return this.responseBuilder.buildAdvisoryUnavailableResponse({ ...base, mode });
+      // No reasoning model in this environment. Say THAT — never that the
+      // business data is missing, which is irrelevant to an advisory turn.
+      this.recordModelFallback(context, traceId, 'zac.advisory', 'provider_unavailable');
+      return this.responseBuilder.buildAdvisoryUnavailableResponse({
+        ...base,
+        mode,
+        failure: 'provider_unavailable',
+      });
     }
 
     const relevantMemory = await this.memory.retrieveRelevant(context, question, traceId);
@@ -567,17 +619,28 @@ export class ZacService {
 
       if (trimmed.length === 0) {
         // The call billed even though the text is unusable — keep honest usage.
-        return this.responseBuilder.buildAdvisoryUnavailableResponse({ ...base, completion, mode });
+        return this.responseBuilder.buildAdvisoryUnavailableResponse({
+          ...base,
+          completion,
+          mode,
+          failure: 'advisory_generation_failed',
+        });
       }
       if (!this.isAdvisoryAnswerSafe(trimmed)) {
         this.recordModelFallback(context, traceId, 'zac.advisory', 'live_claim');
-        return this.responseBuilder.buildAdvisoryUnavailableResponse({ ...base, completion, mode });
+        return this.responseBuilder.buildAdvisoryUnavailableResponse({
+          ...base,
+          completion,
+          mode,
+          failure: 'advisory_generation_failed',
+        });
       }
       return this.responseBuilder.buildAdvisoryResponse({
         ...base,
         completion,
         mode,
         narratedAnswer: trimmed,
+        dataExcluded,
       });
     } catch (error) {
       const latencyMs = Date.now() - callStartedAt;
@@ -589,6 +652,7 @@ export class ZacService {
           ...base,
           completion: error.completion,
           mode,
+          failure: 'advisory_generation_failed',
         });
       }
       if (error instanceof ZacModelRefusedError) {
@@ -601,10 +665,15 @@ export class ZacService {
           ...base,
           completion: error.completion ?? base.completion,
           mode,
+          failure: 'advisory_generation_failed',
         });
       }
       this.recordModelFallback(context, traceId, 'zac.advisory', 'unavailable');
-      return this.responseBuilder.buildAdvisoryUnavailableResponse({ ...base, mode });
+      return this.responseBuilder.buildAdvisoryUnavailableResponse({
+        ...base,
+        mode,
+        failure: 'advisory_generation_failed',
+      });
     }
   }
 
@@ -776,7 +845,13 @@ export class ZacService {
     context: ZacActingContext,
     traceId: string,
     toolName: ZacToolName | 'zac.advisory',
-    reason: 'refusal' | 'unavailable' | 'truncated' | 'ungrounded' | 'live_claim',
+    reason:
+      | 'refusal'
+      | 'unavailable'
+      | 'truncated'
+      | 'ungrounded'
+      | 'live_claim'
+      | 'provider_unavailable',
   ): void {
     this.telemetry.recordSpineEvent('model_fallback', {
       trace_id: traceId,
@@ -1192,13 +1267,25 @@ export class ZacService {
   }
 
   /** Operational check: reachable + which provider would answer. Makes no model call. */
+  /**
+   * Operational check. Reports honestly whether this deployment can actually
+   * do Phase 1: a build with no provider key answers deterministically and
+   * cannot route semantically, so `uat_ready` is false and the hosted smoke
+   * test fails readiness rather than presenting a reduced ZAC as complete.
+   */
   health(actor: AuthUser): ZacHealthResponse {
     this.rollout.assertRolloutFor(actor);
+    const semanticRouting = this.semanticRouter.semanticRoutingAvailable;
+    const narrates = this.modelProvider.narrates;
     return {
       enabled: true,
       provider: this.modelProvider.name,
       model: this.modelProvider.model,
       ok: true,
+      narrates,
+      semantic_routing: semanticRouting,
+      router_model: semanticRouting ? this.semanticRouter.routerModel : null,
+      uat_ready: narrates && semanticRouting,
     };
   }
 }

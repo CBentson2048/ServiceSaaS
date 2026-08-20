@@ -289,45 +289,158 @@ describe('AnthropicZacModelProvider', () => {
     expect(rejection.completion).toMatchObject({ inputTokens: 100, text: '' });
   });
 
-  describe('classifyMode', () => {
-    it('returns the lowercased token plus honest usage on a clean call', async () => {
+  it('instructs the model to separate a live figure from general guidance', async () => {
+    // Brief section 24: a multi-intent turn ("what is my rebooking, and what
+    // should a salon generally do?") routes to qlooqo_data, and the ANSWER must
+    // keep the two apart. No seventh mode — the separation lives in the
+    // narration contract, so it is pinned here.
+    createMock.mockResolvedValue(apiResponse({ content: [{ type: 'text', text: 'ok' }] }));
+    const provider = new AnthropicZacModelProvider(makeConfig());
+
+    await provider.complete(makeRequest());
+
+    const system = String(createMock.mock.calls[0][0].system[0].text);
+    expect(system).toContain('ALSO asks for general guidance');
+    expect(system).toContain('clearly separate paragraph');
+    expect(system).toContain('Never present general guidance as something their figures show');
+    // The evidence-only rule still binds every number in the answer.
+    expect(system).toContain('Every number in your answer must appear verbatim in the evidence');
+  });
+
+  describe('classifyRequestMode', () => {
+    const toolUse = (input: unknown) =>
+      apiResponse({
+        stop_reason: 'tool_use',
+        content: [{ type: 'tool_use', id: 'tu_1', name: 'record_request_mode', input }],
+      });
+
+    it('returns the structured verdict plus honest usage on a clean call', async () => {
       createMock.mockResolvedValue(
-        apiResponse({ content: [{ type: 'text', text: ' General_Advice ' }] }),
+        toolUse({
+          mode: 'general_advice',
+          confidence: 0.86,
+          requires_live_business_data: false,
+          reason_code: 'general_business_advice',
+        }),
       );
       const provider = new AnthropicZacModelProvider(makeConfig());
 
-      const result = await provider.classifyMode('Thoughts on things lately?', 'owner');
+      const result = await provider.classifyRequestMode({
+        question: 'Thoughts on things lately?',
+        roleContext: 'owner',
+      });
 
-      expect(result.mode).toBe('general_advice');
+      expect(result.failure).toBeNull();
+      expect(result.raw).toMatchObject({ mode: 'general_advice', confidence: 0.86 });
       expect(result.completion).toMatchObject({ provider: 'anthropic', inputTokens: 100 });
+
+      const [params, options] = createMock.mock.calls[0];
       // Tight per-request budget: a blocking pre-step must fail fast.
-      expect(createMock.mock.calls[0][1]).toMatchObject({ timeout: 10_000, maxRetries: 1 });
+      expect(options).toMatchObject({ timeout: 8_000, maxRetries: 1 });
+      // Structured output is FORCED — the model cannot answer the user instead.
+      expect(params.tool_choice).toEqual({ type: 'tool', name: 'record_request_mode' });
       // The question is data inside <request> in the USER turn, never system.
-      const params = createMock.mock.calls[0][0];
       expect(params.messages[0].content).toContain('<request>Thoughts on things lately?</request>');
       expect(String(params.system)).not.toContain('Thoughts on things lately');
+      // The routing prompt is cached: it is large and byte-identical per call.
+      expect(params.system[0].cache_control).toEqual({ type: 'ephemeral' });
     });
 
-    it('discards the token (but keeps the usage) when the call did not end cleanly', async () => {
+    it('routes on the configured router model, not the narration model', async () => {
+      createMock.mockResolvedValue(
+        toolUse({
+          mode: 'conversational',
+          confidence: 0.8,
+          requires_live_business_data: false,
+          reason_code: 'conversation_followup',
+        }),
+      );
+      const provider = new AnthropicZacModelProvider(
+        makeConfig({ ...ENV, ZAC_ROUTER_MODEL_ID: 'claude-haiku-4-5' }),
+      );
+
+      await provider.classifyRequestMode({ question: 'Thanks', roleContext: 'owner' });
+
+      expect(createMock.mock.calls[0][0].model).toBe('claude-haiku-4-5');
+      expect(provider.routerModel).toBe('claude-haiku-4-5');
+    });
+
+    it('never sends identity, scope, permissions or tool names to the router', async () => {
+      createMock.mockResolvedValue(
+        toolUse({
+          mode: 'qlooqo_data',
+          confidence: 0.9,
+          requires_live_business_data: true,
+          reason_code: 'real_business_analysis',
+        }),
+      );
+      const provider = new AnthropicZacModelProvider(makeConfig());
+
+      await provider.classifyRequestMode({
+        question: 'How are we doing?',
+        roleContext: 'owner',
+        recentTurnSummaries: ['Asked about business health (week)'],
+      });
+
+      // The per-request payload carries the question, the role LENS and the
+      // structural summary — and nothing that identifies the actor, their
+      // business, their location, or which tools exist.
+      const params = createMock.mock.calls[0][0];
+      const userMessage = String(params.messages[0].content);
+      expect(userMessage).toBe(
+        'Role lens: owner\n' +
+          'Recent turns (oldest first, for follow-up context only):\n' +
+          '- Asked about business health (week)\n' +
+          'Classify this request:\n' +
+          '<request>How are we doing?</request>',
+      );
+      // No tool registry, no scope, no identity anywhere in the request.
+      const payload = JSON.stringify(params);
+      for (const forbidden of ['business_id', 'location_id', 'actor_user_id', 'kpi.summary', 'biz-']) {
+        expect(payload).not.toContain(forbidden);
+      }
+    });
+
+    it('reports a refusal as such, keeping the billed usage', async () => {
+      createMock.mockResolvedValue(apiResponse({ stop_reason: 'refusal', content: [] }));
+      const provider = new AnthropicZacModelProvider(makeConfig());
+
+      const result = await provider.classifyRequestMode({ question: 'Anything?', roleContext: 'owner' });
+
+      expect(result.raw).toBeNull();
+      expect(result.failure).toBe('classification_refused');
+      expect(result.completion).not.toBeNull();
+    });
+
+    it('discards the verdict (but keeps the usage) when the call did not end in a tool call', async () => {
       createMock.mockResolvedValue(
         apiResponse({ stop_reason: 'max_tokens', content: [{ type: 'text', text: 'qlooqo' }] }),
       );
       const provider = new AnthropicZacModelProvider(makeConfig());
 
-      const result = await provider.classifyMode('Anything?', 'owner');
+      const result = await provider.classifyRequestMode({ question: 'Anything?', roleContext: 'owner' });
 
-      expect(result.mode).toBeNull();
+      expect(result.raw).toBeNull();
+      expect(result.failure).toBe('classification_invalid');
       expect(result.completion).not.toBeNull();
     });
 
-    it('never throws — transport failures degrade to the deterministic fallback', async () => {
+    it('never throws — transport failures degrade to the safe fallback', async () => {
       createMock.mockRejectedValue(new Error('529 overloaded'));
       const provider = new AnthropicZacModelProvider(makeConfig());
 
-      await expect(provider.classifyMode('Anything?', 'owner')).resolves.toEqual({
-        mode: null,
-        completion: null,
-      });
+      await expect(
+        provider.classifyRequestMode({ question: 'Anything?', roleContext: 'owner' }),
+      ).resolves.toEqual({ raw: null, failure: 'provider_unavailable', completion: null });
+    });
+
+    it('distinguishes a routing timeout from any other transport failure', async () => {
+      createMock.mockRejectedValue(new Error('Request timed out.'));
+      const provider = new AnthropicZacModelProvider(makeConfig());
+
+      const result = await provider.classifyRequestMode({ question: 'Anything?', roleContext: 'owner' });
+
+      expect(result.failure).toBe('classification_timeout');
     });
   });
 });

@@ -8,7 +8,7 @@ import { ApiRequestError, askZac, submitZacFeedback } from '../../auth/api';
 import type { ZacAskResponse } from '../../auth/api';
 import {
   ZAC_EVIDENCE_SOURCE_LABELS,
-  ZAC_RESPONSE_TYPE_BADGES,
+  zacResponseBadge,
   ZAC_STARTER_QUESTIONS,
   ZacAvatar,
   SparkGlyph,
@@ -289,7 +289,7 @@ function ZacAnswerBubble({
   onAsk: (question: string) => void;
   onFeedback?: (outputId: string, rating: 'useful' | 'not_useful') => Promise<void>;
 }) {
-  const badge = ZAC_RESPONSE_TYPE_BADGES[response.response_type];
+  const badge = zacResponseBadge(response);
   const followUp = response.suggested_next_step
     ? extractQuotedQuestion(response.suggested_next_step)
     : null;

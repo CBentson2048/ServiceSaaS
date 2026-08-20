@@ -2,6 +2,7 @@ import type { ZacRoleContext } from '../context/zac-context.types';
 import type {
   ZacClassificationSource,
   ZacRequestMode,
+  ZacRoutingReasonCode,
 } from '../routing/zac-request-mode.types';
 import type { ZacToolDispatchTrace } from '../tools/zac-tool.types';
 
@@ -75,8 +76,18 @@ export interface ZacTechnicalDetails {
   detected_intent?: string;
   /** How this turn was answered (closed enum; decided server-side). */
   request_mode?: ZacRequestMode;
-  /** Who decided the mode: deterministic rules, the model, or the safe default. */
+  /** Which layer decided the mode: deterministic, semantic, follow-up, fallback or clarification. */
   classification_source?: ZacClassificationSource;
+  /** Closed reason code for the routing decision. Never free text, never rationale. */
+  reason_code?: ZacRoutingReasonCode;
+  /** The semantic classifier's bounded confidence, when one ran. Diagnostics only. */
+  semantic_confidence?: number;
+  /**
+   * False when this deployment is routing on deterministic rules alone (no
+   * model provider). Surfaced so a reduced build can never be mistaken for
+   * full Phase 1 during UAT.
+   */
+  semantic_routing_available?: boolean;
 }
 
 /**
@@ -127,4 +138,16 @@ export interface ZacHealthResponse {
   provider: string;
   model: string;
   ok: boolean;
+  /** True when a real model can narrate advisory answers (false on the stub). */
+  narrates: boolean;
+  /** True when Layer 2 semantic intent routing is available AND enabled. */
+  semantic_routing: boolean;
+  /** The model performing semantic routing, or null when unavailable. */
+  router_model: string | null;
+  /**
+   * Readiness for client acceptance testing. False whenever ZAC would answer
+   * without a real provider or without semantic routing — a deployment in that
+   * state must not be handed over as Phase 1 complete.
+   */
+  uat_ready: boolean;
 }

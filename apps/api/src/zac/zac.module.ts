@@ -14,6 +14,7 @@ import { ZacConversationStore } from './persistence/zac-conversation.store';
 import { ZacMeasurementStore } from './persistence/zac-measurement.store';
 import { ZacMemoryStore } from './persistence/zac-memory.store';
 import { ZacRequestModeClassifierService } from './routing/zac-request-mode-classifier.service';
+import { ZacSemanticRouterService } from './routing/zac-semantic-router.service';
 import { AnthropicZacModelProvider } from './models/providers/anthropic-zac-provider';
 import { StubZacModelProvider } from './models/providers/stub-zac-provider';
 import { ZAC_MODEL_PROVIDER } from './models/zac-model-provider.interface';
@@ -52,6 +53,7 @@ import { ZacService } from './zac.service';
     ZacMemoryExtractionService,
     ZacMemoryService,
     ZacRequestModeClassifierService,
+    ZacSemanticRouterService,
     ZacMeasurementService,
     {
       provide: ZAC_MODEL_PROVIDER,

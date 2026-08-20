@@ -17,8 +17,9 @@ describe('ZacRequestModeClassifierService', () => {
       );
       expect(result).toEqual({
         mode: 'hypothetical',
-        source: 'deterministic',
+        reasonCode: 'explicit_ignore_live_data',
         dataInstruction: 'ignore_data',
+        certain: true,
       });
     });
 
@@ -37,7 +38,12 @@ describe('ZacRequestModeClassifierService', () => {
           "Don't give me generic advice — use my actual salon data and tell me what I should focus on.",
           'owner',
         ),
-      ).toEqual({ mode: 'qlooqo_data', source: 'deterministic', dataInstruction: 'use_data' });
+      ).toEqual({
+        mode: 'qlooqo_data',
+        reasonCode: 'explicit_live_data_request',
+        dataInstruction: 'use_data',
+        certain: true,
+      });
       expect(instructionOf('Using my current rebooking figures, what should I do?')).toBe(
         'use_data',
       );
@@ -211,7 +217,7 @@ describe('ZacRequestModeClassifierService', () => {
         'Which stylist is underperforming?',
       ]) {
         const result = classifier.classify(question, 'stylist');
-        expect(result).toMatchObject({ mode: 'qlooqo_data', source: 'deterministic' });
+        expect(result).toMatchObject({ mode: 'qlooqo_data', certain: true });
       }
     });
 
@@ -220,6 +226,51 @@ describe('ZacRequestModeClassifierService', () => {
         expect(classifier.isPureAcknowledgement(ack)).toBe(true);
         expect(modeOf(ack)).toBe('conversational');
       }
+    });
+  });
+
+  describe('the ignore-data veto survives hostile and awkward text', () => {
+    it('is not defeated by invisible characters', () => {
+      // A zero-width space inside "data" would break \bdata\b and silently
+      // drop the user's explicit instruction.
+      expect(classifier.detectDataInstruction('forget my da\u200Bta for this')).toBe('ignore_data');
+      expect(classifier.detectDataInstruction('forget\u00A0my\u00A0data for this')).toBe(
+        'ignore_data',
+      );
+      expect(classifier.detectDataInstruction('ﬁgnore my data')).not.toBe('use_data');
+    });
+
+    it('survives ordinary long noun phrases between the possessive and the noun', () => {
+      expect(
+        classifier.detectDataInstruction(
+          'Ignore my current end-of-month rolling twelve-week rebooking figures.',
+        ),
+      ).toBe('ignore_data');
+    });
+
+    it('reads negation by direction, not by keyword presence', () => {
+      expect(classifier.detectDataInstruction('Ignore industry averages and use my actual figures.')).toBe('use_data');
+      expect(classifier.detectDataInstruction('Ignore my actual figures and use industry thinking.')).toBe('ignore_data');
+      expect(classifier.detectDataInstruction("dont use my data for this")).toBe('ignore_data');
+      expect(classifier.detectDataInstruction('Ignore what I just said, that came out wrong.')).toBeNull();
+      // A question about ZAC's ability is not an instruction to use the data.
+      expect(
+        classifier.detectDataInstruction('Which bits of my data can you read without me approving it each time?'),
+      ).toBeNull();
+    });
+
+    it('stays linear on adversarial input — the question text is user-supplied', () => {
+      const pathological = [
+        'ignore my ' + 'aaa '.repeat(500) + 'figures',
+        'am i allowed to ' + 'x '.repeat(2000) + 'see',
+        'if ' + 'a '.repeat(2000) + '5',
+        'a, and b, but c, '.repeat(400),
+        'x'.repeat(20000),
+      ];
+      const startedAt = Date.now();
+      for (const input of pathological) classifier.classify(input, 'owner');
+      // Catastrophic backtracking would blow past this by orders of magnitude.
+      expect(Date.now() - startedAt).toBeLessThan(2000);
     });
   });
 
