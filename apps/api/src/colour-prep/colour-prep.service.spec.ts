@@ -84,7 +84,7 @@ function baseRows(overrides: Record<string, unknown[]> = {}): Record<string, unk
         client_profile_id: 'client-1',
         assigned_staff_profile_id: 'staff-1',
         scheduled_start_at: '2026-08-19T10:00:00.000Z',
-        status: 'confirmed',
+        status: 'accepted',
       },
     ],
     'booking.appointment_services': [
@@ -241,7 +241,7 @@ describe('window selection', () => {
     const statusFilter = captured.find(
       (call) => call.key === 'booking.appointments' && call.method === 'in' && call.args[0] === 'status',
     );
-    expect(statusFilter?.args[1]).toEqual(['pending', 'confirmed', 'awaiting_acceptance', 'checked_in']);
+    expect(statusFilter?.args[1]).toEqual(['pending', 'accepted', 'checked_in']);
   });
 });
 
@@ -294,7 +294,7 @@ describe('requirement calculation', () => {
           client_profile_id: 'client-1',
           assigned_staff_profile_id: null,
           scheduled_start_at: '2026-08-19T10:00:00.000Z',
-          status: 'confirmed',
+          status: 'accepted',
         },
         {
           id: 'appt-2',
@@ -512,7 +512,7 @@ describe('performance shape', () => {
       client_profile_id: `client-${index}`,
       assigned_staff_profile_id: null,
       scheduled_start_at: '2026-08-19T10:00:00.000Z',
-      status: 'confirmed',
+      status: 'accepted',
     }));
     const rows = baseRows({
       'booking.appointments': many,

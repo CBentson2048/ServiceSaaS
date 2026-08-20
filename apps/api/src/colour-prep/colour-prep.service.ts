@@ -8,6 +8,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type {
+  AppointmentStatus,
   AuthUser,
   ColourPrepAppointment,
   ColourPrepAppointmentItem,
@@ -15,6 +16,7 @@ import type {
   ColourPrepProductRequirement,
   ColourPrepRange,
   ColourPrepStockState,
+  FormulaStatus,
   ServiceBillingCategory,
   StockUnit,
 } from '@sheer/domain';
@@ -39,11 +41,24 @@ import type { ColourPrepQueryDto } from './dto';
  * that a salon opens every morning.
  */
 
-/** Appointments still worth preparing for. Cancelled/finished work is excluded. */
-const PREPARABLE_STATUSES = ['pending', 'confirmed', 'awaiting_acceptance', 'checked_in'];
+/**
+ * Appointments still worth preparing for, in the canonical lifecycle 0045 left
+ * behind: pending -> accepted / rejected -> checked_in -> awaiting_payment -> paid.
+ *
+ * Prep is only meaningful before the colour is mixed, so this stops at
+ * checked_in. `rejected`, `cancelled` and `no_show` are not happening;
+ * `awaiting_payment` and `paid` already happened.
+ *
+ * TYPED DELIBERATELY. 0045 renamed `confirmed` -> `accepted` and
+ * `awaiting_acceptance` -> `pending`; an untyped literal list silently kept the
+ * dead names and PostgREST rejected the whole query with 22P02, so the screen
+ * failed for every request. Typing against the domain union means the next
+ * rename breaks the build instead.
+ */
+const PREPARABLE_STATUSES: AppointmentStatus[] = ['pending', 'accepted', 'checked_in'];
 
 /** Formula states that represent a finalized mix; drafts are not prep-worthy. */
-const SAVED_FORMULA_STATUS = 'saved';
+const SAVED_FORMULA_STATUS: FormulaStatus = 'saved';
 
 interface LocationRow {
   id: string;
@@ -62,7 +77,7 @@ interface AppointmentRow {
   client_profile_id: string;
   assigned_staff_profile_id: string | null;
   scheduled_start_at: string;
-  status: string;
+  status: AppointmentStatus;
 }
 
 interface AppointmentServiceRow {
