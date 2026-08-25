@@ -285,6 +285,10 @@ export type Permission =
   | 'bills.view'
   | 'eod.manage'
   | 'eod.sign_off'
+  // Ordering (Week 6 tickets 8/9)
+  | 'orders.view'
+  | 'orders.manage'
+  | 'orders.approve'
   // Team / staff
   | 'staff.view'
   | 'staff.manage'
@@ -349,6 +353,11 @@ export const PERMISSION_CATALOG: readonly PermissionDefinition[] = [
   { key: 'eod.manage', label: 'End of day', description: 'Open the trading day, enter counted takings, float and petty cash.', kind: 'feature', group: 'Front of house' },
   { key: 'eod.sign_off', label: 'End of day sign-off', description: 'Sign off the daily cash-up, freezing its variance permanently.', kind: 'feature', group: 'Front of house', requires: ['eod.manage'] },
   { key: 'inventory.manage', label: 'Manage inventory', description: 'Manage products and stock.', kind: 'feature', group: 'Operations' },
+  // Seeded into core.security_levels by migration 0094 — these catalog entries are
+  // the mandatory other half (keys missing from ALL_PERMISSIONS are stripped on save).
+  { key: 'orders.view', label: 'View purchase orders', description: 'View draft and sent supplier orders and their history.', kind: 'feature', group: 'Operations' },
+  { key: 'orders.manage', label: 'Prepare purchase orders', description: 'Generate, edit and submit draft supplier orders for approval.', kind: 'feature', group: 'Operations', requires: ['orders.view'] },
+  { key: 'orders.approve', label: 'Approve & send orders', description: 'Approve submitted orders and send them to suppliers. This is the spend control.', kind: 'feature', group: 'Operations', requires: ['orders.view'] },
   { key: 'services.manage', label: 'Manage services', description: 'Manage the service catalogue.', kind: 'feature', group: 'Operations', requires: ['services.view'] },
   { key: 'rota.manage', label: 'Manage rota', description: 'Manage schedules and shifts.', kind: 'feature', group: 'Operations', requires: ['rota.view'] },
   { key: 'staff.view', label: 'View team', description: 'View the team list.', kind: 'feature', group: 'Team' },
@@ -539,7 +548,9 @@ export const SYSTEM_SECURITY_LEVELS: readonly SystemSecurityLevelDefinition[] = 
     // default (see DEFAULT_ROLE_PERMISSIONS.manager). Mirrors migration 0074, which
     // added payroll.view to this system level only. Owners can grant the remaining
     // payroll keys per business at /settings/security-levels.
-    permissions: [...DEFAULT_ROLE_PERMISSIONS.manager, 'payroll.view'],
+    // Ordering (0094): managers PREPARE orders; orders.approve is the spend
+    // control and stays owner/group_admin unless granted per business.
+    permissions: [...DEFAULT_ROLE_PERMISSIONS.manager, 'payroll.view', 'orders.view', 'orders.manage'],
   },
   {
     key: 'receptionist',
@@ -1029,6 +1040,12 @@ export interface LocationRecordSettings {
   wasteAllowancePercent: number;
   rebookRateBenchmarkPercent: number;
   utilisationWarningThresholdPercent: number;
+  /** Days without outbound movement before on-hand stock counts as dead; per-product deadStockDays overrides. */
+  deadStockDaysDefault: number;
+  /** Trailing weeks of outbound usage the reorder suggestion averages over. */
+  reorderUsageWindowWeeks: number;
+  /** Weeks of forecast usage a suggested order should cover. */
+  reorderCoverageWeeks: number;
   /** Payroll cost as % of revenue: amber warning threshold. */
   payrollWarningPercent: number;
   /** Payroll cost as % of revenue: red critical threshold. */
@@ -1175,6 +1192,9 @@ export function defaultLocationRecordSettings(
     wasteAllowancePercent: 10,
     rebookRateBenchmarkPercent: 50,
     utilisationWarningThresholdPercent: 60,
+    deadStockDaysDefault: 90,
+    reorderUsageWindowWeeks: 8,
+    reorderCoverageWeeks: 4,
     payrollWarningPercent: 45,
     payrollCriticalPercent: 55,
     sundayReportEnabled: true,
@@ -3203,6 +3223,16 @@ export interface InventoryProduct {
   packSize?: number;
   /** Scannable identifier (EAN/UPC or supplier code); unique per business. */
   barcode?: string;
+  /** Supplier this product is ordered from; undefined when unassigned. */
+  supplierId?: string;
+  /** Resolved supplier name for display; undefined when unassigned. */
+  supplierName?: string;
+  /** Smallest order the supplier accepts, in packs of `packSize`. Default 1. */
+  minimumOrderQuantity: number;
+  /** Supplier order step in packs (6 = sold by the half-dozen). Default 1. */
+  orderMultiple: number;
+  /** Days without outbound movement before stock counts as dead; undefined falls back to the location default. */
+  deadStockDays?: number;
   /** Product-use classification (0079). Consumed by the salon itself. */
   isSalonUse: boolean;
   /** Product-use classification (0079). Used by QLOOQO Lab formulas. */
@@ -3289,6 +3319,10 @@ export interface UpsertInventoryProductRequest {
   stockUnit?: StockUnit | null;
   packSize?: number | null;
   barcode?: string | null;
+  supplierId?: string | null;
+  minimumOrderQuantity?: number | null;
+  orderMultiple?: number | null;
+  deadStockDays?: number | null;
   isSalonUse?: boolean | null;
   isLabUse?: boolean | null;
   isRetail?: boolean | null;
@@ -3334,6 +3368,124 @@ export interface ListInventoryLowStockResponse {
   alerts: InventoryLowStockAlert[];
 }
 
+// --- Dead stock (Week 6 ticket 7) -------------------------------------------
+
+/** Which threshold classified the item: the product override or the location default. */
+export type DeadStockThresholdSource = 'product' | 'location_default';
+
+export interface InventoryDeadStockItem {
+  locationId: string;
+  locationName: string;
+  productId: string;
+  productName: string;
+  brand?: string;
+  sku?: string;
+  category?: string;
+  supplierName?: string;
+  quantityOnHandGrams: number;
+  /** How to read the quantity: grams/millilitres, or whole units. */
+  stockUnit: StockUnit;
+  /** Last time stock left the shelf; undefined when it never has. */
+  lastOutboundAt?: string;
+  /** What the idle clock is anchored to (last outbound, else first stocked). */
+  idleSince: string;
+  daysIdle: number;
+  thresholdDays: number;
+  thresholdSource: DeadStockThresholdSource;
+  /** quantityOnHand × default cost per base unit; undefined when no cost is recorded. */
+  estimatedValueCents?: number;
+}
+
+export interface ListInventoryDeadStockResponse {
+  items: InventoryDeadStockItem[];
+  locations: BusinessLocationSummary[];
+  /** Sum of estimatedValueCents across items (items with no cost contribute 0). */
+  totalEstimatedValueCents: number;
+}
+
+// --- Purchase orders (Week 6 tickets 8/9) -----------------------------------
+
+export type PurchaseOrderStatus = 'draft' | 'pending_approval' | 'approved' | 'sent' | 'cancelled';
+
+export interface PurchaseOrderLine {
+  id: string;
+  productId: string;
+  /** Snapshot at draft time — survives later product renames. */
+  productName: string;
+  /** Base quantities per pack at draft time. */
+  packSize?: number;
+  stockUnit: StockUnit;
+  /** Packs the algorithm suggested. */
+  suggestedQuantity: number;
+  /** Packs actually being ordered (editable while draft). */
+  orderedQuantity: number;
+  /** Estimated cost per pack at draft time. */
+  unitCostCents?: number;
+  lineTotalCents: number;
+}
+
+export interface PurchaseOrder {
+  id: string;
+  orderNumber: string;
+  businessId: string;
+  locationId: string;
+  locationName: string;
+  supplierId: string;
+  supplierName: string;
+  /** Where a send will go; undefined when the supplier has no order email. */
+  supplierEmail?: string;
+  status: PurchaseOrderStatus;
+  currencyCode: string;
+  subtotalCents: number;
+  notes?: string;
+  createdBy?: string;
+  submittedAt?: string;
+  approvedAt?: string;
+  approvedBy?: string;
+  sentAt?: string;
+  sentToEmail?: string;
+  /** Last delivery failure; cleared by a successful send. */
+  sendError?: string;
+  cancelledAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  lines: PurchaseOrderLine[];
+}
+
+export interface ListPurchaseOrdersResponse {
+  orders: PurchaseOrder[];
+  locations: BusinessLocationSummary[];
+}
+
+export interface PurchaseOrderResponse {
+  order: PurchaseOrder;
+}
+
+/** Result of POST /orders/:id/send. The order state is persisted either way. */
+export interface SendPurchaseOrderResponse {
+  order: PurchaseOrder;
+  delivered: boolean;
+  error?: string;
+}
+
+/** A product the generator wanted to order but could not. */
+export interface UnorderableProduct {
+  productId: string;
+  productName: string;
+  reason: 'no_supplier' | 'no_pack_size';
+}
+
+export interface GeneratePurchaseOrdersResponse {
+  /** Draft orders created by this run. */
+  created: PurchaseOrder[];
+  /** Suppliers skipped because an open order already exists. */
+  skippedExistingOrder: { supplierId: string; supplierName: string; orderId: string; orderNumber: string }[];
+  /** Products with a shortfall the generator could not turn into a line. */
+  unorderable: UnorderableProduct[];
+  /** True when no product needed ordering at all. */
+  nothingNeeded: boolean;
+}
+
 export interface InventoryCategory {
   id: string;
   businessId: string;
@@ -3364,6 +3516,51 @@ export interface UpdateInventoryCategoryRequest {
   isActive?: boolean;
 }
 
+export interface InventorySupplier {
+  id: string;
+  businessId: string;
+  name: string;
+  /** Where the Week 7 automated order form is sent. */
+  contactEmail?: string;
+  contactPhone?: string;
+  /** The salon's account number with this supplier, quoted on orders. */
+  accountReference?: string;
+  /** Typical days from order to delivery; informs reorder planning. */
+  leadTimeDays?: number;
+  notes?: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ListInventorySuppliersResponse {
+  suppliers: InventorySupplier[];
+}
+
+export interface InventorySupplierResponse {
+  supplier: InventorySupplier;
+}
+
+export interface CreateInventorySupplierRequest {
+  name: string;
+  contactEmail?: string | null;
+  contactPhone?: string | null;
+  accountReference?: string | null;
+  leadTimeDays?: number | null;
+  notes?: string | null;
+  isActive?: boolean;
+}
+
+export interface UpdateInventorySupplierRequest {
+  name?: string;
+  contactEmail?: string | null;
+  contactPhone?: string | null;
+  accountReference?: string | null;
+  leadTimeDays?: number | null;
+  notes?: string | null;
+  isActive?: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Service catalogue (managed services + service categories)
 //
@@ -3380,6 +3577,12 @@ export interface ServiceCategory {
   description?: string;
   /** #RRGGBB tile colour for the appointment book; undefined uses the neutral default. */
   colorHex?: string;
+  /**
+   * Which kind of colour work this category is (0091). Drives Colour Prep and
+   * the colour billing rules; undefined means "not a colour service" and its
+   * appointments are excluded from prep planning.
+   */
+  billingCategory?: ServiceBillingCategory;
   isActive: boolean;
   sortOrder: number;
   createdAt: string;
@@ -3398,6 +3601,8 @@ export interface CreateServiceCategoryRequest {
   name: string;
   description?: string | null;
   colorHex?: string | null;
+  /** Null/omitted = not colour work. */
+  billingCategory?: ServiceBillingCategory | null;
   isActive?: boolean;
   sortOrder?: number;
 }
@@ -3406,6 +3611,8 @@ export interface UpdateServiceCategoryRequest {
   name?: string;
   description?: string | null;
   colorHex?: string | null;
+  /** Explicit null clears the tag; omitted keeps it. */
+  billingCategory?: ServiceBillingCategory | null;
   isActive?: boolean;
   sortOrder?: number;
 }
