@@ -59,6 +59,11 @@ const PREPARABLE_STATUSES: AppointmentStatus[] = ['pending', 'accepted', 'checke
 
 /** Formula states that represent a finalized mix; drafts are not prep-worthy. */
 const SAVED_FORMULA_STATUS: FormulaStatus = 'saved';
+/**
+ * Row count at which a PostgREST response is assumed to have hit its server
+ * cap, so the per-client fallback in loadLatestFormulas is worth running.
+ */
+const POSSIBLE_ROW_CAP = 1000;
 
 interface LocationRow {
   id: string;
@@ -490,10 +495,39 @@ export class ColourPrepService {
       throw new InternalServerErrorException('Unable to load colour preparation');
     }
 
+    const rows = data ?? [];
     const latest = new Map<string, FormulaRow>();
-    for (const formula of data ?? []) {
+    for (const formula of rows) {
       if (!latest.has(formula.client_profile_id)) latest.set(formula.client_profile_id, formula);
     }
+
+    // PostgREST caps a response at its `max_rows`. The query is ordered newest
+    // first, so a cap drops the OLDEST rows — but a long-standing client whose
+    // last colour was years ago can still fall off the end while busier clients
+    // fill the window. Rather than render that client as "no formula on file"
+    // (which would send the salon into an unnecessary consultation), re-ask for
+    // just the clients that came back empty. Normally this loop does not run.
+    if (rows.length >= POSSIBLE_ROW_CAP) {
+      const missing = clientIds.filter((clientId) => !latest.has(clientId));
+      for (const clientId of missing) {
+        const { data: one, error: oneError } = await this.admin
+          .schema('lab')
+          .from('formulas')
+          .select('id,client_profile_id,saved_at,status')
+          .eq('business_id', businessId)
+          .eq('status', SAVED_FORMULA_STATUS)
+          .eq('client_profile_id', clientId)
+          .order('saved_at', { ascending: false })
+          .limit(1)
+          .maybeSingle<FormulaRow>();
+        if (oneError) {
+          this.logger.error(`colour-prep latest formula fallback failed: ${oneError.message}`);
+          throw new InternalServerErrorException('Unable to load colour preparation');
+        }
+        if (one) latest.set(clientId, one);
+      }
+    }
+
     return latest;
   }
 
