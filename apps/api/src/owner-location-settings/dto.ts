@@ -123,6 +123,25 @@ export class UpdateLocationRecordSettingsDto {
   @Max(100)
   utilisationWarningThresholdPercent?: number;
 
+  /** Days without outbound movement before stock counts as dead (location-wide default). */
+  @IsOptional()
+  @IsInt({ message: 'deadStockDaysDefault must be a whole number of days' })
+  @Min(1)
+  @Max(3650)
+  deadStockDaysDefault?: number;
+
+  @IsOptional()
+  @IsInt({ message: 'reorderUsageWindowWeeks must be a whole number of weeks' })
+  @Min(1)
+  @Max(52)
+  reorderUsageWindowWeeks?: number;
+
+  @IsOptional()
+  @IsInt({ message: 'reorderCoverageWeeks must be a whole number of weeks' })
+  @Min(1)
+  @Max(52)
+  reorderCoverageWeeks?: number;
+
   @IsOptional()
   @IsNumber()
   @Min(0)

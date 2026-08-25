@@ -29,7 +29,7 @@ import {
 } from '@sheer/domain';
 
 const SETTINGS_COLUMNS =
-  'location_id,currency_code,opening_hours,chair_count,appointment_slot_minutes,default_deposit_type,default_deposit_value,discount_authorisation_threshold_percent,cash_variance_threshold_amount,colour_margin_target_percent,waste_allowance_percent,rebook_rate_benchmark_percent,utilisation_warning_threshold_percent,payroll_warning_percent,payroll_critical_percent,sunday_report_enabled,sunday_report_recipients,sunday_report_send_hour';
+  'location_id,currency_code,opening_hours,chair_count,appointment_slot_minutes,default_deposit_type,default_deposit_value,discount_authorisation_threshold_percent,cash_variance_threshold_amount,colour_margin_target_percent,waste_allowance_percent,rebook_rate_benchmark_percent,utilisation_warning_threshold_percent,dead_stock_days_default,reorder_usage_window_weeks,reorder_coverage_weeks,payroll_warning_percent,payroll_critical_percent,sunday_report_enabled,sunday_report_recipients,sunday_report_send_hour';
 
 const FIXED_COST_COLUMNS =
   'id,location_id,category,label,amount,cadence,effective_from,effective_to,notes,created_at,updated_at';
@@ -48,6 +48,9 @@ interface SettingsRow {
   waste_allowance_percent: number | string | null;
   rebook_rate_benchmark_percent: number | string | null;
   utilisation_warning_threshold_percent: number | string | null;
+  dead_stock_days_default: number | string | null;
+  reorder_usage_window_weeks: number | string | null;
+  reorder_coverage_weeks: number | string | null;
   payroll_warning_percent: number | string | null;
   payroll_critical_percent: number | string | null;
   sunday_report_enabled: boolean | null;
@@ -129,6 +132,10 @@ export class OwnerLocationSettingsService {
       patch.rebook_rate_benchmark_percent = input.rebookRateBenchmarkPercent;
     if (input.utilisationWarningThresholdPercent !== undefined)
       patch.utilisation_warning_threshold_percent = input.utilisationWarningThresholdPercent;
+    if (input.deadStockDaysDefault !== undefined) patch.dead_stock_days_default = input.deadStockDaysDefault;
+    if (input.reorderUsageWindowWeeks !== undefined)
+      patch.reorder_usage_window_weeks = input.reorderUsageWindowWeeks;
+    if (input.reorderCoverageWeeks !== undefined) patch.reorder_coverage_weeks = input.reorderCoverageWeeks;
     if (input.payrollWarningPercent !== undefined) patch.payroll_warning_percent = input.payrollWarningPercent;
     if (input.payrollCriticalPercent !== undefined) patch.payroll_critical_percent = input.payrollCriticalPercent;
     if (input.sundayReportEnabled !== undefined) patch.sunday_report_enabled = input.sundayReportEnabled;
@@ -385,6 +392,9 @@ function toSettings(row: SettingsRow): LocationRecordSettings {
       row.utilisation_warning_threshold_percent,
       fallback.utilisationWarningThresholdPercent,
     ),
+    deadStockDaysDefault: num(row.dead_stock_days_default, fallback.deadStockDaysDefault),
+    reorderUsageWindowWeeks: num(row.reorder_usage_window_weeks, fallback.reorderUsageWindowWeeks),
+    reorderCoverageWeeks: num(row.reorder_coverage_weeks, fallback.reorderCoverageWeeks),
     payrollWarningPercent: num(row.payroll_warning_percent, fallback.payrollWarningPercent),
     payrollCriticalPercent: num(row.payroll_critical_percent, fallback.payrollCriticalPercent),
     sundayReportEnabled: row.sunday_report_enabled ?? fallback.sundayReportEnabled,
