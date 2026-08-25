@@ -207,6 +207,94 @@ schedule, print action).
 
 ---
 
+## 11a. Addendum (2026-08-25) — Week 6 closure pass
+
+**Ticket 3 completed.** The scan-to-consume surface now exists on `/inventory`
+(Operations column): a focused input built for USB/Bluetooth wedge scanners —
+scan → product resolves with identity and shelf level → quantity in the
+product's real unit → Enter confirms → deduction lands through the existing
+`adjust_location_stock` RPC with an idempotency key per scan (a retried or
+double-fired Enter can never deduct twice). Unknown barcode, archived product,
+out-of-scope location, permission refusal and server failure are five distinct,
+visible states. All decisions live in the pure module
+`apps/web/src/components/inventory/scanConsumption.ts` (23 DOM-free tests, per
+the repo's no-jsdom testing policy); the API side was already covered by
+`inventory-consumption.spec.ts`.
+
+**Real-database acceptance.** `pnpm --filter @sheer/api week6-acceptance` runs
+40 behavioural cases against the actual dev_test database through the same
+RPCs the platform uses (QLAB reconciliation incl. correction netting, swap,
+identical re-save, waste, the deduction gate on/off and its safe defaults,
+idempotent consumption, negative-stock refusal; the full dead-stock rule set;
+purchase-order numbering/retry/snapshot/permission seeds; the colour-prep join
+chain with tagged/untagged categories, cross-location and cross-business
+isolation, no-formula and unmapped-product cases). Fixtures live under the
+`a6000000-` UUID prefix and self-clean; `--keep` leaves them for UAT.
+Result 2026-08-25: **39/40 PASS** — the one failure is the harness detecting
+that **migration 0095 is not applied to dev_test** (see below).
+
+**0095 closure fixes** (`0095_week6_closure_fixes.sql`): withdraws the direct
+PostgREST read grants 0092/0094 gave `authenticated` on suppliers and purchase
+orders (spend data must only flow through the permission-checked API), and
+widens the one-open-order guarantee so an APPROVED-but-unsent order also blocks
+a duplicate generate. The psql suite gained the matching case
+(05_APPROVED_STILL_OPEN). **Action: apply 0095 in the dev_test SQL editor,
+then re-run `week6-acceptance` — expected 40/40.**
+
+Also folded in: a colour-prep fallback so a client whose last formula is very
+old can never be mis-rendered as "no formula on file" when the formula query
+hits PostgREST's row cap.
+
+## 11b. Week 6 UAT demo script (deterministic)
+
+Seeds first (idempotent):
+`pnpm --filter @sheer/api seed-week6-colour-prep -- --business <id> --location <id>`
+and `pnpm --filter @sheer/api seed-dead-stock -- --business <id> --location <id>`.
+
+1. **Stock/QLAB** — note a product's stock on `/inventory`; save a QLAB formula
+   using 30g of it; stock drops 30g and the movement log shows `formula_usage`.
+   Re-save the same formula at 20g → net drop is 20g (movement log shows the
+   reversal pair). Swap the product for another → first restored, second
+   consumed.
+2. **Barcode** — on `/inventory`, click into "Scan to consume", scan (or type +
+   Enter) a seeded barcode → product card appears with shelf level → Enter →
+   "consumed … on hand …" and the stock table refreshes. Scan `0000000000000`
+   → amber "No product matches" with the add-barcode hint; nothing deducted.
+3. **Colour Prep** — `/colour-prep`: Today / This week / Next week / Custom;
+   the seeded appointments show the in-stock product, the exact shortfall on
+   the short one, and the no-formula client flagged for consultation. "Print
+   prep sheet" for the morning-bench copy.
+4. **Dead stock** — `/inventory` Dead stock section: the seeded mask (~120 idle
+   days vs 90) and never-used spray (30-day product override); record an
+   outbound adjustment on one → it leaves the list; a restock does not.
+5. **Ordering foundation** (not the demo centrepiece — its acceptance is the
+   next block): `/orders` → Generate → the shortfall from the same stock model
+   becomes a supplier-grouped draft with MOQ-rounded quantities, proving Colour
+   Prep's shortfall feeds ordering with no architectural change.
+
+## 11c. Week 7 stability — frozen contracts
+
+A second developer can build on these without redesign; **coordinate before
+modifying any of them**:
+
+| Contract | Where | Rule |
+| --- | --- | --- |
+| Movement ledger | `inventory.stock_movements` | Append-only; outbound = negative delta; every deduction goes through `adjust_location_stock` or `save_formula_with_reconciliation` — never direct writes |
+| QLAB reconciliation | `lab.save_formula_with_reconciliation` (0091) | Reverse-then-re-deduct from the formula's own ledger; do not add a second deduction path |
+| Unit model | `products.stock_unit/pack_size` + `apps/api/src/inventory/unit-conversion.ts` | `quantity_on_hand_grams` holds BASE quantities; convert only at the boundary |
+| Barcode consumption | `GET /inventory/scan`, `POST /inventory/consumption` | Idempotency key contract; UI logic in `scanConsumption.ts` |
+| Colour Prep shortfall | `GET /colour-prep`, types in `packages/domain` | `sufficient/low_stock/shortfall/not_stocked/unmapped_product`; missing data is never "sufficient" |
+| Reorder metadata | `products.supplier_id/minimum_order_quantity/order_multiple`, `orders/reorder-math.ts` | MOQ and multiple are in PACKS; suggestion = shortfall → packs → MOQ → multiple |
+| PO lifecycle | `inventory.create_purchase_order` (0095 version) | Gapless numbers; OPEN = draft/pending_approval/approved; one open order per supplier+location |
+| Permissions | `PERMISSION_CATALOG` + migrations | Every new key ships in BOTH places (0074 rule); new SECURITY DEFINER functions revoke PUBLIC execute (0078 rule) |
+| Migration numbering | `supabase/migrations/` | Next free number is **0096**; never renumber an applied file |
+
+**Product Use Classification / markup CR: PARKED, PENDING CLIENT APPROVAL** —
+the 0079 fields keep their write path, but no classification UI, no `isRetail`
+picker gating, no markup-precedence resolver until the CR is signed off.
+
+---
+
 ## 11. Addendum (2026-08-24) — tickets 8 + 9: automated ordering with approval
 
 Migration **`0094_week6_purchase_orders.sql`**. Built as one unit, per the plan
