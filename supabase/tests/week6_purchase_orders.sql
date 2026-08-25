@@ -6,9 +6,10 @@
 -- retried "generate" safe. The reorder_usage aggregate's outbound-only window
 -- is also proved here against real rows.
 --
--- 7 numbered cases. Read the RESULT column of each; every one must read PASS.
+-- 8 numbered cases. Read the RESULT column of each; every one must read PASS.
 --
--- Run against a SCRATCH database that has every migration through 0094 applied:
+-- Run against a SCRATCH database that has every migration through 0095 applied
+-- (0095 widened OPEN to include approved-but-unsent orders):
 --   psql -d <scratch> -f supabase/tests/week6_purchase_orders.sql
 
 \set ON_ERROR_STOP off
@@ -91,13 +92,30 @@ select '04_LINE_SNAPSHOTS' as case,
        then 'PASS' else 'FAIL: line missing or snapshot wrong' end as result;
 
 -- ===========================================================================
--- 5. CLOSED ORDERS FREE THE SLOT — cancel the open order for supplier A,
+-- 5. APPROVED IS STILL OPEN (0095) — an approved-but-unsent order covers its
+--    supplier, so a repeated generate must hand it back, not duplicate spend.
+-- ===========================================================================
+update inventory.purchase_orders set status = 'approved', approved_at = now()
+where order_number = 'PO-00001';
+
+select '05_APPROVED_STILL_OPEN' as case,
+       case when created = false and order_number = 'PO-00001' then 'PASS'
+            else 'FAIL: got created='||created||' number='||order_number end as result
+from inventory.create_purchase_order(
+  jsonb_build_object(
+    'business_id','ee000000-0000-0000-0000-000000000001',
+    'location_id','ee000000-0000-0000-0000-000000000ea1',
+    'supplier_id','ee000000-0000-0000-0000-000000000e51'),
+  '[]'::jsonb);
+
+-- ===========================================================================
+-- 6. CLOSED ORDERS FREE THE SLOT — cancel the open order for supplier A,
 --    generate again: a NEW order (PO-00003) is created.
 -- ===========================================================================
 update inventory.purchase_orders set status = 'cancelled', cancelled_at = now()
 where order_number = 'PO-00001';
 
-select '05_CLOSED_FREES_SLOT' as case,
+select '06_CLOSED_FREES_SLOT' as case,
        case when created = true and order_number = 'PO-00003' then 'PASS'
             else 'FAIL: got created='||created||' number='||order_number end as result
 from inventory.create_purchase_order(
@@ -108,7 +126,7 @@ from inventory.create_purchase_order(
   '[]'::jsonb);
 
 -- ===========================================================================
--- 6. REORDER USAGE — outbound-only inside the window: the restock and the
+-- 7. REORDER USAGE — outbound-only inside the window: the restock and the
 --    outbound before the cutoff must not count.
 -- ===========================================================================
 insert into inventory.stock_movements (business_id,location_id,product_id,movement_type,quantity_delta_grams,created_at) values
@@ -117,7 +135,7 @@ insert into inventory.stock_movements (business_id,location_id,product_id,moveme
  ('ee000000-0000-0000-0000-000000000001','ee000000-0000-0000-0000-000000000ea1','ee000000-0000-0000-0000-000000000e01','retail_sale',        -80, now() - interval '2 days'),
  ('ee000000-0000-0000-0000-000000000001','ee000000-0000-0000-0000-000000000ea1','ee000000-0000-0000-0000-000000000e01','formula_usage',     -500, now() - interval '60 days');
 
-select '06_OUTBOUND_ONLY_WINDOW' as case,
+select '07_OUTBOUND_ONLY_WINDOW' as case,
        case when (select outbound_base from inventory.reorder_usage(
                     'ee000000-0000-0000-0000-000000000001',
                     'ee000000-0000-0000-0000-000000000ea1',
@@ -127,9 +145,9 @@ select '06_OUTBOUND_ONLY_WINDOW' as case,
        else 'FAIL: expected 200 (120+80; restock and the 60-day-old usage excluded)' end as result;
 
 -- ===========================================================================
--- 7. PERMISSION SEEDS — manager prepares, only owner/group_admin approve.
+-- 8. PERMISSION SEEDS — manager prepares, only owner/group_admin approve.
 -- ===========================================================================
-select '07_PERMISSION_SEEDS' as case,
+select '08_PERMISSION_SEEDS' as case,
        case when not exists (
               select 1 from core.security_levels
               where is_system = true and key = 'manager'
