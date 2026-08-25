@@ -1,7 +1,9 @@
 import { Type } from 'class-transformer';
 import {
   IsBoolean,
+  IsEmail,
   IsEnum,
+  IsInt,
   IsISO8601,
   IsNumber,
   IsOptional,
@@ -97,6 +99,30 @@ export class UpsertInventoryProductDto {
   @IsString()
   @MaxLength(64)
   barcode?: string | null;
+
+  @IsOptional()
+  @IsUUID('4', { message: 'supplierId must be a valid supplier id' })
+  supplierId?: string | null;
+
+  /** Smallest order the supplier accepts, in packs. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'minimumOrderQuantity must be a whole number of packs' })
+  @Min(1, { message: 'minimumOrderQuantity must be at least 1' })
+  minimumOrderQuantity?: number | null;
+
+  /** Supplier order step in packs. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'orderMultiple must be a whole number of packs' })
+  @Min(1, { message: 'orderMultiple must be at least 1' })
+  orderMultiple?: number | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'deadStockDays must be a whole number of days' })
+  @Min(1, { message: 'deadStockDays must be at least 1' })
+  deadStockDays?: number | null;
 
   // Product-use classification (0079). These columns have existed since 4 Aug
   // but had no write path, which is why they were still dead columns. Week 6
@@ -308,6 +334,98 @@ export class RecordProductConsumptionDto {
   @IsString()
   @MaxLength(128)
   idempotencyKey?: string;
+}
+
+export class DeadStockQueryDto {
+  @IsOptional()
+  @IsUUID('4', { message: 'locationId must be a valid location id' })
+  locationId?: string;
+}
+
+export class SupplierQueryDto {
+  @IsOptional()
+  @IsString()
+  q?: string;
+
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  includeInactive?: boolean;
+}
+
+export class CreateInventorySupplierDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(120)
+  name!: string;
+
+  @IsOptional()
+  @IsEmail({}, { message: 'contactEmail must be a valid email address' })
+  @MaxLength(254)
+  contactEmail?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  contactPhone?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  accountReference?: string | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'leadTimeDays must be a whole number of days' })
+  @Min(0, { message: 'leadTimeDays must not be negative' })
+  leadTimeDays?: number | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  notes?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+}
+
+export class UpdateInventorySupplierDto {
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(120)
+  name?: string;
+
+  @IsOptional()
+  @IsEmail({}, { message: 'contactEmail must be a valid email address' })
+  @MaxLength(254)
+  contactEmail?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  contactPhone?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  accountReference?: string | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'leadTimeDays must be a whole number of days' })
+  @Min(0, { message: 'leadTimeDays must not be negative' })
+  leadTimeDays?: number | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  notes?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
 }
 
 export class BarcodeLookupQueryDto {

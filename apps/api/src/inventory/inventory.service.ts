@@ -16,18 +16,24 @@ import type {
   InventoryCategoryResponse,
   InventoryLocationStock,
   InventoryLowStockAlert,
+  InventoryDeadStockItem,
   InventoryProduct,
   InventoryProductResponse,
   InventoryStockMovement,
   InventoryStockMutationResponse,
+  InventorySupplier,
+  InventorySupplierResponse,
   BarcodeLookupResponse,
+  DeadStockThresholdSource,
   RecordProductConsumptionResponse,
   StockUnit,
   ListInventoryCategoriesResponse,
+  ListInventoryDeadStockResponse,
   ListInventoryLowStockResponse,
   ListInventoryMovementsResponse,
   ListInventoryProductsResponse,
   ListInventoryStockResponse,
+  ListInventorySuppliersResponse,
 } from '@sheer/domain';
 import { userHasPermission, userHasRole } from '@sheer/domain';
 import { resolveStockUnit, roundBaseQuantity, toBaseQuantity } from './unit-conversion';
@@ -37,12 +43,15 @@ import type {
   AdjustInventoryStockDto,
   CategoryQueryDto,
   CreateInventoryCategoryDto,
+  CreateInventorySupplierDto,
   InitializeInventoryStockDto,
   InventoryQueryDto,
   MovementQueryDto,
   StockQueryDto,
+  SupplierQueryDto,
   UpdateInventoryCategoryDto,
   UpdateInventoryStockThresholdDto,
+  UpdateInventorySupplierDto,
   RecordProductConsumptionDto,
   UpsertInventoryProductDto,
 } from './dto';
@@ -64,6 +73,10 @@ interface ProductRow {
   stock_unit: string | null;
   pack_size: number | string | null;
   barcode: string | null;
+  supplier_id: string | null;
+  minimum_order_quantity: number;
+  order_multiple: number;
+  dead_stock_days: number | null;
   is_salon_use: boolean;
   is_lab_use: boolean;
   is_retail: boolean;
@@ -126,13 +139,40 @@ interface CategoryRow {
   updated_at: string;
 }
 
+interface DeadStockRow {
+  location_id: string;
+  product_id: string;
+  quantity_on_hand_grams: number | string;
+  last_outbound_at: string | null;
+  idle_since: string;
+  days_idle: number;
+  threshold_days: number;
+  threshold_source: DeadStockThresholdSource;
+}
+
+interface SupplierRow {
+  id: string;
+  business_id: string;
+  name: string;
+  contact_email: string | null;
+  contact_phone: string | null;
+  account_reference: string | null;
+  lead_time_days: number | null;
+  notes: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 const PRODUCT_COLUMNS =
-  'id,business_id,brand,name,category_id,sku,size_value,size_unit,default_unit,default_cost_per_gram_cents,retail_price_cents,low_stock_threshold_grams,is_active,stock_unit,pack_size,barcode,is_salon_use,is_lab_use,is_retail,lab_markup_percent,created_at,updated_at';
+  'id,business_id,brand,name,category_id,sku,size_value,size_unit,default_unit,default_cost_per_gram_cents,retail_price_cents,low_stock_threshold_grams,is_active,stock_unit,pack_size,barcode,supplier_id,minimum_order_quantity,order_multiple,dead_stock_days,is_salon_use,is_lab_use,is_retail,lab_markup_percent,created_at,updated_at';
 const STOCK_COLUMNS =
   'id,business_id,location_id,product_id,quantity_on_hand_grams,low_stock_threshold_grams,is_active,updated_at';
 const MOVEMENT_COLUMNS =
   'id,business_id,location_id,product_id,location_stock_id,movement_type,quantity_delta_grams,unit_cost_cents,total_cost_cents,reference_type,reference_id,reason,notes,created_by,created_at';
 const CATEGORY_COLUMNS = 'id,business_id,name,description,is_active,created_at,updated_at';
+const SUPPLIER_COLUMNS =
+  'id,business_id,name,contact_email,contact_phone,account_reference,lead_time_days,notes,is_active,created_at,updated_at';
 
 @Injectable()
 export class InventoryService {
@@ -168,6 +208,7 @@ export class InventoryService {
   async createProduct(actor: AuthUser, dto: UpsertInventoryProductDto): Promise<InventoryProductResponse> {
     this.assertManagerOrOwner(actor);
     if (dto.categoryId) await this.assertCategory(actor.businessId, dto.categoryId);
+    if (dto.supplierId) await this.assertSupplier(actor.businessId, dto.supplierId);
     const { data, error } = await this.admin
       .schema('inventory')
       .from('products')
@@ -179,12 +220,13 @@ export class InventoryService {
       this.logger.error(`createProduct failed: ${error?.message ?? 'no row'}`);
       throw new InternalServerErrorException('Unable to create inventory product');
     }
-    return { product: toProduct(data, await this.fetchCategoryNames(actor.businessId, [data.category_id])) };
+    return { product: await this.resolveProduct(actor.businessId, data) };
   }
 
   async updateProduct(actor: AuthUser, productId: string, dto: UpsertInventoryProductDto): Promise<InventoryProductResponse> {
     this.assertManagerOrOwner(actor);
     if (dto.categoryId) await this.assertCategory(actor.businessId, dto.categoryId);
+    if (dto.supplierId) await this.assertSupplier(actor.businessId, dto.supplierId);
     const { data, error } = await this.admin
       .schema('inventory')
       .from('products')
@@ -199,7 +241,7 @@ export class InventoryService {
       throw new InternalServerErrorException('Unable to update inventory product');
     }
     if (!data) throw new NotFoundException('Inventory product not found');
-    return { product: toProduct(data, await this.fetchCategoryNames(actor.businessId, [data.category_id])) };
+    return { product: await this.resolveProduct(actor.businessId, data) };
   }
 
   async archiveProduct(actor: AuthUser, productId: string): Promise<InventoryProductResponse> {
@@ -218,7 +260,7 @@ export class InventoryService {
       throw new InternalServerErrorException('Unable to archive inventory product');
     }
     if (!data) throw new NotFoundException('Inventory product not found');
-    return { product: toProduct(data, await this.fetchCategoryNames(actor.businessId, [data.category_id])) };
+    return { product: await this.resolveProduct(actor.businessId, data) };
   }
 
   async listStock(actor: AuthUser, query: StockQueryDto): Promise<ListInventoryStockResponse> {
@@ -432,6 +474,42 @@ export class InventoryService {
     return { alerts: (data ?? []).map((row) => toAlert(row, products, locations)) };
   }
 
+  // ---------------------------------------------------------------------------
+  // Dead stock (Week 6 ticket 7)
+  //
+  // Computed on read by inventory.dead_stock_report (0093): stock on hand with
+  // no OUTBOUND movement inside its threshold. The arithmetic lives in SQL next
+  // to the movement ledger so every consumer agrees on what "dead" means; this
+  // method owns scope resolution and display decoration only.
+  // ---------------------------------------------------------------------------
+
+  async listDeadStock(actor: AuthUser, locationId?: string): Promise<ListInventoryDeadStockResponse> {
+    const locationIds = await this.resolveLocationScope(actor, locationId);
+    if (locationIds.length === 0) return { items: [], locations: [], totalEstimatedValueCents: 0 };
+
+    const { data, error } = await this.admin.schema('inventory').rpc('dead_stock_report', {
+      p_business_id: actor.businessId,
+      p_location_ids: locationIds,
+    });
+    if (error) {
+      this.logger.error(`listDeadStock failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load dead stock');
+    }
+
+    const rows = (data ?? []) as DeadStockRow[];
+    const [products, locations] = await Promise.all([
+      this.fetchProductsById(actor.businessId, rows.map((row) => row.product_id)),
+      this.fetchLocations(actor.businessId, locationIds),
+    ]);
+
+    const items = rows.map((row) => toDeadStockItem(row, products, locations));
+    return {
+      items,
+      locations,
+      totalEstimatedValueCents: items.reduce((total, item) => total + (item.estimatedValueCents ?? 0), 0),
+    };
+  }
+
   async listCategories(actor: AuthUser, query: CategoryQueryDto): Promise<ListInventoryCategoriesResponse> {
     this.assertManagerOrOwner(actor);
     let request = this.admin
@@ -535,6 +613,134 @@ export class InventoryService {
     }
     if (!data) throw new NotFoundException('Inventory category not found');
     return { category: toCategory(data) };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Suppliers (Week 6 ticket 1)
+  //
+  // Same posture as categories: owners and managers maintain the catalogue,
+  // only owners hard-delete. Deleting a supplier detaches its products
+  // (products.supplier_id is ON DELETE SET NULL) rather than blocking.
+  // ---------------------------------------------------------------------------
+
+  async listSuppliers(actor: AuthUser, query: SupplierQueryDto): Promise<ListInventorySuppliersResponse> {
+    this.assertManagerOrOwner(actor);
+    let request = this.admin
+      .schema('inventory')
+      .from('suppliers')
+      .select(SUPPLIER_COLUMNS)
+      .eq('business_id', actor.businessId)
+      .order('name', { ascending: true });
+
+    if (!query.includeInactive) request = request.eq('is_active', true);
+    if (query.q?.trim()) {
+      const term = escapeSupabaseOr(query.q.trim());
+      request = request.or(`name.ilike.%${term}%,contact_email.ilike.%${term}%,account_reference.ilike.%${term}%`);
+    }
+
+    const { data, error } = await request.returns<SupplierRow[]>();
+    if (error) {
+      this.logger.error(`listSuppliers failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load suppliers');
+    }
+    return { suppliers: (data ?? []).map(toSupplier) };
+  }
+
+  async createSupplier(actor: AuthUser, dto: CreateInventorySupplierDto): Promise<InventorySupplierResponse> {
+    this.assertManagerOrOwner(actor);
+    const name = dto.name.trim();
+    if (!name) throw new BadRequestException('name is required');
+
+    const { data, error } = await this.admin
+      .schema('inventory')
+      .from('suppliers')
+      .insert({
+        business_id: actor.businessId,
+        name,
+        contact_email: clean(dto.contactEmail),
+        contact_phone: clean(dto.contactPhone),
+        account_reference: clean(dto.accountReference),
+        lead_time_days: dto.leadTimeDays ?? null,
+        notes: clean(dto.notes),
+        is_active: dto.isActive ?? true,
+      })
+      .select(SUPPLIER_COLUMNS)
+      .single<SupplierRow>();
+
+    if (error || !data) {
+      if (error?.code === '23505') {
+        throw new ConflictException('A supplier with this name already exists');
+      }
+      this.logger.error(`createSupplier failed: ${error?.message ?? 'no row'}`);
+      throw new InternalServerErrorException('Unable to create supplier');
+    }
+    return { supplier: toSupplier(data) };
+  }
+
+  async updateSupplier(
+    actor: AuthUser,
+    supplierId: string,
+    dto: UpdateInventorySupplierDto,
+  ): Promise<InventorySupplierResponse> {
+    this.assertManagerOrOwner(actor);
+    // Partial semantics: omitted keeps, explicit null clears. The checks must
+    // be `!== undefined`, never the `in` operator — the ValidationPipe builds
+    // DTO instances whose declared fields all exist as own properties
+    // (useDefineForClassFields), so `in` is true for every field on every
+    // request and would silently null out whatever the caller omitted.
+    const patch: Record<string, unknown> = {};
+    if (dto.name !== undefined) {
+      // IsOptional lets an explicit null through validation; it is not a
+      // usable name, so refuse it here instead of crashing on .trim().
+      const name = dto.name?.trim();
+      if (!name) throw new BadRequestException('name must not be empty');
+      patch.name = name;
+    }
+    if (dto.contactEmail !== undefined) patch.contact_email = clean(dto.contactEmail);
+    if (dto.contactPhone !== undefined) patch.contact_phone = clean(dto.contactPhone);
+    if (dto.accountReference !== undefined) patch.account_reference = clean(dto.accountReference);
+    if (dto.leadTimeDays !== undefined) patch.lead_time_days = dto.leadTimeDays ?? null;
+    if (dto.notes !== undefined) patch.notes = clean(dto.notes);
+    if (dto.isActive !== undefined) patch.is_active = dto.isActive;
+    if (Object.keys(patch).length === 0) throw new BadRequestException('No supplier fields to update');
+
+    const { data, error } = await this.admin
+      .schema('inventory')
+      .from('suppliers')
+      .update(patch)
+      .eq('id', supplierId)
+      .eq('business_id', actor.businessId)
+      .select(SUPPLIER_COLUMNS)
+      .maybeSingle<SupplierRow>();
+
+    if (error) {
+      if (error.code === '23505') {
+        throw new ConflictException('A supplier with this name already exists');
+      }
+      this.logger.error(`updateSupplier failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to update supplier');
+    }
+    if (!data) throw new NotFoundException('Supplier not found');
+    return { supplier: toSupplier(data) };
+  }
+
+  async deleteSupplier(actor: AuthUser, supplierId: string): Promise<InventorySupplierResponse> {
+    this.assertOwner(actor);
+    const { data, error } = await this.admin
+      .schema('inventory')
+      .from('suppliers')
+      .delete()
+      .eq('id', supplierId)
+      .eq('business_id', actor.businessId)
+      .select(SUPPLIER_COLUMNS)
+      .maybeSingle<SupplierRow>();
+
+    if (error) {
+      this.logger.error(`deleteSupplier failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to delete supplier');
+    }
+    if (!data) throw new NotFoundException('Supplier not found');
+    return { supplier: toSupplier(data) };
   }
 
   // ---------------------------------------------------------------------------
@@ -915,8 +1121,8 @@ export class InventoryService {
       throw new InternalServerErrorException('Unable to load inventory products');
     }
     const rows = data ?? [];
-    const categoryNames = await this.fetchCategoryNames(businessId, rows.map((row) => row.category_id));
-    return { products: rows.map((row) => toProduct(row, categoryNames)) };
+    const { categoryNames, supplierNames } = await this.fetchProductLookups(businessId, rows);
+    return { products: rows.map((row) => toProduct(row, categoryNames, supplierNames)) };
   }
 
   private async fetchProductsById(businessId: string, productIds: string[]): Promise<Map<string, InventoryProduct>> {
@@ -934,8 +1140,60 @@ export class InventoryService {
       throw new InternalServerErrorException('Unable to load inventory products');
     }
     const rows = data ?? [];
-    const categoryNames = await this.fetchCategoryNames(businessId, rows.map((row) => row.category_id));
-    return new Map(rows.map((row) => [row.id, toProduct(row, categoryNames)]));
+    const { categoryNames, supplierNames } = await this.fetchProductLookups(businessId, rows);
+    return new Map(rows.map((row) => [row.id, toProduct(row, categoryNames, supplierNames)]));
+  }
+
+  /** Map one product row to the domain shape with its display names resolved. */
+  private async resolveProduct(businessId: string, row: ProductRow): Promise<InventoryProduct> {
+    const { categoryNames, supplierNames } = await this.fetchProductLookups(businessId, [row]);
+    return toProduct(row, categoryNames, supplierNames);
+  }
+
+  private async fetchProductLookups(
+    businessId: string,
+    rows: ProductRow[],
+  ): Promise<{ categoryNames: Map<string, string>; supplierNames: Map<string, string> }> {
+    const [categoryNames, supplierNames] = await Promise.all([
+      this.fetchCategoryNames(businessId, rows.map((row) => row.category_id)),
+      this.fetchSupplierNames(businessId, rows.map((row) => row.supplier_id)),
+    ]);
+    return { categoryNames, supplierNames };
+  }
+
+  private async fetchSupplierNames(
+    businessId: string,
+    supplierIds: (string | null)[],
+  ): Promise<Map<string, string>> {
+    const ids = Array.from(new Set(supplierIds.filter((id): id is string => Boolean(id))));
+    if (ids.length === 0) return new Map();
+    const { data, error } = await this.admin
+      .schema('inventory')
+      .from('suppliers')
+      .select('id,name')
+      .eq('business_id', businessId)
+      .in('id', ids)
+      .returns<{ id: string; name: string }[]>();
+    if (error) {
+      this.logger.error(`fetchSupplierNames failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load suppliers');
+    }
+    return new Map((data ?? []).map((row) => [row.id, row.name]));
+  }
+
+  private async assertSupplier(businessId: string, supplierId: string): Promise<void> {
+    const { data, error } = await this.admin
+      .schema('inventory')
+      .from('suppliers')
+      .select('id')
+      .eq('business_id', businessId)
+      .eq('id', supplierId)
+      .maybeSingle<{ id: string }>();
+    if (error) {
+      this.logger.error(`assertSupplier failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to validate supplier');
+    }
+    if (!data) throw new BadRequestException('supplierId is not valid for this business');
   }
 
   private async fetchCategoryNames(
@@ -1040,6 +1298,18 @@ function toProductPatch(dto: UpsertInventoryProductDto): Record<string, unknown>
     is_lab_use: dto.isLabUse ?? false,
     is_retail: dto.isRetail ?? false,
     lab_markup_percent: dto.labMarkupPercent ?? null,
+    // The supplier/ordering columns are PARTIAL: only written when the caller
+    // sent them. The lab-station product form predates these fields and does
+    // not round-trip them, so full-upsert semantics would silently reset a
+    // product's supplier and MOQ on every lab edit. Omitted on insert means
+    // the column defaults apply (MOQ 1, multiple 1, null supplier/threshold);
+    // an explicit null still clears.
+    ...(dto.supplierId !== undefined ? { supplier_id: dto.supplierId } : {}),
+    ...(dto.minimumOrderQuantity !== undefined
+      ? { minimum_order_quantity: dto.minimumOrderQuantity ?? 1 }
+      : {}),
+    ...(dto.orderMultiple !== undefined ? { order_multiple: dto.orderMultiple ?? 1 } : {}),
+    ...(dto.deadStockDays !== undefined ? { dead_stock_days: dto.deadStockDays } : {}),
   };
 }
 
@@ -1048,7 +1318,11 @@ function clean(value: string | null | undefined): string | null {
   return next ? next : null;
 }
 
-function toProduct(row: ProductRow, categoryNames?: Map<string, string>): InventoryProduct {
+function toProduct(
+  row: ProductRow,
+  categoryNames?: Map<string, string>,
+  supplierNames?: Map<string, string>,
+): InventoryProduct {
   return {
     id: row.id,
     businessId: row.business_id,
@@ -1071,6 +1345,11 @@ function toProduct(row: ProductRow, categoryNames?: Map<string, string>): Invent
     }),
     packSize: row.pack_size === null ? undefined : Number(row.pack_size),
     barcode: row.barcode ?? undefined,
+    supplierId: row.supplier_id ?? undefined,
+    supplierName: row.supplier_id ? supplierNames?.get(row.supplier_id) : undefined,
+    minimumOrderQuantity: Number(row.minimum_order_quantity ?? 1),
+    orderMultiple: Number(row.order_multiple ?? 1),
+    deadStockDays: row.dead_stock_days === null || row.dead_stock_days === undefined ? undefined : Number(row.dead_stock_days),
     isSalonUse: row.is_salon_use,
     isLabUse: row.is_lab_use,
     isRetail: row.is_retail,
@@ -1086,6 +1365,51 @@ function toCategory(row: CategoryRow): InventoryCategory {
     businessId: row.business_id,
     name: row.name,
     description: row.description ?? undefined,
+    isActive: row.is_active,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toDeadStockItem(
+  row: DeadStockRow,
+  products: Map<string, InventoryProduct>,
+  locations: BusinessLocationSummary[],
+): InventoryDeadStockItem {
+  const product = products.get(row.product_id);
+  const quantity = Number(row.quantity_on_hand_grams);
+  const costPerBaseUnit = product?.defaultCostPerGramCents;
+  return {
+    locationId: row.location_id,
+    locationName: locations.find((location) => location.id === row.location_id)?.name ?? 'Unknown location',
+    productId: row.product_id,
+    productName: product?.name ?? 'Unknown product',
+    brand: product?.brand,
+    sku: product?.sku,
+    category: product?.category,
+    supplierName: product?.supplierName,
+    quantityOnHandGrams: quantity,
+    stockUnit: product?.stockUnit ?? 'gram',
+    lastOutboundAt: row.last_outbound_at ?? undefined,
+    idleSince: row.idle_since,
+    daysIdle: Number(row.days_idle),
+    thresholdDays: Number(row.threshold_days),
+    thresholdSource: row.threshold_source,
+    estimatedValueCents:
+      costPerBaseUnit === undefined ? undefined : Math.round(quantity * costPerBaseUnit),
+  };
+}
+
+function toSupplier(row: SupplierRow): InventorySupplier {
+  return {
+    id: row.id,
+    businessId: row.business_id,
+    name: row.name,
+    contactEmail: row.contact_email ?? undefined,
+    contactPhone: row.contact_phone ?? undefined,
+    accountReference: row.account_reference ?? undefined,
+    leadTimeDays: row.lead_time_days === null ? undefined : Number(row.lead_time_days),
+    notes: row.notes ?? undefined,
     isActive: row.is_active,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

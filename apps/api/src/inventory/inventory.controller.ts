@@ -4,11 +4,14 @@ import type {
   InventoryCategoryResponse,
   InventoryProductResponse,
   InventoryStockMutationResponse,
+  InventorySupplierResponse,
   ListInventoryCategoriesResponse,
+  ListInventoryDeadStockResponse,
   ListInventoryLowStockResponse,
   ListInventoryMovementsResponse,
   ListInventoryProductsResponse,
   ListInventoryStockResponse,
+  ListInventorySuppliersResponse,
   BarcodeLookupResponse,
   RecordProductConsumptionResponse,
 } from '@sheer/domain';
@@ -21,12 +24,16 @@ import {
   AdjustInventoryStockDto,
   CategoryQueryDto,
   CreateInventoryCategoryDto,
+  CreateInventorySupplierDto,
+  DeadStockQueryDto,
   InitializeInventoryStockDto,
   InventoryQueryDto,
   MovementQueryDto,
   StockQueryDto,
+  SupplierQueryDto,
   UpdateInventoryCategoryDto,
   UpdateInventoryStockThresholdDto,
+  UpdateInventorySupplierDto,
   UpsertInventoryProductDto,
   BarcodeLookupQueryDto,
   RecordProductConsumptionDto,
@@ -110,6 +117,16 @@ export class InventoryController {
     return this.inventory.listLowStock(actor, locationId);
   }
 
+  // Week 6 ticket 7 — dead stock, computed on read (nothing is materialised).
+
+  @Get('dead-stock')
+  listDeadStock(
+    @CurrentUser() actor: AuthUser,
+    @Query() query: DeadStockQueryDto,
+  ): Promise<ListInventoryDeadStockResponse> {
+    return this.inventory.listDeadStock(actor, query.locationId);
+  }
+
   // Week 6 — barcode consumption foundation. The scan surface (wedge scanner
   // field or camera) is Week 7 UI; these are the API and domain rules under it.
 
@@ -157,6 +174,39 @@ export class InventoryController {
   @Delete('categories/:id')
   deleteCategory(@CurrentUser() actor: AuthUser, @Param('id') id: string): Promise<InventoryCategoryResponse> {
     return this.inventory.deleteCategory(actor, id);
+  }
+
+  // Week 6 ticket 1 — supplier catalogue. Same permission surface as the rest
+  // of inventory; the Week 7 ordering workflow gets its own orders.* keys.
+
+  @Get('suppliers')
+  listSuppliers(
+    @CurrentUser() actor: AuthUser,
+    @Query() query: SupplierQueryDto,
+  ): Promise<ListInventorySuppliersResponse> {
+    return this.inventory.listSuppliers(actor, query);
+  }
+
+  @Post('suppliers')
+  createSupplier(
+    @CurrentUser() actor: AuthUser,
+    @Body() dto: CreateInventorySupplierDto,
+  ): Promise<InventorySupplierResponse> {
+    return this.inventory.createSupplier(actor, dto);
+  }
+
+  @Patch('suppliers/:id')
+  updateSupplier(
+    @CurrentUser() actor: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateInventorySupplierDto,
+  ): Promise<InventorySupplierResponse> {
+    return this.inventory.updateSupplier(actor, id, dto);
+  }
+
+  @Delete('suppliers/:id')
+  deleteSupplier(@CurrentUser() actor: AuthUser, @Param('id') id: string): Promise<InventorySupplierResponse> {
+    return this.inventory.deleteSupplier(actor, id);
   }
 }
 
