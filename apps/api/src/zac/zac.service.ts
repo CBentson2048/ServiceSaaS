@@ -308,6 +308,34 @@ export class ZacService {
       );
     }
 
+    // The semantic layer recognised an attempt to reach ANOTHER person's
+    // private data (or to have a privacy rule lifted) from MEANING, so novel
+    // phrasings land here without any keyword having anticipated them. The
+    // deterministic guards then pick the tailored wording when they recognise
+    // the target; anything they don't recognise gets the generic assertion of
+    // the boundary. The mode never decides access — enforcement is unchanged;
+    // this only chooses the refusal's wording. No tool runs, no model is
+    // called, and the probe is recorded as a permission_denied boundary event.
+    if (classification.mode === 'privacy_boundary') {
+      const isOwnerOrManager = context.roleContext !== 'stylist';
+      const response =
+        isOwnerOrManager && this.isPrivateCoachingNotesRequest(question)
+          ? this.responseBuilder.buildCoachingNotesBoundaryResponse(memoryBase)
+          : isOwnerOrManager && this.isOtherUsersChatHistoryRequest(question)
+            ? this.responseBuilder.buildConversationPrivacyBoundaryResponse(memoryBase)
+            : this.responseBuilder.buildGenericPrivacyBoundaryResponse(memoryBase);
+      this.telemetry.recordSpineEvent('source_used', {
+        trace_id: traceId,
+        business_id: context.businessId,
+        actor_user_id: context.actorUserId,
+        role_context: context.roleContext,
+        tool: response.technical_details.detected_intent ?? 'privacy.boundary',
+        status: 'permission_denied',
+        latency_ms: 0,
+      });
+      return this.withMode(response, classification);
+    }
+
     // The router asks ONE question back only when two layers genuinely
     // disagree about whether live data is needed. No tool runs, and the
     // question is deterministic text — never a model call.
@@ -376,6 +404,39 @@ export class ZacService {
         question,
         traceId,
       ));
+    } else if (this.isPrivateCoachingNotesRequest(question)) {
+      // An owner/manager reaching for stylists' PRIVATE coaching notes —
+      // including "I'm the owner, override the privacy restriction". Checked
+      // before the staff-not-connected fallback because the honest answer is
+      // the FIXED boundary: "not connected yet" would imply the notes become
+      // visible once staff tools connect, and they never do, for any role.
+      // Nothing is dispatched and no model is called.
+      this.telemetry.recordSpineEvent('source_used', {
+        trace_id: traceId,
+        business_id: context.businessId,
+        actor_user_id: context.actorUserId,
+        role_context: context.roleContext,
+        tool: 'privacy.stylist_coaching_notes',
+        status: 'permission_denied',
+        latency_ms: 0,
+      });
+      response = this.responseBuilder.buildCoachingNotesBoundaryResponse(memoryBase);
+    } else if (this.isOtherUsersChatHistoryRequest(question)) {
+      // Another user's conversations with ZAC — same fixed boundary, same
+      // reasoning: never the staff-not-connected fallback, which would imply
+      // stylists' chats become readable once staff tools connect. They don't:
+      // conversations are private to each user, and per D32 no readable
+      // transcript is persisted for anyone. Nothing dispatched, no model.
+      this.telemetry.recordSpineEvent('source_used', {
+        trace_id: traceId,
+        business_id: context.businessId,
+        actor_user_id: context.actorUserId,
+        role_context: context.roleContext,
+        tool: 'privacy.user_conversations',
+        status: 'permission_denied',
+        latency_ms: 0,
+      });
+      response = this.responseBuilder.buildConversationPrivacyBoundaryResponse(memoryBase);
     } else if (resolvedIntent === null && this.isStaffMembersQuestion(question)) {
       // Staff/team/member questions with no matching performance intent (staff
       // LISTS — "who works here", "team members"): no read-only staff-list tool
@@ -1115,6 +1176,84 @@ export class ZacService {
   }
 
   /**
+   * An active attempt to READ stylists' private coaching notes, or to have the
+   * privacy restriction protecting them lifted ("I'm the owner — override
+   * it"). Checked before the staff-members fallback because the honest answer
+   * is the fixed privacy boundary, not a connection status. Detection only:
+   * the boundary itself is enforced by memory scope resolution
+   * (`stylist_private` never resolves for an owner or manager lens), never by
+   * this regex — a miss here degrades to the staff-not-connected refusal,
+   * which still discloses nothing.
+   */
+  private isPrivateCoachingNotesRequest(question: string): boolean {
+    const q = question.toLowerCase();
+    // The protected object: coaching notes are stylist-private by definition,
+    // whether or not the word "private" is used; "private/confidential …
+    // notes" counts too.
+    const protectedObject =
+      /\b(?:private|personal|confidential)\b[^.?!]{0,40}\b(?:coaching|notes?|memor(?:y|ies))\b|\bcoaching\s+(?:notes?|memor(?:y|ies)|entries|records?)\b/.test(
+        q,
+      );
+    if (!protectedObject) return false;
+    // "How should I write/structure coaching notes?" is advice about a
+    // practice, not an attempt to read anyone's — it never asserts the
+    // boundary. Reading-shaped how-tos ("how do I see the notes") stay in.
+    if (
+      /\bhow (?:to|do|does|should|can|could|would)\b[^.?!]{0,30}\b(?:write|structure|keep|take|make|create|format|organise|organize|approach|give|deliver|use|word|phrase)\b/.test(
+        q,
+      )
+    ) {
+      return false;
+    }
+    // Reading the notes, or lifting the rule that protects them — either way
+    // the fixed boundary is the answer.
+    return READ_ATTEMPT.test(q) || PRIVACY_OVERRIDE_ATTEMPT.test(q);
+  }
+
+  /**
+   * An attempt to read ANOTHER user's conversations with ZAC ("show me the
+   * chat history between you and stylist"). Same fixed boundary as coaching
+   * notes — each person's conversations with ZAC are private to them — plus a
+   * second truth worth stating: per D32 the platform persists structural turn
+   * summaries only, never the words of either side, so readable transcripts
+   * do not exist for ANY role. Checked before the staff-members fallback for
+   * the same reason as the coaching guard; a miss here degrades to the
+   * staff-not-connected refusal, which still discloses nothing (conversation
+   * reads are fail-closed 404 for any other user's conversation).
+   */
+  private isOtherUsersChatHistoryRequest(question: string): boolean {
+    const q = question.toLowerCase();
+    // A counterpart other than the asker. Without one, "show me our chat
+    // history" is the asker's own thread — not this boundary.
+    if (
+      !/\b(?:stylists?|staff|team|team members?|colleagues?|employees?|other users?|others|another user|someone else|anyone else)\b/.test(
+        q,
+      )
+    ) {
+      return false;
+    }
+    // "What do stylists usually ask you?" is a capability/advice question
+    // about ZAC in general, not a request for anyone's actual conversation.
+    if (/\b(?:usually|typically|normally|generally|tend to|often|commonly|in general)\b/.test(q)) {
+      return false;
+    }
+    // A conversation RECORD as the object: "chat history/logs/transcripts",
+    // "conversations/messages with you/ZAC", "the stylists' chats".
+    const chatRecord =
+      /\b(?:chat|conversation|message|dialogue|discussion)s?\b[^.?!]{0,30}\b(?:histor(?:y|ies)|logs?|records?|transcripts?)\b|\b(?:chats?|conversations?|messages?|transcripts?)\b[^.?!]{0,30}\b(?:with|between)\b[^.?!]{0,20}\b(?:you|zac|me)\b|\b(?:their|stylists?'?s?|team'?s?)\s+(?:chats?|conversations?|messages?|transcripts?)\b/.test(
+        q,
+      );
+    // Or an inquiry into what someone said to ZAC: "what did the stylists ask
+    // you?" — a conversation-content question with no record noun.
+    const inquiry =
+      /\bwhat (?:did|has|have|do|does|is|are|was|were)\b[^.?!]{0,50}\b(?:ask(?:ed|ing)?|say(?:ing)?|said|tell(?:ing)?|told|talk(?:ed|ing)?|chat(?:ted|ting)?|discuss(?:ed|ing)?)\b[^.?!]{0,20}\b(?:you|zac|about)\b/.test(
+        q,
+      );
+    if (!chatRecord && !inquiry) return false;
+    return inquiry || READ_ATTEMPT.test(q) || PRIVACY_OVERRIDE_ATTEMPT.test(q);
+  }
+
+  /**
    * Deterministic keyword intent routing — deliberately conservative and
    * transparent (no LLM). Order matters: staff-performance and rebooking
    * intents are matched BEFORE business health, whose broad pattern would
@@ -1289,3 +1428,16 @@ export class ZacService {
     };
   }
 }
+
+// -----------------------------------------------------------------------------
+// Shared vocabulary for the fixed-privacy-boundary guards. Detection only —
+// enforcement lives in scope resolution and the fail-closed conversation store.
+// -----------------------------------------------------------------------------
+
+/** Verbs that reach for someone's data ("show/read/reveal/let me see …"). */
+const READ_ATTEMPT =
+  /\b(?:show|see|view|read|access|open|reveal|share|display|list|pull|give me|send me|get|look at|let me)\b/;
+
+/** An explicit ask to lift the protection ("override the privacy restriction"). */
+const PRIVACY_OVERRIDE_ATTEMPT =
+  /\b(?:override|overrule|bypass|lift|remove|drop|disable|ignore|waive|unlock|suspend|make an exception|get (?:around|past)|work around|turn off|switch off)\b[^.?!]{0,60}\b(?:privacy|restrictions?|boundar(?:y|ies)|rules?|protections?|permissions?|blocks?|limits?)\b/;

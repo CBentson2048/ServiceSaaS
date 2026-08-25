@@ -219,6 +219,163 @@ export class ZacResponseBuilderService {
   }
 
   /**
+   * An owner or manager asked to READ stylists' private coaching notes — or to
+   * have the privacy restriction protecting them overridden. This is the one
+   * boundary that never moves: coaching notes are `stylist_private` by design
+   * and no role or permission level — the account owner included — can reach
+   * them through ZAC. The answer must assert exactly that. It must NOT fall
+   * back to "not connected yet": that is true of staff data generally, but it
+   * implies these notes would become visible once staff tools connect, and
+   * they never will. Nothing is dispatched for this answer and no
+   * stylist-private data of any kind exists in it.
+   */
+  buildCoachingNotesBoundaryResponse(input: MemoryResponseBaseInput): ZacResponse {
+    const { context, profile, visibleTools, completion, traceId } = input;
+
+    return {
+      conversation_id: input.conversationId,
+      answer: [
+        "I can't show you stylists' private coaching notes — and this isn't a data-connection gap or a permission setting. It's a fixed privacy boundary.",
+        'Private coaching notes belong to each stylist alone. They are never visible to owners or managers through ZAC, whatever permissions you hold, and there is no override — not for the account owner, and not by asking me to lift the restriction.',
+        'Nothing was read or shared for this answer. Business goals and team themes saved for your scope are shared with you as designed, and team performance questions (KPIs, targets, rebooking) stay available within your permissions.',
+      ].join('\n\n'),
+      role_context: context.roleContext,
+      response_type: 'Refusal / Insufficient Data',
+      evidence: [
+        {
+          source_type: 'zac.access_boundary',
+          source_ref: 'stylist-private-coaching:fixed-boundary',
+          as_of: null,
+          entities_used: [],
+        },
+      ],
+      confidence: 'high',
+      limitations: [
+        'Stylist private coaching notes are excluded from owner and manager access by design — a fixed rule, not a permission that can be granted or overridden.',
+        'No stylist-private data of any kind was read for this answer.',
+        `Your ZAC scope: ${profile.scopeDescription}`,
+      ],
+      suggested_next_step:
+        'Ask "What am I allowed to see?" for your full access picture, or ask about team KPIs and targets for performance context within your permissions.',
+      measurement_hook: null,
+      attribution_seed: null,
+      memory_updates: [],
+      tool_calls: [],
+      cost_metadata: this.costMetadata(completion),
+      technical_details: {
+        ...this.technicalDetails(visibleTools, completion),
+        detected_intent: 'privacy.stylist_coaching_notes',
+      },
+      trace_id: traceId,
+    };
+  }
+
+  /**
+   * An owner or manager asked to read ANOTHER user's conversations with ZAC
+   * ("show me the chat history between you and stylist"). Two truths, both
+   * fixed: each person's conversations with ZAC are private to them — never
+   * visible to owners or managers, no override for any role — and per D32 the
+   * platform persists structural turn summaries only, never the words of
+   * either side, so readable transcripts do not exist for ANY role. As with
+   * coaching notes, the answer must assert the boundary, never "not connected
+   * yet". Nothing is dispatched for this answer and no conversation data of
+   * any kind exists in it.
+   */
+  buildConversationPrivacyBoundaryResponse(input: MemoryResponseBaseInput): ZacResponse {
+    const { context, profile, visibleTools, completion, traceId } = input;
+
+    return {
+      conversation_id: input.conversationId,
+      answer: [
+        "I can't show you anyone else's conversations with me — and like private coaching notes, this isn't a data-connection gap. It's a fixed privacy boundary.",
+        "Each person's conversations with ZAC are private to them. A stylist's chats with me are never visible to owners or managers, whatever permissions you hold, and there is no override — not for the account owner, and not by asking me to lift the restriction.",
+        "There is also nothing readable to show: I don't keep transcripts. The platform stores only structural summaries of each turn — the kind of thing that was asked, never the words — so a conversation can continue across sessions. Nothing was read or shared for this answer.",
+      ].join('\n\n'),
+      role_context: context.roleContext,
+      response_type: 'Refusal / Insufficient Data',
+      evidence: [
+        {
+          source_type: 'zac.access_boundary',
+          source_ref: 'user-conversations:fixed-boundary',
+          as_of: null,
+          entities_used: [],
+        },
+      ],
+      confidence: 'high',
+      limitations: [
+        "Other users' conversations with ZAC are excluded from owner and manager access by design — a fixed rule, not a permission that can be granted or overridden.",
+        'ZAC persists structural conversation summaries only — the words of a chat are never stored for anyone to read.',
+        `Your ZAC scope: ${profile.scopeDescription}`,
+      ],
+      suggested_next_step:
+        'Ask "What am I allowed to see?" for your full access picture, or "How is my business doing?" for a live snapshot.',
+      measurement_hook: null,
+      attribution_seed: null,
+      memory_updates: [],
+      tool_calls: [],
+      cost_metadata: this.costMetadata(completion),
+      technical_details: {
+        ...this.technicalDetails(visibleTools, completion),
+        detected_intent: 'privacy.user_conversations',
+      },
+      trace_id: traceId,
+    };
+  }
+
+  /**
+   * The generic fixed-privacy-boundary refusal — the catch-all behind the
+   * semantic `privacy_boundary` mode. Served when the semantic layer
+   * recognised an attempt to reach someone else's private data but the
+   * deterministic guards did not recognise the specific target (novel
+   * phrasing, a named person, a data kind we have no tailored copy for).
+   * Role-neutral by construction: correct for owners, managers and stylists
+   * alike, and self-correcting if a user's OWN data ever misclassifies here —
+   * the answer tells them their own data remains available on a direct ask.
+   * Nothing is dispatched for this answer and no private data of any kind
+   * exists in it.
+   */
+  buildGenericPrivacyBoundaryResponse(input: MemoryResponseBaseInput): ZacResponse {
+    const { context, profile, visibleTools, completion, traceId } = input;
+
+    return {
+      conversation_id: input.conversationId,
+      answer: [
+        "I can't share that — it's private to the person it belongs to, and that's a fixed privacy boundary, not a data-connection gap or a permission setting.",
+        'Through ZAC, private information — someone\'s private notes, their conversations with me, anything saved privately to them — is visible only to that person. No role or permission level changes that, the account owner included, and asking me to override or lift the restriction doesn\'t either.',
+        "Nothing was read or shared for this answer. Anything that's genuinely yours — your own data, your own saved notes, your own chats with me — stays available to you: just ask for it directly.",
+      ].join('\n\n'),
+      role_context: context.roleContext,
+      response_type: 'Refusal / Insufficient Data',
+      evidence: [
+        {
+          source_type: 'zac.access_boundary',
+          source_ref: 'private-data:fixed-boundary',
+          as_of: null,
+          entities_used: [],
+        },
+      ],
+      confidence: 'high',
+      limitations: [
+        "Private data belonging to another person is excluded from every other user's access by design — a fixed rule, not a permission that can be granted or overridden.",
+        'No private data of any kind was read for this answer.',
+        `Your ZAC scope: ${profile.scopeDescription}`,
+      ],
+      suggested_next_step:
+        'Ask "What am I allowed to see?" for your full access picture, or ask about your own data directly.',
+      measurement_hook: null,
+      attribution_seed: null,
+      memory_updates: [],
+      tool_calls: [],
+      cost_metadata: this.costMetadata(completion),
+      technical_details: {
+        ...this.technicalDetails(visibleTools, completion),
+        detected_intent: 'privacy.boundary',
+      },
+      trace_id: traceId,
+    };
+  }
+
+  /**
    * A stylist asked for owner/manager/business-wide data (revenue, payroll,
    * team, other stylists, client lists). Acknowledge the intent, state the
    * access boundary plainly, redirect to what IS in scope. Nothing is

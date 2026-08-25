@@ -10,6 +10,7 @@ export type ZacRequestMode =
   | 'hypothetical'
   | 'memory'
   | 'permission_capability'
+  | 'privacy_boundary'
   | 'conversational';
 
 export const ZAC_REQUEST_MODES: readonly ZacRequestMode[] = [
@@ -18,6 +19,7 @@ export const ZAC_REQUEST_MODES: readonly ZacRequestMode[] = [
   'hypothetical',
   'memory',
   'permission_capability',
+  'privacy_boundary',
   'conversational',
 ];
 
@@ -61,6 +63,7 @@ export type ZacRoutingReasonCode =
   | 'capability_question'
   | 'conversation_followup'
   | 'real_business_analysis'
+  | 'privacy_boundary_probe'
   | 'ambiguous_business_request';
 
 export const ZAC_ROUTING_REASON_CODES: readonly ZacRoutingReasonCode[] = [
@@ -72,6 +75,7 @@ export const ZAC_ROUTING_REASON_CODES: readonly ZacRoutingReasonCode[] = [
   'capability_question',
   'conversation_followup',
   'real_business_analysis',
+  'privacy_boundary_probe',
   'ambiguous_business_request',
 ];
 
