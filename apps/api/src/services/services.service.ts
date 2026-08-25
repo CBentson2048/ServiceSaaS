@@ -16,6 +16,7 @@ import type {
   ListServiceCategoriesResponse,
   ManagedService,
   ManagedServiceResponse,
+  ServiceBillingCategory,
   ServiceCategory,
   ServiceCategoryResponse,
   ServiceSegment,
@@ -36,6 +37,7 @@ interface CategoryRow {
   name: string;
   description: string | null;
   color_hex: string | null;
+  billing_category: ServiceBillingCategory | null;
   is_active: boolean;
   sort_order: number;
   created_at: string;
@@ -74,7 +76,8 @@ interface SegmentRow {
   updated_at: string;
 }
 
-const CATEGORY_COLUMNS = 'id,business_id,name,description,color_hex,is_active,sort_order,created_at,updated_at';
+const CATEGORY_COLUMNS =
+  'id,business_id,name,description,color_hex,billing_category,is_active,sort_order,created_at,updated_at';
 const SERVICE_COLUMNS =
   'id,business_id,location_id,name,description,service_category_id,estimated_duration_minutes,base_price,deposit_type,deposit_value,requires_patch_test,rebooking_nudge_enabled,rebooking_nudge_interval_days,is_active,sort_order,created_at,updated_at';
 const SEGMENT_COLUMNS = 'id,business_id,service_id,name,duration_minutes,is_stylist_free,sort_order,created_at,updated_at';
@@ -131,6 +134,7 @@ export class ServicesService {
         name,
         description: clean(dto.description),
         color_hex: dto.colorHex ?? null,
+        billing_category: dto.billingCategory ?? null,
         is_active: dto.isActive ?? true,
         sort_order: dto.sortOrder ?? 0,
       })
@@ -159,8 +163,12 @@ export class ServicesService {
       if (!name) throw new BadRequestException('name must not be empty');
       patch.name = name;
     }
-    if ('description' in dto) patch.description = clean(dto.description);
-    if ('colorHex' in dto) patch.color_hex = dto.colorHex ?? null;
+    // `!== undefined`, never the `in` operator: ValidationPipe DTOs carry every
+    // declared field as an own (undefined) property, so `in` is true for all of
+    // them and a partial PATCH would null whatever the caller omitted.
+    if (dto.description !== undefined) patch.description = clean(dto.description);
+    if (dto.colorHex !== undefined) patch.color_hex = dto.colorHex ?? null;
+    if (dto.billingCategory !== undefined) patch.billing_category = dto.billingCategory;
     if (dto.isActive !== undefined) patch.is_active = dto.isActive;
     if (dto.sortOrder !== undefined) patch.sort_order = dto.sortOrder;
     if (Object.keys(patch).length === 0) throw new BadRequestException('No category fields to update');
@@ -681,6 +689,7 @@ function toCategory(row: CategoryRow): ServiceCategory {
     name: row.name,
     description: row.description ?? undefined,
     colorHex: row.color_hex ?? undefined,
+    billingCategory: row.billing_category ?? undefined,
     isActive: row.is_active,
     sortOrder: row.sort_order,
     createdAt: row.created_at,

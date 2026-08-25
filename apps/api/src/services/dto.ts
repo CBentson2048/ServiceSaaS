@@ -5,6 +5,7 @@ import {
   IsArray,
   IsBoolean,
   IsEnum,
+  IsIn,
   IsInt,
   IsNumber,
   IsOptional,
@@ -18,7 +19,14 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
-import type { ServiceDepositType } from '@sheer/domain';
+import type { ServiceBillingCategory, ServiceDepositType } from '@sheer/domain';
+
+const BILLING_CATEGORIES = [
+  'permanent_colour',
+  'lightener_bleach',
+  'semi_toners',
+  'special_treatments',
+] as const;
 
 const DEPOSIT_TYPES = ['none', 'fixed_amount', 'percentage'] as const;
 
@@ -52,6 +60,14 @@ export class CreateServiceCategoryDto {
   @Matches(HEX_COLOUR, { message: 'colorHex must be a #RRGGBB hex colour' })
   colorHex?: string | null;
 
+  /** Which kind of colour work this category is; null/omitted = not colour. */
+  @IsOptional()
+  @ValidateIf((o: CreateServiceCategoryDto) => o.billingCategory !== null)
+  @IsIn(BILLING_CATEGORIES, {
+    message: 'billingCategory must be permanent_colour, lightener_bleach, semi_toners or special_treatments',
+  })
+  billingCategory?: ServiceBillingCategory | null;
+
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
@@ -79,6 +95,14 @@ export class UpdateServiceCategoryDto {
   @ValidateIf((o: UpdateServiceCategoryDto) => o.colorHex !== null)
   @Matches(HEX_COLOUR, { message: 'colorHex must be a #RRGGBB hex colour' })
   colorHex?: string | null;
+
+  /** Explicit null clears the tag; omitted keeps it. */
+  @IsOptional()
+  @ValidateIf((o: UpdateServiceCategoryDto) => o.billingCategory !== null)
+  @IsIn(BILLING_CATEGORIES, {
+    message: 'billingCategory must be permanent_colour, lightener_bleach, semi_toners or special_treatments',
+  })
+  billingCategory?: ServiceBillingCategory | null;
 
   @IsOptional()
   @IsBoolean()
