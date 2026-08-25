@@ -37,6 +37,15 @@ import type {
   InventoryCategoryResponse,
   InventoryProductResponse,
   InventoryStockMutationResponse,
+  InventorySupplierResponse,
+  ListInventoryDeadStockResponse,
+  ListInventorySuppliersResponse,
+  GeneratePurchaseOrdersResponse,
+  ListPurchaseOrdersResponse,
+  PurchaseOrderResponse,
+  PurchaseOrderStatus,
+  SendPurchaseOrderResponse,
+  StockUnit,
   CreateShiftRequest,
   CreateStaffInvitationRequest,
   CreateStylistRebookingRequest,
@@ -920,6 +929,13 @@ export async function createInventoryProduct(
     defaultCostPerGramCents?: number | null;
     retailPriceCents?: number | null;
     lowStockThresholdGrams?: number | null;
+    stockUnit?: StockUnit | null;
+    packSize?: number | null;
+    barcode?: string | null;
+    supplierId?: string | null;
+    minimumOrderQuantity?: number | null;
+    orderMultiple?: number | null;
+    deadStockDays?: number | null;
   },
 ): Promise<InventoryProductResponse> {
   return request<InventoryProductResponse>('/inventory/products', {
@@ -1098,6 +1114,20 @@ export async function listInventoryLowStock(
   });
 }
 
+/** Dead stock: on-hand items with no outbound movement inside their threshold. */
+export async function listInventoryDeadStock(
+  accessToken: string,
+  params: { locationId?: string } = {},
+): Promise<ListInventoryDeadStockResponse> {
+  const search = new URLSearchParams();
+  if (params.locationId) search.set('locationId', params.locationId);
+  const query = search.toString();
+  return request<ListInventoryDeadStockResponse>(
+    `/inventory/dead-stock${query ? `?${query}` : ''}`,
+    { accessToken },
+  );
+}
+
 export async function listInventoryCategories(
   accessToken: string,
   params: { q?: string; includeInactive?: boolean } = {},
@@ -1149,6 +1179,162 @@ export async function deleteInventoryCategory(
       accessToken,
     },
   );
+}
+
+// --- Suppliers (Week 6 ticket 1) --------------------------------------------
+
+export async function listInventorySuppliers(
+  accessToken: string,
+  params: { q?: string; includeInactive?: boolean } = {},
+): Promise<ListInventorySuppliersResponse> {
+  const search = new URLSearchParams();
+  if (params.q) search.set('q', params.q);
+  if (params.includeInactive) search.set('includeInactive', 'true');
+  const query = search.toString();
+  return request<ListInventorySuppliersResponse>(
+    `/inventory/suppliers${query ? `?${query}` : ''}`,
+    { accessToken },
+  );
+}
+
+export async function createInventorySupplier(
+  accessToken: string,
+  payload: {
+    name: string;
+    contactEmail?: string | null;
+    contactPhone?: string | null;
+    accountReference?: string | null;
+    leadTimeDays?: number | null;
+    notes?: string | null;
+    isActive?: boolean;
+  },
+): Promise<InventorySupplierResponse> {
+  return request<InventorySupplierResponse>('/inventory/suppliers', {
+    method: 'POST',
+    accessToken,
+    body: payload,
+  });
+}
+
+export async function updateInventorySupplier(
+  accessToken: string,
+  supplierId: string,
+  payload: {
+    name?: string;
+    contactEmail?: string | null;
+    contactPhone?: string | null;
+    accountReference?: string | null;
+    leadTimeDays?: number | null;
+    notes?: string | null;
+    isActive?: boolean;
+  },
+): Promise<InventorySupplierResponse> {
+  return request<InventorySupplierResponse>(
+    `/inventory/suppliers/${encodeURIComponent(supplierId)}`,
+    {
+      method: 'PATCH',
+      accessToken,
+      body: payload,
+    },
+  );
+}
+
+export async function deleteInventorySupplier(
+  accessToken: string,
+  supplierId: string,
+): Promise<InventorySupplierResponse> {
+  return request<InventorySupplierResponse>(
+    `/inventory/suppliers/${encodeURIComponent(supplierId)}`,
+    {
+      method: 'DELETE',
+      accessToken,
+    },
+  );
+}
+
+// --- Purchase orders (Week 6 tickets 8/9) -----------------------------------
+
+export async function listPurchaseOrders(
+  accessToken: string,
+  params: { locationId?: string; supplierId?: string; status?: PurchaseOrderStatus } = {},
+): Promise<ListPurchaseOrdersResponse> {
+  const search = new URLSearchParams();
+  if (params.locationId) search.set('locationId', params.locationId);
+  if (params.supplierId) search.set('supplierId', params.supplierId);
+  if (params.status) search.set('status', params.status);
+  const query = search.toString();
+  return request<ListPurchaseOrdersResponse>(`/orders${query ? `?${query}` : ''}`, { accessToken });
+}
+
+export async function getPurchaseOrder(
+  accessToken: string,
+  orderId: string,
+): Promise<PurchaseOrderResponse> {
+  return request<PurchaseOrderResponse>(`/orders/${encodeURIComponent(orderId)}`, { accessToken });
+}
+
+/** Compute suggested quantities and create one draft order per supplier. */
+export async function generatePurchaseOrders(
+  accessToken: string,
+  payload: { locationId: string },
+): Promise<GeneratePurchaseOrdersResponse> {
+  return request<GeneratePurchaseOrdersResponse>('/orders/generate', {
+    method: 'POST',
+    accessToken,
+    body: payload,
+  });
+}
+
+export async function updatePurchaseOrder(
+  accessToken: string,
+  orderId: string,
+  payload: { notes?: string | null; lines?: { id: string; orderedQuantity: number }[] },
+): Promise<PurchaseOrderResponse> {
+  return request<PurchaseOrderResponse>(`/orders/${encodeURIComponent(orderId)}`, {
+    method: 'PATCH',
+    accessToken,
+    body: payload,
+  });
+}
+
+export async function submitPurchaseOrder(
+  accessToken: string,
+  orderId: string,
+): Promise<PurchaseOrderResponse> {
+  return request<PurchaseOrderResponse>(`/orders/${encodeURIComponent(orderId)}/submit`, {
+    method: 'POST',
+    accessToken,
+  });
+}
+
+export async function approvePurchaseOrder(
+  accessToken: string,
+  orderId: string,
+): Promise<PurchaseOrderResponse> {
+  return request<PurchaseOrderResponse>(`/orders/${encodeURIComponent(orderId)}/approve`, {
+    method: 'POST',
+    accessToken,
+  });
+}
+
+export async function sendPurchaseOrder(
+  accessToken: string,
+  orderId: string,
+): Promise<SendPurchaseOrderResponse> {
+  return request<SendPurchaseOrderResponse>(`/orders/${encodeURIComponent(orderId)}/send`, {
+    method: 'POST',
+    accessToken,
+  });
+}
+
+export async function cancelPurchaseOrder(
+  accessToken: string,
+  orderId: string,
+): Promise<PurchaseOrderResponse> {
+  return request<PurchaseOrderResponse>(`/orders/${encodeURIComponent(orderId)}/cancel`, {
+    method: 'POST',
+    accessToken,
+  });
 }
 
 // --- Service categories -----------------------------------------------------
