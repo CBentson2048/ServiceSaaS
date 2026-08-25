@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Navigate } from 'react-router-dom';
-import type { ServiceCategory } from '@sheer/domain';
+import type { ServiceBillingCategory, ServiceCategory } from '@sheer/domain';
 import {
   ApiRequestError,
   createServiceCategory,
@@ -16,8 +16,18 @@ interface CategoryForm {
   name: string;
   description: string;
   colorHex: string;
+  /** '' = not colour work; otherwise one of the four colour billing categories. */
+  billingCategory: ServiceBillingCategory | '';
   isActive: boolean;
 }
+
+/** Friendly labels for the fixed colour billing vocabulary (0043/0091). */
+const BILLING_CATEGORY_LABELS: Record<ServiceBillingCategory, string> = {
+  permanent_colour: 'Permanent colour',
+  lightener_bleach: 'Lightener & bleach',
+  semi_toners: 'Semi & toners',
+  special_treatments: 'Special treatments',
+};
 
 // Suggested swatches for quick picking; the colour input still accepts any hex.
 // Each new category defaults to the next swatch so categories start visually distinct.
@@ -43,6 +53,7 @@ const emptyForm: CategoryForm = {
   name: '',
   description: '',
   colorHex: DEFAULT_COLOR,
+  billingCategory: '',
   isActive: true,
 };
 
@@ -113,6 +124,7 @@ export function ServiceCategoriesPage() {
       name: category.name,
       description: category.description ?? '',
       colorHex: category.colorHex ?? DEFAULT_COLOR,
+      billingCategory: category.billingCategory ?? '',
       isActive: category.isActive,
     });
     setShowForm(true);
@@ -139,6 +151,7 @@ export function ServiceCategoriesPage() {
         name: form.name.trim(),
         description: form.description.trim() || null,
         colorHex: form.colorHex,
+        billingCategory: form.billingCategory || null,
         isActive: form.isActive,
       };
       const result = form.id
@@ -248,6 +261,31 @@ export function ServiceCategoriesPage() {
             value={form.description}
             onChange={(value) => setForm((current) => ({ ...current, description: value }))}
           />
+          <label className="text-[12px] font-medium text-text-secondary sm:col-span-2">
+            Colour billing category
+            <p className="mt-0.5 text-[11px] font-normal text-text-muted">
+              Tells the system this category is colour work. Tagged categories drive Colour Prep
+              planning and the colour billing rules; leave as &ldquo;Not colour work&rdquo; for
+              cutting, styling and everything else.
+            </p>
+            <select
+              value={form.billingCategory}
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  billingCategory: event.target.value as ServiceBillingCategory | '',
+                }))
+              }
+              className="mt-2 h-10 w-full rounded-input-lg border border-border-strong bg-surface px-3 text-[13px] text-text-primary outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 sm:w-72"
+            >
+              <option value="">Not colour work</option>
+              {(Object.keys(BILLING_CATEGORY_LABELS) as ServiceBillingCategory[]).map((key) => (
+                <option key={key} value={key}>
+                  {BILLING_CATEGORY_LABELS[key]}
+                </option>
+              ))}
+            </select>
+          </label>
           <div className="text-[12px] font-medium text-text-secondary sm:col-span-2">
             Calendar colour
             <p className="mt-0.5 text-[11px] font-normal text-text-muted">
@@ -365,6 +403,7 @@ export function ServiceCategoriesPage() {
                 {canReorder ? <th className="w-8 px-2 py-3" aria-label="Reorder" /> : null}
                 <th className="px-4 py-3">Name</th>
                 <th className="px-4 py-3">Description</th>
+                <th className="px-4 py-3">Colour work</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Updated</th>
                 {canManage ? <th className="px-4 py-3 text-right">Actions</th> : null}
@@ -396,6 +435,15 @@ export function ServiceCategoriesPage() {
                     </span>
                   </td>
                   <td className="px-4 py-3 text-text-secondary">{category.description ?? '—'}</td>
+                  <td className="px-4 py-3">
+                    {category.billingCategory ? (
+                      <span className="inline-flex rounded-pill border border-primary bg-primary-soft px-2.5 py-1 text-[12px] font-medium text-primary-deep">
+                        {BILLING_CATEGORY_LABELS[category.billingCategory]}
+                      </span>
+                    ) : (
+                      <span className="text-text-muted">—</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3">
                     {category.isActive ? (
                       <span className="inline-flex rounded-pill border border-success-border bg-success-soft px-2.5 py-1 text-[12px] font-medium text-success">

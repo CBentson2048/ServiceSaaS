@@ -79,6 +79,13 @@ const NAV: NavItem[] = [
     permission: 'inventory.manage',
   },
   {
+    to: '/orders',
+    label: 'Purchase orders',
+    icon: BoxIcon,
+    allowedRoles: ['owner', 'manager'],
+    permission: 'orders.view',
+  },
+  {
     to: '/retail-sales',
     label: 'Retail sales',
     icon: TagIcon,

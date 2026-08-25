@@ -3,9 +3,12 @@ import { Navigate } from 'react-router-dom';
 import type {
   BusinessLocationSummary,
   InventoryCategory,
+  InventoryDeadStockItem,
   InventoryLocationStock,
   InventoryProduct,
   InventoryStockMovement,
+  InventorySupplier,
+  StockUnit,
 } from '@sheer/domain';
 import { userHasAnyRole, userHasRole } from '@sheer/domain';
 import {
@@ -21,9 +24,11 @@ import {
   initializeInventoryStock,
   listInventoryCategories,
   listInventoryLowStock,
+  listInventoryDeadStock,
   listInventoryMovements,
   listInventoryProducts,
   listInventoryStock,
+  listInventorySuppliers,
   updateInventoryProduct,
   updateInventoryStockThreshold,
 } from '../auth/api';
@@ -44,6 +49,15 @@ type ProductForm = {
   defaultCostPerGramCents: string;
   retailPriceCents: string;
   lowStockThresholdGrams: string;
+  stockUnit: StockUnit;
+  packSize: string;
+  barcode: string;
+  supplierId: string;
+  // Same fallback-label mechanism as categoryName above.
+  supplierName: string;
+  minimumOrderQuantity: string;
+  orderMultiple: string;
+  deadStockDays: string;
 };
 
 const emptyProductForm: ProductForm = {
@@ -57,6 +71,14 @@ const emptyProductForm: ProductForm = {
   defaultCostPerGramCents: '',
   retailPriceCents: '',
   lowStockThresholdGrams: '',
+  stockUnit: 'gram',
+  packSize: '',
+  barcode: '',
+  supplierId: '',
+  supplierName: '',
+  minimumOrderQuantity: '',
+  orderMultiple: '',
+  deadStockDays: '',
 };
 
 type StockHealth = 'healthy' | 'low' | 'critical';
@@ -71,10 +93,13 @@ export function InventoryPage() {
   const { selectedLocationId: scopeLocationId, isAllLocations } = useLocationScope();
   const [products, setProducts] = useState<InventoryProduct[]>([]);
   const [categories, setCategories] = useState<InventoryCategory[]>([]);
+  const [suppliers, setSuppliers] = useState<InventorySupplier[]>([]);
   const [stock, setStock] = useState<InventoryLocationStock[]>([]);
   const [locations, setLocations] = useState<BusinessLocationSummary[]>([]);
   const [movements, setMovements] = useState<InventoryStockMovement[]>([]);
   const [lowStockCount, setLowStockCount] = useState(0);
+  const [deadStock, setDeadStock] = useState<InventoryDeadStockItem[]>([]);
+  const [deadStockValueCents, setDeadStockValueCents] = useState(0);
   // Stock mutations need a concrete target. It tracks the sidebar when a
   // specific location is picked, and falls back to the first location on "All"
   // so the adjustment form stays usable; the user can still override it below.
@@ -114,9 +139,10 @@ export function InventoryPage() {
     setError(null);
     try {
       const listingLocationId = isAllLocations ? undefined : scopeLocationId;
-      const [productResult, categoryResult, stockResult, movementResult, lowStockResult] = await Promise.all([
+      const [productResult, categoryResult, supplierResult, stockResult, movementResult, lowStockResult, deadStockResult] = await Promise.all([
         listInventoryProducts(accessToken),
         listInventoryCategories(accessToken),
+        listInventorySuppliers(accessToken),
         listInventoryStock(accessToken, { locationId: listingLocationId, q: search.trim() || undefined, lowStockOnly }),
         listInventoryMovements(accessToken, {
           locationId: listingLocationId,
@@ -125,13 +151,17 @@ export function InventoryPage() {
           to: movementWindow?.to,
         }),
         listInventoryLowStock(accessToken, { locationId: listingLocationId }),
+        listInventoryDeadStock(accessToken, { locationId: listingLocationId }),
       ]);
       setProducts(productResult.products);
       setCategories(categoryResult.categories);
+      setSuppliers(supplierResult.suppliers);
       setStock(stockResult.stock);
       setLocations(stockResult.locations);
       setMovements(movementResult.movements);
       setLowStockCount(lowStockResult.alerts.length);
+      setDeadStock(deadStockResult.items);
+      setDeadStockValueCents(deadStockResult.totalEstimatedValueCents);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not load inventory');
     } finally {
@@ -207,6 +237,13 @@ export function InventoryPage() {
         defaultCostPerGramCents: optionalInteger(productForm.defaultCostPerGramCents),
         retailPriceCents: optionalInteger(productForm.retailPriceCents),
         lowStockThresholdGrams: optionalNumber(productForm.lowStockThresholdGrams) ?? 0,
+        stockUnit: productForm.stockUnit,
+        packSize: optionalNumber(productForm.packSize) ?? null,
+        barcode: nullable(productForm.barcode),
+        supplierId: productForm.supplierId || null,
+        minimumOrderQuantity: optionalInteger(productForm.minimumOrderQuantity) ?? 1,
+        orderMultiple: optionalInteger(productForm.orderMultiple) ?? 1,
+        deadStockDays: optionalInteger(productForm.deadStockDays) ?? null,
       };
       const result = productForm.id
         ? await updateInventoryProduct(accessToken, productForm.id, payload)
@@ -463,6 +500,33 @@ export function InventoryPage() {
               <NumberInput value={productForm.defaultCostPerGramCents} onChange={(value) => setProductForm({ ...productForm, defaultCostPerGramCents: value })} placeholder="Cost/gram cents" />
               <NumberInput value={productForm.retailPriceCents} onChange={(value) => setProductForm({ ...productForm, retailPriceCents: value })} placeholder="Retail price cents" />
               <NumberInput value={productForm.lowStockThresholdGrams} onChange={(value) => setProductForm({ ...productForm, lowStockThresholdGrams: value })} placeholder="Default threshold g" />
+              {/* Stock & ordering metadata (Week 6 ticket 1) */}
+              <select
+                value={productForm.stockUnit}
+                onChange={(e) => setProductForm({ ...productForm, stockUnit: e.target.value as StockUnit })}
+                className={inputClass}
+                title="What one unit of stored stock means for this product"
+              >
+                <option value="gram">Stocked in grams</option>
+                <option value="millilitre">Stocked in millilitres</option>
+                <option value="unit">Stocked in whole units</option>
+              </select>
+              <NumberInput value={productForm.packSize} onChange={(value) => setProductForm({ ...productForm, packSize: value })} placeholder="Pack size (base per pack)" positiveOnly />
+              <input value={productForm.barcode} onChange={(e) => setProductForm({ ...productForm, barcode: e.target.value })} placeholder="Barcode (EAN/UPC)" className={inputClass} />
+              <select value={productForm.supplierId} onChange={(e) => setProductForm({ ...productForm, supplierId: e.target.value })} className={inputClass}>
+                <option value="">No supplier</option>
+                {productForm.supplierId && !suppliers.some((supplier) => supplier.id === productForm.supplierId) ? (
+                  <option value={productForm.supplierId}>{productForm.supplierName || 'Current supplier'}</option>
+                ) : null}
+                {suppliers.map((supplier) => (
+                  <option key={supplier.id} value={supplier.id}>
+                    {supplier.name}
+                  </option>
+                ))}
+              </select>
+              <NumberInput value={productForm.minimumOrderQuantity} onChange={(value) => setProductForm({ ...productForm, minimumOrderQuantity: value })} placeholder="Min order (packs)" positiveOnly />
+              <NumberInput value={productForm.orderMultiple} onChange={(value) => setProductForm({ ...productForm, orderMultiple: value })} placeholder="Order multiple (packs)" positiveOnly />
+              <NumberInput value={productForm.deadStockDays} onChange={(value) => setProductForm({ ...productForm, deadStockDays: value })} placeholder="Dead stock after (days)" positiveOnly />
               <div className="flex gap-2 md:col-span-3">
                 <button type="button" className="h-9 rounded-pill bg-primary px-4 text-[12px] font-semibold text-text-on-primary disabled:opacity-50" onClick={() => void handleSaveProduct()} disabled={busy === 'product'}>
                   {productForm.id ? 'Update product' : 'Create product'}
@@ -687,6 +751,75 @@ export function InventoryPage() {
         </div>
       </section>
 
+      {/* Dead stock (Week 6 ticket 7) — on-hand items no longer moving */}
+      <section className="mt-8 rounded-card-lg border border-border bg-surface shadow-card">
+        <header className="flex flex-col gap-1 border-b border-border px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <div className="text-[15px] font-semibold text-text-primary">Dead stock</div>
+              {deadStock.length > 0 ? <StatusPill label={`${deadStock.length} item${deadStock.length === 1 ? '' : 's'}`} tone="warning" /> : null}
+            </div>
+            <div className="mt-0.5 text-[13px] text-text-secondary">
+              Stock on hand with no usage, sale or consumption inside its threshold. Thresholds come
+              from the product&rsquo;s &ldquo;dead stock after&rdquo; setting, or the location default.
+            </div>
+          </div>
+          {deadStock.length > 0 && deadStockValueCents > 0 ? (
+            <div className="text-[13px] text-text-secondary">
+              Tied up: <span className="font-semibold text-text-primary">{formatPounds(deadStockValueCents)}</span>
+            </div>
+          ) : null}
+        </header>
+        {deadStock.length === 0 ? (
+          <EmptyState label={loading ? 'Checking for dead stock…' : 'No dead stock — everything on the shelf is moving.'} />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px] text-left text-[13px]">
+              <thead className="border-b border-border bg-surface-alt text-[11px] uppercase tracking-[0.08em] text-text-secondary">
+                <tr>
+                  <th className="px-5 py-3 font-medium">Product</th>
+                  <th className="px-5 py-3 font-medium">Location</th>
+                  <th className="px-5 py-3 text-right font-medium">On hand</th>
+                  <th className="px-5 py-3 text-right font-medium">Idle</th>
+                  <th className="px-5 py-3 font-medium">Last used</th>
+                  <th className="px-5 py-3 text-right font-medium">Est. value</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {deadStock.map((item) => (
+                  <tr key={`${item.locationId}-${item.productId}`} className="transition hover:bg-surface-alt">
+                    <td className="px-5 py-3.5">
+                      <div className="font-medium text-text-primary">{item.productName}</div>
+                      <div className="text-[12px] text-text-muted">
+                        {[item.brand, item.sku, item.supplierName].filter(Boolean).join(' · ') || '—'}
+                      </div>
+                    </td>
+                    <td className="px-5 py-3.5 text-text-secondary">{item.locationName}</td>
+                    <td className="px-5 py-3.5 text-right font-semibold text-text-primary">
+                      {formatStockQuantity(item.quantityOnHandGrams, item.stockUnit)}
+                    </td>
+                    <td className="px-5 py-3.5 text-right">
+                      <div className="font-semibold text-danger">{item.daysIdle}d</div>
+                      <div className="text-[11px] text-text-muted">
+                        limit {item.thresholdDays}d ({item.thresholdSource === 'product' ? 'product' : 'location default'})
+                      </div>
+                    </td>
+                    <td className="px-5 py-3.5 text-text-secondary">
+                      {item.lastOutboundAt
+                        ? new Date(item.lastOutboundAt).toLocaleDateString([], { day: '2-digit', month: 'short', year: 'numeric' })
+                        : 'Never used'}
+                    </td>
+                    <td className="px-5 py-3.5 text-right text-text-secondary">
+                      {item.estimatedValueCents === undefined ? '—' : formatPounds(item.estimatedValueCents)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
       {/* Product catalogue management (edit for owner/manager, archive for owner) */}
       {canManage ? (
         <section className="mt-8 rounded-card-lg border border-border bg-surface shadow-card">
@@ -703,7 +836,13 @@ export function InventoryPage() {
                     {!product.isActive ? <StatusPill label="Archived" tone="neutral" /> : null}
                   </div>
                   <div className="text-[12px] text-text-secondary">
-                    {[product.brand, product.category, product.sku, product.sizeValue ? `${product.sizeValue}${product.sizeUnit}` : undefined].filter(Boolean).join(' · ') || '—'}
+                    {[
+                      product.brand,
+                      product.category,
+                      product.sku,
+                      product.sizeValue ? `${product.sizeValue}${product.sizeUnit}` : undefined,
+                      product.supplierName,
+                    ].filter(Boolean).join(' · ') || '—'}
                   </div>
                 </div>
                 <div className="flex items-center gap-2 text-[12px] text-text-secondary">
@@ -1054,11 +1193,30 @@ function toProductForm(product: InventoryProduct): ProductForm {
     defaultCostPerGramCents: product.defaultCostPerGramCents === undefined ? '' : String(product.defaultCostPerGramCents),
     retailPriceCents: product.retailPriceCents === undefined ? '' : String(product.retailPriceCents),
     lowStockThresholdGrams: String(product.lowStockThresholdGrams),
+    stockUnit: product.stockUnit,
+    packSize: product.packSize === undefined ? '' : String(product.packSize),
+    barcode: product.barcode ?? '',
+    supplierId: product.supplierId ?? '',
+    supplierName: product.supplierName ?? '',
+    minimumOrderQuantity: product.minimumOrderQuantity > 1 ? String(product.minimumOrderQuantity) : '',
+    orderMultiple: product.orderMultiple > 1 ? String(product.orderMultiple) : '',
+    deadStockDays: product.deadStockDays === undefined ? '' : String(product.deadStockDays),
   };
 }
 
 function formatGrams(value: number): string {
   return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value)}g`;
+}
+
+/** Quantity with the product's declared unit: grams, millilitres or whole items. */
+function formatStockQuantity(value: number, unit: StockUnit): string {
+  const amount = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value);
+  if (unit === 'unit') return `${amount} ${value === 1 ? 'unit' : 'units'}`;
+  return `${amount}${unit === 'millilitre' ? 'ml' : 'g'}`;
+}
+
+function formatPounds(cents: number): string {
+  return new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(cents / 100);
 }
 
 function formatMoney(value?: number): string {

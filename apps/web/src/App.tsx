@@ -26,6 +26,8 @@ import { DeleteAccountPage } from './pages/DeleteAccountPage';
 import { EditLocationPage } from './pages/EditLocationPage';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
 import { InventoryCategoriesPage } from './pages/InventoryCategoriesPage';
+import { InventorySuppliersPage } from './pages/InventorySuppliersPage';
+import { OrdersPage } from './pages/OrdersPage';
 import { InventoryManagementPage } from './pages/InventoryManagementPage';
 import { InventoryPage } from './pages/InventoryPage';
 import { ColourPrepPage } from './pages/ColourPrepPage';
@@ -204,6 +206,7 @@ export function App() {
             <Route path="/inventory" element={<InventoryManagementPage />}>
               <Route index element={<InventoryPage />} />
               <Route path="categories" element={<InventoryCategoriesPage />} />
+              <Route path="suppliers" element={<InventorySuppliersPage />} />
             </Route>
           </Route>
           <Route
@@ -215,6 +218,16 @@ export function App() {
             }
           >
             <Route path="/colour-prep" element={<ColourPrepPage />} />
+          </Route>
+          <Route
+            element={
+              <ProtectedRoute
+                allowedRoles={['owner', 'manager']}
+                requiredPermissions={['orders.view']}
+              />
+            }
+          >
+            <Route path="/orders" element={<OrdersPage />} />
           </Route>
           <Route
             element={

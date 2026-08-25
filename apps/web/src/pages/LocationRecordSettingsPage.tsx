@@ -183,6 +183,9 @@ export function LocationRecordSettingsPage() {
         wasteAllowancePercent: settings.wasteAllowancePercent,
         rebookRateBenchmarkPercent: settings.rebookRateBenchmarkPercent,
         utilisationWarningThresholdPercent: settings.utilisationWarningThresholdPercent,
+        deadStockDaysDefault: settings.deadStockDaysDefault,
+        reorderUsageWindowWeeks: settings.reorderUsageWindowWeeks,
+        reorderCoverageWeeks: settings.reorderCoverageWeeks,
         payrollWarningPercent: settings.payrollWarningPercent,
         payrollCriticalPercent: settings.payrollCriticalPercent,
         sundayReportEnabled: settings.sundayReportEnabled,
@@ -525,6 +528,30 @@ export function LocationRecordSettingsPage() {
                 min={0}
                 max={100}
                 onChange={(v) => patchSettings({ utilisationWarningThresholdPercent: v })}
+              />
+              <NumberField
+                label="Dead stock after (days)"
+                value={settings.deadStockDaysDefault}
+                min={1}
+                max={3650}
+                integer
+                onChange={(v) => patchSettings({ deadStockDaysDefault: v })}
+              />
+              <NumberField
+                label="Reorder usage window (weeks)"
+                value={settings.reorderUsageWindowWeeks}
+                min={1}
+                max={52}
+                integer
+                onChange={(v) => patchSettings({ reorderUsageWindowWeeks: v })}
+              />
+              <NumberField
+                label="Reorder coverage (weeks)"
+                value={settings.reorderCoverageWeeks}
+                min={1}
+                max={52}
+                integer
+                onChange={(v) => patchSettings({ reorderCoverageWeeks: v })}
               />
               <NumberField
                 label="Payroll warning (% of revenue)"
