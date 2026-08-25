@@ -34,6 +34,7 @@ import {
 } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
 import { useLocationScope } from '../components/LocationScopeContext';
+import { ScanConsumptionCard } from '../components/inventory/ScanConsumptionCard';
 
 type ProductForm = {
   id?: string;
@@ -614,6 +615,14 @@ export function InventoryPage() {
       <section>
         <h2 className="mb-3 text-[15px] font-semibold text-text-primary">Operations &amp; audit log</h2>
         <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+          <div className="flex flex-col gap-6">
+          {/* Scan to consume (Week 6 ticket 3) — wedge-scanner capture surface */}
+          <ScanConsumptionCard
+            accessToken={accessToken}
+            locationId={actionLocationId}
+            locationName={actionLocation?.name ?? ''}
+            onStockChanged={() => void reload()}
+          />
           {/* Record stock adjustment */}
           <div className="rounded-card-lg border border-border bg-surface p-5 shadow-card">
             <div className="text-[15px] font-semibold text-text-primary">Record stock adjustment</div>
@@ -699,6 +708,7 @@ export function InventoryPage() {
                 </button>
               </div>
             </details>
+          </div>
           </div>
 
           {/* Recent stock movement (scrollable) */}
