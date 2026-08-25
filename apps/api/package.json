@@ -17,6 +17,7 @@
     "seed-loh-pay-template": "ts-node --transpile-only scripts/seed-loh-pay-template.ts",
     "seed-week6-colour-prep": "ts-node --transpile-only scripts/seed-week6-colour-prep.ts",
     "seed-dead-stock": "ts-node --transpile-only scripts/seed-dead-stock.ts",
+    "week6-acceptance": "ts-node --transpile-only scripts/week6-acceptance.ts",
     "zac-routing-eval": "ts-node --transpile-only scripts/zac-routing-eval.ts"
   },
   "dependencies": {
