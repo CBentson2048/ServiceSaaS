@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { Navigate } from 'react-router-dom';
 import type {
   BusinessLocationSummary,
@@ -8,7 +9,6 @@ import type {
   InventoryProduct,
   InventoryStockMovement,
   InventorySupplier,
-  StockUnit,
 } from '@sheer/domain';
 import { userHasAnyRole, userHasRole } from '@sheer/domain';
 import {
@@ -18,856 +18,538 @@ import {
   type DashboardRange,
 } from '../components/dashboard/RangeTabs';
 import {
-  adjustInventoryStock,
+  ApiRequestError,
   archiveInventoryProduct,
-  createInventoryProduct,
-  initializeInventoryStock,
   listInventoryCategories,
-  listInventoryLowStock,
   listInventoryDeadStock,
   listInventoryMovements,
   listInventoryProducts,
   listInventoryStock,
   listInventorySuppliers,
-  updateInventoryProduct,
   updateInventoryStockThreshold,
 } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
 import { useLocationScope } from '../components/LocationScopeContext';
-import { ScanConsumptionCard } from '../components/inventory/ScanConsumptionCard';
-import { getProductAvailability, setProductAvailability } from '../auth/api';
-import type { ProductLocationAvailability } from '@sheer/domain';
+import { ProductDrawer } from '../components/inventory/ProductDrawer';
+import { ScanConsumeModal } from '../components/inventory/ScanConsumeModal';
+import { StockOperationModal } from '../components/inventory/StockOperationModal';
+import type { StockOperation } from '../components/inventory/stockOperationForm';
+import {
+  EMPTY_FILTERS,
+  STATUS_LABELS,
+  STATUS_TONES,
+  buildInventoryRows,
+  filterInventoryRows,
+  formatCount,
+  formatCurrencyFromCents,
+  formatRowQuantity,
+  summariseInventory,
+  type InventoryFilters,
+  type InventoryRow,
+  type StockStatus,
+} from '../components/inventory/inventoryRows';
+import {
+  formatAbsoluteTime,
+  formatMovementQuantity,
+  movementAuditFields,
+  presentMovement,
+} from '../components/inventory/movementPresentation';
+import { AppButton, StatusBadge } from '../design/components';
+import { Modal } from '../components/team/Modal';
 
-type ProductForm = {
-  id?: string;
-  brand: string;
-  name: string;
-  isRetail: boolean;
-  isSalonUse: boolean;
-  isLabUse: boolean;
-  categoryId: string;
-  // Display name of the selected category; only used to label a still-selected
-  // category that is no longer in the active list (e.g. archived after assignment).
-  categoryName: string;
-  sku: string;
-  sizeValue: string;
-  sizeUnit: string;
-  defaultCostPerGramCents: string;
-  retailPriceCents: string;
-  lowStockThresholdGrams: string;
-  stockUnit: StockUnit;
-  packSize: string;
-  barcode: string;
-  supplierId: string;
-  // Same fallback-label mechanism as categoryName above.
-  supplierName: string;
-  minimumOrderQuantity: string;
-  orderMultiple: string;
-  deadStockDays: string;
-};
-
-const emptyProductForm: ProductForm = {
-  brand: '',
-  name: '',
-  isRetail: false,
-  isSalonUse: false,
-  isLabUse: false,
-  categoryId: '',
-  categoryName: '',
-  sku: '',
-  sizeValue: '',
-  sizeUnit: 'g',
-  defaultCostPerGramCents: '',
-  retailPriceCents: '',
-  lowStockThresholdGrams: '',
-  stockUnit: 'gram',
-  packSize: '',
-  barcode: '',
-  supplierId: '',
-  supplierName: '',
-  minimumOrderQuantity: '',
-  orderMultiple: '',
-  deadStockDays: '',
-};
-
-type StockHealth = 'healthy' | 'low' | 'critical';
-
+/**
+ * Product Management — Products tab.
+ *
+ * Information architecture (redesign §4): Overview → Product Inventory →
+ * Stock insights (dead stock) → Recent stock activity. Every write is a task
+ * that opens a drawer or modal (new/edit product, scan-consume, adjust,
+ * restock), so the page itself stays a management surface rather than a stack
+ * of permanent forms. Nothing here talks to stock directly: all mutations go
+ * through the existing authoritative inventory API.
+ */
 export function InventoryPage() {
   const auth = useAuth();
   const accessToken = auth.session?.accessToken;
   const isOwner = userHasRole(auth.user, 'owner');
   const canManage = userHasAnyRole(auth.user, ['owner', 'manager']);
-  // The stock table follows the shared sidebar scope: "All" aggregates every
-  // location, a concrete selection narrows to it.
   const { selectedLocationId: scopeLocationId, isAllLocations } = useLocationScope();
+
   const [products, setProducts] = useState<InventoryProduct[]>([]);
   const [categories, setCategories] = useState<InventoryCategory[]>([]);
   const [suppliers, setSuppliers] = useState<InventorySupplier[]>([]);
   const [stock, setStock] = useState<InventoryLocationStock[]>([]);
   const [locations, setLocations] = useState<BusinessLocationSummary[]>([]);
   const [movements, setMovements] = useState<InventoryStockMovement[]>([]);
-  const [lowStockCount, setLowStockCount] = useState(0);
   const [deadStock, setDeadStock] = useState<InventoryDeadStockItem[]>([]);
   const [deadStockValueCents, setDeadStockValueCents] = useState(0);
-  // Stock mutations need a concrete target. It tracks the sidebar when a
-  // specific location is picked, and falls back to the first location on "All"
-  // so the adjustment form stays usable; the user can still override it below.
-  const [actionLocationId, setActionLocationId] = useState('');
-  const [search, setSearch] = useState('');
-  const [lowStockOnly, setLowStockOnly] = useState(false);
-  // Date range for the stock movement log + "Restocked" KPI, mirroring the
-  // dashboard's range control. Defaults to the current month so the audit log
-  // has meaningful history on first load.
+
+  const [filters, setFilters] = useState<InventoryFilters>(EMPTY_FILTERS);
   const [range, setRange] = useState<DashboardRange>('month');
   const [customRange, setCustomRange] = useState<CustomRange>({ from: '', to: '' });
-  const [productForm, setProductForm] = useState<ProductForm>(emptyProductForm);
-  const [showProductForm, setShowProductForm] = useState(false);
-  const [stockProductId, setStockProductId] = useState('');
-  const [initialQuantity, setInitialQuantity] = useState('');
-  const [stockThreshold, setStockThreshold] = useState('');
-  const [adjustProductId, setAdjustProductId] = useState('');
-  const [adjustDirection, setAdjustDirection] = useState<'inbound' | 'loss'>('inbound');
-  const [adjustQuantity, setAdjustQuantity] = useState('');
-  const [adjustReason, setAdjustReason] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<string | null>(null);
+  const [activityProduct, setActivityProduct] = useState<{ id: string; name: string } | null>(null);
+  const [openMovement, setOpenMovement] = useState<InventoryStockMovement | null>(null);
+
+  const [drawerProduct, setDrawerProduct] = useState<InventoryProduct | undefined>(undefined);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [scanOpen, setScanOpen] = useState(false);
+  const [operation, setOperation] = useState<{ kind: StockOperation; productId?: string; locationId?: string } | null>(null);
+
+  const [catalogueState, setCatalogueState] = useState<LoadState>('loading');
+  const [stockState, setStockState] = useState<LoadState>('loading');
+  const [activityState, setActivityState] = useState<LoadState>('loading');
+  const [insightsState, setInsightsState] = useState<LoadState>('loading');
+  const [busyRow, setBusyRow] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const activityRef = useRef<HTMLDivElement>(null);
 
-  // Resolve the selected range to an explicit ISO window. Null when a custom
-  // range isn't fully chosen yet, in which case the movement log falls back to
-  // its most-recent view (no date bounds).
-  const movementWindow = useMemo(
-    () => resolveRangeWindow(range, customRange),
-    [range, customRange],
-  );
+  const listingLocationId = isAllLocations ? undefined : scopeLocationId;
+  const movementWindow = useMemo(() => resolveRangeWindow(range, customRange), [range, customRange]);
 
-  const reload = useCallback(async () => {
+  // Four independent loaders so a write invalidates only what it changed
+  // (§31) — editing a product never refetches the movement ledger.
+  const loadCatalogue = useCallback(async () => {
     if (!accessToken) return;
-    setLoading(true);
-    setError(null);
+    setCatalogueState('loading');
     try {
-      const listingLocationId = isAllLocations ? undefined : scopeLocationId;
-      const [productResult, categoryResult, supplierResult, stockResult, movementResult, lowStockResult, deadStockResult] = await Promise.all([
-        listInventoryProducts(accessToken),
+      const [productResult, categoryResult, supplierResult] = await Promise.all([
+        listInventoryProducts(accessToken, { includeInactive: true }),
         listInventoryCategories(accessToken),
         listInventorySuppliers(accessToken),
-        listInventoryStock(accessToken, { locationId: listingLocationId, q: search.trim() || undefined, lowStockOnly }),
-        listInventoryMovements(accessToken, {
-          locationId: listingLocationId,
-          limit: 200,
-          from: movementWindow?.from,
-          to: movementWindow?.to,
-        }),
-        listInventoryLowStock(accessToken, { locationId: listingLocationId }),
-        listInventoryDeadStock(accessToken, { locationId: listingLocationId }),
       ]);
       setProducts(productResult.products);
       setCategories(categoryResult.categories);
       setSuppliers(supplierResult.suppliers);
-      setStock(stockResult.stock);
-      setLocations(stockResult.locations);
-      setMovements(movementResult.movements);
-      setLowStockCount(lowStockResult.alerts.length);
+      setCatalogueState('ready');
+    } catch {
+      setCatalogueState('failed');
+    }
+  }, [accessToken]);
+
+  const loadStock = useCallback(async () => {
+    if (!accessToken) return;
+    setStockState('loading');
+    try {
+      const result = await listInventoryStock(accessToken, { locationId: listingLocationId });
+      setStock(result.stock);
+      setLocations(result.locations);
+      setStockState('ready');
+    } catch {
+      setStockState('failed');
+    }
+  }, [accessToken, listingLocationId]);
+
+  const loadActivity = useCallback(async () => {
+    if (!accessToken) return;
+    setActivityState('loading');
+    try {
+      const result = await listInventoryMovements(accessToken, {
+        locationId: listingLocationId,
+        productId: activityProduct?.id,
+        limit: 100,
+        from: movementWindow?.from,
+        to: movementWindow?.to,
+      });
+      setMovements(result.movements);
+      setActivityState('ready');
+    } catch {
+      setActivityState('failed');
+    }
+  }, [accessToken, listingLocationId, activityProduct, movementWindow]);
+
+  const loadInsights = useCallback(async () => {
+    if (!accessToken) return;
+    setInsightsState('loading');
+    try {
+      // The low-stock KPI is derived from the rows in view so it always agrees
+      // with the table; the server's alert list is not needed a second time.
+      const deadStockResult = await listInventoryDeadStock(accessToken, {
+        locationId: listingLocationId,
+      });
       setDeadStock(deadStockResult.items);
       setDeadStockValueCents(deadStockResult.totalEstimatedValueCents);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not load inventory');
-    } finally {
-      setLoading(false);
+      setInsightsState('ready');
+    } catch {
+      setInsightsState('failed');
     }
-  }, [accessToken, lowStockOnly, search, scopeLocationId, isAllLocations, movementWindow]);
+  }, [accessToken, listingLocationId]);
 
-  // Debounced so typing in the SKU/name search fires one request after the
-  // user pauses rather than one per keystroke.
   useEffect(() => {
-    const handle = setTimeout(() => {
-      void reload();
-    }, 250);
-    return () => clearTimeout(handle);
-  }, [reload]);
-
-  // Keep the mutation target sensible: follow the sidebar when it names a
-  // specific location, otherwise (on "All") fall back to the first location so
-  // the adjustment form stays usable. The user can still override it below.
+    void loadCatalogue();
+  }, [loadCatalogue]);
   useEffect(() => {
-    if (!isAllLocations) {
-      setActionLocationId(scopeLocationId);
-    } else {
-      setActionLocationId((current) => current || locations[0]?.id || '');
-    }
-  }, [isAllLocations, scopeLocationId, locations]);
+    void loadStock();
+  }, [loadStock]);
+  useEffect(() => {
+    void loadActivity();
+  }, [loadActivity]);
+  useEffect(() => {
+    void loadInsights();
+  }, [loadInsights]);
 
-  const activeProducts = useMemo(() => products.filter((product) => product.isActive), [products]);
-  // The location whose stock the table currently reflects (null while aggregating).
-  const viewedLocation = isAllLocations
-    ? undefined
-    : locations.find((location) => location.id === scopeLocationId);
-  // The location stock mutations will write to (the adjustment form's target).
-  const actionLocation = locations.find((location) => location.id === actionLocationId);
+  /** A stock write changes levels, alerts and the ledger — but not the catalogue. */
+  const refreshAfterStockChange = useCallback(() => {
+    void loadStock();
+    void loadActivity();
+    void loadInsights();
+  }, [loadStock, loadActivity, loadInsights]);
 
-  const outOfStockCount = useMemo(
-    () => stock.filter((item) => item.quantityOnHandGrams <= 0).length,
-    [stock],
-  );
-  const restockUnitsMonth = useMemo(
+  const rows = useMemo(
     () =>
-      movements
-        .filter((movement) => movement.quantityDeltaGrams > 0)
-        .reduce((total, movement) => total + movement.quantityDeltaGrams, 0),
-    [movements],
+      buildInventoryRows({ products, stock, locationsInScope: locations }),
+    [products, stock, locations],
   );
-  const rangeLabel = rangeLabelFor(range);
+  const visibleRows = useMemo(() => filterInventoryRows(rows, filters), [rows, filters]);
+  const overview = useMemo(
+    () => summariseInventory(visibleRows, { count: deadStock.length, valueCents: deadStockValueCents }),
+    [visibleRows, deadStock.length, deadStockValueCents],
+  );
+  const productById = useMemo(() => new Map(products.map((product) => [product.id, product])), [products]);
+  const filtersActive =
+    Boolean(filters.search.trim()) ||
+    Boolean(filters.locationId) ||
+    Boolean(filters.categoryId) ||
+    (filters.status && filters.status !== 'all') ||
+    Boolean(filters.lowStockOnly);
 
-  // Gate on the capability, not a single role: an owner who also holds the
-  // stylist role (a common salon-owner setup) must still get full access. Block
-  // only users who lack any management role — pure stylists and clients.
-  if (auth.status === 'authenticated' && !userHasAnyRole(auth.user, ['owner', 'manager'])) {
+  if (auth.status === 'authenticated' && !canManage) {
     return <Navigate to="/unauthorized" replace />;
   }
 
-  async function handleSaveProduct() {
-    if (!accessToken || !canManage) return;
-    if (!productForm.name.trim()) {
-      setError('Product name is required.');
+  function openProduct(productId?: string) {
+    if (productId) {
+      const found = productById.get(productId);
+      if (!found) {
+        // Never silently turn "edit this product" into "create a new one".
+        setError('That product could not be loaded. Refresh the catalogue and try again.');
+        return;
+      }
+      setDrawerProduct(found);
+    } else {
+      setDrawerProduct(undefined);
+    }
+    setDrawerOpen(true);
+  }
+
+  async function handleThresholdUpdate(row: InventoryRow, value: string) {
+    if (!accessToken || !row.stockId) return;
+    // Blur fires whether or not anything changed; only write a real change.
+    const current = row.thresholdBase ? String(row.thresholdBase) : '';
+    if (value.trim() === current) return;
+    const parsed = value.trim() === '' ? null : Number(value);
+    if (parsed !== null && (!Number.isFinite(parsed) || parsed < 0)) {
+      // Clearing a threshold must be deliberate (an empty box), never the
+      // accident of a typo — a silently cleared threshold stops low-stock
+      // warnings for that product.
+      setError(`"${value}" is not a valid threshold for ${row.productName}. Enter a number, or clear the box to remove the threshold.`);
+      setBusyRow(null);
       return;
     }
-    setBusy('product');
+    setBusyRow(row.key);
     setError(null);
-    setActionMessage(null);
     try {
-      const payload = {
-        brand: nullable(productForm.brand),
-        name: productForm.name.trim(),
-        categoryId: productForm.categoryId || null,
-        sku: nullable(productForm.sku),
-        sizeValue: optionalNumber(productForm.sizeValue),
-        sizeUnit: nullable(productForm.sizeUnit) ?? 'g',
-        defaultCostPerGramCents: optionalInteger(productForm.defaultCostPerGramCents),
-        retailPriceCents: optionalInteger(productForm.retailPriceCents),
-        lowStockThresholdGrams: optionalNumber(productForm.lowStockThresholdGrams) ?? 0,
-        stockUnit: productForm.stockUnit,
-        packSize: optionalNumber(productForm.packSize) ?? null,
-        barcode: nullable(productForm.barcode),
-        supplierId: productForm.supplierId || null,
-        minimumOrderQuantity: optionalInteger(productForm.minimumOrderQuantity) ?? 1,
-        orderMultiple: optionalInteger(productForm.orderMultiple) ?? 1,
-        deadStockDays: optionalInteger(productForm.deadStockDays) ?? null,
-        isRetail: productForm.isRetail,
-        isSalonUse: productForm.isSalonUse,
-        isLabUse: productForm.isLabUse,
-      };
-      const result = productForm.id
-        ? await updateInventoryProduct(accessToken, productForm.id, payload)
-        : await createInventoryProduct(accessToken, payload);
-      setProducts((current) => upsertProduct(current, result.product));
-      setProductForm(emptyProductForm);
-      setShowProductForm(false);
-      setActionMessage(`${result.product.name} saved.`);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not save product');
+      await updateInventoryStockThreshold(accessToken, row.stockId, {
+        lowStockThresholdGrams: parsed,
+      });
+      void loadStock();
+      void loadInsights();
+    } catch (cause: unknown) {
+      setError(cause instanceof ApiRequestError ? cause.message : 'Could not update the safety threshold.');
     } finally {
-      setBusy(null);
+      setBusyRow(null);
     }
   }
 
-  async function handleArchiveProduct(product: InventoryProduct) {
+  async function handleArchive(row: InventoryRow) {
     if (!accessToken || !isOwner) return;
-    setBusy(product.id);
+    if (!window.confirm(`Archive ${row.productName}? Its movement history is kept.`)) return;
+    setBusyRow(row.key);
     setError(null);
-    setActionMessage(null);
     try {
-      const result = await archiveInventoryProduct(accessToken, product.id);
-      setProducts((current) => upsertProduct(current, result.product));
-      setActionMessage(`${product.name} archived. Movement history remains intact.`);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not archive product');
+      await archiveInventoryProduct(accessToken, row.productId);
+      setNotice(`${row.productName} archived. Movement history remains intact.`);
+      void loadCatalogue();
+      void loadStock();
+      void loadInsights();
+    } catch (cause: unknown) {
+      setError(cause instanceof ApiRequestError ? cause.message : 'Could not archive the product.');
     } finally {
-      setBusy(null);
+      setBusyRow(null);
     }
   }
 
-  async function handleInitializeStock() {
-    if (!accessToken || !actionLocationId || !stockProductId) return;
-    setBusy('initialize');
-    setError(null);
-    setActionMessage(null);
-    try {
-      const result = await initializeInventoryStock(accessToken, {
-        locationId: actionLocationId,
-        productId: stockProductId,
-        quantityOnHandGrams: optionalNumber(initialQuantity) ?? 0,
-        lowStockThresholdGrams: optionalNumber(stockThreshold),
-      });
-      setStock((current) => upsertStock(current, result.stock));
-      setInitialQuantity('');
-      setStockThreshold('');
-      setActionMessage(`Stock initialized for ${result.stock.productName} at ${result.stock.locationName}.`);
-      void reload();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not initialize stock');
-    } finally {
-      setBusy(null);
-    }
+  function showProductHistory(row: InventoryRow) {
+    setActivityProduct({ id: row.productId, name: row.productName });
+    // Scrolling keeps the click and its result on the same screen.
+    window.setTimeout(() => activityRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
   }
 
-  async function handleAdjustStock() {
-    if (!accessToken || !actionLocationId || !adjustProductId) return;
-    const magnitude = optionalNumber(adjustQuantity);
-    if (!magnitude || magnitude <= 0) {
-      setError('Adjustment quantity must be greater than zero.');
-      return;
-    }
-    const delta = adjustDirection === 'inbound' ? magnitude : -magnitude;
-    setBusy('adjust');
-    setError(null);
-    setActionMessage(null);
-    try {
-      const result = await adjustInventoryStock(accessToken, {
-        locationId: actionLocationId,
-        productId: adjustProductId,
-        quantityDeltaGrams: delta,
-        movementType: delta > 0 ? 'restock' : 'manual_adjustment',
-        reason: delta > 0 ? 'restock' : 'manual_adjustment',
-        notes: nullable(adjustReason),
-      });
-      setStock((current) => upsertStock(current, result.stock));
-      setAdjustQuantity('');
-      setAdjustReason('');
-      setActionMessage(`Stock adjusted for ${result.stock.productName}.`);
-      void reload();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not adjust stock');
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function handleThresholdUpdate(item: InventoryLocationStock, value: string) {
-    if (!accessToken) return;
-    setBusy(item.id);
-    setError(null);
-    try {
-      const result = await updateInventoryStockThreshold(accessToken, item.id, {
-        lowStockThresholdGrams: optionalNumber(value),
-      });
-      setStock((current) => upsertStock(current, result.stock));
-      void reload();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not update threshold');
-    } finally {
-      setBusy(null);
-    }
-  }
+  const scopeLocationName = isAllLocations
+    ? 'all locations'
+    : (locations.find((location) => location.id === scopeLocationId)?.name ?? 'this location');
+  const operationLocationId = isAllLocations ? locations[0]?.id : scopeLocationId;
 
   return (
     <>
       <h2 className="sr-only">Products</h2>
-      <header className="mb-6 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-        <p className="max-w-md text-[13px] text-text-secondary">
-          Manage catalogue products, location stock, low-stock thresholds, and auditable movements.
-        </p>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-end">
-          <RangeTabs
-            value={range}
-            onChange={setRange}
-            allowCustom
-            customRange={customRange}
-            onCustomRangeChange={setCustomRange}
-          />
-          <button
-            type="button"
-            className="inline-flex h-9 items-center gap-2 rounded-pill border border-border-strong bg-surface px-5 text-[13px] font-semibold text-text-primary transition hover:bg-surface-alt disabled:opacity-50"
-            onClick={() => void reload()}
-            disabled={loading}
-          >
-            <RefreshIcon className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
-            Refresh
-          </button>
-        </div>
-      </header>
 
-      {actionMessage ? (
-        <div className="mb-4 rounded-input-lg border border-success-border bg-success-soft px-4 py-3 text-[13px] text-success">
-          {actionMessage}
+      {notice ? (
+        <div className="mb-4 flex items-start justify-between gap-3 rounded-input-lg border border-success-border bg-success-soft px-4 py-3 text-[13px] text-success">
+          <span>{notice}</span>
+          <button type="button" onClick={() => setNotice(null)} aria-label="Dismiss" className="opacity-70 hover:opacity-100">
+            ✕
+          </button>
         </div>
       ) : null}
       {error ? (
-        <div className="mb-4 rounded-input-lg border border-danger-border bg-danger-soft px-4 py-3 text-[13px] text-danger">
+        <div role="alert" className="mb-4 rounded-input-lg border border-danger-border bg-danger-soft px-4 py-3 text-[13px] text-danger">
           {error}
         </div>
       ) : null}
 
-      {/* KPI strip */}
-      <section className="mb-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      {/* ---------------------------------------------------------------- */}
+      {/* 1. Overview                                                       */}
+      {/* ---------------------------------------------------------------- */}
+      <section className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="Overview">
         <KpiCard
-          label="Total SKUs"
-          value={String(activeProducts.length)}
+          label="Products"
+          value={formatCount(overview.products)}
+          hint={filtersActive ? 'matching your filters' : `active across ${scopeLocationName}`}
           icon={<BoxIcon className="h-4 w-4 text-primary" />}
-          hint={`${stock.length} stocked across locations`}
         />
         <KpiCard
-          label="Active alerts"
-          value={String(lowStockCount)}
+          label="Low stock"
+          value={formatCount(overview.lowStock)}
+          hint="shelves at or below their safety threshold"
           icon={<AlertIcon className="h-4 w-4 text-warning" />}
-          badge={lowStockCount > 0 ? { label: 'Action needed', tone: 'warning' } : undefined}
-          hint="at or below safety threshold"
+          badge={overview.lowStock > 0 ? { label: 'Action needed', tone: 'warning' } : undefined}
+          onClick={() => setFilters((current) => ({ ...current, status: 'low', lowStockOnly: false }))}
         />
         <KpiCard
           label="Out of stock"
-          value={String(outOfStockCount).padStart(2, '0')}
+          value={formatCount(overview.outOfStock)}
+          hint="shelves with nothing left"
           icon={<EmptyBoxIcon className="h-4 w-4 text-danger" />}
-          badge={outOfStockCount > 0 ? { label: 'Critical', tone: 'danger' } : undefined}
-          hint="records at zero on hand"
+          badge={overview.outOfStock > 0 ? { label: 'Critical', tone: 'danger' } : undefined}
+          onClick={() => setFilters((current) => ({ ...current, status: 'out', lowStockOnly: false }))}
         />
         <KpiCard
-          label="Restocked"
-          value={formatGrams(restockUnitsMonth)}
-          icon={<TrendIcon className="h-4 w-4 text-success" />}
-          hint={`inbound ${rangeLabel}`}
+          label="Dead stock value"
+          value={insightsState === 'failed' ? '—' : formatCurrencyFromCents(overview.deadStockValueCents)}
+          hint={
+            insightsState === 'failed'
+              ? 'could not be calculated'
+              : `${formatCount(overview.deadStockCount)} product${overview.deadStockCount === 1 ? '' : 's'} sitting unused`
+          }
+          icon={<ClockIcon className="h-4 w-4 text-text-secondary" />}
         />
       </section>
 
-      {/* Current stock status + Product inventory */}
-      <section className="mb-8">
-        <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <h2 className="text-[15px] font-semibold text-text-primary">Current stock status</h2>
-          <div className="flex items-center gap-4 text-[12px] text-text-secondary">
-            <LegendDot className="bg-success-fill" label="Healthy" />
-            <LegendDot className="bg-warning-fill" label="Low stock" />
-            <LegendDot className="bg-danger-fill" label="Critical" />
-          </div>
-        </div>
-
-        <div className="rounded-card-lg border border-border bg-surface shadow-card">
-          {/* Toolbar */}
-          <div className="flex flex-col gap-4 border-b border-border px-5 py-4 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <div className="text-[15px] font-semibold text-text-primary">Product inventory</div>
-              <div className="mt-0.5 text-[13px] text-text-secondary">
-                Real-time stock levels across {viewedLocation ? viewedLocation.name : 'all active locations'}.
-              </div>
-            </div>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <div className="relative">
-                <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
-                <input
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search SKU or name…"
-                  className="h-10 w-full rounded-input-lg border border-border-strong bg-surface pl-9 pr-3 text-[13px] outline-none focus:border-primary sm:w-60"
-                />
-              </div>
-              <label
-                className={`inline-flex h-10 cursor-pointer items-center gap-2 rounded-input-lg border px-3 text-[13px] font-medium transition ${
-                  lowStockOnly
-                    ? 'border-primary bg-primary-soft text-primary-deep'
-                    : 'border-border-strong bg-surface text-text-secondary hover:bg-surface-alt'
-                }`}
-              >
-                <input
-                  type="checkbox"
-                  className="sr-only"
-                  checked={lowStockOnly}
-                  onChange={(event) => setLowStockOnly(event.target.checked)}
-                />
-                <FilterIcon className="h-4 w-4" />
-                Low stock
-              </label>
-              {canManage ? (
-                <button
-                  type="button"
-                  className="inline-flex h-10 items-center gap-1.5 rounded-input-lg bg-primary px-4 text-[13px] font-semibold text-text-on-primary transition hover:bg-primary-deep"
-                  onClick={() => {
-                    setProductForm(emptyProductForm);
-                    setShowProductForm((open) => !open);
-                  }}
-                >
-                  <PlusIcon className="h-4 w-4" />
-                  New product
-                </button>
-              ) : null}
-            </div>
-          </div>
-
-          {/* Inline product form (owner or manager) */}
-          {canManage && showProductForm ? (
-            <div className="grid gap-2 border-b border-border bg-surface-alt px-5 py-4 md:grid-cols-3">
-              <input value={productForm.brand} onChange={(e) => setProductForm({ ...productForm, brand: e.target.value })} placeholder="Brand" className={inputClass} />
-              <input value={productForm.name} onChange={(e) => setProductForm({ ...productForm, name: e.target.value })} placeholder="Product name" className={inputClass} />
-              <select value={productForm.categoryId} onChange={(e) => setProductForm({ ...productForm, categoryId: e.target.value })} className={inputClass}>
-                <option value="">Uncategorised</option>
-                {productForm.categoryId && !categories.some((category) => category.id === productForm.categoryId) ? (
-                  <option value={productForm.categoryId}>{productForm.categoryName || 'Current category'}</option>
-                ) : null}
-                {categories.map((category) => (
-                  <option key={category.id} value={category.id}>
-                    {category.name}
-                  </option>
-                ))}
-              </select>
-              <input value={productForm.sku} onChange={(e) => setProductForm({ ...productForm, sku: e.target.value })} placeholder="SKU / code" className={inputClass} />
-              <NumberInput value={productForm.sizeValue} onChange={(value) => setProductForm({ ...productForm, sizeValue: value })} placeholder="Size" />
-              <input value={productForm.sizeUnit} onChange={(e) => setProductForm({ ...productForm, sizeUnit: e.target.value })} placeholder="Unit" className={inputClass} />
-              <NumberInput value={productForm.defaultCostPerGramCents} onChange={(value) => setProductForm({ ...productForm, defaultCostPerGramCents: value })} placeholder="Cost/gram cents" />
-              <NumberInput value={productForm.retailPriceCents} onChange={(value) => setProductForm({ ...productForm, retailPriceCents: value })} placeholder="Retail price cents" />
-              <NumberInput value={productForm.lowStockThresholdGrams} onChange={(value) => setProductForm({ ...productForm, lowStockThresholdGrams: value })} placeholder="Default threshold g" />
-              {/* Stock & ordering metadata (Week 6 ticket 1) */}
-              <select
-                value={productForm.stockUnit}
-                onChange={(e) => setProductForm({ ...productForm, stockUnit: e.target.value as StockUnit })}
-                className={inputClass}
-                title="What one unit of stored stock means for this product"
-              >
-                <option value="gram">Stocked in grams</option>
-                <option value="millilitre">Stocked in millilitres</option>
-                <option value="unit">Stocked in whole units</option>
-              </select>
-              <NumberInput value={productForm.packSize} onChange={(value) => setProductForm({ ...productForm, packSize: value })} placeholder="Pack size (base per pack)" positiveOnly />
-              <input value={productForm.barcode} onChange={(e) => setProductForm({ ...productForm, barcode: e.target.value })} placeholder="Barcode (EAN/UPC)" className={inputClass} />
-              <select value={productForm.supplierId} onChange={(e) => setProductForm({ ...productForm, supplierId: e.target.value })} className={inputClass}>
-                <option value="">No supplier</option>
-                {productForm.supplierId && !suppliers.some((supplier) => supplier.id === productForm.supplierId) ? (
-                  <option value={productForm.supplierId}>{productForm.supplierName || 'Current supplier'}</option>
-                ) : null}
-                {suppliers.map((supplier) => (
-                  <option key={supplier.id} value={supplier.id}>
-                    {supplier.name}
-                  </option>
-                ))}
-              </select>
-              <NumberInput value={productForm.minimumOrderQuantity} onChange={(value) => setProductForm({ ...productForm, minimumOrderQuantity: value })} placeholder="Min order (packs)" positiveOnly />
-              <NumberInput value={productForm.orderMultiple} onChange={(value) => setProductForm({ ...productForm, orderMultiple: value })} placeholder="Order multiple (packs)" positiveOnly />
-              <NumberInput value={productForm.deadStockDays} onChange={(value) => setProductForm({ ...productForm, deadStockDays: value })} placeholder="Dead stock after (days)" positiveOnly />
-              {/* PRODUCT USE — what this product is FOR. Deliberately separate
-                  from where it is stocked (availability, below) and from what
-                  it costs (the Pricing tab). Multiple selections are normal. */}
-              <fieldset className="md:col-span-3 rounded-input-lg border border-border bg-surface px-3 py-2.5">
-                <legend className="px-1 text-[12px] font-medium text-text-secondary">Product use — what is this product for?</legend>
-                <div className="flex flex-wrap gap-x-6 gap-y-1.5">
-                  {(
-                    [
-                      ['isRetail', 'Retail (sold to clients)'],
-                      ['isSalonUse', 'Salon use (backbar)'],
-                      ['isLabUse', 'QLAB (colour formulas)'],
-                    ] as const
-                  ).map(([key, label]) => (
-                    <label key={key} className="flex items-center gap-2 text-[13px] text-text-primary">
-                      <input
-                        type="checkbox"
-                        checked={productForm[key]}
-                        onChange={(event) => setProductForm({ ...productForm, [key]: event.target.checked })}
-                        className="h-4 w-4 rounded border-border-strong text-primary focus:ring-primary/20"
-                      />
-                      {label}
-                    </label>
-                  ))}
-                </div>
-                <p className="mt-1.5 text-[11px] text-text-muted">
-                  Use decides which screens offer the product (e.g. only Retail products appear at the till).
-                  Where it is stocked is set below; what it sells for lives on the Pricing tab.
-                </p>
-              </fieldset>
-              {productForm.id ? (
-                <ProductAvailabilityEditor productId={productForm.id} accessToken={accessToken} />
-              ) : (
-                <p className="md:col-span-3 text-[12px] text-text-muted">
-                  Save the product first, then set which locations stock it.
-                </p>
-              )}
-              <div className="flex gap-2 md:col-span-3">
-                <button type="button" className="h-9 rounded-pill bg-primary px-4 text-[12px] font-semibold text-text-on-primary disabled:opacity-50" onClick={() => void handleSaveProduct()} disabled={busy === 'product'}>
-                  {productForm.id ? 'Update product' : 'Create product'}
-                </button>
-                <button type="button" className="h-9 rounded-pill border border-border-strong px-4 text-[12px] font-semibold text-text-secondary" onClick={() => { setProductForm(emptyProductForm); setShowProductForm(false); }}>
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : null}
-
-          {/* Inventory table */}
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-left text-[13px]">
-              <thead className="border-b border-border bg-surface-alt text-[11px] uppercase tracking-[0.08em] text-text-secondary">
-                <tr>
-                  <th className="px-5 py-3 font-medium">Product</th>
-                  <th className="px-5 py-3 font-medium">Category</th>
-                  <th className="px-5 py-3 font-medium">Location</th>
-                  <th className="px-5 py-3 text-right font-medium">Stock level</th>
-                  <th className="px-5 py-3 text-right font-medium">Safety threshold</th>
-                  <th className="px-5 py-3 font-medium">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {stock.map((item) => {
-                  const health = stockHealth(item);
-                  return (
-                    <tr key={item.id} className="transition hover:bg-surface-alt">
-                      <td className="px-5 py-3.5">
-                        <div className="flex items-center gap-3">
-                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-input border border-border bg-surface-alt text-text-secondary">
-                            <BoxIcon className="h-4 w-4" />
-                          </span>
-                          <div>
-                            <div className="font-medium text-text-primary">{item.productName}</div>
-                            <div className="text-[12px] text-text-muted">{item.sku ?? '—'}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-5 py-3.5">
-                        {item.category ? (
-                          <span className="inline-flex items-center rounded-input border border-border bg-surface-alt px-2.5 py-1 text-[12px] text-text-secondary">
-                            {item.category}
-                          </span>
-                        ) : (
-                          <span className="text-text-muted">—</span>
-                        )}
-                      </td>
-                      <td className="px-5 py-3.5">
-                        <span className="inline-flex items-center gap-1.5 text-text-secondary">
-                          <PinIcon className="h-3.5 w-3.5 text-text-muted" />
-                          {item.locationName}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3.5 text-right">
-                        <div className="font-semibold text-text-primary">{formatGrams(item.quantityOnHandGrams)}</div>
-                        <div className={`text-[11px] ${health === 'healthy' ? 'text-success' : health === 'low' ? 'text-warning' : 'text-danger'}`}>
-                          {health === 'healthy' ? 'In range' : health === 'low' ? 'Below threshold' : 'Out of stock'}
-                        </div>
-                      </td>
-                      <td className="px-5 py-3.5 text-right">
-                        <input
-                          defaultValue={String(item.lowStockThresholdGrams ?? item.effectiveLowStockThresholdGrams ?? '')}
-                          onBlur={(event) => void handleThresholdUpdate(item, event.target.value)}
-                          className="h-8 w-24 rounded-input border border-border-strong bg-surface px-2 text-right text-[12px] outline-none focus:border-primary disabled:opacity-50"
-                          disabled={busy === item.id}
-                        />
-                      </td>
-                      <td className="px-5 py-3.5">
-                        <HealthBadge health={health} />
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            {!loading && stock.length === 0 ? <EmptyState label="No stock records yet" /> : null}
-            {loading && stock.length === 0 ? <EmptyState label="Loading inventory…" /> : null}
-          </div>
-        </div>
-      </section>
-
-      {/* Operations & audit log */}
-      <section>
-        <h2 className="mb-3 text-[15px] font-semibold text-text-primary">Operations &amp; audit log</h2>
-        <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
-          <div className="flex flex-col gap-6">
-          {/* Scan to consume (Week 6 ticket 3) — wedge-scanner capture surface */}
-          <ScanConsumptionCard
-            accessToken={accessToken}
-            locationId={actionLocationId}
-            locationName={actionLocation?.name ?? ''}
-            onStockChanged={() => void reload()}
-          />
-          {/* Record stock adjustment */}
-          <div className="rounded-card-lg border border-border bg-surface p-5 shadow-card">
-            <div className="text-[15px] font-semibold text-text-primary">Record stock adjustment</div>
-            <p className="mt-0.5 text-[13px] text-text-secondary">
-              Manually update inventory counts with reason notes. Every adjustment is written to the audit log.
-            </p>
-
-            <div className="mt-5 space-y-4">
-              <Field label="Location">
-                <select
-                  value={actionLocationId}
-                  onChange={(event) => setActionLocationId(event.target.value)}
-                  className={inputClassTall}
-                >
-                  {locations.length === 0 ? <option value="">No locations</option> : null}
-                  {locations.map((location) => (
-                    <option key={location.id} value={location.id}>
-                      {location.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-
-              <Field label="Product">
-                <ProductSelect products={activeProducts} value={adjustProductId} onChange={setAdjustProductId} tall />
-              </Field>
-
-              <Field label="Adjustment type">
-                <div className="grid grid-cols-2 gap-2">
-                  <ToggleButton active={adjustDirection === 'inbound'} tone="success" onClick={() => setAdjustDirection('inbound')}>
-                    Inbound (+)
-                  </ToggleButton>
-                  <ToggleButton active={adjustDirection === 'loss'} tone="danger" onClick={() => setAdjustDirection('loss')}>
-                    Loss (−)
-                  </ToggleButton>
-                </div>
-              </Field>
-
-              <div className="grid grid-cols-2 gap-4">
-                <Field label="Quantity (g)">
-                  <NumberInput value={adjustQuantity} onChange={setAdjustQuantity} placeholder="0" tall positiveOnly />
-                </Field>
-                <div className="flex items-end">
-                  <button
-                    type="button"
-                    className="h-11 w-full rounded-input-lg bg-primary px-4 text-[14px] font-semibold text-text-on-primary transition hover:bg-primary-deep disabled:opacity-50"
-                    onClick={() => void handleAdjustStock()}
-                    disabled={busy === 'adjust' || !adjustProductId || !adjustQuantity}
-                  >
-                    Finalize adjustment
-                  </button>
-                </div>
-              </div>
-
-              <Field label="Adjustment reason">
-                <input
-                  value={adjustReason}
-                  onChange={(event) => setAdjustReason(event.target.value)}
-                  placeholder="Cycle count correction, damage, etc."
-                  className={inputClassTall}
-                />
-              </Field>
-            </div>
-
-            {/* Initialize stock — collapsible secondary action */}
-            <details className="mt-5 rounded-input-lg border border-border bg-surface-alt">
-              <summary className="cursor-pointer list-none px-3 py-2.5 text-[13px] font-medium text-text-secondary">
-                + Initialize a product at {actionLocation?.name ?? 'this location'}
-              </summary>
-              <div className="space-y-2 border-t border-border px-3 py-3">
-                <ProductSelect products={activeProducts} value={stockProductId} onChange={setStockProductId} />
-                <div className="grid grid-cols-2 gap-2">
-                  <NumberInput value={initialQuantity} onChange={setInitialQuantity} placeholder="Opening g" />
-                  <NumberInput value={stockThreshold} onChange={setStockThreshold} placeholder="Threshold g" />
-                </div>
-                <button
-                  type="button"
-                  className="h-9 rounded-pill bg-surface-ink px-4 text-[12px] font-semibold text-text-on-primary disabled:opacity-50"
-                  onClick={() => void handleInitializeStock()}
-                  disabled={busy === 'initialize' || !stockProductId || !actionLocationId}
-                >
-                  Initialize stock
-                </button>
-              </div>
-            </details>
-          </div>
-          </div>
-
-          {/* Recent stock movement (scrollable) */}
-          <div className="flex flex-col rounded-card-lg border border-border bg-surface shadow-card">
-            <div className="flex items-center justify-between border-b border-border px-5 py-4">
-              <div>
-                <div className="text-[15px] font-semibold text-text-primary">Recent stock movement</div>
-                <div className="mt-0.5 text-[13px] text-text-secondary">
-                  Inventory transactions {rangeLabel === 'in selected range' ? 'in selected range' : rangeLabel}.
-                </div>
-              </div>
-              <button
-                type="button"
-                className="text-[13px] font-semibold text-primary-deep transition hover:underline"
-                onClick={() => void reload()}
-              >
-                View full log
-              </button>
-            </div>
-            <div className="max-h-[360px] divide-y divide-border overflow-y-auto">
-              {movements.map((movement) => (
-                <div key={movement.id} className="flex items-start gap-3 px-5 py-3.5">
-                  <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${movementDotClass(movement)}`} />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-baseline justify-between gap-3">
-                      <div className="truncate text-[13px] text-text-primary">
-                        <span className="font-medium">{movementActor(movement)}</span>{' '}
-                        {movementVerb(movement)}{' '}
-                        <span className={movement.quantityDeltaGrams < 0 ? 'font-semibold text-danger' : 'font-semibold text-success'}>
-                          {movement.quantityDeltaGrams > 0 ? '+' : ''}
-                          {formatGrams(movement.quantityDeltaGrams)}
-                        </span>
-                      </div>
-                      <span className={`shrink-0 rounded-pill px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${movementTagClass(movement)}`}>
-                        {movementTag(movement)}
-                      </span>
-                    </div>
-                    <div className="mt-0.5 truncate text-[12px] text-text-muted">
-                      {movement.productName} · {movement.locationName} · {formatRelative(movement.createdAt)}
-                    </div>
-                    {movement.notes || movement.reason ? (
-                      <div className="mt-0.5 truncate text-[12px] text-text-secondary">{movement.notes ?? movement.reason}</div>
-                    ) : null}
-                  </div>
-                </div>
-              ))}
-              {movements.length === 0 ? <EmptyState label="No stock movements yet" /> : null}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Dead stock (Week 6 ticket 7) — on-hand items no longer moving */}
-      <section className="mt-8 rounded-card-lg border border-border bg-surface shadow-card">
-        <header className="flex flex-col gap-1 border-b border-border px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+      {/* ---------------------------------------------------------------- */}
+      {/* 2. Product inventory — the primary surface                        */}
+      {/* ---------------------------------------------------------------- */}
+      <section aria-label="Product inventory" className="mb-8 rounded-card-lg border border-border bg-surface shadow-card">
+        <div className="flex flex-col gap-3 border-b border-border px-5 py-4 xl:flex-row xl:items-center xl:justify-between">
           <div>
-            <div className="flex items-center gap-2">
-              <div className="text-[15px] font-semibold text-text-primary">Dead stock</div>
-              {deadStock.length > 0 ? <StatusPill label={`${deadStock.length} item${deadStock.length === 1 ? '' : 's'}`} tone="warning" /> : null}
-            </div>
-            <div className="mt-0.5 text-[13px] text-text-secondary">
-              Stock on hand with no usage, sale or consumption inside its threshold. Thresholds come
-              from the product&rsquo;s &ldquo;dead stock after&rdquo; setting, or the location default.
-            </div>
+            <h3 className="text-[15px] font-semibold text-text-primary">Product inventory</h3>
+            <p className="mt-0.5 text-[13px] text-text-secondary">
+              Live stock across {scopeLocationName}. Everything you can do to a product starts here.
+            </p>
           </div>
-          {deadStock.length > 0 && deadStockValueCents > 0 ? (
-            <div className="text-[13px] text-text-secondary">
-              Tied up: <span className="font-semibold text-text-primary">{formatPounds(deadStockValueCents)}</span>
-            </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <AppButton size="sm" variant="secondary" onClick={() => setScanOpen(true)}>
+              Scan / consume
+            </AppButton>
+            <AppButton size="sm" variant="secondary" onClick={() => setOperation({ kind: 'adjust' })}>
+              Adjust stock
+            </AppButton>
+            <AppButton size="sm" variant="secondary" onClick={() => setOperation({ kind: 'restock' })}>
+              Restock
+            </AppButton>
+            {canManage ? (
+              <AppButton size="sm" onClick={() => openProduct(undefined)}>
+                + New product
+              </AppButton>
+            ) : null}
+          </div>
+        </div>
+
+        {/* Filters */}
+        <div className="flex flex-col gap-2 border-b border-border px-5 py-3 lg:flex-row lg:items-center">
+          <div className="relative flex-1 lg:max-w-xs">
+            <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
+            <input
+              value={filters.search}
+              onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))}
+              placeholder="Search name, brand, SKU or barcode…"
+              aria-label="Search products"
+              className="h-9 w-full rounded-input-lg border border-border-strong bg-surface pl-9 pr-3 text-[13px] outline-none focus:border-primary"
+            />
+          </div>
+          <select
+            value={filters.locationId ?? ''}
+            onChange={(event) => setFilters((current) => ({ ...current, locationId: event.target.value || undefined }))}
+            aria-label="Filter by location"
+            className={FILTER_SELECT}
+          >
+            <option value="">All locations in view</option>
+            {locations.map((location) => (
+              <option key={location.id} value={location.id}>
+                {location.name}
+              </option>
+            ))}
+          </select>
+          <select
+            value={filters.categoryId ?? ''}
+            onChange={(event) => setFilters((current) => ({ ...current, categoryId: event.target.value || undefined }))}
+            aria-label="Filter by category"
+            className={FILTER_SELECT}
+          >
+            <option value="">All categories</option>
+            {categories.map((category) => (
+              <option key={category.id} value={category.id}>
+                {category.name}
+              </option>
+            ))}
+          </select>
+          <select
+            value={filters.status ?? 'all'}
+            onChange={(event) =>
+              setFilters((current) => ({ ...current, status: event.target.value as StockStatus | 'all' }))
+            }
+            aria-label="Filter by stock status"
+            className={FILTER_SELECT}
+          >
+            <option value="all">Any status</option>
+            <option value="healthy">Healthy</option>
+            <option value="low">Low stock</option>
+            <option value="out">Out of stock</option>
+            <option value="not_stocked">Not stocked</option>
+            <option value="unavailable">Not available here</option>
+            <option value="archived">Archived</option>
+          </select>
+          {filtersActive ? (
+            <button
+              type="button"
+              onClick={() => setFilters(EMPTY_FILTERS)}
+              className="h-9 rounded-pill px-3 text-[13px] font-medium text-text-secondary transition hover:bg-surface-alt hover:text-text-primary"
+            >
+              Clear filters
+            </button>
           ) : null}
-        </header>
-        {deadStock.length === 0 ? (
-          <EmptyState label={loading ? 'Checking for dead stock…' : 'No dead stock — everything on the shelf is moving.'} />
+        </div>
+
+        {/* Table */}
+        {stockState === 'failed' || catalogueState === 'failed' ? (
+          <RetryState
+            title="Unable to load the product inventory."
+            onRetry={() => {
+              void loadCatalogue();
+              void loadStock();
+            }}
+          />
+        ) : (stockState === 'loading' || catalogueState === 'loading') && rows.length === 0 ? (
+          <EmptyState title="Loading products…" body="Fetching the catalogue and current stock levels." />
+        ) : visibleRows.length === 0 ? (
+          rows.length === 0 ? (
+            <EmptyState
+              title="No products yet"
+              body="Add your first product to begin tracking stock."
+              action={canManage ? <AppButton size="sm" onClick={() => openProduct(undefined)}>+ New product</AppButton> : undefined}
+            />
+          ) : (
+            <EmptyState
+              title="No products match these filters"
+              body="Try a different search term, or clear the filters to see everything."
+              action={<AppButton size="sm" variant="secondary" onClick={() => setFilters(EMPTY_FILTERS)}>Clear filters</AppButton>}
+            />
+          )
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-left text-[13px]">
+            <table className="w-full min-w-[860px] text-left text-[13px]">
               <thead className="border-b border-border bg-surface-alt text-[11px] uppercase tracking-[0.08em] text-text-secondary">
                 <tr>
-                  <th className="px-5 py-3 font-medium">Product</th>
-                  <th className="px-5 py-3 font-medium">Location</th>
-                  <th className="px-5 py-3 text-right font-medium">On hand</th>
-                  <th className="px-5 py-3 text-right font-medium">Idle</th>
-                  <th className="px-5 py-3 font-medium">Last used</th>
-                  <th className="px-5 py-3 text-right font-medium">Est. value</th>
+                  <th scope="col" className="px-5 py-2.5 font-medium">Product</th>
+                  <th scope="col" className="px-4 py-2.5 font-medium">Category</th>
+                  <th scope="col" className="px-4 py-2.5 font-medium">Location</th>
+                  <th scope="col" className="px-4 py-2.5 text-right font-medium">Stock</th>
+                  <th scope="col" className="px-4 py-2.5 text-right font-medium">Safety threshold</th>
+                  <th scope="col" className="px-4 py-2.5 font-medium">Status</th>
+                  <th scope="col" className="px-4 py-2.5 text-right font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {deadStock.map((item) => (
-                  <tr key={`${item.locationId}-${item.productId}`} className="transition hover:bg-surface-alt">
-                    <td className="px-5 py-3.5">
-                      <div className="font-medium text-text-primary">{item.productName}</div>
+                {visibleRows.map((row) => (
+                  <tr key={row.key} className="transition hover:bg-surface-alt">
+                    <td className="px-5 py-3">
+                      <button
+                        type="button"
+                        onClick={() => openProduct(row.productId)}
+                        className="text-left font-medium text-text-primary hover:text-primary-deep"
+                      >
+                        {row.productName}
+                      </button>
                       <div className="text-[12px] text-text-muted">
-                        {[item.brand, item.sku, item.supplierName].filter(Boolean).join(' · ') || '—'}
+                        {[row.brand, row.sku].filter(Boolean).join(' · ') || '—'}
+                        {!row.isActiveProduct ? ' · archived' : ''}
                       </div>
                     </td>
-                    <td className="px-5 py-3.5 text-text-secondary">{item.locationName}</td>
-                    <td className="px-5 py-3.5 text-right font-semibold text-text-primary">
-                      {formatStockQuantity(item.quantityOnHandGrams, item.stockUnit)}
+                    <td className="px-4 py-3 text-text-secondary">{row.category ?? '—'}</td>
+                    <td className="px-4 py-3 text-text-secondary">{row.locationName}</td>
+                    <td className="px-4 py-3 text-right font-semibold tabular-nums text-text-primary">
+                      {formatRowQuantity(row)}
                     </td>
-                    <td className="px-5 py-3.5 text-right">
-                      <div className="font-semibold text-danger">{item.daysIdle}d</div>
-                      <div className="text-[11px] text-text-muted">
-                        limit {item.thresholdDays}d ({item.thresholdSource === 'product' ? 'product' : 'location default'})
+                    <td className="px-4 py-3 text-right">
+                      {row.stockId ? (
+                        <input
+                          defaultValue={row.thresholdBase ? String(row.thresholdBase) : ''}
+                          onBlur={(event) => void handleThresholdUpdate(row, event.target.value)}
+                          disabled={busyRow === row.key}
+                          aria-label={`Safety threshold for ${row.productName} at ${row.locationName}`}
+                          className="h-8 w-24 rounded-input border border-border-strong bg-surface px-2 text-right text-[12px] outline-none focus:border-primary disabled:opacity-50"
+                        />
+                      ) : (
+                        <span className="text-text-muted">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <StatusBadge label={STATUS_LABELS[row.status]} tone={STATUS_TONES[row.status]} />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-1">
+                        <button
+                          type="button"
+                          onClick={() => openProduct(row.productId)}
+                          className="rounded-pill border border-border-strong px-3 py-1 text-[12px] font-semibold text-text-primary transition hover:bg-surface-alt"
+                        >
+                          Edit
+                        </button>
+                        <RowMenu
+                          label={`More actions for ${row.productName}`}
+                          items={[
+                            // The row's own location travels with the action —
+                            // adjusting a Kensington row must not touch Pinner.
+                            ...(row.isActiveProduct
+                              ? [
+                                  {
+                                    label: 'Adjust stock',
+                                    onSelect: () =>
+                                      setOperation({ kind: 'adjust', productId: row.productId, locationId: row.locationId }),
+                                  },
+                                  {
+                                    label: 'Restock',
+                                    onSelect: () =>
+                                      setOperation({ kind: 'restock', productId: row.productId, locationId: row.locationId }),
+                                  },
+                                ]
+                              : []),
+                            { label: 'Movement history', onSelect: () => showProductHistory(row) },
+                            ...(isOwner && row.isActiveProduct
+                              ? [{ label: 'Archive product', onSelect: () => void handleArchive(row), danger: true }]
+                              : []),
+                          ]}
+                        />
                       </div>
-                    </td>
-                    <td className="px-5 py-3.5 text-text-secondary">
-                      {item.lastOutboundAt
-                        ? new Date(item.lastOutboundAt).toLocaleDateString([], { day: '2-digit', month: 'short', year: 'numeric' })
-                        : 'Never used'}
-                    </td>
-                    <td className="px-5 py-3.5 text-right text-text-secondary">
-                      {item.estimatedValueCents === undefined ? '—' : formatPounds(item.estimatedValueCents)}
                     </td>
                   </tr>
                 ))}
@@ -877,501 +559,489 @@ export function InventoryPage() {
         )}
       </section>
 
-      {/* Product catalogue management (edit for owner/manager, archive for owner) */}
-      {canManage ? (
-        <section className="mt-8 rounded-card-lg border border-border bg-surface shadow-card">
-          <header className="flex items-center justify-between border-b border-border px-5 py-4">
-            <div className="text-[15px] font-semibold text-text-primary">Product catalogue</div>
-            <span className="text-[12px] text-text-secondary">{products.length} products</span>
-          </header>
-          <div className="divide-y divide-border">
-            {products.map((product) => (
-              <div key={product.id} className="flex flex-col gap-3 px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-text-primary">{product.name}</span>
-                    {!product.isActive ? <StatusPill label="Archived" tone="neutral" /> : null}
-                  </div>
-                  <div className="text-[12px] text-text-secondary">
-                    {[
-                      product.brand,
-                      product.category,
-                      product.sku,
-                      product.sizeValue ? `${product.sizeValue}${product.sizeUnit}` : undefined,
-                      product.supplierName,
-                    ].filter(Boolean).join(' · ') || '—'}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 text-[12px] text-text-secondary">
-                  <span>{formatMoney(product.defaultCostPerGramCents)} / g</span>
-                  {product.isActive ? (
-                    <>
-                      <button type="button" className="rounded-pill border border-border-strong px-3 py-1 font-semibold text-text-primary transition hover:bg-surface-alt" onClick={() => { setProductForm(toProductForm(product)); setShowProductForm(true); }}>Edit</button>
-                      {isOwner ? (
-                        <button type="button" className="rounded-pill border border-danger-border px-3 py-1 font-semibold text-danger transition hover:bg-danger-soft disabled:opacity-50" onClick={() => void handleArchiveProduct(product)} disabled={busy === product.id}>Archive</button>
-                      ) : null}
-                    </>
-                  ) : null}
-                </div>
-              </div>
-            ))}
-            {products.length === 0 ? <EmptyState label="No products yet" /> : null}
+      {/* ---------------------------------------------------------------- */}
+      {/* 3. Stock insights — dead stock                                     */}
+      {/* ---------------------------------------------------------------- */}
+      <section aria-label="Stock insights" className="mb-8 rounded-card-lg border border-border bg-surface shadow-card">
+        <header className="flex flex-col gap-1 border-b border-border px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="text-[15px] font-semibold text-text-primary">Stock insights</h3>
+            <p className="mt-0.5 text-[13px] text-text-secondary">
+              Stock on the shelf with no usage inside its threshold — money sitting still.
+            </p>
           </div>
-        </section>
-      ) : null}
+          {deadStock.length > 0 && deadStockValueCents > 0 ? (
+            <div className="text-[13px] text-text-secondary">
+              Tied up: <span className="font-semibold text-text-primary">{formatCurrencyFromCents(deadStockValueCents)}</span>
+            </div>
+          ) : null}
+        </header>
+        {insightsState === 'failed' ? (
+          <RetryState title="Unable to load stock insights." onRetry={() => void loadInsights()} />
+        ) : insightsState === 'loading' && deadStock.length === 0 ? (
+          <EmptyState title="Checking for dead stock…" body="Comparing shelf levels with recent usage." />
+        ) : deadStock.length === 0 ? (
+          <EmptyState title="No dead stock" body="Everything on the shelf has moved inside its threshold." />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[780px] text-left text-[13px]">
+              <thead className="border-b border-border bg-surface-alt text-[11px] uppercase tracking-[0.08em] text-text-secondary">
+                <tr>
+                  <th scope="col" className="px-5 py-2.5 font-medium">Product</th>
+                  <th scope="col" className="px-4 py-2.5 font-medium">Location</th>
+                  <th scope="col" className="px-4 py-2.5 text-right font-medium">On hand</th>
+                  <th scope="col" className="px-4 py-2.5 text-right font-medium">Idle</th>
+                  <th scope="col" className="px-4 py-2.5 font-medium">Last used</th>
+                  <th scope="col" className="px-4 py-2.5 text-right font-medium">Est. value</th>
+                  <th scope="col" className="px-4 py-2.5 text-right font-medium">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {deadStock.map((item) => (
+                  <tr key={`${item.locationId}-${item.productId}`} className="transition hover:bg-surface-alt">
+                    <td className="px-5 py-3">
+                      <div className="font-medium text-text-primary">{item.productName}</div>
+                      <div className="text-[12px] text-text-muted">
+                        {[item.brand, item.sku, item.supplierName].filter(Boolean).join(' · ') || '—'}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-text-secondary">{item.locationName}</td>
+                    <td className="px-4 py-3 text-right font-semibold tabular-nums text-text-primary">
+                      {formatRowQuantity({ quantityOnHand: item.quantityOnHandGrams, stockUnit: item.stockUnit })}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <div className="font-semibold text-danger">{item.daysIdle}d</div>
+                      <div className="text-[11px] text-text-muted">
+                        limit {item.thresholdDays}d ({item.thresholdSource === 'product' ? 'product' : 'location'})
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-text-secondary">
+                      {item.lastOutboundAt
+                        ? new Date(item.lastOutboundAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+                        : 'Never used'}
+                    </td>
+                    <td className="px-4 py-3 text-right text-text-secondary">
+                      {item.estimatedValueCents === undefined ? '—' : formatCurrencyFromCents(item.estimatedValueCents)}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={() => openProduct(item.productId)}
+                        className="rounded-pill border border-border-strong px-3 py-1 text-[12px] font-semibold text-text-primary transition hover:bg-surface-alt"
+                      >
+                        View product
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* ---------------------------------------------------------------- */}
+      {/* 4. Recent stock activity                                           */}
+      {/* ---------------------------------------------------------------- */}
+      <section ref={activityRef} aria-label="Recent stock activity" className="rounded-card-lg border border-border bg-surface shadow-card">
+        <header className="flex flex-col gap-3 border-b border-border px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h3 className="text-[15px] font-semibold text-text-primary">Recent stock activity</h3>
+            <p className="mt-0.5 text-[13px] text-text-secondary">
+              {activityProduct ? `${activityProduct.name} · ` : ''}
+              every movement in the selected period, newest first.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {activityProduct ? (
+              <button
+                type="button"
+                onClick={() => setActivityProduct(null)}
+                className="h-9 rounded-pill border border-primary bg-primary-soft px-3 text-[12px] font-medium text-primary-deep"
+              >
+                {activityProduct.name} ✕
+              </button>
+            ) : null}
+            {/* The date range belongs to this section only — it filters
+                movements, never the product inventory above (§27). */}
+            <RangeTabs
+              value={range}
+              onChange={setRange}
+              allowCustom
+              customRange={customRange}
+              onCustomRangeChange={setCustomRange}
+            />
+          </div>
+        </header>
+
+        {activityState === 'failed' ? (
+          <RetryState title="Unable to load stock activity." onRetry={() => void loadActivity()} />
+        ) : activityState === 'loading' && movements.length === 0 ? (
+          <EmptyState title="Loading activity…" body="Reading the movement ledger." />
+        ) : movements.length === 0 ? (
+          <EmptyState title="No stock movements in this period" body="Try a wider date range, or record a scan, adjustment or restock." />
+        ) : (
+          <ul className="max-h-[420px] divide-y divide-border overflow-y-auto">
+            {movements.map((movement) => {
+              const view = presentMovement(movement, {
+                stockUnit: productById.get(movement.productId)?.stockUnit ?? 'gram',
+              });
+              return (
+                <li key={movement.id}>
+                  <button
+                    type="button"
+                    onClick={() => setOpenMovement(movement)}
+                    className="flex w-full items-start gap-3 px-5 py-3 text-left transition hover:bg-surface-alt"
+                  >
+                    <span
+                      aria-hidden
+                      className={`mt-1 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[12px] font-semibold ${
+                        view.direction === 'in'
+                          ? 'bg-success-soft text-success'
+                          : view.direction === 'out'
+                            ? 'bg-danger-soft text-danger'
+                            : 'bg-surface-alt text-text-secondary'
+                      }`}
+                    >
+                      {view.direction === 'in' ? '↑' : view.direction === 'out' ? '↓' : '•'}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex flex-wrap items-baseline gap-x-2">
+                        <span
+                          className={`text-[13px] font-semibold tabular-nums ${
+                            view.direction === 'in' ? 'text-success' : view.direction === 'out' ? 'text-danger' : 'text-text-secondary'
+                          }`}
+                        >
+                          {view.quantityLabel}
+                        </span>
+                        <span className="truncate text-[13px] font-medium text-text-primary">{view.productLabel}</span>
+                        {view.brand ? <span className="text-[12px] text-text-muted">{view.brand}</span> : null}
+                      </span>
+                      <span className="mt-0.5 block truncate text-[12px] text-text-secondary">{view.contextLabel}</span>
+                    </span>
+                    <StatusBadge label={view.source} tone="neutral" className="mt-0.5 shrink-0" />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
+      {/* ---------------------------------------------------------------- */}
+      {/* Drawers and modals                                                 */}
+      {/* ---------------------------------------------------------------- */}
+      <ProductDrawer
+        open={drawerOpen}
+        product={drawerProduct}
+        categories={categories}
+        suppliers={suppliers}
+        locations={locations}
+        accessToken={accessToken}
+        canManage={canManage}
+        pricingLocationId={isAllLocations ? undefined : scopeLocationId}
+        onClose={() => {
+          setDrawerOpen(false);
+          // Availability toggles inside the drawer change shelf records.
+          void loadStock();
+        }}
+        onSaved={(product, mode) => {
+          setDrawerOpen(false);
+          setNotice(`${product.name} ${mode === 'created' ? 'created' : 'saved'}.`);
+          void loadCatalogue();
+          void loadStock();
+        }}
+      />
+
+      <ScanConsumeModal
+        open={scanOpen}
+        accessToken={accessToken}
+        locationId={operationLocationId ?? ''}
+        locationName={locations.find((location) => location.id === operationLocationId)?.name ?? ''}
+        locations={locations}
+        products={products}
+        stock={stock}
+        onClose={() => setScanOpen(false)}
+        onConsumed={refreshAfterStockChange}
+      />
+
+      <StockOperationModal
+        open={operation !== null}
+        operation={operation?.kind ?? 'adjust'}
+        accessToken={accessToken}
+        locations={locations}
+        products={products}
+        stock={stock}
+        defaultLocationId={operation?.locationId ?? operationLocationId}
+        defaultProductId={operation?.productId}
+        onClose={() => setOperation(null)}
+        onRecorded={(message) => {
+          setNotice(message);
+          refreshAfterStockChange();
+        }}
+      />
+
+      <MovementDetailModal
+        movement={openMovement}
+        stockUnit={openMovement ? (productById.get(openMovement.productId)?.stockUnit ?? 'gram') : 'gram'}
+        onClose={() => setOpenMovement(null)}
+      />
     </>
   );
 }
 
-/**
- * AVAILABLE LOCATIONS — where this product is stocked/sold. A concept of its
- * own: Retail classification does NOT make a product available anywhere, and
- * availability does not make it retail. Toggles apply immediately (they flag
- * the product's shelf record; stock history is preserved).
- */
-function ProductAvailabilityEditor({
-  productId,
-  accessToken,
-}: {
-  productId: string;
-  accessToken: string | undefined;
-}) {
-  const [rows, setRows] = useState<ProductLocationAvailability[]>([]);
-  const [busyLocation, setBusyLocation] = useState<string | null>(null);
-  const [problem, setProblem] = useState<string | null>(null);
+// ---------------------------------------------------------------------------
+// Pieces
+// ---------------------------------------------------------------------------
 
-  useEffect(() => {
-    if (!accessToken) return;
-    let cancelled = false;
-    getProductAvailability(accessToken, productId)
-      .then((res) => {
-        if (!cancelled) setRows(res.locations);
-      })
-      .catch(() => {
-        if (!cancelled) setProblem('Could not load availability.');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [accessToken, productId]);
+type LoadState = 'loading' | 'ready' | 'failed';
 
-  async function toggle(locationId: string, available: boolean) {
-    if (!accessToken) return;
-    setBusyLocation(locationId);
-    setProblem(null);
-    try {
-      const res = await setProductAvailability(accessToken, productId, { locationId, available });
-      setRows(res.locations);
-    } catch {
-      setProblem('Could not update availability.');
-    } finally {
-      setBusyLocation(null);
-    }
-  }
-
-  return (
-    <fieldset className="md:col-span-3 rounded-input-lg border border-border bg-surface px-3 py-2.5">
-      <legend className="px-1 text-[12px] font-medium text-text-secondary">
-        Available locations — where do we stock or sell it?
-      </legend>
-      <div className="flex flex-wrap gap-x-6 gap-y-1.5">
-        {rows.map((row) => (
-          <label key={row.locationId} className="flex items-center gap-2 text-[13px] text-text-primary">
-            <input
-              type="checkbox"
-              checked={row.available}
-              disabled={busyLocation === row.locationId}
-              onChange={(event) => void toggle(row.locationId, event.target.checked)}
-              className="h-4 w-4 rounded border-border-strong text-primary focus:ring-primary/20"
-            />
-            {row.locationName}
-          </label>
-        ))}
-        {rows.length === 0 && !problem ? (
-          <span className="text-[12px] text-text-muted">Loading locations…</span>
-        ) : null}
-      </div>
-      <p className="mt-1.5 text-[11px] text-text-muted">
-        Changes apply immediately. The till only offers Retail products at locations ticked here.
-      </p>
-      {problem ? <p className="mt-1 text-[12px] text-danger">{problem}</p> : null}
-    </fieldset>
-  );
-}
-
-const inputClass =
-  'h-9 w-full rounded-input-lg border border-border-strong bg-surface px-3 text-[13px] outline-none focus:border-primary';
-const inputClassTall =
-  'h-11 w-full rounded-input-lg border border-border-strong bg-surface px-3 text-[13px] outline-none focus:border-primary';
-
-function stockHealth(item: InventoryLocationStock): StockHealth {
-  if (item.quantityOnHandGrams <= 0) return 'critical';
-  if (item.isLowStock) return 'low';
-  return 'healthy';
-}
-
-/**
- * Resolve a range selection to an explicit [from, to) ISO window in local time.
- * Presets end at the start of tomorrow so "today" includes the whole current
- * day. Returns null for an incomplete custom range so the caller can fall back
- * to the default (unbounded) movement view.
- */
-function resolveRangeWindow(
-  range: DashboardRange,
-  custom: CustomRange,
-): { from: string; to: string } | null {
-  if (range === 'custom') return resolveCustomWindow(custom);
-
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(start);
-  end.setDate(end.getDate() + 1); // exclusive: start of tomorrow
-
-  if (range === 'today') {
-    return { from: start.toISOString(), to: end.toISOString() };
-  }
-  if (range === 'week') {
-    const monday = new Date(start);
-    const diffToMonday = (start.getDay() + 6) % 7; // 0=Sun..6=Sat -> days since Monday
-    monday.setDate(monday.getDate() - diffToMonday);
-    return { from: monday.toISOString(), to: end.toISOString() };
-  }
-  // month
-  const firstOfMonth = new Date(start.getFullYear(), start.getMonth(), 1);
-  return { from: firstOfMonth.toISOString(), to: end.toISOString() };
-}
-
-function rangeLabelFor(range: DashboardRange): string {
-  switch (range) {
-    case 'today':
-      return 'today';
-    case 'week':
-      return 'this week';
-    case 'month':
-      return 'this month';
-    default:
-      return 'in selected range';
-  }
-}
+const FILTER_SELECT =
+  'h-9 rounded-input-lg border border-border-strong bg-surface px-3 text-[13px] text-text-primary outline-none focus:border-primary';
 
 function KpiCard({
   label,
   value,
-  icon,
   hint,
+  icon,
   badge,
+  onClick,
 }: {
   label: string;
   value: string;
-  icon: ReactNode;
   hint?: string;
+  icon: ReactNode;
   badge?: { label: string; tone: 'warning' | 'danger' };
+  onClick?: () => void;
 }) {
-  return (
-    <div className="rounded-card-lg border border-border bg-surface p-4 shadow-card">
+  const content = (
+    <>
       <div className="flex items-start justify-between">
         <span className="text-[12px] font-medium text-text-secondary">{label}</span>
         <span className="flex h-8 w-8 items-center justify-center rounded-input bg-surface-alt">{icon}</span>
       </div>
-      <div className="mt-2 text-[28px] font-semibold leading-none text-text-primary">{value}</div>
-      <div className="mt-2 flex items-center gap-2">
-        {badge ? <StatusPill label={badge.label} tone={badge.tone} /> : null}
+      <div className="mt-2 text-[26px] font-semibold leading-none tabular-nums text-text-primary">{value}</div>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        {badge ? <StatusBadge label={badge.label} tone={badge.tone} /> : null}
         {hint ? <span className="text-[11px] text-text-muted">{hint}</span> : null}
+      </div>
+    </>
+  );
+  const className = 'rounded-card-lg border border-border bg-surface p-4 text-left shadow-card';
+  if (!onClick) return <div className={className}>{content}</div>;
+  return (
+    <button type="button" onClick={onClick} className={`${className} transition hover:border-border-strong hover:bg-surface-alt`}>
+      {content}
+    </button>
+  );
+}
+
+/**
+ * Row overflow menu: keeps the table to one visible action plus the rest.
+ *
+ * The menu is rendered in a portal because the table scrolls horizontally, and
+ * a scroll container clips BOTH axes — an absolutely positioned menu would be
+ * cut off at the table edge (invisible for the last rows).
+ */
+function RowMenu({
+  label,
+  items,
+}: {
+  label: string;
+  items: { label: string; onSelect: () => void; danger?: boolean }[];
+}) {
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<{ top: number; right: number } | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    if (!open || !triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    // Flip above the trigger when there is not enough room below.
+    const estimatedHeight = items.length * 36 + 8;
+    const openUpwards = rect.bottom + estimatedHeight > window.innerHeight;
+    setPosition({
+      top: openUpwards ? rect.top - estimatedHeight : rect.bottom + 4,
+      right: Math.max(8, window.innerWidth - rect.right),
+    });
+  }, [open, items.length]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDocumentClick(event: MouseEvent) {
+      const target = event.target as Node;
+      if (!menuRef.current?.contains(target) && !triggerRef.current?.contains(target)) setOpen(false);
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    }
+    // A menu pinned to the viewport must not drift when the page scrolls.
+    function onScrollOrResize() {
+      setOpen(false);
+    }
+    document.addEventListener('mousedown', onDocumentClick);
+    document.addEventListener('keydown', onKeyDown);
+    window.addEventListener('scroll', onScrollOrResize, true);
+    window.addEventListener('resize', onScrollOrResize);
+    return () => {
+      document.removeEventListener('mousedown', onDocumentClick);
+      document.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('scroll', onScrollOrResize, true);
+      window.removeEventListener('resize', onScrollOrResize);
+    };
+  }, [open]);
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-label={label}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+        className="rounded-input px-2 py-1 text-[15px] leading-none text-text-secondary transition hover:bg-surface-alt hover:text-text-primary"
+      >
+        ⋯
+      </button>
+      {open && position
+        ? createPortal(
+            <div
+              ref={menuRef}
+              role="menu"
+              style={{ position: 'fixed', top: position.top, right: position.right }}
+              className="z-50 w-48 overflow-hidden rounded-input-lg border border-border bg-surface py-1 shadow-modal"
+            >
+              {items.map((item) => (
+                <button
+                  key={item.label}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setOpen(false);
+                    item.onSelect();
+                  }}
+                  className={`block w-full px-3 py-2 text-left text-[13px] transition hover:bg-surface-alt ${
+                    item.danger ? 'text-danger' : 'text-text-primary'
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
+  );
+}
+
+/** Movement audit detail — the only place internal ids appear (§20). */
+function MovementDetailModal({
+  movement,
+  stockUnit,
+  onClose,
+}: {
+  movement: InventoryStockMovement | null;
+  stockUnit: InventoryProduct['stockUnit'];
+  onClose: () => void;
+}) {
+  if (!movement) return null;
+  const view = presentMovement(movement, { stockUnit });
+  const rows: { label: string; value: string }[] = [
+    { label: 'Movement', value: view.source },
+    { label: 'Product', value: [movement.productName, movement.brand].filter(Boolean).join(' · ') },
+    { label: 'Amount', value: formatMovementQuantity(movement.quantityDeltaGrams, stockUnit) },
+    { label: 'Location', value: movement.locationName },
+    { label: 'Recorded by', value: view.actor },
+    { label: 'When', value: formatAbsoluteTime(movement.createdAt) },
+  ];
+  if (movement.reason) rows.push({ label: 'Reason', value: movement.reason });
+  if (movement.notes) rows.push({ label: 'Notes', value: movement.notes });
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Movement detail"
+      description="The full audit record for this stock movement."
+      footer={
+        <AppButton size="sm" variant="ghost" onClick={onClose}>
+          Close
+        </AppButton>
+      }
+    >
+      <dl className="divide-y divide-border">
+        {rows.map((row) => (
+          <div key={row.label} className="flex justify-between gap-4 py-2 text-[13px]">
+            <dt className="text-text-secondary">{row.label}</dt>
+            <dd className="text-right font-medium text-text-primary">{row.value}</dd>
+          </div>
+        ))}
+      </dl>
+      <details className="mt-4">
+        <summary className="cursor-pointer text-[12px] font-medium text-text-secondary">Audit identifiers</summary>
+        <dl className="mt-2 divide-y divide-border">
+          {movementAuditFields(movement).map((field) => (
+            <div key={field.label} className="flex justify-between gap-4 py-1.5 text-[12px]">
+              <dt className="text-text-muted">{field.label}</dt>
+              <dd className="break-all text-right font-mono text-[11px] text-text-secondary">{field.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </details>
+    </Modal>
+  );
+}
+
+function EmptyState({ title, body, action }: { title: string; body: string; action?: ReactNode }) {
+  return (
+    <div className="px-5 py-12 text-center">
+      <div className="text-[14px] font-medium text-text-primary">{title}</div>
+      <p className="mx-auto mt-1 max-w-sm text-[13px] text-text-secondary">{body}</p>
+      {action ? <div className="mt-3 flex justify-center">{action}</div> : null}
+    </div>
+  );
+}
+
+function RetryState({ title, onRetry }: { title: string; onRetry: () => void }) {
+  return (
+    <div className="px-5 py-10 text-center" role="alert">
+      <div className="text-[14px] font-medium text-text-primary">{title}</div>
+      <p className="mx-auto mt-1 max-w-sm text-[13px] text-text-secondary">
+        The data could not be fetched. Check your connection and try again.
+      </p>
+      <div className="mt-3 flex justify-center">
+        <AppButton size="sm" variant="secondary" onClick={onRetry}>
+          Retry
+        </AppButton>
       </div>
     </div>
   );
 }
 
-function StatusPill({ label, tone }: { label: string; tone: 'success' | 'warning' | 'danger' | 'neutral' }) {
-  const cls =
-    tone === 'success'
-      ? 'border-success-border bg-success-soft text-success'
-      : tone === 'warning'
-        ? 'border-warning-border bg-warning-soft text-warning'
-        : tone === 'danger'
-          ? 'border-danger-border bg-danger-soft text-danger'
-          : 'border-border bg-surface-alt text-text-secondary';
-  return <span className={`inline-flex items-center rounded-pill border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${cls}`}>{label}</span>;
-}
-
-function HealthBadge({ health }: { health: StockHealth }) {
-  if (health === 'healthy') return <StatusPill label="Healthy" tone="success" />;
-  if (health === 'low') return <StatusPill label="Low stock" tone="warning" />;
-  return <StatusPill label="Critical" tone="danger" />;
-}
-
-function LegendDot({ className, label }: { className: string; label: string }) {
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <span className={`h-2 w-2 rounded-full ${className}`} />
-      {label}
-    </span>
-  );
-}
-
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <label className="block">
-      <span className="mb-1.5 block text-[12px] font-medium text-text-secondary">{label}</span>
-      {children}
-    </label>
-  );
-}
-
-function ToggleButton({
-  active,
-  tone,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  tone: 'success' | 'danger';
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  const activeCls =
-    tone === 'success' ? 'border-success-border bg-success-soft text-success' : 'border-danger-border bg-danger-soft text-danger';
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`h-11 rounded-input-lg border text-[13px] font-medium transition ${
-        active ? activeCls : 'border-border-strong bg-surface text-text-secondary hover:bg-surface-alt'
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
-
-function ProductSelect({
-  products,
-  value,
-  onChange,
-  tall,
-}: {
-  products: InventoryProduct[];
-  value: string;
-  onChange: (value: string) => void;
-  tall?: boolean;
-}) {
-  return (
-    <select value={value} onChange={(event) => onChange(event.target.value)} className={tall ? inputClassTall : inputClass}>
-      <option value="">Choose product</option>
-      {products.map((product) => (
-        <option key={product.id} value={product.id}>
-          {[product.brand, product.name].filter(Boolean).join(' · ')}
-        </option>
-      ))}
-    </select>
-  );
-}
-
-function NumberInput({
-  value,
-  onChange,
-  placeholder,
-  tall,
-  positiveOnly,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  placeholder: string;
-  tall?: boolean;
-  positiveOnly?: boolean;
-}) {
-  const allow = positiveOnly ? /[^0-9.]/g : /[^0-9.-]/g;
-  return (
-    <input
-      inputMode="decimal"
-      value={value}
-      onChange={(event) => onChange(event.target.value.replace(allow, ''))}
-      placeholder={placeholder}
-      className={tall ? inputClassTall : inputClass}
-    />
-  );
-}
-
-function EmptyState({ label }: { label: string }) {
-  return <div className="px-4 py-10 text-center text-[13px] text-text-secondary">{label}</div>;
-}
-
-// ---------------------------------------------------------------------------
-// Movement presentation helpers
-// ---------------------------------------------------------------------------
-
-function movementActor(movement: InventoryStockMovement): string {
-  if (movement.createdBy) return movement.createdBy;
-  switch (movement.movementType) {
-    case 'opening_balance':
-      return 'System';
-    case 'formula_usage':
-    case 'formula_waste':
-    case 'formula_reversal':
-      return 'Formula engine';
-    case 'retail_sale':
-      return 'Point of sale';
-    default:
-      return 'System';
+/**
+ * Resolve the activity range to an explicit window. Null for an incomplete
+ * custom range, which leaves the movement query unbounded.
+ */
+function resolveRangeWindow(range: DashboardRange, custom: CustomRange): { from: string; to: string } | null {
+  if (range === 'custom') return resolveCustomWindow(custom);
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  if (range === 'today') return { from: start.toISOString(), to: end.toISOString() };
+  if (range === 'week') {
+    const monday = new Date(start);
+    monday.setDate(monday.getDate() - ((start.getDay() + 6) % 7));
+    return { from: monday.toISOString(), to: end.toISOString() };
   }
-}
-
-function movementVerb(movement: InventoryStockMovement): string {
-  switch (movement.movementType) {
-    case 'opening_balance':
-      return 'initialized';
-    case 'restock':
-      return 'restocked';
-    case 'manual_adjustment':
-    case 'correction':
-      return 'adjusted';
-    case 'retail_sale':
-      return 'sold';
-    case 'formula_usage':
-      return 'used';
-    case 'formula_waste':
-      return 'wasted';
-    case 'formula_reversal':
-      return 'reversed';
-    default:
-      return 'moved';
-  }
-}
-
-function movementTag(movement: InventoryStockMovement): string {
-  switch (movement.movementType) {
-    case 'opening_balance':
-      return 'init';
-    case 'restock':
-      return 'restock';
-    case 'manual_adjustment':
-    case 'correction':
-      return 'admin';
-    case 'retail_sale':
-      return 'sale';
-    case 'formula_usage':
-    case 'formula_waste':
-    case 'formula_reversal':
-      return 'usage';
-    default:
-      return 'system';
-  }
-}
-
-function movementTagClass(movement: InventoryStockMovement): string {
-  switch (movement.movementType) {
-    case 'restock':
-    case 'opening_balance':
-      return 'bg-success-soft text-success';
-    case 'manual_adjustment':
-    case 'correction':
-      return 'bg-primary-soft text-primary-deep';
-    case 'retail_sale':
-    case 'formula_usage':
-    case 'formula_waste':
-      return 'bg-warning-soft text-warning';
-    default:
-      return 'bg-surface-alt text-text-secondary';
-  }
-}
-
-function movementDotClass(movement: InventoryStockMovement): string {
-  if (movement.quantityDeltaGrams > 0) return 'bg-success-fill';
-  if (movement.quantityDeltaGrams < 0) return 'bg-danger-fill';
-  return 'bg-text-muted';
-}
-
-// ---------------------------------------------------------------------------
-// Data transforms (unchanged behaviour)
-// ---------------------------------------------------------------------------
-
-function optionalNumber(value: string): number | undefined {
-  if (value.trim() === '') return undefined;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function optionalInteger(value: string): number | undefined {
-  const parsed = optionalNumber(value);
-  return parsed === undefined ? undefined : Math.round(parsed);
-}
-
-function nullable(value: string): string | null {
-  const next = value.trim();
-  return next ? next : null;
-}
-
-function upsertProduct(products: InventoryProduct[], product: InventoryProduct): InventoryProduct[] {
-  return products.some((item) => item.id === product.id)
-    ? products.map((item) => (item.id === product.id ? product : item))
-    : [product, ...products];
-}
-
-function upsertStock(stock: InventoryLocationStock[], updated: InventoryLocationStock): InventoryLocationStock[] {
-  return stock.some((item) => item.id === updated.id)
-    ? stock.map((item) => (item.id === updated.id ? updated : item))
-    : [updated, ...stock];
-}
-
-function toProductForm(product: InventoryProduct): ProductForm {
-  return {
-    id: product.id,
-    brand: product.brand ?? '',
-    name: product.name,
-    isRetail: product.isRetail,
-    isSalonUse: product.isSalonUse,
-    isLabUse: product.isLabUse,
-    categoryId: product.categoryId ?? '',
-    categoryName: product.category ?? '',
-    sku: product.sku ?? '',
-    sizeValue: product.sizeValue === undefined ? '' : String(product.sizeValue),
-    sizeUnit: product.sizeUnit,
-    defaultCostPerGramCents: product.defaultCostPerGramCents === undefined ? '' : String(product.defaultCostPerGramCents),
-    retailPriceCents: product.retailPriceCents === undefined ? '' : String(product.retailPriceCents),
-    lowStockThresholdGrams: String(product.lowStockThresholdGrams),
-    stockUnit: product.stockUnit,
-    packSize: product.packSize === undefined ? '' : String(product.packSize),
-    barcode: product.barcode ?? '',
-    supplierId: product.supplierId ?? '',
-    supplierName: product.supplierName ?? '',
-    minimumOrderQuantity: product.minimumOrderQuantity > 1 ? String(product.minimumOrderQuantity) : '',
-    orderMultiple: product.orderMultiple > 1 ? String(product.orderMultiple) : '',
-    deadStockDays: product.deadStockDays === undefined ? '' : String(product.deadStockDays),
-  };
-}
-
-function formatGrams(value: number): string {
-  return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value)}g`;
-}
-
-/** Quantity with the product's declared unit: grams, millilitres or whole items. */
-function formatStockQuantity(value: number, unit: StockUnit): string {
-  const amount = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value);
-  if (unit === 'unit') return `${amount} ${value === 1 ? 'unit' : 'units'}`;
-  return `${amount}${unit === 'millilitre' ? 'ml' : 'g'}`;
-}
-
-function formatPounds(cents: number): string {
-  return new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(cents / 100);
-}
-
-function formatMoney(value?: number): string {
-  if (value === undefined) return 'No cost';
-  return `${value}p`;
-}
-
-function formatRelative(value: string): string {
-  const then = new Date(value).getTime();
-  const now = Date.now();
-  const diffMs = now - then;
-  const minutes = Math.round(diffMs / 60000);
-  if (minutes < 1) return 'just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.round(hours / 24);
-  if (days < 7) return `${days}d ago`;
-  return new Date(value).toLocaleDateString([], { day: '2-digit', month: 'short' });
+  const firstOfMonth = new Date(start.getFullYear(), start.getMonth(), 1);
+  return { from: firstOfMonth.toISOString(), to: end.toISOString() };
 }
 
 // ---------------------------------------------------------------------------
@@ -1407,11 +1077,11 @@ function AlertIcon({ className }: IconProps) {
   );
 }
 
-function TrendIcon({ className }: IconProps) {
+function ClockIcon({ className }: IconProps) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-      <path d="m3 17 6-6 4 4 8-8" />
-      <path d="M17 7h4v4" />
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
     </svg>
   );
 }
@@ -1421,42 +1091,6 @@ function SearchIcon({ className }: IconProps) {
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="11" cy="11" r="7" />
       <path d="m21 21-4.3-4.3" />
-    </svg>
-  );
-}
-
-function FilterIcon({ className }: IconProps) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M22 3H2l8 9.5V19l4 2v-8.5L22 3z" />
-    </svg>
-  );
-}
-
-function PlusIcon({ className }: IconProps) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 5v14M5 12h14" />
-    </svg>
-  );
-}
-
-function PinIcon({ className }: IconProps) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0z" />
-      <circle cx="12" cy="10" r="3" />
-    </svg>
-  );
-}
-
-function RefreshIcon({ className }: IconProps) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
-      <path d="M21 3v5h-5" />
-      <path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
-      <path d="M3 21v-5h5" />
     </svg>
   );
 }
