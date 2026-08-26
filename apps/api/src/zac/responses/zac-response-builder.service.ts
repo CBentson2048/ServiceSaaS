@@ -11,6 +11,7 @@ import type {
   ZacToolName,
   ZacToolResult,
 } from '../tools/zac-tool.types';
+import type { ZacBlockingReason } from '../policy/zac-policy.types';
 import type { ZacEvidenceItem, ZacResponse, ZacTechnicalDetails } from './zac-response.types';
 
 /** Advisory modes: answered by reasoning, never by an operational tool. */
@@ -59,6 +60,13 @@ interface ToolBackedResponseInput {
   trace: ZacToolDispatchTrace;
   traceId: string;
   conversationId: string | null;
+  /**
+   * The TRUE reason a non-ok dispatch failed, resolved by policy from the tool
+   * status. Without it every failure read as the same "can't answer with your
+   * data" sentence, which conflated a permission the actor could be granted,
+   * a capability that does not exist, and data that simply is not there.
+   */
+  blockingReason?: ZacBlockingReason;
 }
 
 /** Shared input for the deterministic memory responses (no tool, no model). */
@@ -152,22 +160,25 @@ export class ZacResponseBuilderService {
       };
     }
 
-    return {
-      ...base,
-      answer: `I can't answer that with your data right now. ${result.explanation}`,
-      response_type: 'Refusal / Insufficient Data',
-      evidence: [
-        {
-          source_type: 'zac.foundation',
-          source_ref: 'safe-unavailable-response',
-          as_of: null,
-          entities_used: [],
-        },
-      ],
-      confidence: 'high',
-      limitations: [result.explanation, `Data scope: ${profile.scopeDescription}`],
-      suggested_next_step: 'Ask "What can you help me with?" to see what I can answer today.',
+    // A failed dispatch is explained by its REAL blocking reason. The trace is
+    // carried over so the turn still reports which tool was attempted.
+    const reasonInput = {
+      context,
+      profile,
+      visibleTools,
+      completion,
+      traceId,
+      conversationId: input.conversationId,
+      explanation: result.explanation,
     };
+    const reason: ZacBlockingReason = input.blockingReason ?? 'data_unavailable';
+    const delegated =
+      reason === 'permission_denied'
+        ? this.buildPermissionDeniedResponse(reasonInput)
+        : reason === 'unsupported_capability'
+          ? this.buildUnsupportedCapabilityResponse(reasonInput)
+          : this.buildDataUnavailableResponse(reasonInput);
+    return { ...delegated, tool_calls: [trace] };
   }
 
   /**
@@ -183,8 +194,8 @@ export class ZacResponseBuilderService {
       conversation_id: input.conversationId,
       answer: [
         "I understand you're asking about your business members or team.",
-        "Staff and team member data isn't connected to ZAC yet, so I can't list or analyse your team using live QLOOQO data — and I won't guess.",
-        'Once read-only staff tools are connected, I will be able to help owners and managers understand team members, their locations and performance context, always within your permissions.',
+        "Listing your team isn't something ZAC can do in this phase — that capability hasn't been built yet, so I can't list or analyse your team, and I won't guess.",
+        'It is planned: once read-only staff tools ship, I will be able to help owners and managers understand team members, their locations and performance context, always within your permissions.',
         'In the meantime, try "How is my business doing?" for a live health snapshot.',
       ].join('\n\n'),
       role_context: context.roleContext,
@@ -199,7 +210,7 @@ export class ZacResponseBuilderService {
       ],
       confidence: 'high',
       limitations: [
-        'Staff and team member data is not connected to ZAC yet.',
+        'Listing team members is not a capability ZAC has in Phase 1 — this is not a permission boundary and not a temporary data outage.',
         'No staff names, roles, performance or pay details were read or included.',
         `Data scope once staff tools are connected: ${profile.scopeDescription}`,
       ],
@@ -237,7 +248,8 @@ export class ZacResponseBuilderService {
       answer: [
         "I can't show you stylists' private coaching notes — and this isn't a data-connection gap or a permission setting. It's a fixed privacy boundary.",
         'Private coaching notes belong to each stylist alone. They are never visible to owners or managers through ZAC, whatever permissions you hold, and there is no override — not for the account owner, and not by asking me to lift the restriction.',
-        'Nothing was read or shared for this answer. Business goals and team themes saved for your scope are shared with you as designed, and team performance questions (KPIs, targets, rebooking) stay available within your permissions.',
+        "Nothing was read or shared for this answer, and I can't tell you whether any such notes exist either way — that would leak the same privacy.",
+        this.safeAlternativeSentence(visibleTools),
       ].join('\n\n'),
       role_context: context.roleContext,
       response_type: 'Refusal / Insufficient Data',
@@ -290,6 +302,7 @@ export class ZacResponseBuilderService {
         "I can't show you anyone else's conversations with me — and like private coaching notes, this isn't a data-connection gap. It's a fixed privacy boundary.",
         "Each person's conversations with ZAC are private to them. A stylist's chats with me are never visible to owners or managers, whatever permissions you hold, and there is no override — not for the account owner, and not by asking me to lift the restriction.",
         "There is also nothing readable to show: I don't keep transcripts. The platform stores only structural summaries of each turn — the kind of thing that was asked, never the words — so a conversation can continue across sessions. Nothing was read or shared for this answer.",
+        this.safeAlternativeSentence(visibleTools),
       ].join('\n\n'),
       role_context: context.roleContext,
       response_type: 'Refusal / Insufficient Data',
@@ -342,7 +355,7 @@ export class ZacResponseBuilderService {
       answer: [
         "I can't share that — it's private to the person it belongs to, and that's a fixed privacy boundary, not a data-connection gap or a permission setting.",
         'Through ZAC, private information — someone\'s private notes, their conversations with me, anything saved privately to them — is visible only to that person. No role or permission level changes that, the account owner included, and asking me to override or lift the restriction doesn\'t either.',
-        "Nothing was read or shared for this answer. Anything that's genuinely yours — your own data, your own saved notes, your own chats with me — stays available to you: just ask for it directly.",
+        "Nothing was read or shared for this answer, and I can't confirm whether anything of the kind exists — that would leak the same privacy. Anything that's genuinely yours — your own data, your own saved notes, your own chats with me — stays available to you: just ask for it directly.",
       ].join('\n\n'),
       role_context: context.roleContext,
       response_type: 'Refusal / Insufficient Data',
@@ -1042,4 +1055,282 @@ export class ZacResponseBuilderService {
       trace_id: traceId,
     };
   }
+
+  /**
+   * What this actor CAN ask instead, derived from their EFFECTIVE permissions —
+   * enabled, visible tools only.
+   *
+   * A refusal that redirects to an area the actor also cannot reach is a second
+   * wrong answer, so nothing is named here unless this request's own tool
+   * filter already cleared it.
+   */
+  private safeAlternativeSentence(visibleTools: ZacReadOnlyTool[]): string {
+    const usable = visibleTools.filter(
+      (tool) => tool.enabled && tool.name !== 'context.capabilities',
+    );
+    if (usable.length === 0) {
+      return 'Your capability questions and your own saved notes still work as normal.';
+    }
+    const labels = usable
+      .slice(0, 3)
+      .map((tool) => (TOOL_AREA_LABELS[tool.name] ?? tool.description).toLowerCase());
+    return `What I can help with instead, within your current access: ${joinList(labels)}.`;
+  }
+
+  /**
+   * ZAC Phase 1 is read-only. A request to CHANGE something is refused for that
+   * reason and no other — never "that data isn't connected", which would imply
+   * the action becomes possible once a source is wired up. It does not: no
+   * write contract exists to implement.
+   */
+  buildReadOnlyBoundaryResponse(input: MemoryResponseBaseInput): ZacResponse {
+    const { context, profile, visibleTools, completion, traceId } = input;
+
+    return {
+      conversation_id: input.conversationId,
+      answer: [
+        "I can't do that — ZAC is read-only, so I can't make changes in QLOOQO. That's a fixed boundary in this phase, not a data-connection gap or a permission you could be granted.",
+        'Bookings, prices, clients, stock, payments and messages are all changed by you in QLOOQO itself. I can explain, analyse and recommend, but the action stays with you.',
+        this.safeAlternativeSentence(visibleTools),
+      ].join('\n\n'),
+      role_context: context.roleContext,
+      response_type: 'Refusal / Insufficient Data',
+      evidence: [
+        {
+          source_type: 'zac.access_boundary',
+          source_ref: 'phase1-read-only:fixed-boundary',
+          as_of: null,
+          entities_used: [],
+        },
+      ],
+      confidence: 'high',
+      limitations: [
+        'ZAC is read-only in Phase 1 — it cannot create, change, cancel or send anything. This is a product boundary, not a permission or a connection state.',
+        'Nothing was changed, and nothing was read for this answer.',
+        `Your ZAC scope: ${profile.scopeDescription}`,
+      ],
+      suggested_next_step:
+        'Make the change in QLOOQO directly — or ask me to explain the impact first.',
+      measurement_hook: null,
+      attribution_seed: null,
+      memory_updates: [],
+      tool_calls: [],
+      cost_metadata: this.costMetadata(completion),
+      technical_details: {
+        ...this.technicalDetails(visibleTools, completion),
+        detected_intent: 'policy.read_only',
+      },
+      trace_id: traceId,
+    };
+  }
+
+  /**
+   * The actor may not use a capability that genuinely EXISTS and is connected.
+   * Distinct from a privacy boundary (which no permission could ever lift) and
+   * from unavailable data (which no permission change would fix): this is the
+   * one refusal where "ask an owner to widen your access" is the true remedy.
+   */
+  buildPermissionDeniedResponse(
+    input: MemoryResponseBaseInput & { explanation?: string },
+  ): ZacResponse {
+    const { context, profile, visibleTools, completion, traceId } = input;
+
+    return {
+      conversation_id: input.conversationId,
+      answer: [
+        "I can't answer that at your current access level.",
+        input.explanation?.trim()
+          ? input.explanation.trim()
+          : 'That area is connected and working — your security level just does not include the permission it needs, so an owner could open it up if you should have it.',
+        this.safeAlternativeSentence(visibleTools),
+      ].join('\n\n'),
+      role_context: context.roleContext,
+      response_type: 'Refusal / Insufficient Data',
+      evidence: [
+        {
+          source_type: 'zac.permissions',
+          source_ref: 'effective-permission-denied',
+          as_of: null,
+          entities_used: [],
+        },
+      ],
+      confidence: 'high',
+      limitations: [
+        'This is a permission boundary at your current security level, not a privacy rule and not a data problem.',
+        'Nothing from that area was read for this answer.',
+        `Your ZAC scope: ${profile.scopeDescription}`,
+      ],
+      suggested_next_step:
+        'Ask an owner to review your security level if you need that area — or ask "What am I allowed to see?" for your full picture.',
+      measurement_hook: null,
+      attribution_seed: null,
+      memory_updates: [],
+      tool_calls: [],
+      cost_metadata: this.costMetadata(completion),
+      technical_details: {
+        ...this.technicalDetails(visibleTools, completion),
+        detected_intent: 'policy.permission_denied',
+      },
+      trace_id: traceId,
+    };
+  }
+
+  /**
+   * ZAC does not have this capability in Phase 1 at all. Nobody's permissions
+   * would help and no data would arrive to fix it — the honest statement is
+   * that it is not built yet.
+   */
+  buildUnsupportedCapabilityResponse(
+    input: MemoryResponseBaseInput & { explanation?: string; area?: string },
+  ): ZacResponse {
+    const { context, profile, visibleTools, completion, traceId } = input;
+    const area = input.area?.trim();
+
+    return {
+      conversation_id: input.conversationId,
+      answer: [
+        area
+          ? `${area} isn't something I can do in this phase of ZAC yet.`
+          : "That isn't something I can do in this phase of ZAC yet.",
+        input.explanation?.trim()
+          ? input.explanation.trim()
+          : "It's a capability that hasn't been built into ZAC yet rather than a permission you're missing or data that's temporarily down — so I won't guess at an answer.",
+        this.safeAlternativeSentence(visibleTools),
+      ].join('\n\n'),
+      role_context: context.roleContext,
+      response_type: 'Refusal / Insufficient Data',
+      evidence: [
+        {
+          source_type: 'zac.capability',
+          source_ref: 'phase1-capability-not-implemented',
+          as_of: null,
+          entities_used: [],
+        },
+      ],
+      confidence: 'high',
+      limitations: [
+        'This capability is not implemented in ZAC Phase 1 — it is not a permission problem and not a temporary data outage.',
+        'No data of any kind was read or invented for this answer.',
+        `Your ZAC scope: ${profile.scopeDescription}`,
+      ],
+      suggested_next_step: 'Ask "What can you help me with?" to see what is available today.',
+      measurement_hook: null,
+      attribution_seed: null,
+      memory_updates: [],
+      tool_calls: [],
+      cost_metadata: this.costMetadata(completion),
+      technical_details: {
+        ...this.technicalDetails(visibleTools, completion),
+        detected_intent: 'policy.unsupported_capability',
+      },
+      trace_id: traceId,
+    };
+  }
+
+  /**
+   * The capability exists, the actor is permitted, the tool ran — and the
+   * SOURCE DATA was not there. Saying "you don't have permission" here sends a
+   * user to their administrator over a missing rota; saying "not built yet"
+   * sends them away for good. Both are false, so this reason stands alone.
+   */
+  buildDataUnavailableResponse(
+    input: MemoryResponseBaseInput & { explanation?: string; capability?: string },
+  ): ZacResponse {
+    const { context, profile, visibleTools, completion, traceId } = input;
+    const capability = input.capability?.trim();
+
+    return {
+      conversation_id: input.conversationId,
+      answer: [
+        capability
+          ? `I can analyse ${capability}, but there isn't enough data behind it to answer that right now.`
+          : "I can look at that area, but there isn't enough data behind it to answer right now.",
+        input.explanation?.trim()
+          ? input.explanation.trim()
+          : "This is a data gap, not a permission problem — you're allowed to see it, there just isn't enough recorded yet for an honest answer, and I won't estimate one.",
+        this.safeAlternativeSentence(visibleTools),
+      ].join('\n\n'),
+      role_context: context.roleContext,
+      response_type: 'Refusal / Insufficient Data',
+      evidence: [
+        {
+          source_type: 'zac.data_availability',
+          source_ref: 'source-data-missing',
+          as_of: null,
+          entities_used: [],
+        },
+      ],
+      confidence: 'high',
+      limitations: [
+        'The source data for that answer is missing or incomplete — this is not a permission boundary and not an unsupported capability.',
+        'No figure was estimated, inferred or invented to fill the gap.',
+        `Your ZAC scope: ${profile.scopeDescription}`,
+      ],
+      suggested_next_step:
+        'Try a different period, or ask again once the underlying records are in QLOOQO.',
+      measurement_hook: null,
+      attribution_seed: null,
+      memory_updates: [],
+      tool_calls: [],
+      cost_metadata: this.costMetadata(completion),
+      technical_details: {
+        ...this.technicalDetails(visibleTools, completion),
+        detected_intent: 'policy.data_unavailable',
+      },
+      trace_id: traceId,
+    };
+  }
+
+  /**
+   * Another business, or a location outside the actor's scope. Distinct from an
+   * ordinary permission denial because no owner can grant it: it is the tenant
+   * boundary, and telling the user to "ask an owner to review your access"
+   * would send them on an errand that cannot succeed.
+   */
+  buildTenantBoundaryResponse(input: MemoryResponseBaseInput): ZacResponse {
+    const { context, profile, visibleTools, completion, traceId } = input;
+
+    return {
+      conversation_id: input.conversationId,
+      answer: [
+        "I can't answer that — it's outside the business and locations your account covers.",
+        'That boundary is the account itself rather than a security level, so it is not something an owner could open up for you here. Data belonging to another business is never readable through ZAC, under any phrasing.',
+        this.safeAlternativeSentence(visibleTools),
+      ].join('\n\n'),
+      role_context: context.roleContext,
+      response_type: 'Refusal / Insufficient Data',
+      evidence: [
+        {
+          source_type: 'zac.access_boundary',
+          source_ref: 'tenant-scope:fixed-boundary',
+          as_of: null,
+          entities_used: [],
+        },
+      ],
+      confidence: 'high',
+      limitations: [
+        'This is the account/tenant boundary — not a permission that can be granted, and not a data problem.',
+        'Nothing outside your business or locations was read for this answer.',
+        `Your ZAC scope: ${profile.scopeDescription}`,
+      ],
+      suggested_next_step: 'Ask about the business and locations your account covers.',
+      measurement_hook: null,
+      attribution_seed: null,
+      memory_updates: [],
+      tool_calls: [],
+      cost_metadata: this.costMetadata(completion),
+      technical_details: {
+        ...this.technicalDetails(visibleTools, completion),
+        detected_intent: 'policy.tenant_boundary',
+      },
+      trace_id: traceId,
+    };
+  }
+}
+
+
+/** "a, b and c" — Oxford-free, matches the product copy elsewhere. */
+function joinList(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? '';
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
 }

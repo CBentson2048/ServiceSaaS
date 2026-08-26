@@ -19,6 +19,8 @@ import { AnthropicZacModelProvider } from './models/providers/anthropic-zac-prov
 import { StubZacModelProvider } from './models/providers/stub-zac-provider';
 import { ZAC_MODEL_PROVIDER } from './models/zac-model-provider.interface';
 import type { ZacModelProvider } from './models/zac-model-provider.interface';
+import { ZacPolicyService } from './policy/zac-policy.service';
+import { ZacResourceCategoryService } from './policy/zac-resource-category.service';
 import { ZacResponseBuilderService } from './responses/zac-response-builder.service';
 import { ZacRoleProfileService } from './roles/zac-role-profile.service';
 import { ZacToolRegistryService } from './tools/zac-tool-registry.service';
@@ -45,6 +47,8 @@ import { ZacService } from './zac.service';
     ZacRoleProfileService,
     ZacToolRegistryService,
     ZacResponseBuilderService,
+    ZacResourceCategoryService,
+    ZacPolicyService,
     ZacCostTelemetryService,
     ZacConversationStore,
     ZacMemoryStore,

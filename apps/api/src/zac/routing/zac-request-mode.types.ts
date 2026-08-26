@@ -1,3 +1,5 @@
+import type { ZacResourceCategory } from '../policy/zac-policy.types';
+
 /**
  * The closed set of ZAC request modes. The mode decides HOW a question is
  * answered — which pipeline runs and whether any QLOOQO tool may execute.
@@ -105,6 +107,12 @@ export type ZacClassifierFailure =
 /** Validated output of one semantic classification call. */
 export interface ZacSemanticClassification {
   mode: ZacRequestMode;
+  /**
+   * The resource category the model proposed, or null when it proposed none or
+   * proposed something outside the closed enum. Policy — not the model — then
+   * decides what it means.
+   */
+  resourceCategory: ZacResourceCategory | null;
   /** 0..1, clamped server-side. Drives the confidence policy, never shown to users. */
   confidence: number;
   requiresLiveBusinessData: boolean;
@@ -136,6 +144,11 @@ export interface ZacRequestClassification {
   requiresLiveBusinessData: boolean | null;
   /** Set when `source === 'clarification'`: the one question to ask back. */
   clarificationPrompt?: string;
+  /**
+   * What the request reaches for, from the deterministic category classifier or
+   * the semantic layer. Feeds {@link ZacPolicyService}; never an access grant.
+   */
+  resourceCategory?: ZacResourceCategory | null;
 }
 
 /**

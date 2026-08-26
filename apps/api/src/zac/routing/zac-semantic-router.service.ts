@@ -7,6 +7,7 @@ import {
   type ZacModelProvider,
 } from '../models/zac-model-provider.interface';
 import { ZacRequestModeClassifierService } from './zac-request-mode-classifier.service';
+import { isZacResourceCategory } from '../policy/zac-policy.types';
 import {
   isZacRequestMode,
   isZacRoutingReasonCode,
@@ -133,6 +134,9 @@ export class ZacSemanticRouterService {
           confidence: null,
           classifierFailure: null,
           requiresLiveBusinessData: null,
+          // Layer 1 rules classify the MODE only; the deterministic resource
+          // classifier runs in the orchestrator alongside policy.
+          resourceCategory: null,
         },
         completion: null,
         classifierLatencyMs: null,
@@ -240,8 +244,17 @@ export class ZacSemanticRouterService {
     const selfConsistent = requiresLive === (candidate.mode === 'qlooqo_data');
     const clamped = Math.min(1, Math.max(0, confidence));
 
+    // The category is ADVISORY input to policy, not part of the verdict's
+    // validity: an unrecognised value is dropped to null rather than voiding an
+    // otherwise good classification, because the deterministic category
+    // classifier and the fixed-boundary guards still run regardless.
+    const resourceCategory = isZacResourceCategory(candidate.resource_category)
+      ? candidate.resource_category
+      : null;
+
     return {
       mode: candidate.mode,
+      resourceCategory,
       confidence: selfConsistent
         ? clamped
         : Math.min(clamped, ZAC_SEMANTIC_ACCEPT_CONFIDENCE - 0.01),
@@ -275,6 +288,7 @@ export class ZacSemanticRouterService {
         confidence: semantic.confidence,
         classifierFailure: null,
         requiresLiveBusinessData: semantic.requiresLiveBusinessData,
+        resourceCategory: semantic.resourceCategory,
       };
     }
 
@@ -286,6 +300,7 @@ export class ZacSemanticRouterService {
       confidence: semantic.confidence,
       classifierFailure: null,
       requiresLiveBusinessData: semantic.requiresLiveBusinessData,
+      resourceCategory: semantic.resourceCategory,
     });
 
     // A follow-up resolved from prior-turn context is recorded as such: it is
@@ -355,6 +370,10 @@ export class ZacSemanticRouterService {
       confidence: semantic?.confidence ?? null,
       classifierFailure: failure,
       requiresLiveBusinessData: semantic?.requiresLiveBusinessData ?? null,
+      // Preserved even for an UNTRUSTED verdict: the category is not an access
+      // decision, and policy re-derives fixed boundaries deterministically, so
+      // carrying it forward can only make a refusal more specific.
+      resourceCategory: semantic?.resourceCategory ?? null,
     };
 
     // 1. An explicit "do not use my data" NEVER falls back to qlooqo_data.

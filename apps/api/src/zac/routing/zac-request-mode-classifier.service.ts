@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { ZacRoleContext } from '../context/zac-context.types';
 import { ZacMemoryExtractionService } from '../memory/zac-memory-extraction.service';
+import { ZacResourceCategoryService } from '../policy/zac-resource-category.service';
 import type {
   ZacDataInstruction,
   ZacDeterministicVerdict,
@@ -37,19 +38,36 @@ import { isZacRequestMode } from './zac-request-mode.types';
  */
 @Injectable()
 export class ZacRequestModeClassifierService {
-  constructor(private readonly memoryExtraction: ZacMemoryExtractionService) {}
+  constructor(
+    private readonly memoryExtraction: ZacMemoryExtractionService,
+    private readonly resourceCategories: ZacResourceCategoryService = new ZacResourceCategoryService(),
+  ) {}
 
   /**
    * Layer 1. A verdict here is treated as final and skips the model entirely.
    * `null` means "not explicit" — the semantic layer decides.
    */
   classifyExplicit(question: string, roleContext: ZacRoleContext): ZacDeterministicVerdict | null {
-    void roleContext;
     const q = normalise(question);
 
     // 1. Memory recall — the memory extractor is the single source of truth.
     if (this.memoryExtraction.detectRecallSubject(question) !== null) {
       return certain('memory', 'user_memory_recall', null);
+    }
+
+    // 1b. A reach for ANOTHER person's private material. This runs before the
+    //     own-data rules on purpose: "show me Sarah's private coaching" carries
+    //     a possessive and an imperative, so the own-data anchor below would
+    //     otherwise claim it with certainty and send a privacy probe into the
+    //     live-data pipeline. Own-memory recall above still wins, because a
+    //     question about the ASKER's own history is never this.
+    const protectedTarget = this.resourceCategories.classify(question, roleContext);
+    if (
+      protectedTarget?.certain &&
+      (protectedTarget.category === 'private_other_stylist_coaching' ||
+        protectedTarget.category === 'private_other_actor_conversation')
+    ) {
+      return certain('privacy_boundary', 'privacy_boundary_probe', null);
     }
 
     // 2. Explicit current-turn instruction about the user's own data. Resolved

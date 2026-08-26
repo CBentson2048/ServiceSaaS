@@ -64,7 +64,7 @@ export class ZacMemoryService {
     // with no inferable topic ("update that goal to 60%") inherits the topic of
     // the most recent matching memory — same conversation first.
     let topic = command.topic;
-    let predecessorPool = visible.filter(
+    const predecessorPool = visible.filter(
       (item) => item.kind === kind && this.sameOwner(context, item, visibilityScope),
     );
     if (topic === 'general' && command.updateIntent && predecessorPool.length > 0) {

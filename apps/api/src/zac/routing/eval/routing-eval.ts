@@ -1,6 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ZacRoleContext } from '../../context/zac-context.types';
+import {
+  ZAC_BLOCKING_REASONS,
+  type ZacBlockingReason,
+} from '../../policy/zac-policy.types';
 import { ZAC_REQUEST_MODES, type ZacRequestMode } from '../zac-request-mode.types';
 
 /** One labelled routing example. */
@@ -19,10 +23,32 @@ export interface RoutingEvalCase {
   /** Pinned by the client acceptance criteria — these must never regress. */
   mandated?: boolean;
   rationale?: string;
+  /**
+   * The TRUE blocking reason this prompt should produce, for cases where the
+   * reason is decidable from the request alone.
+   *
+   * Only the P0 fixed boundaries and 'none' are labelled here, and that is a
+   * deliberate limit rather than an omission: permission_denied,
+   * unsupported_capability and data_unavailable depend on the actor's live
+   * permissions and on tool/dataset state, so they cannot be judged from a
+   * prompt. Those are measured in the service suite, which has that state.
+   */
+  expectedReason?: ZacBlockingReason;
 }
 
 export function loadRoutingEvalDataset(): RoutingEvalCase[] {
   const path = join(__dirname, 'routing-eval-dataset.json');
+  return JSON.parse(readFileSync(path, 'utf8')) as RoutingEvalCase[];
+}
+
+/**
+ * The blocking-reason dataset. Separate from the mode dataset on purpose: it
+ * labels a different decision (WHY a request is refused, not WHICH handler
+ * answers it), and mixing the two would force every case to carry a label for
+ * a question it was not written to test.
+ */
+export function loadReasonEvalDataset(): RoutingEvalCase[] {
+  const path = join(__dirname, 'reason-eval-dataset.json');
   return JSON.parse(readFileSync(path, 'utf8')) as RoutingEvalCase[];
 }
 
@@ -34,6 +60,108 @@ export interface RoutingEvalOutcome {
   actual: ZacRequestMode | null;
   /** True when `actual` is the expected mode or one of its acceptable alternatives. */
   correct: boolean;
+}
+
+/** One scored blocking-reason case. */
+export interface ReasonEvalOutcome {
+  case: RoutingEvalCase;
+  actual: ZacBlockingReason;
+  correct: boolean;
+}
+
+export interface ReasonEvalMetrics {
+  scored: number;
+  correct: number;
+  accuracy: number;
+  /** rows = expected reason, cols = actual reason. */
+  confusion: Record<string, Record<string, number>>;
+  /**
+   * The product-critical error: a FIXED boundary reported as something that
+   * could change (availability, permission, technical). This is the exact
+   * defect that shipped — "staff data isn't connected" in front of a privacy
+   * invariant — so it is counted on its own and must stay at zero.
+   */
+  boundaryDowngrades: ReasonEvalOutcome[];
+  /** The mirror error: a changeable condition reported as a permanent boundary. */
+  falseBoundaries: ReasonEvalOutcome[];
+}
+
+/**
+ * Score blocking-reason selection. Routing accuracy alone is not enough: a turn
+ * can pick the right handler and still tell the user something untrue about
+ * WHY it could not help, which is a product-quality bug in its own right.
+ */
+export function scoreBlockingReasons(outcomes: ReasonEvalOutcome[]): ReasonEvalMetrics {
+  const labels: string[] = [...ZAC_BLOCKING_REASONS];
+  const confusion: Record<string, Record<string, number>> = Object.fromEntries(
+    labels.map((expected) => [
+      expected,
+      Object.fromEntries(labels.map((actual) => [actual, 0])),
+    ]),
+  );
+
+  let correct = 0;
+  const boundaryDowngrades: ReasonEvalOutcome[] = [];
+  const falseBoundaries: ReasonEvalOutcome[] = [];
+
+  for (const outcome of outcomes) {
+    const expected = outcome.case.expectedReason ?? 'none';
+    confusion[expected][outcome.actual] += 1;
+    if (outcome.correct) correct += 1;
+    const expectedFixed = FIXED.has(expected);
+    const actualFixed = FIXED.has(outcome.actual);
+    if (expectedFixed && !actualFixed) boundaryDowngrades.push(outcome);
+    if (!expectedFixed && actualFixed) falseBoundaries.push(outcome);
+  }
+
+  return {
+    scored: outcomes.length,
+    correct,
+    accuracy: outcomes.length === 0 ? 0 : correct / outcomes.length,
+    confusion,
+    boundaryDowngrades,
+    falseBoundaries,
+  };
+}
+
+const FIXED = new Set<string>([
+  'private_coaching_boundary',
+  'cross_actor_private_boundary',
+  'phase1_read_only_boundary',
+]);
+
+/** Human-readable blocking-reason report, mirroring formatRoutingReport. */
+export function formatReasonReport(title: string, metrics: ReasonEvalMetrics): string {
+  const lines: string[] = [];
+  lines.push('');
+  lines.push(`  ${title} — refusal-reason accuracy`);
+  lines.push(
+    `  scored ${metrics.scored}   correct ${metrics.correct}   accuracy ${(metrics.accuracy * 100).toFixed(1)}%`,
+  );
+  lines.push(
+    `  boundary downgrades (fixed reported as changeable): ${metrics.boundaryDowngrades.length}`,
+  );
+  lines.push(`  false boundaries (changeable reported as fixed): ${metrics.falseBoundaries.length}`);
+  const present = Object.entries(metrics.confusion).filter(([, row]) =>
+    Object.values(row).some((count) => count > 0),
+  );
+  if (present.length > 0) {
+    lines.push('  Confusion (rows = expected, cols = actual, non-empty only):');
+    for (const [expected, row] of present) {
+      const cells = Object.entries(row)
+        .filter(([, count]) => count > 0)
+        .map(([actual, count]) => `${actual}=${count}`)
+        .join('  ');
+      lines.push(`    ${expected.padEnd(32)} ${cells}`);
+    }
+  }
+  for (const miss of metrics.boundaryDowngrades.slice(0, 5)) {
+    lines.push(`    DOWNGRADE  "${miss.case.prompt}" -> ${miss.actual}`);
+  }
+  for (const miss of metrics.falseBoundaries.slice(0, 5)) {
+    lines.push(`    FALSE-BOUNDARY  "${miss.case.prompt}" -> ${miss.actual}`);
+  }
+  return lines.join('\n');
 }
 
 export interface RoutingEvalMetrics {

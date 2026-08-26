@@ -1,5 +1,10 @@
 import type { ZacRoleContext } from '../context/zac-context.types';
 import type {
+  ZacBlockingReason,
+  ZacResourceCategory,
+  ZacResponseStrategy,
+} from '../policy/zac-policy.types';
+import type {
   ZacClassificationSource,
   ZacRequestMode,
   ZacRoutingReasonCode,
@@ -88,6 +93,25 @@ export interface ZacTechnicalDetails {
    * full Phase 1 during UAT.
    */
   semantic_routing_available?: boolean;
+  /**
+   * The TRUE reason this turn could not be fulfilled, selected server-side by
+   * precedence — never by whichever response branch matched first. 'none' on a
+   * fulfilled answer. This is the field UAT reads to confirm that a privacy
+   * boundary was reported as a boundary and not as a connection problem.
+   */
+  blocking_reason?: ZacBlockingReason;
+  /** WHAT the request reached for. Describes the request, never an access grant. */
+  resource_category?: ZacResourceCategory | null;
+  /** Which closed strategy produced this answer. */
+  response_strategy?: ZacResponseStrategy;
+  /** True when a FIXED Phase 1 boundary decided the turn before any dispatch. */
+  policy_boundary_triggered?: boolean;
+  /**
+   * True when the actor asked for the rule to be lifted (authority claim,
+   * consent claim or an explicit override request). Recorded for audit; it has
+   * no effect whatsoever on the decision.
+   */
+  override_attempted?: boolean;
 }
 
 /**

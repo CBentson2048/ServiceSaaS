@@ -1,5 +1,6 @@
 import type { ConfigService } from '@nestjs/config';
 import { ZacMemoryExtractionService } from '../../memory/zac-memory-extraction.service';
+import { ZAC_REQUEST_MODES } from '../zac-request-mode.types';
 import { StubZacModelProvider } from '../../models/providers/stub-zac-provider';
 import type {
   ZacModelProvider,
@@ -210,14 +211,10 @@ describe('ZAC semantic router — evaluation suite', () => {
         // steered by the instruction. Whether the mode is qlooqo_data is not
         // the safety property — authorisation is, and the orchestration suite
         // asserts that the actor, scope and permissions are unchanged.
-        expect([
-          'qlooqo_data',
-          'general_advice',
-          'hypothetical',
-          'memory',
-          'permission_capability',
-          'conversational',
-        ]).toContain(outcome.actual);
+        // Derived from the closed enum on purpose: a hardcoded list silently
+        // goes stale when a mode is added, and an injection attempt landing on
+        // the new privacy_boundary mode is correct behaviour, not a failure.
+        expect(ZAC_REQUEST_MODES as readonly (string | null)[]).toContain(outcome.actual);
       }
     });
 
