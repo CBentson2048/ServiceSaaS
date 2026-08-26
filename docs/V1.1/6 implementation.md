@@ -207,6 +207,79 @@ schedule, print action).
 
 ---
 
+## 10d. Addendum (2026-08-26) — Product Management UX redesign
+
+The Products tab was rebuilt as an operations screen. **No stock, QLAB,
+pricing or classification logic changed** — the redesign sits on top of the
+existing API, and every write still goes through the authoritative endpoints.
+
+**Information architecture** (was: KPIs → stock table → permanent product form
+→ permanent adjustment form → movements → dead stock → a second catalogue list):
+
+1. **Overview** — Products / Low stock / Out of stock / Dead stock value.
+   Counts are derived from the rows in view, so they always agree with the
+   table beneath them; the low/out cards are buttons that apply that filter.
+2. **Product inventory** — the primary surface, directly under the overview:
+   search (name, brand, SKU, barcode, category), location / category / status
+   filters, and the actions Scan-consume, Adjust stock, Restock, + New product.
+   One visible row action (Edit) plus an overflow menu (adjust, restock,
+   movement history, archive).
+3. **Stock insights** — the dead-stock table, unchanged in substance, with a
+   View product action.
+4. **Recent stock activity** — human-readable movements; the date range now
+   sits inside this section because it only filters movements.
+
+**Drawers and modals** — `design/components/Drawer.tsx` is a new shared
+right-side drawer (full-screen sheet below `sm`) with focus trap, focus
+restore, Escape and a scroll lock. Product create/edit lives there in sections:
+Basic information, Stock settings, Barcode, Product use, Available locations,
+Pricing summary (read-only, linking to the Pricing tab — never a second copy of
+its controls). Scan/consume, adjust and restock are modals.
+
+**Barcode** — one dialog, four ways in: USB/Bluetooth wedge scanner (default,
+autofocused, Enter resolves), device **camera**, manual product search, and
+plain typing. All four converge on the same lookup and the same confirmation
+step: **a scan identifies a product and never moves stock** until a quantity is
+confirmed. No file upload. Camera decoding uses the browser's built-in
+`BarcodeDetector` — no barcode library was added; unsupported browsers keep the
+other three paths and are told which one to use.
+
+**Human-readable activity** — the old list printed `movement.createdBy`, a raw
+user-profile UUID, as the actor. `movementPresentation.ts` is now the only
+place that decides how a movement reads ("+200g Majirel 6.0 · Restocked at
+Pinner · by Ada Lovelace · 1 hour ago"), and it can never fall back to an id:
+an unresolved actor becomes the mechanism (QLAB, Point of sale, System).
+Internal ids appear only in the movement detail dialog.
+
+**Two minimum backend fixes the UI exposed** (§30 allows exactly this):
+`listMovements` now resolves actor names from `core.user_profiles` (batched,
+and a failed lookup degrades to the mechanism rather than breaking the list),
+and `salon_consumption` was missing from the `InventoryStockMovementType`
+union although 0091 added the enum value and the barcode path writes it.
+
+**One deliberate semantic change:** an inbound *Adjust* now writes
+`manual_adjustment` (it did `restock` before, because the old form inferred the
+type from the sign). Restock is its own action and keeps `restock`. Outbound
+movement types are untouched, so dead-stock idle clocks and reorder forecasts —
+which read outbound only — are unaffected.
+
+**Testing** — jsdom + @testing-library/react were added as DEV dependencies so
+the interaction boundaries could be tested for real (the repo previously had no
+DOM testing). `tsconfig.jest.json` makes ts-jest use the app's strict config,
+so specs are checked exactly as the build checks them. Web suite: **14 files,
+209 tests**, covering the row model/filters/KPIs, movement presentation, camera
+decisions, both form models, the drawer's dialog behaviour, the scan workflow
+(including duplicate-Enter and idempotent retry), the camera with a mocked
+`BarcodeDetector`, the stock dialogs, and the page itself (render, search,
+filters, edit-opens-drawer, row actions, failure + retry states).
+
+**Visual harness** — `apps/web/visual/` + `vite.visual.config.ts` render the
+real page with canned API responses and stubbed auth, so the layout can be
+inspected at any viewport without a backend:
+`npx vite --config vite.visual.config.ts` (from `apps/web`, opens on :5199).
+
+---
+
 ## 10c. Addendum (2026-08-26) — Product Use Classification & Pricing (approved CR)
 
 The CR is commercially approved; Luke's final rules are implemented in full.
