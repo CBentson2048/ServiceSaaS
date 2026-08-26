@@ -10,6 +10,11 @@ export default defineConfig({
         new URL('../../packages/design-tokens/src/index.ts', import.meta.url),
       ),
       '@sheer/utils': fileURLToPath(new URL('../../packages/utils/src/index.ts', import.meta.url)),
+      // Bundle domain from SOURCE like the other workspace packages. Without
+      // this, vite falls through to packages/domain/dist — whatever was last
+      // built — and a stale build silently ships old money logic (found when
+      // the first new runtime value export crashed rollup against an Aug-7 dist).
+      '@sheer/domain': fileURLToPath(new URL('../../packages/domain/src/index.ts', import.meta.url)),
     },
   },
   server: {

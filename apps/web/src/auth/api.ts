@@ -46,6 +46,12 @@ import type {
   PurchaseOrderStatus,
   SendPurchaseOrderResponse,
   StockUnit,
+  EffectiveRetailPricingResponse,
+  ListRetailPricingRulesResponse,
+  ListSellableProductsResponse,
+  ProductAvailabilityResponse,
+  RetailPricingRuleResponse,
+  UpsertRetailPricingRuleRequest,
   CreateShiftRequest,
   CreateStaffInvitationRequest,
   CreateStylistRebookingRequest,
@@ -1249,6 +1255,87 @@ export async function deleteInventorySupplier(
       method: 'DELETE',
       accessToken,
     },
+  );
+}
+
+// --- Retail pricing & availability (classification CR) ----------------------
+
+export async function listRetailPricingRules(
+  accessToken: string,
+  params: { productId?: string; categoryId?: string; locationId?: string } = {},
+): Promise<ListRetailPricingRulesResponse> {
+  const search = new URLSearchParams();
+  if (params.productId) search.set('productId', params.productId);
+  if (params.categoryId) search.set('categoryId', params.categoryId);
+  if (params.locationId) search.set('locationId', params.locationId);
+  const query = search.toString();
+  return request<ListRetailPricingRulesResponse>(`/retail-pricing/rules${query ? `?${query}` : ''}`, {
+    accessToken,
+  });
+}
+
+/** Set the rule at one level. Clearing a level is deleteRetailPricingRule — never a 0. */
+export async function upsertRetailPricingRule(
+  accessToken: string,
+  payload: UpsertRetailPricingRuleRequest,
+): Promise<RetailPricingRuleResponse> {
+  return request<RetailPricingRuleResponse>('/retail-pricing/rules', {
+    method: 'PUT',
+    accessToken,
+    body: payload,
+  });
+}
+
+export async function deleteRetailPricingRule(
+  accessToken: string,
+  ruleId: string,
+): Promise<RetailPricingRuleResponse> {
+  return request<RetailPricingRuleResponse>(`/retail-pricing/rules/${encodeURIComponent(ruleId)}`, {
+    method: 'DELETE',
+    accessToken,
+  });
+}
+
+/** Canonical effective price + provenance for one product at one location. */
+export async function getEffectiveRetailPricing(
+  accessToken: string,
+  params: { productId: string; locationId: string },
+): Promise<EffectiveRetailPricingResponse> {
+  const search = new URLSearchParams({ productId: params.productId, locationId: params.locationId });
+  return request<EffectiveRetailPricingResponse>(`/retail-pricing/effective?${search.toString()}`, {
+    accessToken,
+  });
+}
+
+/** The till's picker: Retail products available at the location, priced. */
+export async function listSellableProducts(
+  accessToken: string,
+  locationId: string,
+): Promise<ListSellableProductsResponse> {
+  const search = new URLSearchParams({ locationId });
+  return request<ListSellableProductsResponse>(`/retail-sales/sellable?${search.toString()}`, {
+    accessToken,
+  });
+}
+
+export async function getProductAvailability(
+  accessToken: string,
+  productId: string,
+): Promise<ProductAvailabilityResponse> {
+  return request<ProductAvailabilityResponse>(
+    `/inventory/products/${encodeURIComponent(productId)}/availability`,
+    { accessToken },
+  );
+}
+
+export async function setProductAvailability(
+  accessToken: string,
+  productId: string,
+  payload: { locationId: string; available: boolean },
+): Promise<ProductAvailabilityResponse> {
+  return request<ProductAvailabilityResponse>(
+    `/inventory/products/${encodeURIComponent(productId)}/availability`,
+    { method: 'PUT', accessToken, body: payload },
   );
 }
 
