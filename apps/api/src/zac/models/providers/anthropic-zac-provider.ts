@@ -26,6 +26,7 @@ import {
   buildSemanticRouterUserMessage,
 } from '../../routing/zac-semantic-router.prompt';
 import type { ZacClassifierFailure } from '../../routing/zac-request-mode.types';
+import { classifySemanticFailure } from '../zac-semantic-health.service';
 import {
   ZacModelIncompleteError,
   ZacModelRefusedError,
@@ -299,7 +300,12 @@ export class AnthropicZacModelProvider implements ZacModelProvider {
       // The deterministic candidate rendering answers instead — the user still
       // gets their priorities, just in the server's words.
       this.logger.warn(`zac priority synthesis failed: ${describeProviderFailure(error)}`);
-      return { raw: null, failure: 'provider_unavailable', completion: null };
+      return {
+        raw: null,
+        failure: 'provider_unavailable',
+        completion: null,
+        failureKind: classifySemanticFailure(error),
+      };
     }
   }
 
@@ -370,7 +376,12 @@ export class AnthropicZacModelProvider implements ZacModelProvider {
       // A planning failure must never break the turn: the caller falls back to
       // the deterministic plan and STILL reads live data.
       this.logger.warn(`zac analysis planning failed: ${describeProviderFailure(error)}`);
-      return { raw: null, failure: 'provider_unavailable', completion: null };
+      return {
+        raw: null,
+        failure: 'provider_unavailable',
+        completion: null,
+        failureKind: classifySemanticFailure(error),
+      };
     }
   }
 
@@ -454,7 +465,7 @@ export class AnthropicZacModelProvider implements ZacModelProvider {
       this.logger.warn(
         `zac semantic routing failed (${failure}): ${describeProviderFailure(error)}; safe fallback applies`,
       );
-      return { raw: null, failure, completion: null };
+      return { raw: null, failure, completion: null, failureKind: classifySemanticFailure(error) };
     }
   }
 }

@@ -337,6 +337,57 @@ async function main(): Promise<void> {
   console.log(`11. duplicate final priorities               ${duplicateFinals}  (of ${finalTotal} returned)`);
   console.log(`12. same-root-issue duplicates               ${sameRootDuplicates}  (of ${finalTotal} returned)`);
   console.log(`13. refusal-reason accuracy                  ${pct(reasonCorrect, reasonOutcomes.length)}  (${reasonCorrect}/${reasonOutcomes.length}); fixed-boundary downgrades ${downgrades}`);
+  // ---------------------------------------------------------- error buckets ---
+  // Aggregates say a number is wrong; only the individual cases say WHY. Every
+  // failure is printed so it can be triaged one at a time rather than guessed at.
+  const bucket = (title: string, rows: string[]): void => {
+    console.log(`\n  ${title} (${rows.length})`);
+    if (rows.length === 0) {
+      console.log('    none');
+      return;
+    }
+    for (const row of rows) console.log(`    ${row}`);
+  };
+
+  bucket(
+    'REQUEST-MODE ERRORS',
+    scoredModes
+      .filter((o) => o.mode !== o.item.expected && !(o.item.acceptable ?? []).includes(o.mode))
+      .map((o) => `want=${o.item.expected} got=${o.mode} role=${o.item.role} | ${o.item.prompt}`),
+  );
+  bucket(
+    'ANALYSIS-INTENT ERRORS',
+    orchOutcomes
+      .filter((o) => (o.intent ?? 'not_live_data') !== o.item.expectedIntent)
+      .map(
+        (o) =>
+          `want=${o.item.expectedIntent} got=${o.intent ?? 'not_live_data'} tools=${o.tools} role=${o.item.role} | ${o.item.prompt}`,
+      ),
+  );
+  bucket(
+    'BROAD -> MISSED MULTI-TOOL',
+    broadish
+      .filter((o) => o.tools <= 1)
+      .map(
+        (o) =>
+          `want=${o.item.expectedIntent} got=${o.intent ?? 'not_live_data'} tools=${o.tools} | ${o.item.prompt}`,
+      ),
+  );
+  bucket(
+    'ADVICE/HYPOTHETICAL -> LIVE TOOLS',
+    [
+      ...adviceCases.filter((o) => o.mode === 'qlooqo_data').map((o) => `[mode-set general_advice] ${o.item.prompt}`),
+      ...hypoCases.filter((o) => o.mode === 'qlooqo_data').map((o) => `[mode-set hypothetical] ${o.item.prompt}`),
+      ...notLive.filter((o) => o.intent !== null).map((o) => `[orch-set not_live_data -> ${o.intent}] ${o.item.prompt}`),
+    ],
+  );
+  bucket(
+    'REFUSAL-REASON ERRORS',
+    reasonOutcomes
+      .filter((o) => o.reason !== (o.item.expectedReason ?? 'none'))
+      .map((o) => `want=${o.item.expectedReason ?? 'none'} got=${o.reason} | ${o.item.prompt}`),
+  );
+
   console.log(`\n    advice cases reaching the live pipeline (orchestration set): ${pct(notLiveToData, notLive.length)} (${notLiveToData}/${notLive.length})`);
   console.log(
     `    classifier failures: ${[...failures.entries()].map(([k, v]) => `${k}=${v}`).join(' ') || 'none'}`,

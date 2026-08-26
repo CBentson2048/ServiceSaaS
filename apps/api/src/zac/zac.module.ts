@@ -24,6 +24,7 @@ import { ZacEvidenceService } from './analysis/zac-evidence.service';
 import { ZacPriorityService } from './analysis/zac-priority.service';
 import { ZacOrchestratorService } from './analysis/zac-orchestrator.service';
 import { ZacToolPlannerService } from './analysis/zac-tool-planner.service';
+import { ZacSemanticHealthService } from './models/zac-semantic-health.service';
 import { ZacPolicyService } from './policy/zac-policy.service';
 import { ZacResourceCategoryService } from './policy/zac-resource-category.service';
 import { ZacResponseBuilderService } from './responses/zac-response-builder.service';
@@ -59,6 +60,7 @@ import { ZacService } from './zac.service';
     ZacEvidenceService,
     ZacPriorityService,
     ZacOrchestratorService,
+    ZacSemanticHealthService,
     ZacCostTelemetryService,
     ZacConversationStore,
     ZacMemoryStore,

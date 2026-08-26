@@ -2140,18 +2140,39 @@ export class ZacService {
    */
   health(actor: AuthUser): ZacHealthResponse {
     this.rollout.assertRolloutFor(actor);
-    const semanticRouting = this.semanticRouter.semanticRoutingAvailable;
+    const configured = this.modelProvider.classifyRequestMode !== undefined;
+    const enabled = this.semanticRouter.semanticRoutingAvailable;
+    const semanticHealth = this.semanticRouter.health;
+    const router = semanticHealth.snapshot('router');
     const narrates = this.modelProvider.narrates;
+    const operational = semanticHealth.operational('router');
+
+    // Readiness is EVIDENCE, not configuration. This field used to be
+    // `narrates && semanticRoutingAvailable` — two capability flags — and read
+    // `true` while every semantic request was returning HTTP 400 for a tool
+    // schema the API rejects. A deployment that has never completed a semantic
+    // call has not demonstrated it can, and says so.
+    const ready = narrates && configured && enabled && semanticHealth.schemaValid && operational;
+
     return {
       enabled: true,
       provider: this.modelProvider.name,
       model: this.modelProvider.model,
       ok: true,
       narrates,
-      semantic_routing: semanticRouting,
-      router_model: semanticRouting ? this.semanticRouter.routerModel : null,
-      uat_ready: narrates && semanticRouting,
+      semantic_routing: enabled,
+      router_model: enabled ? this.semanticRouter.routerModel : null,
+      semantic_routing_configured: configured,
+      semantic_routing_enabled: enabled,
+      semantic_schema_valid: semanticHealth.schemaValid,
+      semantic_last_success_at: router.lastSuccessAt,
+      semantic_last_failure_at: router.lastFailureAt,
+      semantic_last_failure_kind: router.lastFailureKind,
+      semantic_operational: operational,
+      degraded_reason: ready ? null : (semanticHealth.degradedReason('router') ?? 'provider_cannot_narrate'),
+      uat_ready: ready,
     };
   }
+
 }
 

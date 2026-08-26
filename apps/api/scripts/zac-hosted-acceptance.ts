@@ -263,14 +263,38 @@ async function main(): Promise<void> {
   const stylistToken = process.env.ZAC_STYLIST_TOKEN;
 
   // 1. Deployment identity: a green suite against a stale build proves nothing.
-  const health = (await request(baseUrl, '/zac/health', ownerToken)) as Record<string, unknown>;
+  const health = (await request(baseUrl, '/zac/health', ownerToken)) as Record<string, unknown> & {
+    semantic_schema_valid?: boolean;
+    semantic_operational?: boolean;
+    semantic_last_success_at?: string | null;
+    semantic_last_failure_at?: string | null;
+    semantic_last_failure_kind?: string | null;
+    degraded_reason?: string | null;
+    uat_ready?: boolean;
+  };
   console.log('\nDEPLOYMENT');
   console.log(`  provider          ${String(health.provider)}`);
   console.log(`  model             ${String(health.model)}`);
   console.log(`  narrates          ${String(health.narrates)}`);
   console.log(`  semantic_routing  ${String(health.semantic_routing)}`);
   console.log(`  router_model      ${String(health.router_model)}`);
-  console.log(`  uat_ready         ${String(health.uat_ready)}`);
+  console.log(`  schema_valid         ${String(health.semantic_schema_valid)}`);
+  console.log(`  semantic_operational ${String(health.semantic_operational)}`);
+  console.log(`  last_success_at      ${String(health.semantic_last_success_at ?? '-')}`);
+  console.log(
+    `  last_failure         ${String(health.semantic_last_failure_kind ?? '-')} at ${String(health.semantic_last_failure_at ?? '-')}`,
+  );
+  console.log(`  degraded_reason      ${String(health.degraded_reason ?? '-')}`);
+  console.log(`  uat_ready            ${String(health.uat_ready)}`);
+  if (health.semantic_schema_valid === false) {
+    console.log(
+      '  ⚠ A strict tool schema uses a keyword the API rejects. EVERY semantic call\n' +
+        '    returns HTTP 400 and ZAC runs on its deterministic floor.',
+    );
+  }
+  if (health.semantic_last_failure_kind === 'credit') {
+    console.log('  ⚠ The provider balance is exhausted — the semantic layer is not running.');
+  }
   if (health.uat_ready !== true) {
     console.log(
       '  ⚠ uat_ready is false — this deployment cannot narrate or cannot route semantically.\n' +

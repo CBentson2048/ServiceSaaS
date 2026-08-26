@@ -7,6 +7,7 @@ import {
   type ZacModelProvider,
   type ZacModelSynthesisPack,
 } from '../models/zac-model-provider.interface';
+import { ZacSemanticHealthService } from '../models/zac-semantic-health.service';
 import { ZacToolRegistryService } from '../tools/zac-tool-registry.service';
 import type { ZacToolDispatchTrace, ZacToolName } from '../tools/zac-tool.types';
 import { ZacAnalysisIntentService } from './zac-analysis-intent.service';
@@ -69,6 +70,7 @@ export class ZacOrchestratorService {
     private readonly priorities: ZacPriorityService,
     private readonly registry: ZacToolRegistryService,
     @Inject(ZAC_MODEL_PROVIDER) private readonly modelProvider: ZacModelProvider,
+    private readonly semanticHealth?: ZacSemanticHealthService,
   ) {}
 
   /**
@@ -118,10 +120,23 @@ export class ZacOrchestratorService {
           // KINDS only — the remembered text never leaves the server.
           memoryKinds: input.memory.map((item) => item.kind),
         })
-        .catch(() => ({ raw: null, failure: 'provider_unavailable' as const, completion: null }));
+        .catch(() => ({
+          raw: null,
+          failure: 'provider_unavailable' as const,
+          completion: null,
+          failureKind: 'transport' as const,
+        }));
       const latencyMs = Date.now() - startedAt;
 
       const intent = ZacToolPlannerService.readIntent(outcome.raw?.analysis_intent);
+      if (intent) {
+        this.semanticHealth?.recordSuccess('planner');
+      } else {
+        this.semanticHealth?.recordFailure(
+          'planner',
+          outcome.failureKind ?? (outcome.raw ? 'invalid_output' : 'transport'),
+        );
+      }
       if (intent) {
         const rawReason = outcome.raw?.reason_code;
         return {

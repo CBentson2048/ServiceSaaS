@@ -434,7 +434,14 @@ describe('AnthropicZacModelProvider', () => {
 
       await expect(
         provider.classifyRequestMode({ question: 'Anything?', roleContext: 'owner' }),
-      ).resolves.toEqual({ raw: null, failure: 'provider_unavailable', completion: null });
+      ).resolves.toEqual({
+        raw: null,
+        failure: 'provider_unavailable',
+        completion: null,
+        // The routing verdict stays coarse; the OBSERVABILITY kind is precise,
+        // so an overloaded provider no longer looks like a schema bug.
+        failureKind: 'rate_limit',
+      });
     });
 
     it('distinguishes a routing timeout from any other transport failure', async () => {

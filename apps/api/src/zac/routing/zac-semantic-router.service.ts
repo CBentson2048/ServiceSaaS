@@ -6,6 +6,7 @@ import {
   type ZacModelCompletion,
   type ZacModelProvider,
 } from '../models/zac-model-provider.interface';
+import { ZacSemanticHealthService } from '../models/zac-semantic-health.service';
 import { ZacRequestModeClassifierService } from './zac-request-mode-classifier.service';
 import { isZacResourceCategory } from '../policy/zac-policy.types';
 import {
@@ -99,6 +100,7 @@ export class ZacSemanticRouterService {
     private readonly deterministic: ZacRequestModeClassifierService,
     @Inject(ZAC_MODEL_PROVIDER) private readonly modelProvider: ZacModelProvider,
     config: ConfigService,
+    private readonly semanticHealth: ZacSemanticHealthService = new ZacSemanticHealthService(),
   ) {
     // Default ON: the semantic layer is Phase 1 behaviour, and a provider that
     // cannot classify already degrades safely on its own. The flag exists to
@@ -107,9 +109,19 @@ export class ZacSemanticRouterService {
     this.enabled = readBooleanFlag(config.get<string>('ZAC_SEMANTIC_ROUTER_ENABLED'), true);
   }
 
-  /** True when a real semantic layer is available for this deployment. */
+  /**
+   * True when a semantic layer is CONFIGURED for this deployment — the flag is
+   * on and the provider implements it. This says nothing about whether a call
+   * has ever succeeded; see {@link ZacSemanticHealthService.operational} for
+   * that, and never use this alone to claim readiness.
+   */
   get semanticRoutingAvailable(): boolean {
     return this.enabled && this.modelProvider.semanticRouting === true;
+  }
+
+  /** The recorded runtime state of the semantic layer. */
+  get health(): ZacSemanticHealthService {
+    return this.semanticHealth;
   }
 
   /** The model performing semantic routing, for /zac/health. Null when none. */
@@ -177,11 +189,22 @@ export class ZacSemanticRouterService {
           raw: null,
           failure: 'provider_unavailable' as ZacClassifierFailure,
           completion: null,
+          failureKind: 'transport' as const,
         }));
       latencyMs = Date.now() - startedAt;
       completion = outcome.completion;
       semantic = this.validate(outcome.raw);
       failure = semantic ? null : (outcome.failure ?? 'classification_invalid');
+      // Readiness is evidence, not configuration: record what actually
+      // happened so /zac/health can stop guessing from flags.
+      if (semantic) {
+        this.semanticHealth.recordSuccess('router');
+      } else {
+        this.semanticHealth.recordFailure(
+          'router',
+          outcome.failureKind ?? (outcome.raw ? 'invalid_output' : 'transport'),
+        );
+      }
     }
 
     if (semantic) {

@@ -34,6 +34,7 @@ import { ZacEvidenceService } from './analysis/zac-evidence.service';
 import { ZacPriorityService } from './analysis/zac-priority.service';
 import { ZacOrchestratorService } from './analysis/zac-orchestrator.service';
 import { ZacToolPlannerService } from './analysis/zac-tool-planner.service';
+import { ZacSemanticHealthService } from './models/zac-semantic-health.service';
 import { ZacPolicyService } from './policy/zac-policy.service';
 import { ZacResourceCategoryService } from './policy/zac-resource-category.service';
 import { ZacResponseBuilderService } from './responses/zac-response-builder.service';
@@ -276,6 +277,7 @@ function makeService(
 
   const memoryExtraction = new ZacMemoryExtractionService();
   const requestModes = new ZacRequestModeClassifierService(memoryExtraction);
+  const semanticHealth = new ZacSemanticHealthService();
   const registry = new ZacToolRegistryService(
     dashboard as DashboardService,
     kpi as KpiService,
@@ -302,8 +304,9 @@ function makeService(
       new ZacPriorityService(),
       registry,
       provider,
+      semanticHealth,
     ),
-    new ZacSemanticRouterService(requestModes, provider, config),
+    new ZacSemanticRouterService(requestModes, provider, config, semanticHealth),
     new ZacMeasurementService(new ZacMeasurementStore(config), telemetryService),
     provider,
   );
@@ -472,7 +475,101 @@ describe('ZacService', () => {
       narrates: false,
       semantic_routing: false,
       router_model: null,
+      semantic_routing_configured: false,
+      semantic_routing_enabled: false,
+      semantic_schema_valid: true,
+      semantic_last_success_at: null,
+      semantic_last_failure_at: null,
+      semantic_last_failure_kind: null,
+      semantic_operational: false,
+      // Never attempted is not ready: configuration is not evidence.
+      degraded_reason: 'never_attempted',
       uat_ready: false,
+    });
+  });
+
+
+  describe('health readiness is evidence, not configuration', () => {
+    /** A provider that is fully configured but whose every call is rejected. */
+    function brokenSemanticProvider() {
+      return makeNarratingProvider({
+        semanticRouting: true,
+        classifyRequestMode: jest.fn(async () => ({
+          raw: null,
+          failure: 'provider_unavailable' as const,
+          completion: null,
+          failureKind: 'credit' as const,
+        })),
+      });
+    }
+
+    it('never reports UAT-ready while every semantic call is failing', async () => {
+      const { service } = makeService(undefined, undefined, undefined, undefined, brokenSemanticProvider());
+
+      // Before this fix, `semantic_routing` and `uat_ready` were derived from a
+      // capability flag and an env var, so both read `true` while every request
+      // returned HTTP 400. Health has to look at what happened, not what was
+      // configured.
+      // A question Layer 1 cannot resolve, so the semantic layer is actually
+      // consulted and its failure is recorded.
+      await service.ask(makeActor(), { question: 'Thoughts on how things have been going lately?' });
+      const health = service.health(makeActor());
+
+      expect(health.semantic_routing_configured).toBe(true);
+      expect(health.semantic_routing_enabled).toBe(true);
+      expect(health.semantic_schema_valid).toBe(true);
+      expect(health.semantic_operational).toBe(false);
+      expect(health.semantic_last_failure_kind).toBe('credit');
+      expect(health.degraded_reason).toBe('never_succeeded:credit');
+      expect(health.uat_ready).toBe(false);
+    });
+
+    it('reports ready only after a semantic call has actually succeeded', async () => {
+      const provider = makeNarratingProvider({
+        semanticRouting: true,
+        classifyRequestMode: jest.fn(async () => ({
+          raw: {
+            mode: 'general_advice',
+            confidence: 0.9,
+            requires_live_business_data: false,
+            reason_code: 'general_business_advice',
+          },
+          failure: null,
+          completion: null,
+        })),
+      });
+      const { service } = makeService(undefined, undefined, undefined, undefined, provider);
+
+      // A fresh deployment has demonstrated nothing yet.
+      expect(service.health(makeActor()).uat_ready).toBe(false);
+      expect(service.health(makeActor()).degraded_reason).toBe('never_attempted');
+
+      await service.ask(makeActor(), { question: 'Thoughts on how things have been going lately?' });
+
+      const health = service.health(makeActor());
+      expect(health.semantic_operational).toBe(true);
+      expect(health.semantic_last_success_at).not.toBeNull();
+      expect(health.degraded_reason).toBeNull();
+      expect(health.uat_ready).toBe(true);
+    });
+
+    it('keeps answering safely while degraded — fail-safe is unchanged', async () => {
+      const kpis = jest.fn().mockResolvedValue(KPI_FIXTURE);
+      const { service } = makeService(
+        undefined,
+        { kpis } as Partial<DashboardService>,
+        undefined,
+        undefined,
+        brokenSemanticProvider(),
+      );
+
+      const response = await service.ask(makeActor(), { question: 'How is my business doing?' });
+
+      // Degraded readiness must never become a degraded ANSWER: the turn still
+      // runs on the deterministic floor and still reads live data.
+      expect(response.tool_calls[0]?.tool).toBe('report.business_health');
+      expect(kpis).toHaveBeenCalled();
+      expect(service.health(makeActor()).uat_ready).toBe(false);
     });
   });
 

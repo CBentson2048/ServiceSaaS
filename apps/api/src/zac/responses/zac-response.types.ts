@@ -192,14 +192,42 @@ export interface ZacHealthResponse {
   ok: boolean;
   /** True when a real model can narrate advisory answers (false on the stub). */
   narrates: boolean;
-  /** True when Layer 2 semantic intent routing is available AND enabled. */
+  /**
+   * Kept for compatibility: semantic routing is CONFIGURED (flag on, provider
+   * implements it). It is not evidence that anything works — see
+   * `semantic_operational`.
+   */
   semantic_routing: boolean;
   /** The model performing semantic routing, or null when unavailable. */
   router_model: string | null;
+
+  // --- The distinctions that stop a config flag masquerading as readiness ---
+  /** The provider implements semantic classification at all. */
+  semantic_routing_configured: boolean;
+  /** ZAC_SEMANTIC_ROUTER_ENABLED (default on). */
+  semantic_routing_enabled: boolean;
+  /** Every strict tool schema uses only keywords the API accepts. Boot check. */
+  semantic_schema_valid: boolean;
+  /** ISO timestamp of the last SUCCESSFUL semantic classification, or null. */
+  semantic_last_success_at: string | null;
+  /** ISO timestamp of the last failure, or null. */
+  semantic_last_failure_at: string | null;
+  /** Actionable cause: auth, credit, schema, rate_limit, timeout, transport… */
+  semantic_last_failure_kind: string | null;
+  /** A semantic call has demonstrably worked and nothing hard has failed since. */
+  semantic_operational: boolean;
   /**
-   * Readiness for client acceptance testing. False whenever ZAC would answer
-   * without a real provider or without semantic routing — a deployment in that
-   * state must not be handed over as Phase 1 complete.
+   * Why the semantic layer is not fully operational, or null when it is.
+   * 'never_attempted' on a fresh boot — one real request settles it.
+   */
+  degraded_reason: string | null;
+  /**
+   * Readiness for client acceptance testing.
+   *
+   * Requires EVIDENCE, not configuration: a real narrating provider, semantic
+   * routing configured and enabled, valid tool schemas, and a semantic call
+   * that has actually succeeded with nothing hard-failing since. This field
+   * previously read `true` while every semantic request returned HTTP 400.
    */
   uat_ready: boolean;
 }

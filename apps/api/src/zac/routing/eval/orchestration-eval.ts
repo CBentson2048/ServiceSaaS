@@ -41,7 +41,10 @@ export interface OrchestrationMetrics {
   /** Broad-priority questions correctly recognised — the acceptance number. */
   businessPriorityRecall: number;
   businessPrioritySupport: number;
-  /** A narrow or non-live question that nevertheless gathered several sources. */
+  /**
+   * A question ONE source should answer that nevertheless gathered several.
+   * Excludes intents that are multi-source by design — see MULTI_BY_DESIGN.
+   */
   unnecessaryMultiToolRate: number;
   /** A broad question answered from one source or none. */
   missedMultiToolRate: number;
@@ -52,7 +55,20 @@ export interface OrchestrationMetrics {
   misses: OrchestrationOutcome[];
 }
 
+/** Intents whose answer is a ranked set of priorities. Drives recall. */
 const BROAD: ReadonlySet<string> = new Set(['business_priorities', 'team_priorities']);
+
+/**
+ * Intents that legitimately gather several sources. `diagnostic` belongs here:
+ * it consults the named metric plus its context by design, so counting it as a
+ * "narrow" question inflated the unnecessary-multi-tool rate with correct
+ * behaviour — 13.7% of it, in the first production run.
+ */
+const MULTI_BY_DESIGN: ReadonlySet<string> = new Set([
+  'business_priorities',
+  'team_priorities',
+  'diagnostic',
+]);
 
 /**
  * Score analysis-intent selection AND the tool-count consequences of it.
@@ -102,7 +118,8 @@ export function scoreOrchestration(outcomes: OrchestrationOutcome[]): Orchestrat
       // A broad question answered from a single source is the thin-answer
       // failure — the user asked for the picture and got one number.
       if (outcome.toolsSelected <= 1) missedMultiTool += 1;
-    } else {
+    }
+    if (!MULTI_BY_DESIGN.has(expected)) {
       narrowSupport += 1;
       if (outcome.toolsSelected > 1) unnecessaryMultiTool += 1;
     }

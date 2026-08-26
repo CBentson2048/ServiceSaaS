@@ -3,6 +3,7 @@ import type {
   ZacClassifierFailure,
   ZacRequestMode,
 } from '../routing/zac-request-mode.types';
+import type { ZacSemanticFailureKind } from './zac-semantic-health.service';
 import type { ZacEvidenceItem } from '../responses/zac-response.types';
 import type { ZacToolName } from '../tools/zac-tool.types';
 
@@ -178,6 +179,14 @@ export interface ZacSemanticRouterOutcome {
   failure: ZacClassifierFailure | null;
   /** Usage/cost of the call, for honest telemetry. Null if the call never billed. */
   completion: ZacModelCompletion | null;
+  /**
+   * The actionable cause when the call failed: bad credentials, an exhausted
+   * balance, a rejected schema, a rate limit, a timeout. The closed
+   * `ZacClassifierFailure` above drives ROUTING (it must stay small and
+   * behavioural); this drives OBSERVABILITY, and conflating them is how a 400
+   * for our own schema looked like a network blip for weeks.
+   */
+  failureKind?: ZacSemanticFailureKind;
 }
 
 export interface ZacModelCompletion {
@@ -272,6 +281,7 @@ export interface ZacPrioritySynthesisOutcome {
   raw: ZacPrioritySynthesisRawOutput | null;
   failure: ZacClassifierFailure | null;
   completion: ZacModelCompletion | null;
+  failureKind?: ZacSemanticFailureKind;
 }
 
 /** Everything the planner is allowed to see. No identity, no data, no scope. */
@@ -298,4 +308,5 @@ export interface ZacAnalysisPlanOutcome {
   raw: ZacAnalysisPlanRawOutput | null;
   failure: ZacClassifierFailure | null;
   completion: ZacModelCompletion | null;
+  failureKind?: ZacSemanticFailureKind;
 }
