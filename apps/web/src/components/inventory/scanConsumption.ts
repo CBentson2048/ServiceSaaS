@@ -96,6 +96,8 @@ export function classifyScanError(status: number, message: string, barcode?: str
 export type ConsumptionUnit = 'base' | 'pack';
 
 export interface ResolvedScan {
+  /** How the product was identified — decides the ledger's reference type. */
+  source: 'barcode' | 'search';
   barcode: string;
   productId: string;
   productName: string;
@@ -119,6 +121,7 @@ export function makeResolvedScan(
   idempotencyKey: string,
 ): ResolvedScan {
   return {
+    source: 'barcode',
     barcode,
     productId: lookup.product.id,
     productName: lookup.product.name,
@@ -127,6 +130,38 @@ export function makeResolvedScan(
     stockUnit: lookup.product.stockUnit,
     packSize: lookup.product.packSize,
     quantityOnHandGrams: lookup.quantityOnHandGrams,
+    idempotencyKey,
+  };
+}
+
+/**
+ * The same resolved state, reached by picking a product from the manual search
+ * fallback instead of scanning (§13 option C). The consumption call then
+ * carries productId rather than a barcode — the API accepts either.
+ */
+export function resolvedScanFromProduct(
+  product: {
+    id: string;
+    name: string;
+    brand?: string;
+    sku?: string;
+    stockUnit: StockUnit;
+    packSize?: number;
+    barcode?: string;
+  },
+  quantityOnHandGrams: number,
+  idempotencyKey: string,
+): ResolvedScan {
+  return {
+    source: 'search',
+    barcode: product.barcode ?? '',
+    productId: product.id,
+    productName: product.name,
+    brand: product.brand,
+    sku: product.sku,
+    stockUnit: product.stockUnit,
+    packSize: product.packSize,
+    quantityOnHandGrams,
     idempotencyKey,
   };
 }
@@ -171,6 +206,12 @@ export function validateConsumptionQuantity(
   const decimals = (input.trim().split('.')[1] ?? '').length;
   if (decimals > 3) {
     return { ok: false, message: 'Quantity supports at most 3 decimal places.' };
+  }
+  // A wedge scanner fired while the quantity box has focus types a barcode
+  // into it. No salon consumes 100,000 units of anything in one go, so treat
+  // that as the misfire it is instead of deducting it.
+  if (value > 100_000) {
+    return { ok: false, message: 'That looks like a barcode, not a quantity. Clear the box and scan again.' };
   }
   const mustBeWhole = scan.stockUnit === 'unit' || unit === 'pack';
   if (mustBeWhole && !Number.isInteger(value)) {
