@@ -2971,6 +2971,14 @@ export interface RetailSale {
   soldAt: string; // ISO
   notes?: string;
   createdAt: string; // ISO
+  // Pricing provenance snapshot taken at the moment of sale (0096). Absent on
+  // sales recorded before the pricing feature or rung up without the resolver.
+  unitCostCents?: number;
+  pricingMode?: RetailPricingMode;
+  pricingSource?: RetailPricingSource;
+  /** The configured rule value at sale time: markup % or fixed price cents. 0 is real. */
+  pricingConfiguredValue?: number;
+  effectiveMarkupPercent?: number;
 }
 
 export interface RecordRetailSaleRequest {
@@ -5269,4 +5277,288 @@ export interface ColourPrepPlan {
 
 export interface ColourPrepResponse {
   plan: ColourPrepPlan;
+}
+
+// ---------------------------------------------------------------------------
+// Retail pricing (Product Use Classification & Pricing CR — final rules)
+//
+// One canonical resolver for the retail selling price. Luke's confirmed
+// precedence, evaluated strictly in this order, stopping at the FIRST
+// configured rule (rules never stack, never add, never multiply):
+//
+//   1. location_product   — this product at this location
+//   2. product            — the product's default
+//   3. location_category  — the product's category at this location
+//   4. category           — the category's default
+//   5. location           — the location's default
+//
+// Null-vs-zero is structural: NO rule at a level means "inherit from the next
+// level"; a rule with markup 0 is an INTENTIONAL zero-markup override that
+// stops inheritance. When no rule exists at any level, the legacy behaviour
+// applies unchanged: products.retail_price_cents is the selling price.
+// ---------------------------------------------------------------------------
+
+export type RetailPricingScope =
+  | 'location_product'
+  | 'product'
+  | 'location_category'
+  | 'category'
+  | 'location';
+
+export type RetailPricingMode = 'percentage_markup' | 'fixed_price';
+
+export type RetailPricingSource =
+  | 'location_product'
+  | 'product_default'
+  | 'location_category'
+  | 'category_default'
+  | 'location_default'
+  | 'legacy_retail_price'
+  | 'manual'
+  | 'none';
+
+/** Precedence order, highest first. The resolver walks exactly this list. */
+export const RETAIL_PRICING_PRECEDENCE: readonly RetailPricingScope[] = [
+  'location_product',
+  'product',
+  'location_category',
+  'category',
+  'location',
+];
+
+export const RETAIL_PRICING_SOURCE_LABELS: Record<RetailPricingSource, string> = {
+  location_product: 'Location-specific product',
+  product_default: 'Product default',
+  location_category: 'Location-specific category',
+  category_default: 'Category default',
+  location_default: 'Location default',
+  legacy_retail_price: 'Product retail price (legacy)',
+  manual: 'Manual till override',
+  none: 'No pricing configured',
+};
+
+const SCOPE_TO_SOURCE: Record<RetailPricingScope, RetailPricingSource> = {
+  location_product: 'location_product',
+  product: 'product_default',
+  location_category: 'location_category',
+  category: 'category_default',
+  location: 'location_default',
+};
+
+/** A stored pricing rule (one level of the hierarchy). */
+export interface RetailPricingRule {
+  id: string;
+  businessId: string;
+  scope: RetailPricingScope;
+  productId?: string;
+  categoryId?: string;
+  locationId?: string;
+  pricingMode: RetailPricingMode;
+  /** Percent for percentage_markup mode. 0 is a real, intentional value. */
+  markupPercent?: number;
+  /** Cents for fixed_price mode — the FINAL selling price, not an uplift. */
+  fixedPriceCents?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** The candidate rules for one product+location, keyed by scope. */
+export type RetailPricingCandidates = Partial<
+  Record<RetailPricingScope, Pick<RetailPricingRule, 'id' | 'pricingMode' | 'markupPercent' | 'fixedPriceCents'>>
+>;
+
+/** The canonical resolution result — provenance included, never just a number. */
+export interface EffectiveRetailPricing {
+  productId: string;
+  locationId: string;
+  /** Cost per sellable unit in cents; null when the product has no recorded cost. */
+  unitCostCents: number | null;
+  /**
+   * The selling price the winning rule produces. Null only when a percentage
+   * rule wins but the product has no cost to mark up (the rule still wins —
+   * the price is honestly unknown, never invented).
+   */
+  sellingPriceCents: number | null;
+  pricingMode: RetailPricingMode | null;
+  /** The configured value of the winning rule (percent, or fixed cents). */
+  configuredValue: number | null;
+  /**
+   * Markup implied by the final price over cost, for display. Echoes the
+   * percent for percentage rules; derived for fixed rules; null when cost is
+   * missing or zero (never divide by zero, never fabricate a percentage).
+   */
+  effectiveMarkupPercent: number | null;
+  source: RetailPricingSource;
+  sourceRuleId: string | null;
+  sourceLabel: string;
+  currencyCode: string;
+}
+
+/** House rounding: integer cents, cost + round(cost × pct / 100). */
+export function applyPercentageMarkup(costCents: number, markupPercent: number): number {
+  return costCents + Math.round((costCents * markupPercent) / 100);
+}
+
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+/**
+ * THE canonical retail pricing resolver. Pure: all data is passed in, so the
+ * API, the tests and any display surface share one implementation and cannot
+ * diverge. Checks are explicit (`!== undefined`) throughout — 0 is a valid
+ * configured value and must never be treated as "unset".
+ */
+export function resolveRetailPricing(input: {
+  productId: string;
+  locationId: string;
+  /** Cost per sellable unit in cents (pack for weight products, item for unit). */
+  unitCostCents: number | null;
+  /** products.retail_price_cents — the legacy fallback when no rule exists. */
+  legacyRetailPriceCents: number | null;
+  candidates: RetailPricingCandidates;
+  currencyCode?: string;
+}): EffectiveRetailPricing {
+  const currencyCode = input.currencyCode ?? 'GBP';
+  const base = {
+    productId: input.productId,
+    locationId: input.locationId,
+    unitCostCents: input.unitCostCents,
+    currencyCode,
+  };
+
+  for (const scope of RETAIL_PRICING_PRECEDENCE) {
+    const rule = input.candidates[scope];
+    if (rule === undefined) continue; // no rule at this level -> inherit
+
+    const source = SCOPE_TO_SOURCE[scope];
+    if (rule.pricingMode === 'fixed_price') {
+      const selling = rule.fixedPriceCents ?? null;
+      const cost = input.unitCostCents;
+      return {
+        ...base,
+        sellingPriceCents: selling,
+        pricingMode: 'fixed_price',
+        configuredValue: selling,
+        effectiveMarkupPercent:
+          selling !== null && cost !== null && cost > 0
+            ? round2(((selling - cost) / cost) * 100)
+            : null,
+        source,
+        sourceRuleId: rule.id ?? null,
+        sourceLabel: RETAIL_PRICING_SOURCE_LABELS[source],
+      };
+    }
+
+    // Percentage markup. 0% is a real override: it wins and stops inheritance.
+    const percent = rule.markupPercent;
+    const cost = input.unitCostCents;
+    return {
+      ...base,
+      sellingPriceCents:
+        percent !== undefined && cost !== null ? applyPercentageMarkup(cost, percent) : null,
+      pricingMode: 'percentage_markup',
+      configuredValue: percent !== undefined ? percent : null,
+      effectiveMarkupPercent: percent !== undefined && cost !== null ? percent : null,
+      source,
+      sourceRuleId: rule.id ?? null,
+      sourceLabel: RETAIL_PRICING_SOURCE_LABELS[source],
+    };
+  }
+
+  // No rule at any level: legacy behaviour, unchanged — the product's stored
+  // retail price is the selling price (this is what the till has always done).
+  if (input.legacyRetailPriceCents !== null && input.legacyRetailPriceCents !== undefined) {
+    const cost = input.unitCostCents;
+    const selling = input.legacyRetailPriceCents;
+    return {
+      ...base,
+      sellingPriceCents: selling,
+      pricingMode: 'fixed_price',
+      configuredValue: selling,
+      effectiveMarkupPercent: cost !== null && cost > 0 ? round2(((selling - cost) / cost) * 100) : null,
+      source: 'legacy_retail_price',
+      sourceRuleId: null,
+      sourceLabel: RETAIL_PRICING_SOURCE_LABELS.legacy_retail_price,
+    };
+  }
+
+  return {
+    ...base,
+    sellingPriceCents: null,
+    pricingMode: null,
+    configuredValue: null,
+    effectiveMarkupPercent: null,
+    source: 'none',
+    sourceRuleId: null,
+    sourceLabel: RETAIL_PRICING_SOURCE_LABELS.none,
+  };
+}
+
+/**
+ * Cost per SELLABLE unit in cents: what one till transaction of quantity 1
+ * costs the salon. Mirrors the deduction arithmetic in record_retail_sale —
+ * a weight product sells a pack (pack_size × per-base cost), a unit product
+ * sells an item (per-item cost). Null when the product has no recorded cost
+ * or no resolvable pack.
+ */
+export function retailUnitCostCents(product: {
+  stockUnit: StockUnit;
+  packSize?: number | null;
+  sizeValue?: number | null;
+  defaultCostPerGramCents?: number | null;
+}): number | null {
+  const perBase = product.defaultCostPerGramCents;
+  if (perBase === null || perBase === undefined) return null;
+  if (product.stockUnit === 'unit') return Math.round(perBase);
+  const pack = product.packSize ?? product.sizeValue;
+  if (pack === null || pack === undefined || pack <= 0) return null;
+  return Math.round(perBase * pack);
+}
+
+// --- API contracts ----------------------------------------------------------
+
+export interface UpsertRetailPricingRuleRequest {
+  scope: RetailPricingScope;
+  productId?: string;
+  categoryId?: string;
+  locationId?: string;
+  pricingMode: RetailPricingMode;
+  markupPercent?: number;
+  fixedPriceCents?: number;
+}
+
+export interface RetailPricingRuleResponse {
+  rule: RetailPricingRule;
+}
+
+export interface ListRetailPricingRulesResponse {
+  rules: RetailPricingRule[];
+}
+
+export interface EffectiveRetailPricingResponse {
+  pricing: EffectiveRetailPricing;
+}
+
+/** A product the till may sell at a location, with its resolved price. */
+export interface SellableProduct {
+  product: InventoryProduct;
+  pricing: EffectiveRetailPricing;
+}
+
+export interface ListSellableProductsResponse {
+  locationId: string;
+  products: SellableProduct[];
+}
+
+/** Availability of one product across the business's locations. */
+export interface ProductLocationAvailability {
+  locationId: string;
+  locationName: string;
+  available: boolean;
+}
+
+export interface ProductAvailabilityResponse {
+  productId: string;
+  locations: ProductLocationAvailability[];
 }
