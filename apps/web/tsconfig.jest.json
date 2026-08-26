@@ -1,0 +1,17 @@
+{
+  // Compiler options for jest only. Extends the real app config so specs are
+  // checked with the SAME strictness as `tsc --noEmit` — an inline ts-jest
+  // config would drop `strict`, and without strictNullChecks TypeScript stops
+  // narrowing discriminated unions, failing specs on code the build accepts.
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "verbatimModuleSyntax": false,
+    "isolatedModules": false,
+    "esModuleInterop": true,
+    "noEmit": false,
+    "types": ["node", "jest"]
+  },
+  "include": ["src"]
+}
