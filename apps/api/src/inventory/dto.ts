@@ -336,6 +336,19 @@ export class RecordProductConsumptionDto {
   idempotencyKey?: string;
 }
 
+/**
+ * Location availability is a concept of its own — "where do we stock/sell
+ * this?" — independent of the product's use classification ("what is it
+ * for?"). Setting it maintains the product's inventory.location_stock row.
+ */
+export class SetProductAvailabilityDto {
+  @IsUUID('4', { message: 'locationId must be a valid location id' })
+  locationId!: string;
+
+  @IsBoolean()
+  available!: boolean;
+}
+
 export class DeadStockQueryDto {
   @IsOptional()
   @IsUUID('4', { message: 'locationId must be a valid location id' })

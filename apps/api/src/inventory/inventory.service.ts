@@ -34,6 +34,7 @@ import type {
   ListInventoryProductsResponse,
   ListInventoryStockResponse,
   ListInventorySuppliersResponse,
+  ProductAvailabilityResponse,
 } from '@sheer/domain';
 import { userHasPermission, userHasRole } from '@sheer/domain';
 import { resolveStockUnit, roundBaseQuantity, toBaseQuantity } from './unit-conversion';
@@ -53,10 +54,11 @@ import type {
   UpdateInventoryStockThresholdDto,
   UpdateInventorySupplierDto,
   RecordProductConsumptionDto,
+  SetProductAvailabilityDto,
   UpsertInventoryProductDto,
 } from './dto';
 
-interface ProductRow {
+export interface ProductRow {
   id: string;
   business_id: string;
   brand: string | null;
@@ -164,7 +166,7 @@ interface SupplierRow {
   updated_at: string;
 }
 
-const PRODUCT_COLUMNS =
+export const PRODUCT_COLUMNS =
   'id,business_id,brand,name,category_id,sku,size_value,size_unit,default_unit,default_cost_per_gram_cents,retail_price_cents,low_stock_threshold_grams,is_active,stock_unit,pack_size,barcode,supplier_id,minimum_order_quantity,order_multiple,dead_stock_days,is_salon_use,is_lab_use,is_retail,lab_markup_percent,created_at,updated_at';
 const STOCK_COLUMNS =
   'id,business_id,location_id,product_id,quantity_on_hand_grams,low_stock_threshold_grams,is_active,updated_at';
@@ -472,6 +474,104 @@ export class InventoryService {
       this.fetchLocations(actor.businessId, locationIds),
     ]);
     return { alerts: (data ?? []).map((row) => toAlert(row, products, locations)) };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Location availability (classification CR)
+  //
+  // "Available at a location" = an ACTIVE inventory.location_stock row. This
+  // reuses the existing per-location product structure (unique per pair,
+  // indexed, tenant-scoped) rather than inventing a parallel table, and it is
+  // deliberately independent of the product's use classification: Retail=true
+  // does not make a product available anywhere, and availability does not make
+  // it retail.
+  // ---------------------------------------------------------------------------
+
+  async getProductAvailability(actor: AuthUser, productId: string): Promise<ProductAvailabilityResponse> {
+    this.assertManagerOrOwner(actor);
+    await this.assertProductAnyState(actor.businessId, productId);
+    const [locations, stockRows] = await Promise.all([
+      this.fetchLocations(actor.businessId),
+      this.fetchStockRowsForProduct(actor.businessId, productId),
+    ]);
+    const activeByLocation = new Map(stockRows.map((row) => [row.location_id, row.is_active]));
+    return {
+      productId,
+      locations: locations.map((location) => ({
+        locationId: location.id,
+        locationName: location.name,
+        available: activeByLocation.get(location.id) === true,
+      })),
+    };
+  }
+
+  async setProductAvailability(
+    actor: AuthUser,
+    productId: string,
+    dto: SetProductAvailabilityDto,
+  ): Promise<ProductAvailabilityResponse> {
+    await this.assertLocationScope(actor, dto.locationId);
+    await this.assertProductAnyState(actor.businessId, productId);
+
+    // Upsert keeps any existing stock quantity untouched; a brand-new row
+    // starts at zero on hand. Making a product unavailable only flags the row —
+    // stock history and levels are preserved.
+    const { error } = await this.admin.schema('inventory').from('location_stock').upsert(
+      {
+        business_id: actor.businessId,
+        location_id: dto.locationId,
+        product_id: productId,
+        is_active: dto.available,
+      },
+      { onConflict: 'location_id,product_id' },
+    );
+    if (error) {
+      this.logger.error(`setProductAvailability failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to update product availability');
+    }
+
+    await this.audit.record(actor, {
+      action: 'product.availability_changed',
+      entityType: 'product',
+      entityId: productId,
+      locationId: dto.locationId,
+      after: { available: dto.available },
+    });
+    return this.getProductAvailability(actor, productId);
+  }
+
+  private async fetchStockRowsForProduct(
+    businessId: string,
+    productId: string,
+  ): Promise<{ location_id: string; is_active: boolean }[]> {
+    const { data, error } = await this.admin
+      .schema('inventory')
+      .from('location_stock')
+      .select('location_id,is_active')
+      .eq('business_id', businessId)
+      .eq('product_id', productId)
+      .returns<{ location_id: string; is_active: boolean }[]>();
+    if (error) {
+      this.logger.error(`fetchStockRowsForProduct failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load product availability');
+    }
+    return data ?? [];
+  }
+
+  /** Like assertProduct but archived products remain manageable. */
+  private async assertProductAnyState(businessId: string, productId: string): Promise<void> {
+    const { data, error } = await this.admin
+      .schema('inventory')
+      .from('products')
+      .select('id')
+      .eq('business_id', businessId)
+      .eq('id', productId)
+      .maybeSingle<{ id: string }>();
+    if (error) {
+      this.logger.error(`assertProductAnyState failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to validate product');
+    }
+    if (!data) throw new NotFoundException('Inventory product not found');
   }
 
   // ---------------------------------------------------------------------------
@@ -1318,7 +1418,7 @@ function clean(value: string | null | undefined): string | null {
   return next ? next : null;
 }
 
-function toProduct(
+export function toProduct(
   row: ProductRow,
   categoryNames?: Map<string, string>,
   supplierNames?: Map<string, string>,

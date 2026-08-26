@@ -1,10 +1,11 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
 import type {
   AuthUser,
   InventoryCategoryResponse,
   InventoryProductResponse,
   InventoryStockMutationResponse,
   InventorySupplierResponse,
+  ProductAvailabilityResponse,
   ListInventoryCategoriesResponse,
   ListInventoryDeadStockResponse,
   ListInventoryLowStockResponse,
@@ -37,6 +38,7 @@ import {
   UpsertInventoryProductDto,
   BarcodeLookupQueryDto,
   RecordProductConsumptionDto,
+  SetProductAvailabilityDto,
 } from './dto';
 import { InventoryService } from './inventory.service';
 
@@ -67,6 +69,21 @@ export class InventoryController {
     @Body() dto: UpsertInventoryProductDto,
   ): Promise<InventoryProductResponse> {
     return this.inventory.updateProduct(actor, id, dto);
+  }
+
+  @Get('products/:id/availability')
+  getAvailability(@CurrentUser() actor: AuthUser, @Param('id') id: string): Promise<ProductAvailabilityResponse> {
+    return this.inventory.getProductAvailability(actor, id);
+  }
+
+  /** Where is this product stocked/sold? Independent of its use classification. */
+  @Put('products/:id/availability')
+  setAvailability(
+    @CurrentUser() actor: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: SetProductAvailabilityDto,
+  ): Promise<ProductAvailabilityResponse> {
+    return this.inventory.setProductAvailability(actor, id, dto);
   }
 
   @Post('products/:id/archive')
