@@ -207,6 +207,68 @@ schedule, print action).
 
 ---
 
+## 10c. Addendum (2026-08-26) — Product Use Classification & Pricing (approved CR)
+
+The CR is commercially approved; Luke's final rules are implemented in full.
+Migration **`0096_retail_pricing_and_classification.sql`**.
+
+**Three separate concepts, kept separate end to end:**
+1. **Use classification** — the existing 0079 booleans (`is_retail`,
+   `is_salon_use`, `is_lab_use`), multi-select, now editable on the product
+   form ("Product use").
+2. **Location availability** — where a product is stocked/sold. NO new table:
+   an ACTIVE `inventory.location_stock` row IS availability (the existing
+   structure already models product+location+active with the right uniqueness
+   and indexes). "Available locations" checkboxes on the product form;
+   `GET/PUT /inventory/products/:id/availability`.
+3. **Pricing** — the new Pricing tab under Product management.
+
+**The retail picker** (`GET /retail-sales/sellable?locationId`) shows a product
+only when Retail AND available at the location AND active — the till modal now
+uses it, with the canonical price prefilled and its source shown.
+
+**Pricing precedence (authoritative):** location product → product default →
+location category → category default → location default. First configured rule
+wins and STOPS; rules never stack. Every level supports percentage markup OR a
+fixed selling price (a FINAL price, not an uplift). **NULL inherits; explicit
+0% is a real zero-markup override** — enforced at DB (row-absence vs
+`markup_percent = 0`), API (`!== undefined` checks), resolver, UI (blank input
+is invalid, never coerced to 0) and tests. With no rule at any level, the
+legacy `products.retail_price_cents` applies exactly as before — the table
+ships empty, so **no salon's price moves because the schema landed**.
+
+**One canonical resolver:** `resolveRetailPricing` in `packages/domain` (pure);
+consumed by the API's effective endpoint, the batch picker resolution (one
+rules query for any product count — no N+1), the till, and the DB acceptance
+harness. Provenance is part of the result: price, mode, configured value,
+effective markup (derived for fixed prices, null when cost is 0/missing —
+never divide-by-zero, never fabricated), source + rule id + label. Rounding is
+the house convention: integer cents, `cost + round(cost × pct / 100)`.
+
+**Transaction lock point:** a retail sale is single-shot — the price locks at
+`POST /retail-sales`. The service resolves canonically (or accepts a till
+override, snapshotted as source `manual`) and `record_retail_sale` persists
+cost, mode, source, configured value and effective markup into the sale row.
+Completed sales are never recomputed; history reads stored values only.
+Rule changes are audited (`retail_pricing.rule_set/rule_cleared`).
+
+**Permissions:** the whole pricing surface sits behind
+`settings.billing.manage` (owner + manager per existing contracts); location-
+bound rules re-check the caller's location scope; stylists/front-desk gain
+nothing. The picker itself needs only `retail.record`.
+
+**Verification:** resolver matrix `retail-pricing.resolver.spec.ts` (27 cases —
+every precedence level, null-vs-zero, fixed semantics, rounding),
+`retail-pricing.service.spec.ts` (validation/tenancy/batch),
+`retail-sales.service.spec.ts` (lock point, manual override, picker filters,
+historical immutability), `pricingRuleForm.spec.ts` (blank≠0 at the UI
+boundary), and harness Phase E (constraints on the real DB + **Luke's §43 UAT
+chain executed against real rows**: £18 → £13 → £12.50 → £12 → £11 → 0%→£10 →
+fixed £17, plus the completed-sale-unchanged proof). **Action: apply 0096 in
+the dev_test SQL editor, then `pnpm --filter @sheer/api week6-acceptance`.**
+
+---
+
 ## 11a. Addendum (2026-08-25) — Week 6 closure pass
 
 **Ticket 3 completed.** The scan-to-consume surface now exists on `/inventory`
