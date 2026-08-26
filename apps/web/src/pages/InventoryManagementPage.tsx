@@ -13,6 +13,7 @@ const TABS: InventoryTab[] = [
   { to: '/inventory', label: 'Products', end: true },
   { to: '/inventory/categories', label: 'Product categories' },
   { to: '/inventory/suppliers', label: 'Suppliers' },
+  { to: '/inventory/pricing', label: 'Pricing' },
 ];
 
 export function InventoryManagementPage() {

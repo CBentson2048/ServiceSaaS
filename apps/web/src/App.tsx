@@ -28,6 +28,7 @@ import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
 import { InventoryCategoriesPage } from './pages/InventoryCategoriesPage';
 import { InventorySuppliersPage } from './pages/InventorySuppliersPage';
 import { OrdersPage } from './pages/OrdersPage';
+import { RetailPricingPage } from './pages/RetailPricingPage';
 import { InventoryManagementPage } from './pages/InventoryManagementPage';
 import { InventoryPage } from './pages/InventoryPage';
 import { ColourPrepPage } from './pages/ColourPrepPage';
@@ -207,6 +208,7 @@ export function App() {
               <Route index element={<InventoryPage />} />
               <Route path="categories" element={<InventoryCategoriesPage />} />
               <Route path="suppliers" element={<InventorySuppliersPage />} />
+              <Route path="pricing" element={<RetailPricingPage />} />
             </Route>
           </Route>
           <Route

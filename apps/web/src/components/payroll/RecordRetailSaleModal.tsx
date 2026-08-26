@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { InventoryProduct, RetailPaymentMethod, StaffMember } from '@sheer/domain';
+import { RETAIL_PRICING_SOURCE_LABELS } from '@sheer/domain';
+import type { SellableProduct, RetailPaymentMethod, StaffMember } from '@sheer/domain';
 import { AppButton, AppText } from '../../design';
 import { Modal } from '../team/Modal';
 import { formatMoney } from '../kpi/format';
 import { useAuth } from '../../auth/AuthProvider';
 import {
   ApiRequestError,
-  listInventoryProducts,
+  listSellableProducts,
   listStaff,
   recordRetailSale,
 } from '../../auth/api';
@@ -57,7 +58,7 @@ export function RecordRetailSaleModal({
   const accessToken = auth.session?.accessToken;
   const locations = auth.user?.locations ?? [];
 
-  const [products, setProducts] = useState<InventoryProduct[]>([]);
+  const [sellable, setSellable] = useState<SellableProduct[]>([]);
   const [staff, setStaff] = useState<StaffMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -77,15 +78,21 @@ export function RecordRetailSaleModal({
   const [error, setError] = useState<string | null>(null);
   const [recordedMessage, setRecordedMessage] = useState<string | null>(null);
 
+  // The picker is the SELLABLE list for the chosen location: Retail-classified
+  // AND available there, each with its canonical effective price + provenance.
   useEffect(() => {
-    if (!accessToken) return;
+    if (!accessToken || !locationId) return;
     let cancelled = false;
     setLoading(true);
     setLoadError(null);
-    Promise.all([listInventoryProducts(accessToken), listStaff(accessToken)])
-      .then(([productsRes, staffRes]) => {
+    Promise.all([listSellableProducts(accessToken, locationId), listStaff(accessToken)])
+      .then(([sellableRes, staffRes]) => {
         if (cancelled) return;
-        setProducts(productsRes.products.filter((product) => product.isActive));
+        setSellable(sellableRes.products);
+        // A product chosen for another location may not be sellable here.
+        setProductId((current) =>
+          sellableRes.products.some((entry) => entry.product.id === current) ? current : '',
+        );
         setStaff(
           staffRes.staff.filter(
             (member) => member.staffProfile && member.membershipStatus === 'active',
@@ -105,7 +112,7 @@ export function RecordRetailSaleModal({
     return () => {
       cancelled = true;
     };
-  }, [accessToken]);
+  }, [accessToken, locationId]);
 
   // Split the stylist list by the SELECTED location: attribution is almost
   // always someone working this salon, but cover shifts across locations are
@@ -124,21 +131,22 @@ export function RecordRetailSaleModal({
     [staff, staffAtLocation],
   );
 
-  const selectedProduct = useMemo(
-    () => products.find((product) => product.id === productId) ?? null,
-    [products, productId],
+  const selectedEntry = useMemo(
+    () => sellable.find((entry) => entry.product.id === productId) ?? null,
+    [sellable, productId],
   );
+  const selectedProduct = selectedEntry?.product ?? null;
+  const resolvedPriceCents = selectedEntry?.pricing.sellingPriceCents ?? null;
 
   const handleProductChange = useCallback(
     (nextProductId: string) => {
       setProductId(nextProductId);
-      const product = products.find((candidate) => candidate.id === nextProductId);
-      // Prefill the PER-UNIT price from the product's configured retail price.
-      setUnitPrice(
-        product?.retailPriceCents !== undefined ? (product.retailPriceCents / 100).toFixed(2) : '',
-      );
+      const entry = sellable.find((candidate) => candidate.product.id === nextProductId);
+      // Prefill the PER-UNIT price from the canonical resolver's answer.
+      const cents = entry?.pricing.sellingPriceCents;
+      setUnitPrice(cents !== null && cents !== undefined ? (cents / 100).toFixed(2) : '');
     },
-    [products],
+    [sellable],
   );
 
   const quantityValue = /^\d+$/.test(quantity.trim()) ? Number(quantity.trim()) : null;
@@ -163,12 +171,16 @@ export function RecordRetailSaleModal({
     setError(null);
     setRecordedMessage(null);
     try {
+      // When the till price matches the resolved price, OMIT it: the server
+      // re-resolves canonically and snapshots the rule's provenance. A changed
+      // price is a deliberate manual override, recorded as such.
+      const manualOverride = resolvedPriceCents === null || unitPriceCents !== resolvedPriceCents;
       const response = await recordRetailSale(accessToken, {
         locationId,
         productId,
         staffProfileId,
         quantity: quantityValue,
-        unitPriceCents,
+        ...(manualOverride ? { unitPriceCents } : {}),
         paymentMethod,
       });
       onRecorded();
@@ -195,6 +207,7 @@ export function RecordRetailSaleModal({
     canSubmit,
     quantityValue,
     unitPriceCents,
+    resolvedPriceCents,
     locationId,
     productId,
     staffProfileId,
@@ -282,23 +295,36 @@ export function RecordRetailSaleModal({
                 <option value="" disabled>
                   Pick a product
                 </option>
-                {products.map((product) => {
-                  const hasRetailPrice = product.retailPriceCents !== undefined;
+                {sellable.map(({ product, pricing }) => {
+                  const hasPrice = pricing.sellingPriceCents !== null;
                   const nameWithBrand = product.brand
                     ? `${product.name} — ${product.brand}`
                     : product.name;
                   return (
-                    <option key={product.id} value={product.id} disabled={!hasRetailPrice}>
-                      {hasRetailPrice
-                        ? `${nameWithBrand} — ${formatMoney(product.retailPriceCents ?? 0, 'GBP')}`
-                        : `${nameWithBrand} (no retail price set)`}
+                    <option key={product.id} value={product.id} disabled={!hasPrice}>
+                      {hasPrice
+                        ? `${nameWithBrand} — ${formatMoney(pricing.sellingPriceCents ?? 0, pricing.currencyCode)}`
+                        : `${nameWithBrand} (no price configured)`}
                     </option>
                   );
                 })}
               </select>
-              {products.length === 0 ? (
+              {selectedEntry ? (
                 <span className="mt-1.5 block text-[12px] text-text-secondary">
-                  No active products. Add products with a retail price under Product management.
+                  {resolvedPriceCents !== null
+                    ? `${formatMoney(resolvedPriceCents, selectedEntry.pricing.currencyCode)} — ${RETAIL_PRICING_SOURCE_LABELS[selectedEntry.pricing.source]}${
+                        selectedEntry.pricing.effectiveMarkupPercent !== null
+                          ? ` (${selectedEntry.pricing.effectiveMarkupPercent}% markup)`
+                          : ''
+                      }${unitPriceCents !== null && unitPriceCents !== resolvedPriceCents ? ' — edited: will be recorded as a manual till override' : ''}`
+                    : 'No price configured for this product — enter one to record a manual sale.'}
+                </span>
+              ) : null}
+              {sellable.length === 0 ? (
+                <span className="mt-1.5 block text-[12px] text-text-secondary">
+                  Nothing is sellable at this location. A product appears here when it is marked
+                  Retail (Product use) AND available at this location — both are set under Product
+                  management.
                 </span>
               ) : null}
             </label>

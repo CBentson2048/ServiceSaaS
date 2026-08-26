@@ -35,11 +35,16 @@ import {
 import { useAuth } from '../auth/AuthProvider';
 import { useLocationScope } from '../components/LocationScopeContext';
 import { ScanConsumptionCard } from '../components/inventory/ScanConsumptionCard';
+import { getProductAvailability, setProductAvailability } from '../auth/api';
+import type { ProductLocationAvailability } from '@sheer/domain';
 
 type ProductForm = {
   id?: string;
   brand: string;
   name: string;
+  isRetail: boolean;
+  isSalonUse: boolean;
+  isLabUse: boolean;
   categoryId: string;
   // Display name of the selected category; only used to label a still-selected
   // category that is no longer in the active list (e.g. archived after assignment).
@@ -64,6 +69,9 @@ type ProductForm = {
 const emptyProductForm: ProductForm = {
   brand: '',
   name: '',
+  isRetail: false,
+  isSalonUse: false,
+  isLabUse: false,
   categoryId: '',
   categoryName: '',
   sku: '',
@@ -245,6 +253,9 @@ export function InventoryPage() {
         minimumOrderQuantity: optionalInteger(productForm.minimumOrderQuantity) ?? 1,
         orderMultiple: optionalInteger(productForm.orderMultiple) ?? 1,
         deadStockDays: optionalInteger(productForm.deadStockDays) ?? null,
+        isRetail: productForm.isRetail,
+        isSalonUse: productForm.isSalonUse,
+        isLabUse: productForm.isLabUse,
       };
       const result = productForm.id
         ? await updateInventoryProduct(accessToken, productForm.id, payload)
@@ -528,6 +539,42 @@ export function InventoryPage() {
               <NumberInput value={productForm.minimumOrderQuantity} onChange={(value) => setProductForm({ ...productForm, minimumOrderQuantity: value })} placeholder="Min order (packs)" positiveOnly />
               <NumberInput value={productForm.orderMultiple} onChange={(value) => setProductForm({ ...productForm, orderMultiple: value })} placeholder="Order multiple (packs)" positiveOnly />
               <NumberInput value={productForm.deadStockDays} onChange={(value) => setProductForm({ ...productForm, deadStockDays: value })} placeholder="Dead stock after (days)" positiveOnly />
+              {/* PRODUCT USE — what this product is FOR. Deliberately separate
+                  from where it is stocked (availability, below) and from what
+                  it costs (the Pricing tab). Multiple selections are normal. */}
+              <fieldset className="md:col-span-3 rounded-input-lg border border-border bg-surface px-3 py-2.5">
+                <legend className="px-1 text-[12px] font-medium text-text-secondary">Product use — what is this product for?</legend>
+                <div className="flex flex-wrap gap-x-6 gap-y-1.5">
+                  {(
+                    [
+                      ['isRetail', 'Retail (sold to clients)'],
+                      ['isSalonUse', 'Salon use (backbar)'],
+                      ['isLabUse', 'QLAB (colour formulas)'],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <label key={key} className="flex items-center gap-2 text-[13px] text-text-primary">
+                      <input
+                        type="checkbox"
+                        checked={productForm[key]}
+                        onChange={(event) => setProductForm({ ...productForm, [key]: event.target.checked })}
+                        className="h-4 w-4 rounded border-border-strong text-primary focus:ring-primary/20"
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+                <p className="mt-1.5 text-[11px] text-text-muted">
+                  Use decides which screens offer the product (e.g. only Retail products appear at the till).
+                  Where it is stocked is set below; what it sells for lives on the Pricing tab.
+                </p>
+              </fieldset>
+              {productForm.id ? (
+                <ProductAvailabilityEditor productId={productForm.id} accessToken={accessToken} />
+              ) : (
+                <p className="md:col-span-3 text-[12px] text-text-muted">
+                  Save the product first, then set which locations stock it.
+                </p>
+              )}
               <div className="flex gap-2 md:col-span-3">
                 <button type="button" className="h-9 rounded-pill bg-primary px-4 text-[12px] font-semibold text-text-on-primary disabled:opacity-50" onClick={() => void handleSaveProduct()} disabled={busy === 'product'}>
                   {productForm.id ? 'Update product' : 'Create product'}
@@ -876,6 +923,82 @@ export function InventoryPage() {
   );
 }
 
+/**
+ * AVAILABLE LOCATIONS — where this product is stocked/sold. A concept of its
+ * own: Retail classification does NOT make a product available anywhere, and
+ * availability does not make it retail. Toggles apply immediately (they flag
+ * the product's shelf record; stock history is preserved).
+ */
+function ProductAvailabilityEditor({
+  productId,
+  accessToken,
+}: {
+  productId: string;
+  accessToken: string | undefined;
+}) {
+  const [rows, setRows] = useState<ProductLocationAvailability[]>([]);
+  const [busyLocation, setBusyLocation] = useState<string | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    let cancelled = false;
+    getProductAvailability(accessToken, productId)
+      .then((res) => {
+        if (!cancelled) setRows(res.locations);
+      })
+      .catch(() => {
+        if (!cancelled) setProblem('Could not load availability.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, productId]);
+
+  async function toggle(locationId: string, available: boolean) {
+    if (!accessToken) return;
+    setBusyLocation(locationId);
+    setProblem(null);
+    try {
+      const res = await setProductAvailability(accessToken, productId, { locationId, available });
+      setRows(res.locations);
+    } catch {
+      setProblem('Could not update availability.');
+    } finally {
+      setBusyLocation(null);
+    }
+  }
+
+  return (
+    <fieldset className="md:col-span-3 rounded-input-lg border border-border bg-surface px-3 py-2.5">
+      <legend className="px-1 text-[12px] font-medium text-text-secondary">
+        Available locations — where do we stock or sell it?
+      </legend>
+      <div className="flex flex-wrap gap-x-6 gap-y-1.5">
+        {rows.map((row) => (
+          <label key={row.locationId} className="flex items-center gap-2 text-[13px] text-text-primary">
+            <input
+              type="checkbox"
+              checked={row.available}
+              disabled={busyLocation === row.locationId}
+              onChange={(event) => void toggle(row.locationId, event.target.checked)}
+              className="h-4 w-4 rounded border-border-strong text-primary focus:ring-primary/20"
+            />
+            {row.locationName}
+          </label>
+        ))}
+        {rows.length === 0 && !problem ? (
+          <span className="text-[12px] text-text-muted">Loading locations…</span>
+        ) : null}
+      </div>
+      <p className="mt-1.5 text-[11px] text-text-muted">
+        Changes apply immediately. The till only offers Retail products at locations ticked here.
+      </p>
+      {problem ? <p className="mt-1 text-[12px] text-danger">{problem}</p> : null}
+    </fieldset>
+  );
+}
+
 const inputClass =
   'h-9 w-full rounded-input-lg border border-border-strong bg-surface px-3 text-[13px] outline-none focus:border-primary';
 const inputClassTall =
@@ -1195,6 +1318,9 @@ function toProductForm(product: InventoryProduct): ProductForm {
     id: product.id,
     brand: product.brand ?? '',
     name: product.name,
+    isRetail: product.isRetail,
+    isSalonUse: product.isSalonUse,
+    isLabUse: product.isLabUse,
     categoryId: product.categoryId ?? '',
     categoryName: product.category ?? '',
     sku: product.sku ?? '',
