@@ -23,11 +23,14 @@
 import path from 'node:path';
 import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
+// The package entry, not a deep path into src: a relative directory import
+// resolves to the built package here and silently yielded a module without
+// the resolver, which skipped the whole §43 pricing chain at runtime.
 import {
   resolveRetailPricing,
   type RetailPricingCandidates,
   type RetailPricingScope,
-} from '../../../packages/domain/src';
+} from '@sheer/domain';
 
 const apiRoot = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(apiRoot, '..', '..');
