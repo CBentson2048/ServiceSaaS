@@ -13,6 +13,7 @@ import { HealthModule } from './health/health.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { ColourPrepModule } from './colour-prep/colour-prep.module';
 import { OrdersModule } from './orders/orders.module';
+import { RetailPricingModule } from './retail-pricing/retail-pricing.module';
 import { LabAppointmentsModule } from './lab-appointments/lab-appointments.module';
 import { LabBillingRulesModule } from './lab-billing-rules/lab-billing-rules.module';
 import { LabAnalyticsModule } from './lab-analytics/lab-analytics.module';
@@ -81,6 +82,7 @@ import { validateEnv } from './config/env.validation';
     InventoryModule,
     ColourPrepModule,
     OrdersModule,
+    RetailPricingModule,
     HealthModule,
     MobileDashboardModule,
     LabDeviceModule,
