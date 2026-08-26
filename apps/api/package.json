@@ -19,7 +19,8 @@
     "seed-dead-stock": "ts-node --transpile-only scripts/seed-dead-stock.ts",
     "week6-acceptance": "ts-node --transpile-only scripts/week6-acceptance.ts",
     "zac-routing-eval": "ts-node --transpile-only scripts/zac-routing-eval.ts",
-    "zac-hosted-acceptance": "ts-node --transpile-only scripts/zac-hosted-acceptance.ts"
+    "zac-hosted-acceptance": "ts-node --transpile-only scripts/zac-hosted-acceptance.ts",
+    "zac-production-eval": "ts-node --transpile-only scripts/zac-production-eval.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",

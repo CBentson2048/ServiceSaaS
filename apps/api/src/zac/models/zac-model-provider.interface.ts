@@ -54,6 +54,30 @@ export interface ZacModelEvidencePack {
 }
 
 /**
+ * Several permission-checked sources, plus the deterministic ranking, for ONE
+ * synthesis. Kept distinct from `evidencePack` because the task is different:
+ * narration restates one tool's answer, synthesis weighs several against each
+ * other and returns a small number of priorities.
+ */
+export interface ZacModelSynthesisPack {
+  strategy: string;
+  /** Ranked, source-attributed one-liners — the only measurements available. */
+  signals: Array<{
+    sourceTool: ZacToolName;
+    headline: string;
+    severity: string;
+    /** 'tool_threshold' | 'user_memory_goal' | null — provenance for any target. */
+    targetSource: string | null;
+  }>;
+  /** Sources that could not contribute, stated honestly rather than hidden. */
+  limitations: string[];
+  /** How many priorities to return at most. */
+  requestedCount: number;
+  /** Domains that were NOT assessed, so coverage is not overstated. */
+  unassessedDomains: string[];
+}
+
+/**
  * User-stated context memory entering one narration — clearly separated from
  * tool evidence so a remembered aspiration can never masquerade as a live
  * figure. Summaries are already redacted; providers must never log them.
@@ -88,6 +112,12 @@ export interface ZacModelRequest {
    * (capability/foundation turns), answer honestly about capabilities only.
    */
   evidencePack?: ZacModelEvidencePack;
+  /**
+   * Present = synthesise across several sources instead of narrating one.
+   * Mutually exclusive with `evidencePack` in practice; when both are present
+   * the synthesis pack wins, because it already contains the same figures.
+   */
+  synthesisPack?: ZacModelSynthesisPack;
   /** User-stated memory relevant to this turn; NEVER merged into evidence. */
   memoryContext?: ZacModelMemoryItem[];
   /** Absent on legacy/stateless turns — providers then behave as before. */
@@ -99,6 +129,12 @@ export interface ZacModelRequest {
    * Absent = narration behaviour (back-compat).
    */
   mode?: ZacRequestMode;
+  /**
+   * How many items the user asked for, when they asked for a number. Advisory
+   * answers honour it too: "the 2 biggest things a salon owner should focus
+   * on" is an instruction whether or not any data is read.
+   */
+  requestedCount?: number;
 }
 
 /**
@@ -184,4 +220,82 @@ export interface ZacModelProvider {
    * tool names, permissions, actor identity or scope.
    */
   classifyRequestMode?(input: ZacSemanticRouterInput): Promise<ZacSemanticRouterOutcome>;
+  /**
+   * Optional: decide WHAT KIND of analysis a live-data question needs, and
+   * which of the supplied evidence sources would answer it.
+   *
+   * The catalogue it receives has already been filtered to tools this actor
+   * may use right now, so the model cannot propose anything it was not shown —
+   * and everything it returns is re-validated server-side anyway. It is never
+   * told who the actor is, what permissions they hold, or any business data.
+   */
+  planAnalysis?(input: ZacAnalysisPlanInput): Promise<ZacAnalysisPlanOutcome>;
+  /**
+   * Optional: choose and explain priorities from a supplied candidate list.
+   *
+   * Structured on purpose. Free prose let the model return four priorities for
+   * a request for two, repeat one, and split a single issue across slots —
+   * because nothing downstream could tell which sentence was which priority.
+   * Selecting by candidate id makes every one of those a validation failure
+   * instead of a user-visible defect: the model cannot invent a candidate, and
+   * the server does the counting.
+   */
+  synthesisePriorities?(input: ZacPrioritySynthesisInput): Promise<ZacPrioritySynthesisOutcome>;
+}
+
+/** What the priority synthesiser may see. Candidates only — no raw payloads. */
+export interface ZacPrioritySynthesisInput {
+  question: string;
+  roleContext: ZacRoleContext;
+  requestedCount: number;
+  candidates: Array<{
+    id: string;
+    title: string;
+    headline: string;
+    severity: string;
+    supporting: string[];
+    /** 'user_memory_goal' when a target came from what the user told ZAC. */
+    targetSource: string | null;
+  }>;
+  limitations: string[];
+  unassessedAreas: string[];
+}
+
+/** Untrusted synthesis output. Every id is validated against the candidates. */
+export interface ZacPrioritySynthesisRawOutput {
+  priorities?: unknown;
+  /** Optional one-line framing; validated for grounding like any other prose. */
+  preamble?: unknown;
+}
+
+export interface ZacPrioritySynthesisOutcome {
+  raw: ZacPrioritySynthesisRawOutput | null;
+  failure: ZacClassifierFailure | null;
+  completion: ZacModelCompletion | null;
+}
+
+/** Everything the planner is allowed to see. No identity, no data, no scope. */
+export interface ZacAnalysisPlanInput {
+  question: string;
+  roleContext: ZacRoleContext;
+  /** Permitted, enabled sources only — name + purpose, nothing more. */
+  catalogue: Array<{ name: string; purpose: string; domains: string[] }>;
+  recentTurnSummaries?: string[];
+  /** Kinds only ('business_goal'), never the remembered text. */
+  memoryKinds?: string[];
+}
+
+/** Untrusted planner output. Every field is validated before it is used. */
+export interface ZacAnalysisPlanRawOutput {
+  analysis_intent?: unknown;
+  reason_code?: unknown;
+  confidence?: unknown;
+  tools?: unknown;
+  synthesis_strategy?: unknown;
+}
+
+export interface ZacAnalysisPlanOutcome {
+  raw: ZacAnalysisPlanRawOutput | null;
+  failure: ZacClassifierFailure | null;
+  completion: ZacModelCompletion | null;
 }

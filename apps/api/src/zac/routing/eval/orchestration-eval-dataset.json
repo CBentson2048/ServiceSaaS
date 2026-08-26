@@ -1,0 +1,833 @@
+[
+  {
+    "prompt": "use everythin youve got on us and come back with the handful of things that actually matter",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Explicit 'use everything' breadth marker plus a request for a shortlist to act on — the defining shape, wrapped in typos so no clean trigger string survives."
+  },
+  {
+    "prompt": "cast your eye over the whole shop for me, not one number, the lot, and tell me whats worth my time this month",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Whole-business sweep explicitly rejecting a single measure; the deliverable is where to spend time, not a snapshot, so it beats business_health."
+  },
+  {
+    "prompt": "If you were sat in my chair on a Monday morning with the books open, what would you sort out first?",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Role-swap framing ('if you were me') asking for the first thing to fix — prioritisation with no priority vocabulary anywhere in it."
+  },
+  {
+    "prompt": "ive got maybe an hour before my 10 oclock colour, wheres that hour best spent",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Constrained-time framing forces ranking across the business; the salon detail is scene-setting, not a request about that appointment."
+  },
+  {
+    "prompt": "what's hurting us most at the minute?",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Near-miss for diagnostic, but no result has been named and nothing asks why — it asks ZAC to weigh everything up and surface the worst problem to act on."
+  },
+  {
+    "prompt": "where's the low hanging fruit? something we can turn round this month without spending money",
+    "role": "manager",
+    "expectedIntent": "business_priorities",
+    "rationale": "Asks for the easiest wins across the business filtered by effort and cost — an opportunity ranking, which is prioritisation rather than an overview."
+  },
+  {
+    "prompt": "Give me three things. That's it. Three.",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Bare count with no named subject; in a live-data conversation the only sensible reading is three things to act on, drawn from across the business."
+  },
+  {
+    "prompt": "i dont want one kpi off you, i want the picture — and then tell me what to do about it",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Explicitly refuses specific_metric and asks for breadth plus recommended action, which is what separates it from a plain business_health snapshot."
+  },
+  {
+    "prompt": "where am i leaking money",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Three words, no metric named, no known result to explain — a sweep for the biggest drains worth fixing, so priorities rather than diagnostic."
+  },
+  {
+    "prompt": "Biggest gap in the business right now — what is it?",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "'Biggest gap' scoped to the whole business is a request to rank shortfalls and return the top one."
+  },
+  {
+    "prompt": "so weve had a decent few weeks on the surface, takings look alright, but ive got this nagging feeling somethings not right underneath and i honestly dont know where to look first, youve got all the numbers so tell me what youd be worried about if it was your salon",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Long and rambling with a revenue mention that could pull it to specific_metric, but the actual ask is 'what would worry you across the lot' — a prioritised concern list."
+  },
+  {
+    "prompt": "where do i start?",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Minimal form. No object, no metric, no comparison — the user wants ZAC to pick the starting point out of everything it can see."
+  },
+  {
+    "prompt": "whats the one thing",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Terse and unpunctuated; a request for the single most important item, which requires weighing the business rather than reading one measure."
+  },
+  {
+    "prompt": "The owner's in Friday and will want to know what we're on top of. Weigh the salon up and give me the two or three that genuinely need sorting.",
+    "role": "manager",
+    "expectedIntent": "business_priorities",
+    "rationale": "Near-miss for team_priorities because of the reporting context, but nothing asks about people — it asks which parts of the business need sorting."
+  },
+  {
+    "prompt": "rank my problems for me",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Ranking is the whole request; it necessarily spans every source rather than resolving to one figure."
+  },
+  {
+    "prompt": "if you had to bet on where the next two grand comes from, where would you point me?",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Sounds revenue-shaped but is not a revenue lookup — it asks where effort would pay best, which is an opportunity ranking across the business."
+  },
+  {
+    "prompt": "everythings a bit meh at the moment. whats actually worth fixing and what can wait?",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Explicit split into act-now versus leave-alone is prioritisation; the vague opener carries no metric to look up."
+  },
+  {
+    "prompt": "im drowning a bit if im honest. tell me the stuff thats worth my energy and the stuff i can leave alone til september",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Emotional framing around an attention-allocation request — where to spend effort, judged across the whole picture."
+  },
+  {
+    "prompt": "Which levers should I be pulling right now?",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Metaphorical and trigger-free, but 'which levers' asks ZAC to identify the highest-value actions available from the business data."
+  },
+  {
+    "prompt": "wot needs sorting most urgnetly do u reckon, and dont just give me sales figures",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Heavy typos plus an explicit instruction not to answer with one metric; the ask is the most urgent item across everything."
+  },
+  {
+    "prompt": "got a team meeting thursday and half an hour of everyones time. which two areas of the business should we put it towards?",
+    "role": "manager",
+    "expectedIntent": "business_priorities",
+    "rationale": "The meeting framing invites team_priorities, but the question names areas of the business, not people needing coaching."
+  },
+  {
+    "prompt": "of everything you can see, whats costing me the most and whats the easiest win — in that order",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Two-part request over full breadth: worst cost and best quick win, explicitly ordered. That ordering is the prioritisation."
+  },
+  {
+    "prompt": "Honestly I'd rather you told me than me guess. Weigh it all up and come back with a shortlist.",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Hands the judgement to ZAC and names the output as a shortlist — the intent is prioritisation even though nothing is named."
+  },
+  {
+    "prompt": "quiet in today so thought id use the time properly — going off what you can actually see, what should i focus on?",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "The canonical phrasing, included once so the band is not defined solely by paraphrases; the breadth clause confirms it is live-data prioritisation."
+  },
+  {
+    "prompt": "if this was your money on the line, what would you tackle before christmas?",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Ownership-swap plus a deadline; 'what would you tackle' asks for the top action, not a state-of-play summary."
+  },
+  {
+    "prompt": "top of the list — go",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Four words, no keyword from any priority rule, yet it plainly asks for the highest-ranked item across the business."
+  },
+  {
+    "prompt": "were a year in and i genuinely cant tell if im busy or productive. take the whole lot into account and tell me what needs attention",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Utilisation is implied and could pull to specific_metric, but the explicit 'whole lot' plus 'what needs attention' makes it a broad prioritisation ask."
+  },
+  {
+    "prompt": "The accountant says we're fine, my gut says we're not. Dig through the lot and give me the three things you'd be on top of if you ran this place.",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Combines full breadth, a fixed count and a role swap; the answer must rank rather than report."
+  },
+  {
+    "prompt": "sorry this is probably a rubbish question but theres so much in that dashboard i dont know what im meant to be looking at, can you just cut through it and tell me the bits that matter for us",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Indirect and apologetic. Asking ZAC to cut through everything to 'the bits that matter' is a request for a filtered priority set, not a walkthrough."
+  },
+  {
+    "prompt": "give it to me straight — whats slipping that we havent noticed",
+    "role": "manager",
+    "expectedIntent": "business_priorities",
+    "rationale": "Unknown-unknowns framing: it needs a scan of every source to surface the declines worth acting on, so it is broader than diagnostic or a single metric."
+  },
+  {
+    "prompt": "What's the highest value use of my next fortnight in here?",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Time-horizon phrasing of the same intent — allocate the owner's attention against whatever the business data says is worth most."
+  },
+  {
+    "prompt": "no waffle please. just the order i should be tackling things in",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Names the output format as an ordered list of things to tackle; ordering across the business is exactly this band."
+  },
+  {
+    "prompt": "we could push retail, we could chase the gaps in the diary, or we could sort tuesdays out properly. realistically i can only do one of them well — which?",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Presents candidate actions and asks ZAC to choose using the numbers; the comparison is between courses of action, not periods, so not comparison."
+  },
+  {
+    "prompt": "big picture. what am i missing?",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "'Big picture' alone would read as business_health, but 'what am I missing' turns it into a hunt for the overlooked gaps worth acting on."
+  },
+  {
+    "prompt": "wheres my rebooking rate sitting",
+    "role": "owner",
+    "expectedIntent": "specific_metric",
+    "rationale": "One named measure, asked flat with no breadth or prioritisation marker."
+  },
+  {
+    "prompt": "right so we've had a mad week what with the bank holiday and two of the girls off with that bug going round, but the only thing i actually need off you this morning is the utilisation figure for the week",
+    "role": "manager",
+    "expectedIntent": "specific_metric",
+    "rationale": "Long preamble supplies context that reads diagnostic, but the request itself is a single utilisation number — the narration must not widen the intent."
+  },
+  {
+    "prompt": "utilisaton for last week? cant find it in the reports bit",
+    "role": "owner",
+    "expectedIntent": "specific_metric",
+    "rationale": "Misspelt metric with a period qualifier; still one measure and must survive the typo."
+  },
+  {
+    "prompt": "takings yesterday?",
+    "role": "manager",
+    "expectedIntent": "specific_metric",
+    "rationale": "Two-word ask for a single figure — the shortest realistic shape of a metric request."
+  },
+  {
+    "prompt": "how much did we turn over in july in the end",
+    "role": "owner",
+    "expectedIntent": "specific_metric",
+    "rationale": "Turnover for a closed month; a completed period is still one metric, not a comparison."
+  },
+  {
+    "prompt": "whats the average bill sitting at these days",
+    "role": "manager",
+    "expectedIntent": "specific_metric",
+    "rationale": "Average bill named directly, vague timeframe — imprecision about the period does not make it an overview."
+  },
+  {
+    "prompt": "how many people just didnt turn up last week",
+    "role": "owner",
+    "expectedIntent": "specific_metric",
+    "rationale": "No-shows described in plain words rather than the metric name; the measure is still singular and named in substance."
+  },
+  {
+    "prompt": "give us the cancellation numbers for this month would you",
+    "role": "manager",
+    "expectedIntent": "specific_metric",
+    "rationale": "Cancellations asked as a straightforward count."
+  },
+  {
+    "prompt": "how much retail did we shift over the weekend",
+    "role": "owner",
+    "expectedIntent": "specific_metric",
+    "rationale": "Retail sales for a two-day window; salon idiom for one measure."
+  },
+  {
+    "prompt": "how many appointments have we got in the book for next week",
+    "role": "manager",
+    "expectedIntent": "specific_metric",
+    "rationale": "Forward-looking booking count — one measure, just pointed at the diary rather than history."
+  },
+  {
+    "prompt": "whats jess's rebooking sitting at at the moment",
+    "role": "owner",
+    "expectedIntent": "specific_metric",
+    "rationale": "A single metric scoped to one stylist; naming a person does not make it a team-attention question, since nothing about coaching or who needs help is asked."
+  },
+  {
+    "prompt": "can i have the retail figures for the whole of august please",
+    "role": "manager",
+    "expectedIntent": "specific_metric",
+    "rationale": "Adversarial on breadth — 'the whole of' scopes a month, not the business, so it stays a single retail figure."
+  },
+  {
+    "prompt": "when you get a sec, could you tell me what our column utilisation came out at for last week? nothing else needed, just that number.",
+    "role": "owner",
+    "expectedIntent": "specific_metric",
+    "rationale": "Polite and wordy, but explicitly fences the answer to one figure."
+  },
+  {
+    "prompt": "no shows fri?",
+    "role": "manager",
+    "expectedIntent": "specific_metric",
+    "rationale": "Three-word texting shorthand for a no-show count on a named day."
+  },
+  {
+    "prompt": "average spend per client this month, roughly?",
+    "role": "owner",
+    "expectedIntent": "specific_metric",
+    "rationale": "Average bill under its everyday name; 'roughly' asks for precision to be relaxed, not for scope to widen."
+  },
+  {
+    "prompt": "sorry me again — the takings for saturday, did they come in over 3k or not, thats all i need to know",
+    "role": "manager",
+    "expectedIntent": "specific_metric",
+    "rationale": "A yes/no framing against a threshold still resolves to one takings figure; a target check is not a period comparison."
+  },
+  {
+    "prompt": "what did we take on the tills yesterday",
+    "role": "owner",
+    "expectedIntent": "specific_metric",
+    "rationale": "Till takings for a single day, phrased the way it gets said on the floor."
+  },
+  {
+    "prompt": "how many bookings did we do in august",
+    "role": "manager",
+    "expectedIntent": "specific_metric",
+    "rationale": "Booking volume for a month — a plain count of one thing."
+  },
+  {
+    "prompt": "give me rebooking for the month and dont dress it up",
+    "role": "owner",
+    "expectedIntent": "specific_metric",
+    "rationale": "Blunt tone request attached to a single named metric; the tone instruction must not be read as wanting a wider read."
+  },
+  {
+    "prompt": "chair utilisation on tuesdays — whats it running at",
+    "role": "manager",
+    "expectedIntent": "specific_metric",
+    "rationale": "Utilisation sliced to one weekday; a filter on a metric keeps it a metric."
+  },
+  {
+    "prompt": "hows business",
+    "role": "owner",
+    "expectedIntent": "business_health",
+    "rationale": "The bare overview question — a snapshot of the whole, with nothing to choose between."
+  },
+  {
+    "prompt": "morning — can i get a quick headline on how the salon's doing before we open up",
+    "role": "manager",
+    "expectedIntent": "business_health",
+    "rationale": "Asks for the headline state of the salon, not for ZAC to pick what matters."
+  },
+  {
+    "prompt": "been off six weeks with my shoulder and i've not looked at a single number the whole time, honestly dreading it — just tell me where we're at as a business, warts and all",
+    "role": "owner",
+    "expectedIntent": "business_health",
+    "rationale": "Rambling and emotive, but the ask is 'where we're at' — a full-business status read, with no request to rank or prioritise anything."
+  },
+  {
+    "prompt": "big picture, how are we looking?",
+    "role": "owner",
+    "expectedIntent": "business_health",
+    "rationale": "Adversarial — 'big picture' is a breadth marker, yet the question wants an overall state, not a shortlist of things to act on."
+  },
+  {
+    "prompt": "is the salon healthy or not",
+    "role": "manager",
+    "expectedIntent": "business_health",
+    "rationale": "Health framed as a verdict on the business as a whole."
+  },
+  {
+    "prompt": "overall how are we doing this month?",
+    "role": "manager",
+    "expectedIntent": "business_health",
+    "rationale": "Adversarial — 'overall' reads as breadth, but paired with 'how are we doing' it is a snapshot request; nothing asks ZAC to weigh options."
+  },
+  {
+    "prompt": "give me the state of play on the business in two lines",
+    "role": "owner",
+    "expectedIntent": "business_health",
+    "rationale": "A length constraint on an overview; brevity does not turn a summary into a prioritisation."
+  },
+  {
+    "prompt": "just after a general temperature check on how we're performing",
+    "role": "manager",
+    "expectedIntent": "business_health",
+    "rationale": "'Temperature check' is overview phrasing with no named metric and no ask to choose focus."
+  },
+  {
+    "prompt": "how r we doin as a salon rn",
+    "role": "owner",
+    "expectedIntent": "business_health",
+    "rationale": "Heavily abbreviated overview question — must classify the same as its fully spelt form."
+  },
+  {
+    "prompt": "i've got my quarterly catch-up with the accountant on thursday and he always asks how the business is going — give me the general picture",
+    "role": "manager",
+    "expectedIntent": "business_health",
+    "rationale": "Meeting prep, but the request is the general picture of the business; no shortlist, gaps or focus is being asked for."
+  },
+  {
+    "prompt": "whos struggling",
+    "role": "owner",
+    "expectedIntent": "team_priorities",
+    "rationale": "Two words, no metric, no trigger phrase — but the subject is unmistakably people, and answering it means weighing stylists against each other rather than reporting one number."
+  },
+  {
+    "prompt": "any of the girls need a word this week?",
+    "role": "manager",
+    "expectedIntent": "team_priorities",
+    "rationale": "Salon-floor shorthand for 'who needs attention'. Colloquial and matches none of the pinned coaching wording, so it has to be read for meaning."
+  },
+  {
+    "prompt": "ive got about an hour on friday for one to ones and realistically i can only sit down with two of them, who would you put in front of me and why",
+    "role": "owner",
+    "expectedIntent": "team_priorities",
+    "rationale": "A scarce-coaching-time question. The 'and why' tail is asking ZAC to justify its ranking of people, not to diagnose a cause, so diagnostic is the wrong read."
+  },
+  {
+    "prompt": "im doing quarterly reviews on monday and i dont want to walk in blind. across the team whos coming on nicely and whos quietly slipping back",
+    "role": "manager",
+    "expectedIntent": "team_priorities",
+    "rationale": "Breadth words ('across the team') sit next to people, not the business, so this is team_priorities rather than business_priorities."
+  },
+  {
+    "prompt": "wheres my attention best spent on the floor at the minute",
+    "role": "owner",
+    "expectedIntent": "team_priorities",
+    "rationale": "Attention-spending phrasing that would read as business_priorities if not for 'on the floor', which pins the subject to the stylists working it."
+  },
+  {
+    "prompt": "spot me the ones that need coaching, im not fussed about the top performers",
+    "role": "manager",
+    "expectedIntent": "team_priorities",
+    "rationale": "Imperative rather than a question, and it explicitly asks for a filtered subset of people — the defining shape of team_priorities."
+  },
+  {
+    "prompt": "we've got a bit of training budget left over and i can send two people on a course. based on what you can see, whod get the most out of it?",
+    "role": "owner",
+    "expectedIntent": "team_priorities",
+    "rationale": "Framed as a spending decision but the unit being ranked is individual stylists and their development gaps, so it lands on team_priorities not business_priorities."
+  },
+  {
+    "prompt": "whos fallin behind the rest of the floor",
+    "role": "manager",
+    "expectedIntent": "team_priorities",
+    "rationale": "Typo'd and implicitly comparative between colleagues. Peer-versus-peer is still team_priorities; comparison is reserved for one period against another."
+  },
+  {
+    "prompt": "if im honest all my coaching time this month has gone on the new starters. is that where it should be going or has someone else gone quiet on me without me noticing",
+    "role": "owner",
+    "expectedIntent": "team_priorities",
+    "rationale": "Long, self-questioning and phrased as a yes/no, but what it actually wants is a re-ranking of who deserves coaching hours."
+  },
+  {
+    "prompt": "who should i be keeping an eye on over the next few weeks",
+    "role": "manager",
+    "expectedIntent": "team_priorities",
+    "rationale": "Forward-looking watchlist of people. No named metric and no cause is being asked for."
+  },
+  {
+    "prompt": "whos my weakest link right now, dont sugar coat it",
+    "role": "owner",
+    "expectedIntent": "team_priorities",
+    "rationale": "Blunt request for the single lowest performer. Superlative about a person, not about a business metric."
+  },
+  {
+    "prompt": "our apprentice has her assessment coming up but theres three other stylists i've barely looked at this quarter, tell me where the coaching hours actually need to go",
+    "role": "manager",
+    "expectedIntent": "team_priorities",
+    "rationale": "Rambling with a named individual in it, yet the request is an allocation of coaching effort across the whole team — team_priorities, not a specific_metric read on one person."
+  },
+  {
+    "prompt": "which of the team could do with a bit of support on their column",
+    "role": "owner",
+    "expectedIntent": "team_priorities",
+    "rationale": "Gentle British understatement ('could do with a bit of support') standing in for 'needs attention'; column utilisation is context, not the thing being asked for."
+  },
+  {
+    "prompt": "why has our rebooking fallen off a cliff since the summer",
+    "role": "owner",
+    "expectedIntent": "diagnostic",
+    "rationale": "Textbook cause question on a named metric — the metric value itself is assumed known, the ask is what caused the fall."
+  },
+  {
+    "prompt": "tuesdays are dead. whats going on there",
+    "role": "manager",
+    "expectedIntent": "diagnostic",
+    "rationale": "Two blunt fragments, no 'why' anywhere. The user states the symptom and asks for the cause, which is diagnostic rather than business_health."
+  },
+  {
+    "prompt": "takings are down again this month and i honestly cant work out where its gone, can you have a dig and tell me whats causing it",
+    "role": "owner",
+    "expectedIntent": "diagnostic",
+    "rationale": "Mentions a period so it can be mistaken for comparison, but the previous month is only context for the real ask — the cause of the drop."
+  },
+  {
+    "prompt": "my no shows have gone mental the last fortnight, any idea whats behind that?",
+    "role": "stylist",
+    "expectedIntent": "diagnostic",
+    "rationale": "A stylist diagnosing their own column. 'Any idea what's behind' is a softened cause question and should not be downgraded to a specific_metric lookup of the no-show count."
+  },
+  {
+    "prompt": "cancellations are up and we've changed nothing our end, whats driving it",
+    "role": "manager",
+    "expectedIntent": "diagnostic",
+    "rationale": "The user has already ruled out one explanation, which confirms they want an investigation of causes rather than the cancellation figure itself."
+  },
+  {
+    "prompt": "wheres the drop in colour work coming from",
+    "role": "owner",
+    "expectedIntent": "diagnostic",
+    "rationale": "Cause question phrased as a location question. No 'why' or 'because', so the meaning has to carry it."
+  },
+  {
+    "prompt": "how come my thursday column is emptier than it used to be",
+    "role": "stylist",
+    "expectedIntent": "diagnostic",
+    "rationale": "'How come' is a why in disguise. 'Than it used to be' is the symptom being explained, not a period comparison the user wants tabulated."
+  },
+  {
+    "prompt": "retail fell off a cliff in june and nobody can tell me why, dig into it for me",
+    "role": "manager",
+    "expectedIntent": "diagnostic",
+    "rationale": "An instruction rather than a question, with 'why' buried in a subordinate clause about other people — the request is still squarely for a cause."
+  },
+  {
+    "prompt": "somethings not right with saturdays, theyre meant to be our biggest day and theyre just not any more. work out whats gone wrong",
+    "role": "owner",
+    "expectedIntent": "diagnostic",
+    "rationale": "Rambling and imperative. Expectation-versus-reality framing could look like business_health, but the closing instruction asks for the cause of a specific decline."
+  },
+  {
+    "prompt": "average bill has slipped which makes no sense to me because we put prices up in april, explain that",
+    "role": "manager",
+    "expectedIntent": "diagnostic",
+    "rationale": "Hard case: 'explain that' reads like the explanation intent, but there is no prior ZAC answer being unpacked — the user is raising a fresh puzzle about live data, which is diagnostic."
+  },
+  {
+    "prompt": "any idea why new clients arent coming back for a second appointment?",
+    "role": "owner",
+    "expectedIntent": "diagnostic",
+    "rationale": "Cause question about client retention behaviour rather than a headline metric, so it must not collapse into a specific_metric read of the retention rate."
+  },
+  {
+    "prompt": "i keep getting big gaps between clients in the afternoons, whats the cause",
+    "role": "stylist",
+    "expectedIntent": "diagnostic",
+    "rationale": "First-person symptom plus a direct request for the cause; the underlying utilisation figure is evidence, not the answer."
+  },
+  {
+    "prompt": "we had a shocking week last week. get to the bottom of it for me please",
+    "role": "manager",
+    "expectedIntent": "diagnostic",
+    "rationale": "'Get to the bottom of it' names no metric at all, so an unrecognised-question fallback would send it to business_health — but the intent is clearly to find out what went wrong."
+  },
+  {
+    "prompt": "what do the really good salons put their energy into? talking about the trade in general, not us",
+    "role": "owner",
+    "expectedIntent": "not_live_data",
+    "rationale": "Asks what well-run salons prioritise as a class and explicitly disclaims their own salon, so it is best-practice advice rather than a read of their figures."
+  },
+  {
+    "prompt": "when a salon's properly struggling, what do people normally sort out first — the diary, the pricing, or the team?",
+    "role": "manager",
+    "expectedIntent": "not_live_data",
+    "rationale": "An indefinite struggling salon and 'normally' mark this as received industry wisdom; nothing points at this business's own state."
+  },
+  {
+    "prompt": "textbook answer pls — whats a stylist meant to be focusing on to build a column",
+    "role": "stylist",
+    "expectedIntent": "not_live_data",
+    "rationale": "'Textbook answer' asks for the general rule for any stylist, not an assessment of this stylist's live column."
+  },
+  {
+    "prompt": "been reading a lot of salon business stuff lately and everyone bangs on about something different. if you had to say what the two or three biggest levers are in this industry, generally, what would they be? not after anything about us, i just want the received wisdom",
+    "role": "owner",
+    "expectedIntent": "not_live_data",
+    "rationale": "Long and rambling but the ask is industry-wide levers with an explicit 'not about us' — the shape of business_priorities aimed at the trade, not the tenant."
+  },
+  {
+    "prompt": "typical january priorities for a salon?",
+    "role": "manager",
+    "expectedIntent": "not_live_data",
+    "rationale": "Four words, and 'typical ... for a salon' generalises to any salon at that time of year rather than asking what this one should act on."
+  },
+  {
+    "prompt": "in the trade generally, whats the thing that moves the needle most for an independent — retention, average bill or getting more bums in seats?",
+    "role": "owner",
+    "expectedIntent": "not_live_data",
+    "rationale": "Names candidate levers but scopes them to independents in general, so the answer needs no live retention or spend figures."
+  },
+  {
+    "prompt": "do the salon gurus actually agree on what to fix first, or has everyone got their own pet theory?",
+    "role": "stylist",
+    "expectedIntent": "not_live_data",
+    "rationale": "A question about the state of industry opinion on prioritisation, not a request for this salon to be weighed up."
+  },
+  {
+    "prompt": "if a salon had 40% rebooking and the chairs were only about two thirds full, which of those would you go at first?",
+    "role": "owner",
+    "expectedIntent": "not_live_data",
+    "rationale": "Both figures are supplied as an invented case for an indefinite salon, so ZAC reasons from the premise instead of retrieving anything."
+  },
+  {
+    "prompt": "say a six chair place was turning over about £18k a month and two of the team were off long term sick — where would the manager start?",
+    "role": "manager",
+    "expectedIntent": "not_live_data",
+    "rationale": "'Say' frames the turnover and staffing as assumptions about a hypothetical six-chair salon; the priorities asked for are for that made-up case."
+  },
+  {
+    "prompt": "suppose my column was half empty every wednesday — hypothetically like, im not saying it is — whats the first thing youd look at",
+    "role": "stylist",
+    "expectedIntent": "not_live_data",
+    "rationale": "Adversarial because it says 'my column', but the supposition is stated and then explicitly disclaimed, so the scenario is invented and no live data may be read."
+  },
+  {
+    "prompt": "imagine a salon where retail is basically nil and the whole team hate the idea of selling. what order would you fix that in?",
+    "role": "manager",
+    "expectedIntent": "not_live_data",
+    "rationale": "'Imagine a salon' invents the situation outright; the request for an order of attack is prioritisation of a fictional case."
+  },
+  {
+    "prompt": "purely as a thought experiment: twelve staff, average bill about £48, rebooking sat at 38%, new clients coming back maybe one in five. made up numbers, i just want to see how you'd think it through — what three things would you tell that salon to fix, and in what order?",
+    "role": "manager",
+    "expectedIntent": "not_live_data",
+    "rationale": "Closest case to business_priorities in the set, but every figure is declared invented and the subject is 'that salon', so it must be answered from the premise alone."
+  },
+  {
+    "prompt": "if takings at some salon fell 15% two months on the bounce, what would you chase down first?",
+    "role": "owner",
+    "expectedIntent": "not_live_data",
+    "rationale": "'Some salon' plus a supplied decline makes this a constructed scenario rather than a diagnostic of this business's takings."
+  },
+  {
+    "prompt": "lets say a stylist gets loads of new clients in but hardly any of them come back. what should she work on first?",
+    "role": "stylist",
+    "expectedIntent": "not_live_data",
+    "rationale": "An unnamed, invented stylist introduced with 'let's say' — it looks like team_priorities but no real person or record is involved."
+  },
+  {
+    "prompt": "what should a salon owner be losing sleep over at this time of year?",
+    "role": "owner",
+    "expectedIntent": "not_live_data",
+    "rationale": "Indefinite 'a salon owner' rather than this owner, so the answer is seasonal best practice with no lookup."
+  },
+  {
+    "prompt": "where does a salon manager usually add the most value — the rota, coaching the floor, or front of house?",
+    "role": "manager",
+    "expectedIntent": "not_live_data",
+    "rationale": "Asks where the role generally pays off best; 'usually' and the indefinite manager keep it off live rota or team data."
+  },
+  {
+    "prompt": "whats more important to a salon in the end, new clients or hanging onto the ones youve already got",
+    "role": "stylist",
+    "expectedIntent": "not_live_data",
+    "rationale": "A general principle question about salons as a category — no figures of theirs would change the answer."
+  },
+  {
+    "prompt": "for a mid sized independent, what's usually top of the priority list?",
+    "role": "owner",
+    "expectedIntent": "not_live_data",
+    "rationale": "Reads like business_priorities but is scoped to a size band of salons generally, with 'usually' signalling the typical case."
+  },
+  {
+    "prompt": "if somebody took over a salon on monday morning, what should be at the top of their list in week one?",
+    "role": "manager",
+    "expectedIntent": "not_live_data",
+    "rationale": "A hypothetical new owner of an unspecified salon; the priorities requested belong to that invented situation."
+  },
+  {
+    "prompt": "forget my numbers a minute. in general, what matters most?",
+    "role": "owner",
+    "expectedIntent": "not_live_data",
+    "rationale": "Explicitly sets their own figures aside and asks the general question, which overrides the otherwise priorities-shaped wording."
+  },
+  {
+    "prompt": "dont go into qlooqo for this one. just tell me what you'd normally tell a salon manager to prioritise when they're spread thin",
+    "role": "manager",
+    "expectedIntent": "not_live_data",
+    "rationale": "Direct instruction not to touch the platform data, paired with an indefinite manager, so it must be answered from general practice."
+  },
+  {
+    "prompt": "i'd rather you didn't pull anything out of the system for this, it's genuinely not about us — i'm just curious where the industry reckons attention ought to go when a salon plateaus after a few decent years, because we all get told something different and i'd like a straight view",
+    "role": "owner",
+    "expectedIntent": "not_live_data",
+    "rationale": "Long and conversational, but it bars retrieval up front and asks for industry consensus on a plateaued salon rather than an assessment of theirs."
+  },
+  {
+    "prompt": "no data pls. jst generally wot shud i be putting my effort into",
+    "role": "stylist",
+    "expectedIntent": "not_live_data",
+    "rationale": "Typo-heavy and terse, yet 'no data' plus 'generally' rules out reading their live performance despite the personal 'i'."
+  },
+  {
+    "prompt": "leave our figures out of it — biggest opportunities in salons right now?",
+    "role": "owner",
+    "expectedIntent": "not_live_data",
+    "rationale": "'Biggest opportunities' is classic business_priorities phrasing, but the exclusion of their figures and the plural 'in salons' moves it to general commentary."
+  },
+  {
+    "prompt": "Use everything you have access to and tell me the 3 most important things I should focus on.",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Section 49 — the exact hosted failure.",
+    "mandated": true
+  },
+  {
+    "prompt": "What should I focus on first?",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Section 36 B.",
+    "mandated": true
+  },
+  {
+    "prompt": "If I only had one hour today, where should I spend it?",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Section 36 C.",
+    "mandated": true
+  },
+  {
+    "prompt": "Look across my business and tell me what needs my attention.",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Section 36 D.",
+    "mandated": true
+  },
+  {
+    "prompt": "What are my biggest opportunities right now?",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Section 36 E.",
+    "mandated": true
+  },
+  {
+    "prompt": "Taking everything you know about my business into account, what are my top three priorities?",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Section 36 F.",
+    "mandated": true
+  },
+  {
+    "prompt": "Use all the information you're allowed to see and tell me what matters most.",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Section 51 paraphrase.",
+    "mandated": true
+  },
+  {
+    "prompt": "Look across everything and tell me my biggest three priorities.",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Section 51 paraphrase.",
+    "mandated": true
+  },
+  {
+    "prompt": "What are the three things I should care about most today?",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Section 51 paraphrase.",
+    "mandated": true
+  },
+  {
+    "prompt": "If you were me, where would you focus first based on the business?",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Section 51 paraphrase.",
+    "mandated": true
+  },
+  {
+    "prompt": "Taking all my current figures into account, where are the biggest gaps?",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Section 51 paraphrase.",
+    "mandated": true
+  },
+  {
+    "prompt": "Don't just give me one KPI — tell me what actually needs attention.",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Section 51 paraphrase.",
+    "mandated": true
+  },
+  {
+    "prompt": "Based on everything you can see, what should I do first?",
+    "role": "owner",
+    "expectedIntent": "business_priorities",
+    "rationale": "Section 51 paraphrase.",
+    "mandated": true
+  },
+  {
+    "prompt": "How is my business doing?",
+    "role": "owner",
+    "expectedIntent": "business_health",
+    "rationale": "Section 50 turn 1 — the case that already worked.",
+    "mandated": true
+  },
+  {
+    "prompt": "What's my current rebooking?",
+    "role": "owner",
+    "expectedIntent": "specific_metric",
+    "rationale": "Section 38 — narrow stays narrow.",
+    "mandated": true
+  },
+  {
+    "prompt": "What is my utilisation this week?",
+    "role": "owner",
+    "expectedIntent": "specific_metric",
+    "rationale": "Section 38.",
+    "mandated": true
+  },
+  {
+    "prompt": "Which team members need my attention this week?",
+    "role": "manager",
+    "expectedIntent": "team_priorities",
+    "rationale": "Section 39.",
+    "mandated": true
+  },
+  {
+    "prompt": "What should I coach the team on first?",
+    "role": "manager",
+    "expectedIntent": "team_priorities",
+    "rationale": "Section 39.",
+    "mandated": true
+  },
+  {
+    "prompt": "Generally, what are the three most important things a salon owner should focus on?",
+    "role": "owner",
+    "expectedIntent": "not_live_data",
+    "rationale": "Section 37 — general advice.",
+    "mandated": true
+  },
+  {
+    "prompt": "What are common priorities for a struggling salon?",
+    "role": "owner",
+    "expectedIntent": "not_live_data",
+    "rationale": "Section 37.",
+    "mandated": true
+  },
+  {
+    "prompt": "If a hypothetical salon had poor utilisation and weak rebooking, what should they do first?",
+    "role": "owner",
+    "expectedIntent": "not_live_data",
+    "rationale": "Section 37 — hypothetical.",
+    "mandated": true
+  }
+]

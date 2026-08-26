@@ -11,6 +11,8 @@ import type {
   ZacToolName,
   ZacToolResult,
 } from '../tools/zac-tool.types';
+import type { ZacEvidenceSignal, ZacOrchestrationResult } from '../analysis/zac-analysis.types';
+import type { ZacResolvedPriority } from '../analysis/zac-priority.types';
 import type { ZacBlockingReason } from '../policy/zac-policy.types';
 import type { ZacEvidenceItem, ZacResponse, ZacTechnicalDetails } from './zac-response.types';
 
@@ -1326,11 +1328,134 @@ export class ZacResponseBuilderService {
       trace_id: traceId,
     };
   }
-}
 
+  /**
+   * A multi-source analysis answer.
+   *
+   * Evidence is the UNION of every source that contributed, so the owner can
+   * see the analysis rested on several parts of the business rather than one
+   * report. Limitations name the sources that could not be assessed — partial
+   * coverage is stated, never implied away, and never inflated into "I have no
+   * live data".
+   */
+  buildAnalysisResponse(
+    input: MemoryResponseBaseInput & {
+      answer: string;
+      orchestration: ZacOrchestrationResult;
+      toolCalls: ZacToolDispatchTrace[];
+      narrated: boolean;
+      /** The cap the user asked for; the answer may contain fewer, never more. */
+      requestedCount?: number;
+      /** The issues this answer actually raised, after validation. */
+      priorities?: ZacResolvedPriority[];
+    },
+  ): ZacResponse {
+    const { context, profile, visibleTools, completion, traceId, orchestration } = input;
+    const failed = orchestration.executions.filter((execution) => !execution.ok);
+    const contributing = [...new Set(orchestration.signals.map((signal) => signal.sourceTool))];
+    const priorities = input.priorities ?? [];
+
+    // Evidence follows what was RAISED, not everything that was gathered: a
+    // priority list of two should not cite five sources the user never sees.
+    // Source transparency is preserved by merging every reference behind each
+    // consolidated issue.
+    const evidence: ZacEvidenceItem[] = dedupeEvidence(
+      priorities.length > 0
+        ? priorities.flatMap((priority) => priority.candidate.evidenceRefs)
+        : orchestration.signals.flatMap((signal) => signal.evidenceRefs),
+    );
+
+    const limitations = [
+      ...failed.map((execution) => execution.limitation ?? ''),
+      ...new Set(orchestration.signals.flatMap((signal) => signal.limitations)),
+    ].filter((line) => line.length > 0);
+
+    if (contributing.length > 0) {
+      limitations.push(
+        `This analysis is based on ${contributing.length} live source${contributing.length === 1 ? '' : 's'} you currently have access to; it is not a complete audit of the business.`,
+      );
+    }
+    limitations.push(`Data scope: ${profile.scopeDescription}`);
+
+    return {
+      conversation_id: input.conversationId,
+      answer: input.answer,
+      role_context: context.roleContext,
+      response_type: severityToResponseType(orchestration.signals),
+      evidence:
+        evidence.length > 0
+          ? evidence
+          : [
+              {
+                source_type: 'zac.analysis',
+                source_ref: 'multi-source-analysis',
+                as_of: null,
+                entities_used: [],
+              },
+            ],
+      // Confidence follows COVERAGE, not the model's tone: an analysis missing
+      // sources is exactly as uncertain as the gaps it could not fill.
+      confidence:
+        failed.length === 0 ? 'high' : failed.length >= contributing.length ? 'low' : 'medium',
+      limitations,
+      suggested_next_step:
+        orchestration.signals.length > 0
+          ? 'Ask me to go deeper on any one of these, or check back after the next reporting period.'
+          : 'Ask about a specific area — rebooking, utilisation or team KPIs — and I will look at it directly.',
+      measurement_hook: null,
+      attribution_seed: null,
+      memory_updates: [],
+      tool_calls: input.toolCalls,
+      cost_metadata: this.costMetadata(completion),
+      technical_details: {
+        ...this.technicalDetails(visibleTools, completion),
+        // `foundation_mode` means "this answer is not built from live data".
+        // A multi-source analysis is built from live data whether or not a
+        // model put it into prose, so the deterministic answer is just as
+        // live as the narrated one.
+        ...(orchestration.hasLiveEvidence ? { foundation_mode: false } : {}),
+        detected_intent: `analysis.${orchestration.plan.analysisIntent}`,
+        ...(input.requestedCount === undefined
+          ? {}
+          : { requested_priority_count: input.requestedCount }),
+        final_priority_count: priorities.length,
+        ...(orchestration.consolidation
+          ? {
+              raw_signal_count: orchestration.consolidation.rawSignalCount,
+              consolidated_candidate_count: orchestration.consolidation.candidates.length,
+              candidate_domains: orchestration.consolidation.candidates.map((c) => c.domain),
+              duplicate_signals_removed: orchestration.consolidation.duplicateSignalsRemoved,
+              signals_merged: orchestration.consolidation.signalsMerged,
+            }
+          : {}),
+      },
+      trace_id: traceId,
+    };
+  }
+}
 
 /** "a, b and c" — Oxford-free, matches the product copy elsewhere. */
 function joinList(items: string[]): string {
   if (items.length <= 1) return items[0] ?? '';
   return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
+/** Highest-severity signal decides the framing: a Risk is not an Insight. */
+function severityToResponseType(signals: ZacEvidenceSignal[]): ZacResponse['response_type'] {
+  if (signals.some((signal) => signal.severity === 'attention')) return 'Risk';
+  if (signals.some((signal) => signal.severity === 'watch')) return 'Watch Point';
+  return 'Insight';
+}
+
+/** One reference per source_ref — several signals often share a source. */
+function dedupeEvidence(items: ZacEvidenceItem[]): ZacEvidenceItem[] {
+  const seen = new Set<string>();
+  const out: ZacEvidenceItem[] = [];
+  for (const item of items) {
+    const key = `${item.source_type}|${item.source_ref}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
 }

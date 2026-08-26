@@ -29,6 +29,14 @@ interface Scenario {
   title: string;
   question: string;
   lens: 'owner' | 'stylist';
+  /** Expected analysis intent for a live-data turn. */
+  analysisIntent?: string;
+  /** Require that more than one live source was gathered. */
+  expectMultiTool?: boolean;
+  /** Require that at least one source actually returned data. */
+  expectLiveTools?: boolean;
+  /** The count the user asked for; the answer must not exceed it. */
+  expectRequestedCount?: number;
   /** Modes that are acceptable; empty means "any". */
   modes?: ZacRequestMode[];
   /** The primary reason that must be reported. */
@@ -40,6 +48,13 @@ interface Scenario {
   /** Tools must not run at all. */
   expectNoTools?: boolean;
 }
+
+/**
+ * The sentence this workstream exists to remove: a claim of no live data while
+ * permitted, connected sources are executable.
+ */
+const FALSE_NO_DATA =
+  /(?:don'?t|do not) (?:yet )?have access to (?:your )?live|(?:business|live) data (?:is|isn'?t) (?:not )?connected|no live (?:business )?data|foundation mode|ask (?:me )?for a specific report|can'?t analyse that/i;
 
 const FORBIDDEN_FOR_A_FIXED_BOUNDARY =
   /(?:isn'?t|is not) connected|data (?:is|isn'?t) connected|once .{0,40}(?:are|is) connected|try again when|you (?:don'?t|do not) have permission|your (?:current )?(?:security|access) level (?:doesn'?t|does not)/i;
@@ -116,6 +131,79 @@ const SCENARIOS: Scenario[] = [
     expectNoTools: true,
   },
   {
+    id: 'K',
+    title: "Luke's exact broad-priority question",
+    question:
+      'Use everything you have access to and tell me the 3 most important things I should focus on.',
+    lens: 'owner',
+    modes: ['qlooqo_data'],
+    analysisIntent: 'business_priorities',
+    expectMultiTool: true,
+    expectLiveTools: true,
+    forbid: FALSE_NO_DATA,
+  },
+  {
+    id: 'L',
+    title: 'Broad priorities, paraphrased with no shared keywords',
+    question: 'If you were running my salon today, where would you spend your attention?',
+    lens: 'owner',
+    modes: ['qlooqo_data'],
+    analysisIntent: 'business_priorities',
+    expectMultiTool: true,
+    expectLiveTools: true,
+    forbid: FALSE_NO_DATA,
+    continues: true,
+  },
+  {
+    id: 'K2',
+    title: "The exact count/duplication regression",
+    question: 'tell me 2 most importnat things i should focus on',
+    lens: 'owner',
+    modes: ['qlooqo_data'],
+    analysisIntent: 'business_priorities',
+    expectMultiTool: true,
+    expectLiveTools: true,
+    expectRequestedCount: 2,
+    forbid: FALSE_NO_DATA,
+  },
+  {
+    id: 'K3',
+    title: 'A single most important thing',
+    question: 'tell me the single most important thing',
+    lens: 'owner',
+    modes: ['qlooqo_data'],
+    analysisIntent: 'business_priorities',
+    expectRequestedCount: 1,
+    expectLiveTools: true,
+  },
+  {
+    id: 'K4',
+    title: 'An explicit top three',
+    question: 'give me my top 3 priorities',
+    lens: 'owner',
+    modes: ['qlooqo_data'],
+    analysisIntent: 'business_priorities',
+    expectRequestedCount: 3,
+    expectLiveTools: true,
+  },
+  {
+    id: 'M',
+    title: 'A narrow question stays narrow',
+    question: "What's my rebooking rate?",
+    lens: 'owner',
+    modes: ['qlooqo_data'],
+    analysisIntent: 'specific_metric',
+    expectLiveTools: true,
+  },
+  {
+    id: 'N',
+    title: 'Broad-sounding general advice reads no live data',
+    question: 'Generally, what are the three most important things a salon owner should focus on?',
+    lens: 'owner',
+    modes: ['general_advice', 'hypothetical'],
+    expectNoTools: true,
+  },
+  {
     id: 'I',
     title: 'Data unavailable — a permitted tool with no source data',
     question: 'What was my utilisation on 1 January 2019?',
@@ -138,6 +226,19 @@ interface AskResponse {
   tool_calls: { tool: string; status: string }[];
   technical_details: {
     request_mode?: string;
+    analysis_intent?: string;
+    planner_source?: string;
+    multi_tool?: boolean;
+    tools_executed?: number;
+    tool_failures?: number;
+    executable_tool_count?: number;
+    requested_priority_count?: number;
+    raw_signal_count?: number;
+    consolidated_candidate_count?: number;
+    candidate_domains?: string[];
+    duplicate_signals_removed?: number;
+    signals_merged?: number;
+    final_priority_count?: number;
     blocking_reason?: string;
     resource_category?: string | null;
     response_strategy?: string;
@@ -215,12 +316,51 @@ async function main(): Promise<void> {
     if (scenario.expectNoTools && (response.tool_calls ?? []).length > 0) {
       problems.push(`dispatched ${response.tool_calls.map((call) => call.tool).join(', ')}`);
     }
+    if (scenario.analysisIntent && details.analysis_intent !== scenario.analysisIntent) {
+      problems.push(
+        `analysis_intent ${details.analysis_intent ?? '(none)'}, expected ${scenario.analysisIntent}`,
+      );
+    }
+    if (scenario.expectMultiTool && details.multi_tool !== true) {
+      problems.push('single-source answer to a question that spans the business');
+    }
+    if (scenario.expectRequestedCount !== undefined) {
+      if (details.requested_priority_count !== scenario.expectRequestedCount) {
+        problems.push(
+          `requested_priority_count ${details.requested_priority_count ?? '(none)'}, expected ${scenario.expectRequestedCount}`,
+        );
+      }
+      if ((details.final_priority_count ?? 0) > scenario.expectRequestedCount) {
+        problems.push(
+          `returned ${details.final_priority_count} priorities for a request for ${scenario.expectRequestedCount}`,
+        );
+      }
+      const domains = details.candidate_domains ?? [];
+      if (new Set(domains).size !== domains.length) {
+        problems.push(`repeated candidate domain: ${domains.join(', ')}`);
+      }
+      const numbered = (response.answer.match(/^\s*\d+[.)]\s/gm) ?? []).length;
+      if (numbered > scenario.expectRequestedCount) {
+        problems.push(`answer lists ${numbered} items for a request for ${scenario.expectRequestedCount}`);
+      }
+    }
+    if (scenario.expectLiveTools && (details.tools_executed ?? 0) < 1) {
+      problems.push(
+        `no live source succeeded (executable=${details.executable_tool_count ?? '?'}) — ` +
+          'if executable is non-zero this is the orchestration defect, not a data outage',
+      );
+    }
 
     if (problems.length > 0) failures += 1;
     console.log(
       `  ${scenario.id}  ${problems.length === 0 ? 'PASS' : 'FAIL'}  ${scenario.title}\n` +
-        `        mode=${mode} reason=${reason} strategy=${details.response_strategy ?? '-'} ` +
-        `category=${details.resource_category ?? '-'} tools=${(response.tool_calls ?? []).length}`,
+        `        mode=${mode} reason=${reason} intent=${details.analysis_intent ?? '-'} ` +
+          `planner=${details.planner_source ?? '-'} multi=${details.multi_tool ?? false} ` +
+          `ran=${details.tools_executed ?? 0}/${(response.tool_calls ?? []).length} ` +
+          `failed=${details.tool_failures ?? 0} executable=${details.executable_tool_count ?? '?'} ` +
+          `asked=${details.requested_priority_count ?? '-'} gave=${details.final_priority_count ?? '-'} ` +
+          `signals=${details.raw_signal_count ?? '-'}->cands=${details.consolidated_candidate_count ?? '-'} ` +
+          `domains=[${(details.candidate_domains ?? []).join(',')}]`,
     );
     for (const problem of problems) console.log(`        ✗ ${problem}`);
   }

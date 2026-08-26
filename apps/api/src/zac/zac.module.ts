@@ -19,6 +19,11 @@ import { AnthropicZacModelProvider } from './models/providers/anthropic-zac-prov
 import { StubZacModelProvider } from './models/providers/stub-zac-provider';
 import { ZAC_MODEL_PROVIDER } from './models/zac-model-provider.interface';
 import type { ZacModelProvider } from './models/zac-model-provider.interface';
+import { ZacAnalysisIntentService } from './analysis/zac-analysis-intent.service';
+import { ZacEvidenceService } from './analysis/zac-evidence.service';
+import { ZacPriorityService } from './analysis/zac-priority.service';
+import { ZacOrchestratorService } from './analysis/zac-orchestrator.service';
+import { ZacToolPlannerService } from './analysis/zac-tool-planner.service';
 import { ZacPolicyService } from './policy/zac-policy.service';
 import { ZacResourceCategoryService } from './policy/zac-resource-category.service';
 import { ZacResponseBuilderService } from './responses/zac-response-builder.service';
@@ -49,6 +54,11 @@ import { ZacService } from './zac.service';
     ZacResponseBuilderService,
     ZacResourceCategoryService,
     ZacPolicyService,
+    ZacAnalysisIntentService,
+    ZacToolPlannerService,
+    ZacEvidenceService,
+    ZacPriorityService,
+    ZacOrchestratorService,
     ZacCostTelemetryService,
     ZacConversationStore,
     ZacMemoryStore,

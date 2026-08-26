@@ -17,6 +17,13 @@ import { ZacMeasurementService } from './measurement/zac-measurement.service';
 import { ZacMemoryExtractionService } from './memory/zac-memory-extraction.service';
 import { ZacMemoryService } from './memory/zac-memory.service';
 import { containsForbiddenMemoryContent } from './memory/zac-redaction';
+import type { ZacAnalysisDecision } from './analysis/zac-orchestrator.service';
+import { ZacOrchestratorService } from './analysis/zac-orchestrator.service';
+import {
+  DEFAULT_PRIORITY_COUNT,
+  type ZacOrchestrationResult,
+} from './analysis/zac-analysis.types';
+import type { ZacResolvedPriority } from './analysis/zac-priority.types';
 import { ZacPolicyService } from './policy/zac-policy.service';
 import { ZacResourceCategoryService } from './policy/zac-resource-category.service';
 import {
@@ -97,6 +104,7 @@ export class ZacService {
     private readonly requestModes: ZacRequestModeClassifierService,
     private readonly resourceCategories: ZacResourceCategoryService,
     private readonly policy: ZacPolicyService,
+    private readonly orchestrator: ZacOrchestratorService,
     private readonly semanticRouter: ZacSemanticRouterService,
     private readonly measurement: ZacMeasurementService,
     @Inject(ZAC_MODEL_PROVIDER) private readonly modelProvider: ZacModelProvider,
@@ -487,9 +495,35 @@ export class ZacService {
     let response: ZacResponse;
     let liveCompletion: ZacModelCompletion | null = null;
     let liveLatencyMs = 0;
+    let orchestration: ZacOrchestrationResult | null = null;
 
     const resolvedIntent =
       context.roleContext === 'stylist' ? null : this.resolveIntent(question);
+
+    // What KIND of analysis is this? Decided once, before the branch chain, so
+    // the (possibly model-backed) decision is never made twice for one turn.
+    // Only owner/manager live-data turns that are not staff-list questions get
+    // this far; stylists keep their own self-scoped path.
+    const needsAnalysisDecision = context.roleContext !== 'stylist';
+    const analysis = needsAnalysisDecision
+      ? await this.orchestrator.decideAnalysis({
+          question,
+          context,
+          actor,
+          recentTurnSummaries: conversation.recentSummaries,
+          memory: modelRequest.memoryContext ?? [],
+        })
+      : null;
+    if (analysis?.decision.plannerBilled && analysis.completion) {
+      this.recordPlannerCostEvent(
+        context,
+        conversation,
+        analysis.completion as ZacModelCompletion,
+        analysis.latencyMs,
+        traceId,
+        costEvents,
+      );
+    }
 
     if (context.roleContext === 'stylist') {
       let stylistReason: ZacBlockingReason = 'none';
@@ -509,7 +543,11 @@ export class ZacService {
         traceId,
       ));
       decision.executionReason = stylistReason;
-    } else if (resolvedIntent === null && this.isStaffMembersQuestion(question)) {
+    } else if (
+      resolvedIntent === null &&
+      this.isStaffMembersQuestion(question) &&
+      !(analysis && this.orchestrator.isMultiTool(analysis.decision.intent))
+    ) {
       // Staff/team/member questions with no matching performance intent (staff
       // LISTS — "who works here", "team members"): no read-only staff-list tool
       // is connected, so answer honestly from the service layer — nothing is
@@ -520,6 +558,44 @@ export class ZacService {
       // staff-list capability in Phase 1 — not a permission, not missing data.
       decision.executionReason = 'unsupported_capability';
       response = this.responseBuilder.buildStaffMembersUnavailableResponse(memoryBase);
+    } else if (
+      analysis &&
+      (this.orchestrator.isMultiTool(analysis.decision.intent) ||
+        (resolvedIntent === null && this.orchestrator.hasAnalysisSignal(question)))
+    ) {
+      // A question whose answer spans the business — OR any live-data question
+      // the single-tool router could not place.
+      //
+      // That second condition is the structural half of the fix. The old
+      // pipeline sent an unplaced live-data question to `context.capabilities`,
+      // whose copy says ZAC has no live business data — so a comparison, an
+      // explanation or any unanticipated phrasing was answered with a sentence
+      // that is false whenever a report is connected. An unplaced question is
+      // now planned from its intent, and if nothing can be planned the
+      // capability state decides what the user is told.
+      // A question whose answer spans the business. The old pipeline had no
+      // route for this: one keyword-matched tool or nothing, and "nothing"
+      // served the capability summary, which states ZAC has no live data.
+      let analysisReason: ZacBlockingReason = 'none';
+      ({
+        response,
+        liveCompletion,
+        liveLatencyMs,
+        orchestration,
+        executionReason: analysisReason,
+      } = await this.answerByAnalysis(
+        actor,
+        context,
+        profile,
+        visibleTools,
+        conversation,
+        modelRequest,
+        question,
+        resolvedIntent,
+        analysis.decision,
+        traceId,
+      ));
+      decision.executionReason = analysisReason;
     } else {
       const intentTool = resolvedIntent ?? 'context.capabilities';
       const { result, trace } = await this.toolRegistry.dispatch(
@@ -600,7 +676,22 @@ export class ZacService {
       );
     }
 
-    return this.withMode(response, classification, decision);
+    return this.withMode(
+      response,
+      classification,
+      decision,
+      analysis
+        ? {
+            intent: analysis.decision.intent,
+            plannerSource: orchestration?.plan.source ?? analysis.decision.source,
+            plannerConfidence: analysis.decision.confidence,
+            orchestration,
+            executableToolCount: this.toolRegistry
+              .buildFor(actor)
+              .filter((tool) => tool.enabled).length,
+          }
+        : undefined,
+    );
   }
 
   /**
@@ -773,6 +864,13 @@ export class ZacService {
     response: ZacResponse,
     classification: ZacRequestClassification,
     decision?: ZacTurnPolicyState,
+    analysis?: {
+      intent: string;
+      plannerSource: string;
+      plannerConfidence: number | null;
+      orchestration: ZacOrchestrationResult | null;
+      executableToolCount: number;
+    },
   ): ZacResponse {
     const blockingReason = this.policy.primaryReason(
       decision?.policy.blockingReason ?? 'none',
@@ -798,6 +896,30 @@ export class ZacService {
         response_strategy: responseStrategy,
         policy_boundary_triggered: decision ? !decision.policy.allowed : false,
         override_attempted: decision?.policy.overrideAttempted ?? false,
+        ...(analysis
+          ? {
+              analysis_intent: analysis.intent,
+              planner_source: analysis.plannerSource,
+              ...(analysis.plannerConfidence === null
+                ? {}
+                : { planner_confidence: Number(analysis.plannerConfidence.toFixed(2)) }),
+              // `executable_tool_count` is the honest counterweight to any
+              // shortfall the turn reports: it says what the actor could have
+              // run, so "no live data" can be checked rather than believed.
+              executable_tool_count: analysis.executableToolCount,
+              ...(analysis.orchestration
+                ? {
+                    multi_tool: analysis.orchestration.plan.tools.length > 1,
+                    tools_considered: analysis.orchestration.capability.executable.length,
+                    tools_selected: analysis.orchestration.plan.tools.map((tool) => tool.toolName),
+                    tools_executed: analysis.orchestration.executions.filter((run) => run.ok).length,
+                    tool_failures: analysis.orchestration.executions.filter((run) => !run.ok).length,
+                    fallback_plan_used: analysis.orchestration.plan.source === 'fallback_plan',
+                    evidence_signal_count: analysis.orchestration.signals.length,
+                  }
+                : {}),
+            }
+          : {}),
       },
     };
   }
@@ -932,6 +1054,9 @@ export class ZacService {
         recentTurnSummaries: conversation.recentSummaries,
       },
       mode,
+      // "the 2 biggest things a salon owner should focus on" is an instruction
+      // about the ANSWER, not about the data — advisory turns honour it too.
+      requestedCount: this.orchestrator.requestedPriorityCount(question),
     };
 
     const callStartedAt = Date.now();
@@ -1258,6 +1383,386 @@ export class ZacService {
       estimatedCostUsd: 0,
     };
   }
+
+  /**
+   * Answer a question whose scope spans the business: plan the evidence,
+   * gather it in parallel, rank it, then synthesise a small number of
+   * priorities.
+   *
+   * The invariant that matters most here is the one the defect violated: at no
+   * point may a planning or synthesis shortfall be reported as an absence of
+   * live data. Planning failure falls back to the deterministic plan; synthesis
+   * failure falls back to the deterministic answer; and if the plan is empty
+   * the capability state — not a guess — decides what the user is told.
+   */
+  private async answerByAnalysis(
+    actor: AuthUser,
+    context: ZacActingContext,
+    profile: ZacRoleProfile,
+    visibleTools: ZacReadOnlyTool[],
+    conversation: ZacConversationState,
+    modelRequest: ZacModelRequest,
+    question: string,
+    primaryTool: ZacToolName | null,
+    decision: ZacAnalysisDecision,
+    traceId: string,
+  ): Promise<{
+    response: ZacResponse;
+    liveCompletion: ZacModelCompletion | null;
+    liveLatencyMs: number;
+    orchestration: ZacOrchestrationResult | null;
+    /** The honest reason when the analysis could not be produced. */
+    executionReason: ZacBlockingReason;
+  }> {
+    const memoryBase = {
+      context,
+      profile,
+      visibleTools,
+      completion: this.noModelCompletion(),
+      traceId,
+      conversationId: conversation.conversationId,
+    };
+
+    const { plan, capability, analysisCapabilityCount } = this.orchestrator.buildPlan({
+      decision,
+      actor,
+      context,
+      primaryTool,
+    });
+
+    // Nothing to run. This is the branch that used to lie: it must report what
+    // is actually true of this actor's capability, and the two truths are
+    // different — "you have no live sources" vs "I could not work out which of
+    // your live sources to use".
+    if (plan.tools.length === 0) {
+      // The distinction is ANALYSIS capability, not runnable tools. An actor who
+      // can only run "which locations can I see" has no reporting access at all,
+      // and calling that a data gap would send them to wait for data that was
+      // never the blocker — the permission was.
+      const response =
+        analysisCapabilityCount === 0
+          ? this.responseBuilder.buildPermissionDeniedResponse({
+              ...memoryBase,
+              explanation:
+                'No reporting areas are open at your current access level, so there is nothing for me to analyse. An owner can widen this if you should have it.',
+            })
+          : this.responseBuilder.buildDataUnavailableResponse({
+              ...memoryBase,
+              capability: 'your business data',
+              explanation:
+                "I could not work out which of your connected reports would answer that, so I have not guessed. Ask me about a specific area — rebooking, utilisation, team KPIs or business health — and I will look at it directly.",
+            });
+      return {
+        response,
+        liveCompletion: null,
+        liveLatencyMs: 0,
+        orchestration: null,
+        executionReason: analysisCapabilityCount === 0 ? 'permission_denied' : 'data_unavailable',
+      };
+    }
+
+    const { result, traces } = await this.orchestrator.execute({
+      plan,
+      actor,
+      context,
+      toolInput: (tool) => this.toolInput(tool, question),
+      memory: modelRequest.memoryContext ?? [],
+      capability,
+    });
+
+    for (const trace of traces) {
+      this.telemetry.recordSpineEvent('source_used', {
+        trace_id: traceId,
+        business_id: context.businessId,
+        actor_user_id: context.actorUserId,
+        role_context: context.roleContext,
+        tool: trace.tool,
+        status: trace.status,
+        latency_ms: trace.latency_ms,
+        analysis_intent: plan.analysisIntent,
+      });
+    }
+
+    // Every planned source failed. That is a genuine data/tool failure and is
+    // reported as one — still not as a permission or connectivity claim.
+    if (!result.hasLiveEvidence) {
+      const denied = result.executions.filter((execution) => execution.status === 'permission_denied');
+      // Precedence, not a majority vote: if ANY source was refused and none
+      // succeeded, a permission boundary is the higher-priority truth. Telling
+      // the user to wait for data would send them to fix something that is not
+      // broken.
+      const base =
+        denied.length > 0
+          ? this.responseBuilder.buildPermissionDeniedResponse({
+              ...memoryBase,
+              explanation:
+                'The reporting areas that would answer that are not open at your current access level.',
+            })
+          : this.responseBuilder.buildDataUnavailableResponse({
+              ...memoryBase,
+              capability: 'the areas that would answer this',
+              explanation:
+                'None of the reports I tried returned enough data for this period to base an answer on — so I have not estimated one.',
+            });
+      // The dispatches happened and must stay visible: a turn that tried five
+      // sources and got nothing is a different fact from one that tried none.
+      return {
+        response: { ...base, tool_calls: traces },
+        liveCompletion: null,
+        liveLatencyMs: 0,
+        orchestration: result,
+        executionReason: denied.length > 0 ? 'permission_denied' : 'data_unavailable',
+      };
+    }
+
+    // How many the user actually asked for — bounded server-side, defaulting
+    // to three, and never raised by anything the model returns.
+    const requestedCount = this.orchestrator.requestedPriorityCount(question);
+    const deterministic = this.orchestrator.composeDeterministicAnswer(result, requestedCount);
+    const synthesis = await this.synthesisePriorities(
+      modelRequest,
+      result,
+      context,
+      requestedCount,
+      traceId,
+    );
+
+    const priorities = synthesis.priorities ?? deterministic.priorities;
+    const response = this.responseBuilder.buildAnalysisResponse({
+      ...memoryBase,
+      completion: synthesis.completion,
+      answer: synthesis.answer ?? deterministic.answer,
+      orchestration: result,
+      toolCalls: traces,
+      narrated: synthesis.answer !== null,
+      requestedCount,
+      priorities,
+    });
+
+    return {
+      response,
+      liveCompletion: synthesis.liveCompletion,
+      liveLatencyMs: synthesis.latencyMs,
+      orchestration: result,
+      // Partial coverage is a limitation on a real answer, not a blocker.
+      executionReason: 'none',
+    };
+  }
+
+  /**
+   * Choose and explain the priorities.
+   *
+   * Structured selection, not free prose: the model picks candidate ids the
+   * server built, and the server validates every one before a word reaches the
+   * user. An invented id, a repeated id or more priorities than were asked for
+   * are all caught here — which is the difference between this and the version
+   * that returned three priorities for a request for two, one of them printed
+   * twice.
+   *
+   * Grounding is unchanged in substance: the prose is checked against the same
+   * candidate evidence the model was shown.
+   */
+  private async synthesisePriorities(
+    modelRequest: ZacModelRequest,
+    result: ZacOrchestrationResult,
+    context: ZacActingContext,
+    requestedCount: number,
+    traceId: string,
+  ): Promise<{
+    completion: ZacModelCompletion;
+    liveCompletion: ZacModelCompletion | null;
+    answer: string | null;
+    priorities: ZacResolvedPriority[] | null;
+    latencyMs: number;
+  }> {
+    const none = {
+      completion: this.noModelCompletion(),
+      liveCompletion: null,
+      answer: null,
+      priorities: null,
+      latencyMs: 0,
+    };
+    const candidates = this.orchestrator.selectCandidates(result.consolidation, requestedCount);
+    if (!this.modelProvider.synthesisePriorities || candidates.length === 0) return none;
+
+    const pack = this.orchestrator.buildSynthesisPack(result, requestedCount);
+    const startedAt = Date.now();
+    const outcome = await this.modelProvider
+      .synthesisePriorities({
+        question: modelRequest.question,
+        roleContext: context.roleContext,
+        requestedCount,
+        candidates: candidates.map((candidate) => ({
+          id: candidate.id,
+          title: candidate.title,
+          headline: candidate.primarySignal.headline,
+          severity: candidate.severity,
+          supporting: candidate.supportingSignals.map((signal) => signal.headline),
+          targetSource: candidate.primarySignal.targetSource,
+        })),
+        limitations: pack.limitations,
+        unassessedAreas: pack.unassessedDomains,
+      })
+      .catch(() => ({ raw: null, failure: 'provider_unavailable' as const, completion: null }));
+    const latencyMs = Date.now() - startedAt;
+    const completion = outcome.completion ?? this.noModelCompletion();
+
+    const resolved = this.orchestrator.resolvePriorities(outcome.raw, candidates, requestedCount);
+    if (!resolved) {
+      if (outcome.raw !== null) {
+        // Something came back and none of it referenced a real candidate.
+        this.recordModelFallback(context, traceId, 'context.capabilities', 'ungrounded');
+      }
+      return { ...none, completion, liveCompletion: outcome.completion };
+    }
+
+    const preamble = typeof outcome.raw?.preamble === 'string' ? outcome.raw.preamble : null;
+    const answer = this.orchestrator.composeSynthesisedAnswer(resolved.priorities, preamble, result);
+
+    // The same numeric grounding as any other narration, against the evidence
+    // behind the candidates the model was actually given.
+    const groundingPack: ZacModelEvidencePack = {
+      toolName: candidates[0]?.primarySignal.sourceTool ?? 'context.capabilities',
+      toolAnswer: candidates
+        .flatMap((candidate) => [
+          candidate.primarySignal.headline,
+          ...candidate.supportingSignals.map((signal) => signal.headline),
+        ])
+        .join(' '),
+      evidence: candidates.flatMap((candidate) => candidate.evidenceRefs),
+      limitations: pack.limitations,
+    };
+    if (!this.isGroundedNarration(answer, groundingPack, modelRequest)) {
+      this.recordModelFallback(context, traceId, groundingPack.toolName, 'ungrounded');
+      return { ...none, completion, liveCompletion: outcome.completion };
+    }
+
+    return {
+      completion,
+      liveCompletion: outcome.completion,
+      answer,
+      priorities: resolved.priorities,
+      latencyMs,
+    };
+  }
+
+  /**
+   * Turn ranked findings into an answer. Grounding is unchanged in substance:
+   * every number in the synthesis must appear in the findings, or in memory
+   * AND be phrased as the user's own goal. An ungrounded synthesis is
+   * discarded in favour of the deterministic answer — the user still gets
+   * their priorities, just in plainer words.
+   */
+  private async synthesise(
+    modelRequest: ZacModelRequest,
+    result: ZacOrchestrationResult,
+    context: ZacActingContext,
+    traceId: string,
+  ): Promise<{
+    completion: ZacModelCompletion;
+    liveCompletion: ZacModelCompletion | null;
+    answer: string | null;
+    latencyMs: number;
+  }> {
+    if (!this.modelProvider.narrates) {
+      return {
+        completion: this.noModelCompletion(),
+        liveCompletion: null,
+        answer: null,
+        latencyMs: 0,
+      };
+    }
+
+    const synthesisPack = this.orchestrator.buildSynthesisPack(result, DEFAULT_PRIORITY_COUNT);
+    // The grounding check reads the same evidence the model was given — the
+    // findings, their references and their limitations — so a figure the model
+    // introduces from nowhere still fails, exactly as in single-tool narration.
+    const groundingPack: ZacModelEvidencePack = {
+      toolName: result.signals[0]?.sourceTool ?? 'context.capabilities',
+      toolAnswer: result.signals.map((signal) => signal.headline).join(' '),
+      evidence: result.signals.flatMap((signal) => signal.evidenceRefs),
+      limitations: synthesisPack.limitations,
+    };
+
+    const startedAt = Date.now();
+    try {
+      const completion = await this.modelProvider.complete({ ...modelRequest, synthesisPack });
+      const latencyMs = Date.now() - startedAt;
+      const trimmed = completion.text.trim();
+      if (trimmed.length === 0) {
+        return { completion, liveCompletion: completion, answer: null, latencyMs };
+      }
+      if (!this.isGroundedNarration(trimmed, groundingPack, modelRequest)) {
+        this.recordModelFallback(context, traceId, groundingPack.toolName, 'ungrounded');
+        return { completion, liveCompletion: completion, answer: null, latencyMs };
+      }
+      return { completion, liveCompletion: completion, answer: trimmed, latencyMs };
+    } catch (error) {
+      const latencyMs = Date.now() - startedAt;
+      if (error instanceof ZacModelIncompleteError) {
+        this.recordModelFallback(context, traceId, groundingPack.toolName, 'truncated');
+        return {
+          completion: error.completion,
+          liveCompletion: error.completion,
+          answer: null,
+          latencyMs,
+        };
+      }
+      if (error instanceof ZacModelRefusedError) {
+        this.recordModelFallback(context, traceId, groundingPack.toolName, 'refusal');
+        return {
+          completion: error.completion ?? this.noModelCompletion(),
+          liveCompletion: error.completion ?? null,
+          answer: null,
+          latencyMs,
+        };
+      }
+      this.recordModelFallback(context, traceId, groundingPack.toolName, 'provider_unavailable');
+      return {
+        completion: this.noModelCompletion(),
+        liveCompletion: null,
+        answer: null,
+        latencyMs,
+      };
+    }
+  }
+
+  /**
+   * One cost event for the PLANNING call, kept distinct from the synthesis
+   * call so multi-tool spend can be attributed to the step that caused it.
+   * Classified as `classification` — it decides how to answer, it does not
+   * answer.
+   */
+  private recordPlannerCostEvent(
+    context: ZacActingContext,
+    conversation: ZacConversationState,
+    completion: ZacModelCompletion,
+    latencyMs: number,
+    traceId: string,
+    costEvents: ZacCostEvent[],
+  ): void {
+    const event: ZacCostEvent = {
+      trace_id: traceId,
+      conversation_id: conversation.conversationId,
+      business_id: context.businessId,
+      location_id: context.locationId,
+      actor_user_id: context.actorUserId,
+      role_context: context.roleContext,
+      provider: completion.provider,
+      model: completion.model,
+      task_type: 'classification',
+      input_tokens: completion.inputTokens,
+      output_tokens: completion.outputTokens,
+      reasoning_tokens: completion.reasoningTokens,
+      estimated_cost_usd: completion.estimatedCostUsd,
+      latency_ms: latencyMs,
+      tool_calls_used: 0,
+      cache_hit: completion.cacheReadInputTokens > 0,
+    };
+    this.telemetry.recordCostEvent(event);
+    costEvents.push(event);
+  }
+
 
   /**
    * Stylist turns never enter the owner/manager router. Three outcomes only:

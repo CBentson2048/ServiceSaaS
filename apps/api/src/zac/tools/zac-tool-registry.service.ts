@@ -78,6 +78,17 @@ export class ZacToolRegistryService {
   }
 
   /**
+   * Every registered tool, regardless of role, permission or enablement.
+   * Read-only metadata for capability reporting: it answers "does ZAC have
+   * this capability at all?", which is a different question from "may this
+   * actor use it?" — conflating the two is what let a planning miss be
+   * reported as a data outage.
+   */
+  allTools(): readonly ZacReadOnlyTool[] {
+    return this.tools;
+  }
+
+  /**
    * The tool set visible to this actor — filtered by role AND per-tool permission
    * BEFORE any model ever sees a tool list. `zac.access` alone yields nothing here.
    */

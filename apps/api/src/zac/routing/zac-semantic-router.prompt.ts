@@ -45,6 +45,15 @@ const EXAMPLES: RouterExample[] = [
   { q: 'Which chair is losing me money?', mode: 'qlooqo_data', why: 'their real profitability by column' },
   { q: 'Am I on track this week?', mode: 'qlooqo_data', why: 'first-person progress against their real targets' },
 
+  // --- what should I DO: about THEIR salon unless generalised ---
+  { q: 'If I only had one hour today, where should I spend it?', mode: 'qlooqo_data', why: 'asks where to spend THEIR hour in THEIR salon — answering needs their actual position' },
+  { q: 'Based on everything you can see, what should I do first?', mode: 'qlooqo_data', why: '"everything you can see" is their connected data; a first-person action question about their business' },
+  { q: "Use all the information you're allowed to see and tell me what matters most.", mode: 'qlooqo_data', why: 'explicitly asks ZAC to use the data it holds for them' },
+  { q: 'What should I coach the team on first?', mode: 'qlooqo_data', why: 'their actual team, so it needs their team\'s real standing' },
+  { q: 'What should I focus on first?', mode: 'qlooqo_data', why: 'first-person and unqualified — their salon, not salons' },
+  { q: 'Generally, what should a salon owner focus on first?', mode: 'general_advice', why: 'explicitly generalised: "generally" plus an indefinite subject' },
+  { q: 'What do most salons focus on first?', mode: 'general_advice', why: 'indefinite subject — salons in general, not theirs' },
+
   // --- general advice, including questions that name business metrics ---
   { q: 'What are the best ways for salons to improve rebooking?', mode: 'general_advice', why: 'general best practice' },
   { q: 'How should a manager approach a difficult coaching conversation?', mode: 'general_advice', why: 'general management technique' },
@@ -133,6 +142,7 @@ export const ZAC_SEMANTIC_ROUTER_SYSTEM_PROMPT: string = [
   '7. If the user explicitly says not to use their QLOOQO or current data, never choose qlooqo_data — unless this same message retracts that and asks for live data.',
   '8. Prefer hypothetical over general_advice when a concrete scenario or figure is supplied; prefer general_advice when the question is open ("what normally improves rebooking?").',
   '9. For a short follow-up, decide whether answering needs NEW data. If the previous answer already contains what is needed, it is conversational.',
+  "9b. ZAC lives inside the user's own salon in QLOOQO, so a first-person question about what to DO — what to focus on, work on, fix, spend an hour on, coach the team on, where to start, what matters most — is about THEIR salon by default. It is qlooqo_data even when it names no metric, no period and no figure, because answering it well means looking at their actual business. Only an explicit generalisation moves it to general_advice: \"generally\", \"in general\", \"usually\", \"typically\", an indefinite subject (\"a salon\", \"salon owners\", \"most salons\"), or an explicit instruction to ignore their data.",
   "10. privacy_boundary is about the TARGET, not the vocabulary: whoever asks, in whatever words, a request whose object is another person's private information (their private notes, their chats with ZAC, what they told ZAC) is privacy_boundary. Requests for the asker's own business figures — even about staff performance in aggregate — are qlooqo_data, because business data is not private-to-a-person.",
   '',
   'REASON CODES',
@@ -209,9 +219,11 @@ export const ZAC_SEMANTIC_ROUTER_SCHEMA = {
     },
     confidence: {
       type: 'number' as const,
-      minimum: 0,
-      maximum: 1,
-      description: 'Genuine confidence in the chosen mode, 0 to 1.',
+      // NO `minimum`/`maximum`: a strict tool schema rejects numeric bounds
+      // outright, and the whole call 400s. The range belongs in the
+      // description, and the server clamps it in validate() regardless — the
+      // bound was never load-bearing here.
+      description: 'Genuine confidence in the chosen mode, from 0 to 1.',
     },
     requires_live_business_data: {
       type: 'boolean' as const,

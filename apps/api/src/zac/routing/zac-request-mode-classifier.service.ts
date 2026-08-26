@@ -435,7 +435,7 @@ export class ZacRequestModeClassifierService {
       return true;
     }
     return (
-      /\bhypothetical(ly)?\b|\bsuppose(\s|d\b|ing\b)|\bimagine\b|\bwhat if\b|\bfictional\b|\bfor (the sake of )?argument\b|\bin theory\b|\btheoretical(ly)?\b|\bpurely as an example\b/.test(
+      /\bhypothetical(ly)?\b|\bsuppose(\s|d\b|ing\b)|\bimagine\b|\bwhat if\b|\bfictional\b|\bfor (the sake of )?argument\b|\bin theory\b|\btheoretical(ly)?\b|\bpurely as an example\b|\bthought experiment\b|\bmade[- ]up numbers\b|\bmade these numbers up\b/.test(
         q,
       ) ||
       // "let's say", "lets say", "say a stylist was on 40%", "assuming X"
@@ -496,6 +496,36 @@ export class ZacRequestModeClassifierService {
       return true;
     }
     if (/\btips (for|on)\b/.test(q)) return true;
+    // An indefinite subject with no possessive: "priorities for A struggling
+    // salon", "what should AN owner focus on". The question is about salons in
+    // general — reading it as their own business would put the whole live
+    // pipeline behind a question that never mentioned their figures.
+    if (
+      /\b(?:for|to|of|in) (?:a|an|any|another|the average|a typical)\s+(?:[\w-]+\s+){0,2}(?:salons?|stylists?|owners?|managers?|business|team)\b/.test(
+        q,
+      )
+    ) {
+      return true;
+    }
+    if (/\b(?:salon|business) owners?\b(?!.*\b(?:my|our)\b)/.test(q)) return true;
+    // Received wisdom, explicitly about the trade rather than this salon.
+    if (
+      /\btextbook\b|\breceived wisdom\b|\bthe industry\b|\bindustry reckons\b|\bsalon gurus\b|\bwhat do people normally\b|\bbest salons\b|\bin this industry\b/.test(
+        q,
+      )
+    ) {
+      return true;
+    }
+    // The user disclaiming their own data outright.
+    if (/\bnot (?:after anything |genuinely )?about us\b|\bnothing to do with us\b|\bdidn'?t pull anything out of the system\b/.test(q)) {
+      return true;
+    }
+    // An indefinite protagonist in a general situation: "when a salon is
+    // struggling", "if somebody took over a salon", "for a mid-sized
+    // independent". None of these name the asker's business.
+    if (/\bwhen (?:a|an) (?:[\w-]+\s+){0,2}(?:salon|stylist|business|owner|manager)\b/.test(q)) return true;
+    if (/\bif (?:somebody|someone|anyone) (?:took over|ran|bought|opened)\b/.test(q)) return true;
+    if (/\bfor a (?:mid[- ]?sized|small|large|typical|busy|new|struggling)\b/.test(q)) return true;
     // "What normally lifts retail attach?", "what typically drives walk-ins" —
     // the adverb marks the general case whatever verb follows it.
     if (/\bwhat (generally|typically|usually|normally|often)\b/.test(q)) return true;
@@ -548,6 +578,10 @@ export class ZacRequestModeClassifierService {
    * self-data questions ("can I see my appointments?" is a diary ask).
    */
   private isPermissionQuestion(q: string): boolean {
+    // "Use all the information you're allowed to see and tell me what matters
+    // most" mentions permission, but the ASK is an analysis. Answering it with
+    // the access explainer would describe the data instead of using it.
+    if (ASKS_FOR_ANALYSIS.test(q)) return false;
     if (
       /\b(allowed|permitted|not allowed)\b[^.?!]{0,60}\b(to )?(see|access|view|know|look at|get at|pull up|open|check)\b/.test(
         q,
@@ -786,6 +820,14 @@ type DataClauseSignal = 'own_ignore' | 'own_use' | 'general_excluded' | null;
  */
 const DISCONTINUOUS_EXCLUSION =
   /\b(leave|left)\b[^.?!]{0,60}\bout\b|\b(put|set|park)\b[^.?!]{0,60}\b(aside|to one side)\b|\bkeep\b[^.?!]{0,60}\bout of\b/;
+
+/**
+ * A demand for analysis rather than for a description of access. Used to stop
+ * the permission explainer claiming a question that merely mentions permission
+ * on its way to asking for the business to be weighed up.
+ */
+const ASKS_FOR_ANALYSIS =
+  /\btell me what matters\b|\bwhat matters most\b|\bmost important\b|\btop (?:three|3|two|2|five|5)\b|\bpriorit(?:y|ies)\b|\bwhat should i (?:focus|work on|do)\b|\bwhere should i (?:focus|start)\b|\bneeds? (?:my |our )?attention\b|\bbiggest (?:gaps?|opportunit\w*)\b/;
 
 /** A question about ZAC's ability to reach data, rather than an instruction to. */
 const CAPABILITY_QUESTION_SHAPE =

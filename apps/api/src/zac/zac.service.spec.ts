@@ -29,6 +29,11 @@ import type {
 import { ZacConversationStore } from './persistence/zac-conversation.store';
 import { ZacMeasurementStore } from './persistence/zac-measurement.store';
 import { ZacMemoryStore } from './persistence/zac-memory.store';
+import { ZacAnalysisIntentService } from './analysis/zac-analysis-intent.service';
+import { ZacEvidenceService } from './analysis/zac-evidence.service';
+import { ZacPriorityService } from './analysis/zac-priority.service';
+import { ZacOrchestratorService } from './analysis/zac-orchestrator.service';
+import { ZacToolPlannerService } from './analysis/zac-tool-planner.service';
 import { ZacPolicyService } from './policy/zac-policy.service';
 import { ZacResourceCategoryService } from './policy/zac-resource-category.service';
 import { ZacResponseBuilderService } from './responses/zac-response-builder.service';
@@ -271,16 +276,17 @@ function makeService(
 
   const memoryExtraction = new ZacMemoryExtractionService();
   const requestModes = new ZacRequestModeClassifierService(memoryExtraction);
+  const registry = new ZacToolRegistryService(
+    dashboard as DashboardService,
+    kpi as KpiService,
+    labAppointments as LabAppointmentsService,
+    utilisation as UtilisationService,
+  );
   const service = new ZacService(
     new ZacRolloutService(config),
     new ZacContextService(),
     new ZacRoleProfileService(),
-    new ZacToolRegistryService(
-      dashboard as DashboardService,
-      kpi as KpiService,
-      labAppointments as LabAppointmentsService,
-      utilisation as UtilisationService,
-    ),
+    registry,
     new ZacResponseBuilderService(),
     telemetryService,
     new ZacConversationService(new ZacConversationStore(config), telemetryService),
@@ -289,6 +295,14 @@ function makeService(
     requestModes,
     new ZacResourceCategoryService(),
     new ZacPolicyService(),
+    new ZacOrchestratorService(
+      new ZacAnalysisIntentService(),
+      new ZacToolPlannerService(registry),
+      new ZacEvidenceService(),
+      new ZacPriorityService(),
+      registry,
+      provider,
+    ),
     new ZacSemanticRouterService(requestModes, provider, config),
     new ZacMeasurementService(new ZacMeasurementStore(config), telemetryService),
     provider,
@@ -1276,6 +1290,12 @@ describe('ZacService', () => {
         response_strategy: 'answer_with_qlooqo_evidence',
         policy_boundary_triggered: false,
         override_attempted: false,
+        // Every live-data turn now records WHAT KIND of analysis it was, and
+        // what the actor could have run — the counterweight to any shortfall
+        // the answer reports.
+        analysis_intent: 'business_health',
+        planner_source: 'fallback_plan',
+        executable_tool_count: expect.any(Number),
       });
       expect(response.answer).not.toContain('zac-stub-1');
     });
@@ -2381,6 +2401,573 @@ describe('ZacService', () => {
   // data was connected. A refusal with the wrong reason is a product defect,
   // because it tells the user something untrue about their own product.
   // ===========================================================================
+  // ===========================================================================
+  // Multi-source orchestration (Phase 1 completion).
+  //
+  // The hosted failure: "Use everything you have access to and tell me the 3
+  // most important things I should focus on." ZAC answered that it did not have
+  // access to live business data — while five permitted tools sat executable.
+  // The pipeline had exactly one route for a live-data question (one
+  // keyword-matched tool), so a question spanning the business matched no
+  // keyword and fell through to the capability summary, whose copy says
+  // precisely that. These tests pin the route that was missing.
+  // ===========================================================================
+
+  describe('multi-source analysis (broad business questions)', () => {
+    /** Every Core MVP source wired, as a working salon would have them. */
+    function fullyConnected(provider?: ZacModelProvider) {
+      const kpis = jest.fn().mockResolvedValue(KPI_FIXTURE);
+      const stylistPerformance = jest.fn().mockResolvedValue(STYLIST_PERF_FIXTURE);
+      const stylistList = jest.fn().mockResolvedValue(STYLIST_LIST_FIXTURE);
+      const summary = jest.fn().mockResolvedValue(UTILISATION_FIXTURE);
+      const { service, telemetry } = makeService(
+        undefined,
+        { kpis, stylistPerformance } as Partial<DashboardService>,
+        { stylistList, myKpi: jest.fn().mockResolvedValue(MY_KPI_FIXTURE) } as Partial<KpiService>,
+        undefined,
+        provider,
+        undefined,
+        { summary },
+      );
+      return { service, telemetry, kpis, stylistPerformance, stylistList, summary };
+    }
+
+    const LUKE_EXACT =
+      'Use everything you have access to and tell me the 3 most important things I should focus on.';
+
+    /** Language that would be untrue while executable live tools exist. */
+    const FALSE_NO_DATA =
+      /(don'?t|do not) (?:yet )?have access to (?:your )?live|(?:business|live) data (?:is|isn'?t) (?:not )?connected|no live (?:business )?data|foundation mode|ask for a specific report|can'?t analyse that/i;
+
+    it("answers Luke's exact question from several live sources", async () => {
+      const { service, kpis, summary } = fullyConnected();
+
+      const response = await service.ask(makeActor(), { question: LUKE_EXACT });
+
+      // More than one source actually ran.
+      expect(response.tool_calls.length).toBeGreaterThan(1);
+      expect(kpis).toHaveBeenCalled();
+      expect(summary).toHaveBeenCalled();
+      expect(response.technical_details.analysis_intent).toBe('business_priorities');
+      expect(response.technical_details.multi_tool).toBe(true);
+      // And the sentence that started all this is gone.
+      expect(response.answer).not.toMatch(FALSE_NO_DATA);
+      expect(response.answer.length).toBeGreaterThan(40);
+      expect(response.evidence.length).toBeGreaterThan(0);
+    });
+
+    it('reproduces the hosted sequence: health first, then the broad question', async () => {
+      const { service, kpis } = fullyConnected();
+      const actor = makeActor();
+
+      const health = await service.ask(actor, { question: 'How is my business doing?' });
+      expect(health.tool_calls[0]?.tool).toBe('report.business_health');
+      expect(kpis).toHaveBeenCalled();
+
+      const priorities = await service.ask(actor, {
+        question: LUKE_EXACT,
+        conversationId: health.conversation_id!,
+      });
+
+      // Same actor, same conversation, same live capability — the broad
+      // question must not suddenly lose the data the previous turn just used.
+      expect(priorities.technical_details.analysis_intent).toBe('business_priorities');
+      expect(priorities.tool_calls.length).toBeGreaterThan(1);
+      expect(priorities.answer).not.toMatch(FALSE_NO_DATA);
+    });
+
+    const PARAPHRASES = [
+      'What should I focus on first?',
+      'If I only had one hour today, where should I spend it?',
+      'Look across my business and tell me what needs my attention.',
+      'What are my biggest opportunities right now?',
+      'Taking everything you know about my business into account, what are my top three priorities?',
+      'Use all the information you are allowed to see and tell me what matters most.',
+      'Look across everything and tell me my biggest three priorities.',
+      'What are the three things I should care about most today?',
+      'If you were me, where would you focus first based on the business?',
+      'Taking all my current figures into account, where are the biggest gaps?',
+      'Based on everything you can see, what should I do first?',
+      'If you were running my salon today, where would you spend your attention?',
+    ];
+
+    it.each(PARAPHRASES)('handles the paraphrase "%s" with no trigger phrase', async (question) => {
+      const { service } = fullyConnected();
+
+      const response = await service.ask(makeActor(), { question });
+
+      expect(response.technical_details.analysis_intent).toBe('business_priorities');
+      expect(response.tool_calls.length).toBeGreaterThan(1);
+      expect(response.answer).not.toMatch(FALSE_NO_DATA);
+    });
+
+    it('returns at most three priorities, not a dashboard dump', async () => {
+      const { service } = fullyConnected();
+
+      const response = await service.ask(makeActor(), { question: LUKE_EXACT });
+
+      const numbered = response.answer.match(/^\s*\d+[.)]\s/gm) ?? [];
+      expect(numbered.length).toBeLessThanOrEqual(3);
+    });
+
+    it('a narrow question still runs one tool', async () => {
+      const { service, summary, kpis } = fullyConnected();
+
+      const rebooking = await service.ask(makeActor(), { question: 'What is my rebooking rate?' });
+      expect(rebooking.tool_calls).toHaveLength(1);
+      expect(rebooking.tool_calls[0].tool).toBe('report.rebooking_summary');
+      expect(summary).not.toHaveBeenCalled();
+
+      const utilisation = await service.ask(makeActor(), {
+        question: 'What is my utilisation this week?',
+      });
+      expect(utilisation.tool_calls).toHaveLength(1);
+      expect(utilisation.tool_calls[0].tool).toBe('report.utilisation_summary');
+      void kpis;
+    });
+
+    it('general advice and hypotheticals still run no tool at all', async () => {
+      const { service, kpis, summary } = fullyConnected(makeNarratingProvider());
+
+      for (const question of [
+        'Generally, what are the three most important things a salon owner should focus on?',
+        'What are common priorities for a struggling salon?',
+        'If a hypothetical salon had poor utilisation and weak rebooking, what should they do first?',
+      ]) {
+        const response = await service.ask(makeActor(), { question });
+        expect(response.tool_calls).toEqual([]);
+        expect(['general_advice', 'hypothetical']).toContain(
+          response.technical_details.request_mode,
+        );
+      }
+      expect(kpis).not.toHaveBeenCalled();
+      expect(summary).not.toHaveBeenCalled();
+    });
+
+    it('partial evidence still answers, and says what it could not assess', async () => {
+      const kpis = jest.fn().mockResolvedValue(KPI_FIXTURE);
+      const stylistPerformance = jest.fn().mockResolvedValue(STYLIST_PERF_FIXTURE);
+      const stylistList = jest.fn().mockResolvedValue(STYLIST_LIST_FIXTURE);
+      // Utilisation has no rota data for the period — a real, common state.
+      const summary = jest.fn().mockRejectedValue(new Error('no rota'));
+      const { service } = makeService(
+        undefined,
+        { kpis, stylistPerformance } as Partial<DashboardService>,
+        { stylistList } as Partial<KpiService>,
+        undefined,
+        undefined,
+        undefined,
+        { summary },
+      );
+
+      const response = await service.ask(makeActor(), { question: LUKE_EXACT });
+
+      // The analysis survives one missing source…
+      expect(response.answer).not.toMatch(FALSE_NO_DATA);
+      expect(response.technical_details.tool_failures).toBeGreaterThan(0);
+      // …and says so rather than implying full coverage.
+      expect(response.limitations.join(' ')).toMatch(/utilisation/i);
+      expect(response.confidence).not.toBe('high');
+    });
+
+    it('when every source fails it reports a DATA problem, never a capability one', async () => {
+      const failing = jest.fn().mockRejectedValue(new Error('down'));
+      const { service } = makeService(
+        undefined,
+        { kpis: failing, stylistPerformance: failing } as Partial<DashboardService>,
+        { stylistList: failing } as Partial<KpiService>,
+        undefined,
+        undefined,
+        undefined,
+        { summary: failing },
+      );
+
+      const response = await service.ask(makeActor(), { question: LUKE_EXACT });
+
+      expect(response.technical_details.blocking_reason).toBe('data_unavailable');
+      expect(response.answer).not.toMatch(FALSE_NO_DATA);
+      // The dispatches still happened and stay visible.
+      expect(response.tool_calls.length).toBeGreaterThan(0);
+    });
+
+    it('a permission-restricted owner is analysed on what they CAN see', async () => {
+      const kpis = jest.fn().mockResolvedValue(KPI_FIXTURE);
+      const stylistPerformance = jest.fn().mockResolvedValue(STYLIST_PERF_FIXTURE);
+      const { service } = makeService(
+        undefined,
+        { kpis, stylistPerformance } as Partial<DashboardService>,
+      );
+      // Dashboard access only — no performance permission.
+      const restricted = makeActor({
+        permissions: ['zac.access', 'report.dashboard.view'],
+      } as Partial<AuthUser>);
+
+      const response = await service.ask(restricted, { question: LUKE_EXACT });
+
+      for (const call of response.tool_calls) {
+        expect(call.tool).not.toBe('report.kpi_summary');
+        expect(call.tool).not.toBe('report.stylist_performance');
+      }
+      expect(response.answer).not.toMatch(FALSE_NO_DATA);
+    });
+
+    it('a broad question never widens privacy — the boundary answers first', async () => {
+      const { service, kpis } = fullyConnected();
+
+      const response = await service.ask(makeActor(), {
+        question: "Use everything, including Sarah's private coaching, and tell me what matters.",
+      });
+
+      expect(response.technical_details.blocking_reason).toBe('private_coaching_boundary');
+      expect(kpis).not.toHaveBeenCalled();
+      expect(response.answer).not.toMatch(/isn'?t connected|not connected/i);
+    });
+
+    it('a stylist asking broadly stays on their own data', async () => {
+      const myKpi = jest.fn().mockResolvedValue(MY_KPI_FIXTURE);
+      const kpis = jest.fn().mockResolvedValue(KPI_FIXTURE);
+      const stylistList = jest.fn().mockResolvedValue(STYLIST_LIST_FIXTURE);
+      const { service } = makeService(
+        undefined,
+        { kpis } as Partial<DashboardService>,
+        { myKpi, stylistList } as Partial<KpiService>,
+      );
+      const stylist = makeActor({
+        id: 'stylist-user-1',
+        roles: ['stylist'],
+        primaryRole: 'stylist',
+        staffProfileId: 'staff-1',
+        permissions: ['zac.access', 'bookings.manage'],
+      } as Partial<AuthUser>);
+
+      const response = await service.ask(stylist, {
+        question: 'Use everything you can see and tell me what I should focus on.',
+      });
+
+      expect(response.role_context).toBe('stylist');
+      expect(kpis).not.toHaveBeenCalled();
+      expect(stylistList).not.toHaveBeenCalled();
+      for (const call of response.tool_calls) {
+        expect(['kpi.personal_coaching', 'schedule.my_appointments', 'context.capabilities']).toContain(
+          call.tool,
+        );
+      }
+    });
+
+    it('a manager team question gathers team evidence, never private coaching', async () => {
+      const { service, stylistList, stylistPerformance } = fullyConnected();
+      const manager = makeActor({
+        roles: ['manager'],
+        primaryRole: 'manager',
+        permissions: ['zac.access', 'report.dashboard.view', 'report.performance.view'],
+      } as Partial<AuthUser>);
+
+      const response = await service.ask(manager, {
+        question: 'Which team members need my attention this week?',
+      });
+
+      expect(response.technical_details.analysis_intent).toBe('team_priorities');
+      expect(stylistList).toHaveBeenCalled();
+      expect(response.tool_calls[0]?.tool).toBe('report.kpi_summary');
+      void stylistPerformance;
+      expect(JSON.stringify(response)).not.toMatch(/coaching_focus|stylist_private/);
+    });
+
+    it('records the plan on the spine and bills nothing extra without a planner', async () => {
+      const { service, telemetry } = fullyConnected();
+
+      const response = await service.ask(makeActor(), { question: LUKE_EXACT });
+
+      expect(response.technical_details.planner_source).toBeDefined();
+      expect(response.technical_details.tools_selected?.length).toBeGreaterThan(1);
+      expect(response.technical_details.executable_tool_count).toBeGreaterThan(0);
+      expect(telemetry.recordSpineEvent).toHaveBeenCalledWith(
+        'source_used',
+        expect.objectContaining({ analysis_intent: 'business_priorities' }),
+      );
+      // The stub provider cannot plan, so no planning call was billed.
+      expect(telemetry.recordCostEvent).not.toHaveBeenCalledWith(
+        expect.objectContaining({ task_type: 'classification' }),
+      );
+    });
+
+    it('a planner that fails still yields a live-data answer', async () => {
+      const provider = makeNarratingProvider({
+        planAnalysis: jest.fn().mockRejectedValue(new Error('planner down')),
+      });
+      const { service } = fullyConnected(provider);
+
+      const response = await service.ask(makeActor(), { question: LUKE_EXACT });
+
+      expect(response.technical_details.fallback_plan_used).toBe(true);
+      expect(response.tool_calls.length).toBeGreaterThan(1);
+      expect(response.answer).not.toMatch(FALSE_NO_DATA);
+    });
+
+    describe('requested count and consolidation, end to end', () => {
+      /** The exact hosted failure, as a full turn. */
+      const LUKE_COUNT = 'tell me 2 most importnat things i should focus on';
+
+      it('respects the requested count and never repeats a priority', async () => {
+        const { service } = fullyConnected();
+        await service.ask(makeActor(), { question: 'My rebooking goal is 60%.' });
+
+        const response = await service.ask(makeActor(), { question: LUKE_COUNT });
+
+        expect(response.technical_details.requested_priority_count).toBe(2);
+        expect(response.technical_details.final_priority_count).toBeLessThanOrEqual(2);
+        const numbered = response.answer.match(/^\s*\d+\.\s/gm) ?? [];
+        expect(numbered.length).toBeLessThanOrEqual(2);
+
+        // The defect verbatim: the same line printed twice.
+        const items = response.answer
+          .split('\n')
+          .filter((line) => /^\s*\d+\.\s/.test(line))
+          .map((line) => line.replace(/^\s*\d+\.\s/, '').trim());
+        expect(new Set(items).size).toBe(items.length);
+      });
+
+      it('consolidates the team view of a problem into the problem', async () => {
+        const { service } = fullyConnected();
+        await service.ask(makeActor(), { question: 'My rebooking goal is 60%.' });
+
+        const response = await service.ask(makeActor(), { question: LUKE_COUNT });
+
+        const domains = response.technical_details.candidate_domains ?? [];
+        // One rebooking issue, not one per source that mentioned it.
+        expect(domains.filter((domain) => domain === 'rebooking')).toHaveLength(1);
+        expect(response.technical_details.signals_merged).toBeGreaterThanOrEqual(0);
+        expect(response.technical_details.raw_signal_count).toBeGreaterThan(
+          response.technical_details.consolidated_candidate_count ?? 0,
+        );
+      });
+
+      it.each([
+        ['tell me the single most important thing', 1],
+        ['tell me 2 most importnat things i should focus on', 2],
+        ['what should I focus on?', 3],
+        ['give me my top 5 priorities', 5],
+        ['give me my top 20 priorities', 5],
+      ])('caps "%s" at %i', async (question, expected) => {
+        const { service } = fullyConnected();
+
+        const response = await service.ask(makeActor(), { question });
+
+        expect(response.technical_details.requested_priority_count).toBe(expected);
+        const numbered = response.answer.match(/^\s*\d+\.\s/gm) ?? [];
+        expect(numbered.length).toBeLessThanOrEqual(expected);
+      });
+
+      it('returns fewer than requested rather than padding the list', async () => {
+        // Only rebooking is connected, so only one issue is supportable.
+        const stylistList = jest.fn().mockResolvedValue(STYLIST_LIST_FIXTURE);
+        const failing = jest.fn().mockRejectedValue(new Error('down'));
+        const { service } = makeService(
+          undefined,
+          { kpis: jest.fn().mockResolvedValue(KPI_FIXTURE), stylistPerformance: failing } as Partial<DashboardService>,
+          { stylistList } as Partial<KpiService>,
+          undefined,
+          undefined,
+          undefined,
+          { summary: failing },
+        );
+
+        const response = await service.ask(makeActor(), {
+          question: 'give me my top 5 priorities',
+        });
+
+        const numbered = response.answer.match(/^\s*\d+\.\s/gm) ?? [];
+        expect(numbered.length).toBeLessThan(5);
+        expect(response.answer).not.toMatch(/no data|nothing to report/i);
+      });
+
+      it('enforces the count even when the model returns too many', async () => {
+        const provider = makeNarratingProvider({
+          synthesisePriorities: jest.fn(async () => ({
+            raw: {
+              priorities: [
+                { candidate_id: 'cand_rebooking', explanation: 'a', action: 'b' },
+                { candidate_id: 'cand_utilisation', explanation: 'c', action: 'd' },
+                { candidate_id: 'cand_revenue', explanation: 'e', action: 'f' },
+              ],
+            },
+            failure: null,
+            completion: null,
+          })),
+        });
+        const { service } = fullyConnected(provider);
+
+        const response = await service.ask(makeActor(), {
+          question: 'tell me 2 most importnat things i should focus on',
+        });
+
+        expect(response.technical_details.final_priority_count).toBeLessThanOrEqual(2);
+      });
+
+      it('rejects a repeated candidate id', async () => {
+        const provider = makeNarratingProvider({
+          synthesisePriorities: jest.fn(async () => ({
+            raw: {
+              priorities: [
+                { candidate_id: 'cand_rebooking', explanation: 'a', action: 'b' },
+                { candidate_id: 'cand_rebooking', explanation: 'a', action: 'b' },
+              ],
+            },
+            failure: null,
+            completion: null,
+          })),
+        });
+        const { service } = fullyConnected(provider);
+
+        const response = await service.ask(makeActor(), {
+          question: 'give me my top 3 priorities',
+        });
+
+        expect(response.technical_details.final_priority_count).toBe(1);
+      });
+
+      it('rejects an invented candidate id and falls back deterministically', async () => {
+        const provider = makeNarratingProvider({
+          synthesisePriorities: jest.fn(async () => ({
+            raw: {
+              priorities: [
+                { candidate_id: 'cand_made_up', explanation: 'Revenue is £9,999,999.', action: 'x' },
+              ],
+            },
+            failure: null,
+            completion: null,
+          })),
+        });
+        const { service } = fullyConnected(provider);
+
+        const response = await service.ask(makeActor(), {
+          question: 'give me my top 2 priorities',
+        });
+
+        // Nothing the model invented reaches the user.
+        expect(response.answer).not.toContain('9,999,999');
+        expect(response.technical_details.final_priority_count).toBeGreaterThan(0);
+      });
+
+      it('falls back to deterministic candidates when synthesis fails', async () => {
+        const provider = makeNarratingProvider({
+          synthesisePriorities: jest.fn().mockRejectedValue(new Error('down')),
+        });
+        const { service } = fullyConnected(provider);
+
+        const response = await service.ask(makeActor(), {
+          question: 'tell me 2 most importnat things i should focus on',
+        });
+
+        const numbered = response.answer.match(/^\s*\d+\.\s/gm) ?? [];
+        expect(numbered.length).toBeGreaterThan(0);
+        expect(numbered.length).toBeLessThanOrEqual(2);
+        // Deduplicated in the fallback too.
+        const items = response.answer
+          .split('\n')
+          .filter((line) => /^\s*\d+\.\s/.test(line));
+        expect(new Set(items).size).toBe(items.length);
+      });
+
+      it('a narrow metric question never builds candidates', async () => {
+        const { service } = fullyConnected();
+
+        const response = await service.ask(makeActor(), { question: 'What is my rebooking?' });
+
+        expect(response.tool_calls).toHaveLength(1);
+        expect(response.technical_details.consolidated_candidate_count).toBeUndefined();
+      });
+    });
+
+    describe('findings from adversarial review', () => {
+      it('a comparison question never reaches the capability summary', async () => {
+        const { service, kpis } = fullyConnected();
+
+        const response = await service.ask(makeActor(), {
+          question: 'How does this month compare with last month?',
+        });
+
+        // The original defect, in a different intent: no keyword matched, so
+        // the turn fell to context.capabilities and was told ZAC has no live
+        // data — while the dashboard was right there.
+        expect(response.tool_calls.map((call) => call.tool)).not.toContain('context.capabilities');
+        expect(kpis).toHaveBeenCalled();
+        expect(response.answer).not.toMatch(FALSE_NO_DATA);
+      });
+
+      it('a staff-shaped team question is analysed, not answered "not built yet"', async () => {
+        const { service, stylistList } = fullyConnected();
+
+        const response = await service.ask(makeActor(), {
+          question: 'Which of my stylists needs support this week?',
+        });
+
+        // The staff-list branch used to claim this: a staff noun with no
+        // matching single tool. It is a team-priority question.
+        expect(response.technical_details.analysis_intent).toBe('team_priorities');
+        expect(stylistList).toHaveBeenCalled();
+        expect(response.answer).not.toMatch(/hasn'?t been built yet/i);
+      });
+
+      it('no reporting access is a PERMISSION gap, not a missing dataset', async () => {
+        const { service } = fullyConnected();
+        // zac.access only: context tools run, but nothing measures the business.
+        const restricted = makeActor({ permissions: ['zac.access'] } as Partial<AuthUser>);
+
+        const response = await service.ask(restricted, {
+          question:
+            'Use everything you have access to and tell me the 3 most important things I should focus on.',
+        });
+
+        expect(response.technical_details.blocking_reason).toBe('permission_denied');
+        expect(response.answer).not.toMatch(FALSE_NO_DATA);
+        expect(response.answer).not.toMatch(/not enough data|isn'?t enough data/i);
+      });
+
+      it("an owner's analysis never folds in their own stylist column", async () => {
+        const { service } = fullyConnected();
+        // A working manager: holds a staff profile AND the stylist grant.
+        const workingManager = makeActor({
+          roles: ['manager', 'stylist'],
+          primaryRole: 'manager',
+          staffProfileId: 'staff-9',
+          permissions: ['zac.access', 'report.dashboard.view', 'report.performance.view', 'bookings.manage'],
+        } as Partial<AuthUser>);
+
+        const response = await service.ask(workingManager, {
+          question: 'Look across the business and tell me what needs my attention.',
+        });
+
+        for (const call of response.tool_calls) {
+          expect(['kpi.personal_coaching', 'schedule.my_appointments']).not.toContain(call.tool);
+        }
+      });
+
+      it('a live-data answer is never stamped as foundation mode', async () => {
+        const { service } = fullyConnected();
+
+        const response = await service.ask(makeActor(), {
+          question:
+            'Use everything you have access to and tell me the 3 most important things I should focus on.',
+        });
+
+        // The stub provider cannot narrate, so this is the DETERMINISTIC
+        // multi-source answer — and it is still built from live tool output.
+        expect(response.technical_details.foundation_mode).toBe(false);
+      });
+
+      it('nonsense still gets the capability answer rather than two reports', async () => {
+        const { service, kpis } = fullyConnected();
+
+        const response = await service.ask(makeActor(), { question: 'Tell me a story' });
+
+        expect(response.tool_calls[0]?.tool).toBe('context.capabilities');
+        expect(kpis).not.toHaveBeenCalled();
+      });
+    });
+
+  });
+
   describe('policy: private coaching is a fixed invariant, not a permission', () => {
     function stylistOf(overrides: Partial<AuthUser> = {}): AuthUser {
       return makeActor({

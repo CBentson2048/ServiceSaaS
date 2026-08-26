@@ -112,6 +112,34 @@ export interface ZacTechnicalDetails {
    * no effect whatsoever on the decision.
    */
   override_attempted?: boolean;
+  /** What kind of analysis this live-data turn needed. */
+  analysis_intent?: string;
+  /** Which layer decided the analysis and the plan. */
+  planner_source?: string;
+  planner_confidence?: number;
+  /** True when more than one evidence source was gathered for one answer. */
+  multi_tool?: boolean;
+  tools_considered?: number;
+  tools_selected?: string[];
+  tools_executed?: number;
+  tool_failures?: number;
+  /** True when the deterministic plan ran because model planning did not. */
+  fallback_plan_used?: boolean;
+  evidence_signal_count?: number;
+  priority_count?: number;
+  /**
+   * What this actor could ACTUALLY run this turn. Present on analysis turns so
+   * a "no live data" claim can be checked against reality rather than trusted.
+   */
+  executable_tool_count?: number;
+  /** How many priorities the user asked for. The answer never exceeds it. */
+  requested_priority_count?: number;
+  raw_signal_count?: number;
+  consolidated_candidate_count?: number;
+  candidate_domains?: string[];
+  duplicate_signals_removed?: number;
+  signals_merged?: number;
+  final_priority_count?: number;
 }
 
 /**

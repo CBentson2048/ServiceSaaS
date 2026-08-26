@@ -336,7 +336,10 @@ describe('AnthropicZacModelProvider', () => {
 
       const [params, options] = createMock.mock.calls[0];
       // Tight per-request budget: a blocking pre-step must fail fast.
-      expect(options).toMatchObject({ timeout: 8_000, maxRetries: 1 });
+      // 15s sits above the measured p95 for this call; 8s produced routine
+      // timeouts, and a timeout costs the whole semantic layer for that turn.
+      // No retry: a slow call is slow, not broken.
+      expect(options).toMatchObject({ timeout: 15_000, maxRetries: 0 });
       // Structured output is FORCED — the model cannot answer the user instead.
       expect(params.tool_choice).toEqual({ type: 'tool', name: 'record_request_mode' });
       // The question is data inside <request> in the USER turn, never system.
