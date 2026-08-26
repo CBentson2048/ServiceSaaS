@@ -23,6 +23,11 @@
 import path from 'node:path';
 import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
+import {
+  resolveRetailPricing,
+  type RetailPricingCandidates,
+  type RetailPricingScope,
+} from '../../../packages/domain/src';
 
 const apiRoot = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(apiRoot, '..', '..');
@@ -543,6 +548,167 @@ async function phaseColourPrep(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Phase E — retail pricing (0096): constraints, Luke's §43 chain, immutability
+// ---------------------------------------------------------------------------
+
+const PRICE_PRODUCT = id('31');
+const PRICE_CATEGORY = id('91');
+
+async function phasePricing(): Promise<void> {
+  console.log('\nPhase E — retail pricing (classification CR, 0096)');
+
+  const probe = await admin.schema('inventory').from('retail_pricing_rules').select('id').limit(1);
+  if (probe.error) {
+    report('E0 [0096] retail_pricing_rules exists', false, '0096 NOT applied to this database — apply it, then re-run');
+    return;
+  }
+  report('E0 [0096] retail_pricing_rules exists', true);
+
+  // Fixtures: a £10-cost retail product (10c/g × 100g pack) with a legacy
+  // retail price of £14.99, in a category, stocked at L1.
+  await must('pricing category', admin.schema('inventory').from('categories').upsert([
+    { id: PRICE_CATEGORY, business_id: BIZ, name: 'W6A Pricing Category', is_active: true },
+  ]) as never);
+  await must('pricing product', admin.schema('inventory').from('products').upsert([{
+    id: PRICE_PRODUCT, business_id: BIZ, name: 'W6A Priced Serum', sku: 'W6A-PRICE',
+    default_unit: 'g', stock_unit: 'gram', pack_size: 100, size_value: 100,
+    default_cost_per_gram_cents: 10, retail_price_cents: 1499,
+    low_stock_threshold_grams: 0, is_active: true, is_retail: true,
+    category_id: PRICE_CATEGORY,
+  }]) as never);
+  await must('pricing stock', admin.schema('inventory').from('location_stock').upsert([
+    { business_id: BIZ, location_id: L1, product_id: PRICE_PRODUCT, quantity_on_hand_grams: 1000, is_active: true },
+  ], { onConflict: 'location_id,product_id' }) as never);
+
+  // E1/E2/E3: the money constraints hold on the real table.
+  const badPair = await admin.schema('inventory').from('retail_pricing_rules').insert({
+    business_id: BIZ, scope: 'product', product_id: PRICE_PRODUCT,
+    pricing_mode: 'percentage_markup', fixed_price_cents: 1800,
+  });
+  report('E1 mode/value pairing enforced (percentage with a fixed price rejected)', badPair.error !== null, badPair.error?.message ?? 'accepted!');
+
+  const badShape = await admin.schema('inventory').from('retail_pricing_rules').insert({
+    business_id: BIZ, scope: 'product', product_id: PRICE_PRODUCT, location_id: L1,
+    pricing_mode: 'percentage_markup', markup_percent: 10,
+  });
+  report('E2 scope shape enforced (product rule with a stray location rejected)', badShape.error !== null, badShape.error?.message ?? 'accepted!');
+
+  const rule = (scope: RetailPricingScope, mode: 'percentage_markup' | 'fixed_price', value: number, locationId?: string) => ({
+    business_id: BIZ,
+    scope,
+    product_id: scope === 'location_product' || scope === 'product' ? PRICE_PRODUCT : null,
+    category_id: scope === 'location_category' || scope === 'category' ? PRICE_CATEGORY : null,
+    location_id: scope === 'location_product' || scope === 'location_category' || scope === 'location' ? (locationId ?? L1) : null,
+    pricing_mode: mode,
+    markup_percent: mode === 'percentage_markup' ? value : null,
+    fixed_price_cents: mode === 'fixed_price' ? value : null,
+  });
+
+  await must('seed product rule', admin.schema('inventory').from('retail_pricing_rules').insert(rule('product', 'percentage_markup', 30)) as never);
+  const dupe = await admin.schema('inventory').from('retail_pricing_rules').insert(rule('product', 'percentage_markup', 40));
+  report('E3 one rule per level per target (duplicate product rule rejected)', dupe.error !== null, dupe.error?.message ?? 'accepted!');
+
+  const zero = await admin.schema('inventory').from('retail_pricing_rules').insert(rule('location', 'percentage_markup', 0));
+  report('E4 explicit 0% is storable — 0 is configuration, not absence', zero.error === null, zero.error?.message);
+  await must('clear zero', admin.schema('inventory').from('retail_pricing_rules').delete()
+    .eq('business_id', BIZ).eq('scope', 'location') as never);
+
+  // §43 — Luke's exact UAT chain, against REAL rows, resolved by the one
+  // canonical resolver the API uses. Cost £10, legacy £14.99.
+  const resolveNow = async (): Promise<{ price: number | null; source: string }> => {
+    const rows = await must('read rules', admin.schema('inventory').from('retail_pricing_rules')
+      .select('id,scope,product_id,category_id,location_id,pricing_mode,markup_percent,fixed_price_cents')
+      .eq('business_id', BIZ) as never) as {
+      id: string; scope: RetailPricingScope; product_id: string | null; category_id: string | null;
+      location_id: string | null; pricing_mode: 'percentage_markup' | 'fixed_price';
+      markup_percent: number | string | null; fixed_price_cents: number | null;
+    }[];
+    const candidates: RetailPricingCandidates = {};
+    for (const row of rows) {
+      const belongs =
+        (row.scope === 'location_product' && row.product_id === PRICE_PRODUCT && row.location_id === L1) ||
+        (row.scope === 'product' && row.product_id === PRICE_PRODUCT) ||
+        (row.scope === 'location_category' && row.category_id === PRICE_CATEGORY && row.location_id === L1) ||
+        (row.scope === 'category' && row.category_id === PRICE_CATEGORY) ||
+        (row.scope === 'location' && row.location_id === L1);
+      if (!belongs) continue;
+      candidates[row.scope] = {
+        id: row.id,
+        pricingMode: row.pricing_mode,
+        markupPercent: row.markup_percent === null ? undefined : Number(row.markup_percent),
+        fixedPriceCents: row.fixed_price_cents ?? undefined,
+      };
+    }
+    const resolved = resolveRetailPricing({
+      productId: PRICE_PRODUCT, locationId: L1, unitCostCents: 1000,
+      legacyRetailPriceCents: 1499, candidates,
+    });
+    return { price: resolved.sellingPriceCents, source: resolved.source };
+  };
+  const clearScope = (scope: RetailPricingScope) =>
+    admin.schema('inventory').from('retail_pricing_rules').delete().eq('business_id', BIZ).eq('scope', scope);
+
+  await must('LD 10%', admin.schema('inventory').from('retail_pricing_rules').insert(rule('location', 'percentage_markup', 10)) as never);
+  await must('CD 20%', admin.schema('inventory').from('retail_pricing_rules').insert(rule('category', 'percentage_markup', 20)) as never);
+  await must('LC 25%', admin.schema('inventory').from('retail_pricing_rules').insert(rule('location_category', 'percentage_markup', 25)) as never);
+  await must('LP £18', admin.schema('inventory').from('retail_pricing_rules').insert(rule('location_product', 'fixed_price', 1800)) as never);
+  // (product 30% was already inserted above)
+
+  let step = await resolveNow();
+  report('E5 §43: Location A → £18, source location product', step.price === 1800 && step.source === 'location_product', JSON.stringify(step));
+  await must('drop LP', clearScope('location_product') as never);
+  step = await resolveNow();
+  report('E6 §43: remove LP → product default 30% → £13', step.price === 1300 && step.source === 'product_default', JSON.stringify(step));
+  await must('drop PD', clearScope('product') as never);
+  step = await resolveNow();
+  report('E7 §43: PD null → location category 25% → £12.50', step.price === 1250 && step.source === 'location_category', JSON.stringify(step));
+  await must('drop LC', clearScope('location_category') as never);
+  step = await resolveNow();
+  report('E8 §43: LC null → category default 20% → £12', step.price === 1200 && step.source === 'category_default', JSON.stringify(step));
+  await must('drop CD', clearScope('category') as never);
+  step = await resolveNow();
+  report('E9 §43: CD null → location default 10% → £11', step.price === 1100 && step.source === 'location_default', JSON.stringify(step));
+  await must('PD 0%', admin.schema('inventory').from('retail_pricing_rules').insert(rule('product', 'percentage_markup', 0)) as never);
+  step = await resolveNow();
+  report('E10 §43: PD 0% → £10, stops inheritance (location default ignored)', step.price === 1000 && step.source === 'product_default', JSON.stringify(step));
+  await must('drop PD 0', clearScope('product') as never);
+  await must('PD fixed £17', admin.schema('inventory').from('retail_pricing_rules').insert(rule('product', 'fixed_price', 1700)) as never);
+  step = await resolveNow();
+  report('E11 §43: PD fixed £17 → £17, provenance product default', step.price === 1700 && step.source === 'product_default', JSON.stringify(step));
+
+  // E12/E13 — the transaction snapshot and its immutability on the real table.
+  const sale = await admin.schema('billing').rpc('record_retail_sale', {
+    p_payload: {
+      businessId: BIZ, locationId: L1, productId: PRICE_PRODUCT, quantity: 1,
+      unitPriceCents: 1700, soldAt: new Date().toISOString(),
+      pricing: {
+        unitCostCents: 1000, pricingMode: 'fixed_price', pricingSource: 'product_default',
+        configuredValue: 1700, effectiveMarkupPercent: 70,
+      },
+    },
+  });
+  const saleRow = (Array.isArray(sale.data) ? sale.data[0] : sale.data) as
+    | { id: string; unit_price_cents: number; pricing_source: string | null; pricing_configured_value: number | string | null }
+    | null;
+  report('E12 record_retail_sale persists the pricing snapshot',
+    sale.error === null && saleRow !== null && Number(saleRow.unit_price_cents) === 1700
+      && saleRow.pricing_source === 'product_default' && Number(saleRow.pricing_configured_value) === 1700,
+    sale.error?.message ?? JSON.stringify(saleRow));
+
+  // Change every rule, then re-read the completed sale: it must be untouched.
+  await must('drop PD fixed', clearScope('product') as never);
+  await must('LP £99', admin.schema('inventory').from('retail_pricing_rules').insert(rule('location_product', 'fixed_price', 9900)) as never);
+  const after = await must('re-read sale', admin.schema('billing').from('retail_sales')
+    .select('unit_price_cents,pricing_source,pricing_configured_value')
+    .eq('id', saleRow?.id ?? '00000000-0000-0000-0000-000000000000') as never) as Record<string, unknown>[];
+  report('E13 completed sale unchanged after every rule changed (£17 stays £17)',
+    after.length === 1 && Number(after[0].unit_price_cents) === 1700 && after[0].pricing_source === 'product_default',
+    JSON.stringify(after[0] ?? null));
+  await must('drop LP 99', clearScope('location_product') as never);
+  await must('drop LD', clearScope('location') as never);
+}
+
+// ---------------------------------------------------------------------------
 // Cleanup
 // ---------------------------------------------------------------------------
 
@@ -552,6 +718,8 @@ async function cleanup(): Promise<void> {
     const { error } = await admin.schema(schema).from(table).delete().in(column, values);
     if (error) console.warn(`  cleanup ${schema}.${table}: ${error.message}`);
   };
+  await del('billing', 'retail_sales', 'business_id', [BIZ]);
+  await del('inventory', 'retail_pricing_rules', 'business_id', [BIZ]);
   await del('booking', 'appointment_services', 'business_id', [BIZ, RIVAL]);
   await del('booking', 'appointments', 'business_id', [BIZ, RIVAL]);
   await del('booking', 'services', 'business_id', [BIZ, RIVAL]);
@@ -567,6 +735,7 @@ async function cleanup(): Promise<void> {
   await del('lab', 'formulas', 'business_id', [BIZ]);
   await del('inventory', 'location_stock', 'business_id', [BIZ]);
   await del('inventory', 'products', 'business_id', [BIZ]);
+  await del('inventory', 'categories', 'business_id', [BIZ]);
   await del('inventory', 'suppliers', 'business_id', [BIZ]);
   await del('core', 'client_profiles', 'business_id', [BIZ, RIVAL]);
   await del('core', 'location_settings', 'location_id', [L1, L2, L3]);
@@ -585,6 +754,7 @@ async function main(): Promise<void> {
     await phaseDeadStock();
     await phaseOrders();
     await phaseColourPrep();
+    await phasePricing();
   } finally {
     if (!keep) await cleanup();
     else console.log('\n--keep: fixtures left in place for UAT.');
