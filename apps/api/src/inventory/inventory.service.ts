@@ -446,11 +446,37 @@ export class InventoryService {
       this.logger.error(`listMovements failed: ${error.message}`);
       throw new InternalServerErrorException('Unable to load stock movements');
     }
-    const [products, locations] = await Promise.all([
+    // Actor names are resolved here so the activity log can name a person
+    // rather than print a raw user-profile UUID at the top of the screen.
+    const [products, locations, actors] = await Promise.all([
       this.fetchProductsById(actor.businessId, (data ?? []).map((row) => row.product_id)),
       this.fetchLocations(actor.businessId, locationIds),
+      this.fetchActorNames((data ?? []).map((row) => row.created_by)),
     ]);
-    return { movements: (data ?? []).map((row) => toMovement(row, products, locations)) };
+    return { movements: (data ?? []).map((row) => toMovement(row, products, locations, actors)) };
+  }
+
+  /** user_profile id -> display name, for movement provenance. */
+  private async fetchActorNames(ids: (string | null)[]): Promise<Map<string, string>> {
+    const unique = Array.from(new Set(ids.filter((id): id is string => Boolean(id))));
+    if (unique.length === 0) return new Map();
+    const { data, error } = await this.admin
+      .schema('core')
+      .from('user_profiles')
+      .select('id,full_name')
+      .in('id', unique)
+      .returns<{ id: string; full_name: string | null }[]>();
+    if (error) {
+      // A missing name must never fail the movement list — the UI falls back
+      // to the movement's own source ("Formula engine", "Point of sale", …).
+      this.logger.error(`fetchActorNames failed: ${error.message}`);
+      return new Map();
+    }
+    const map = new Map<string, string>();
+    for (const row of data ?? []) {
+      if (row.full_name?.trim()) map.set(row.id, row.full_name.trim());
+    }
+    return map;
   }
 
   async listLowStock(actor: AuthUser, locationId?: string): Promise<ListInventoryLowStockResponse> {
@@ -1547,6 +1573,7 @@ function toMovement(
   row: MovementRow,
   products: Map<string, InventoryProduct>,
   locations: BusinessLocationSummary[],
+  actors?: Map<string, string>,
 ): InventoryStockMovement {
   const product = products.get(row.product_id);
   return {
@@ -1567,6 +1594,7 @@ function toMovement(
     reason: row.reason ?? undefined,
     notes: row.notes ?? undefined,
     createdBy: row.created_by ?? undefined,
+    createdByName: row.created_by ? actors?.get(row.created_by) : undefined,
     createdAt: row.created_at,
   };
 }

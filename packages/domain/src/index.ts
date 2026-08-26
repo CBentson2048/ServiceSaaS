@@ -3202,6 +3202,7 @@ export type InventoryStockMovementType =
   | 'formula_waste'
   | 'formula_reversal'
   | 'retail_sale'
+  | 'salon_consumption'
   | 'correction';
 
 export interface InventoryProduct {
@@ -3288,7 +3289,10 @@ export interface InventoryStockMovement {
   referenceId?: string;
   reason?: string;
   notes?: string;
+  /** Acting user profile id — an internal identifier, never a primary display value. */
   createdBy?: string;
+  /** Resolved actor name for display; undefined for system/automated movements. */
+  createdByName?: string;
   createdAt: string;
 }
 
