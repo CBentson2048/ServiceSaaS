@@ -502,6 +502,7 @@ export function InventoryPage() {
                     <td className="px-4 py-3 text-right">
                       {row.stockId ? (
                         <input
+                          key={`${row.key}:${row.thresholdBase}`}
                           defaultValue={row.thresholdBase ? String(row.thresholdBase) : ''}
                           onBlur={(event) => void handleThresholdUpdate(row, event.target.value)}
                           disabled={busyRow === row.key}
@@ -742,14 +743,28 @@ export function InventoryPage() {
         pricingLocationId={isAllLocations ? undefined : scopeLocationId}
         onClose={() => {
           setDrawerOpen(false);
-          // Availability toggles inside the drawer change shelf records.
+          // Availability toggles inside the drawer change shelf records, and
+          // a changed dead-stock threshold changes the insight it feeds.
           void loadStock();
+          void loadInsights();
         }}
-        onSaved={(product, mode) => {
+        onSaved={(saved, mode) => {
           setDrawerOpen(false);
-          setNotice(`${product.name} ${mode === 'created' ? 'created' : 'saved'}.`);
+          setNotice(`${saved.name} ${mode === 'created' ? 'created' : 'saved'}.`);
+          // Adopt the saved record immediately: the refetch below is async and
+          // can fail, and a stale snapshot would let a second save write the
+          // pre-save values back over it.
+          setDrawerProduct(saved);
+          setProducts((current) =>
+            current.some((entry) => entry.id === saved.id)
+              ? current.map((entry) => (entry.id === saved.id ? saved : entry))
+              : [...current, saved],
+          );
           void loadCatalogue();
           void loadStock();
+          // A product's dead-stock threshold lives on the product, so the
+          // insight it feeds has to be recomputed too.
+          void loadInsights();
         }}
       />
 
@@ -839,9 +854,12 @@ function KpiCard({
 /**
  * Row overflow menu: keeps the table to one visible action plus the rest.
  *
- * The menu is rendered in a portal because the table scrolls horizontally, and
- * a scroll container clips BOTH axes — an absolutely positioned menu would be
- * cut off at the table edge (invisible for the last rows).
+ * Rendered in a portal because the table scrolls horizontally, and a scroll
+ * container clips BOTH axes — an absolutely positioned menu would be cut off
+ * at the table edge. Portalling moves the items to the end of the document,
+ * so focus is managed explicitly here: opening moves focus to the first item,
+ * arrows/Home/End move between them, Escape and Tab close and hand focus back
+ * to the trigger.
  */
 function RowMenu({
   label,
@@ -855,6 +873,11 @@ function RowMenu({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  const close = useCallback((returnFocus: boolean) => {
+    setOpen(false);
+    if (returnFocus) triggerRef.current?.focus();
+  }, []);
+
   useLayoutEffect(() => {
     if (!open || !triggerRef.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
@@ -867,33 +890,71 @@ function RowMenu({
     });
   }, [open, items.length]);
 
+  // Focus the first item once it exists, so the menu is operable from the
+  // keyboard even though it lives at the end of the document.
+  useEffect(() => {
+    if (!open || !position) return;
+    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+  }, [open, position]);
+
   useEffect(() => {
     if (!open) return;
     function onDocumentClick(event: MouseEvent) {
       const target = event.target as Node;
-      if (!menuRef.current?.contains(target) && !triggerRef.current?.contains(target)) setOpen(false);
+      if (!menuRef.current?.contains(target) && !triggerRef.current?.contains(target)) close(false);
     }
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        setOpen(false);
-        triggerRef.current?.focus();
-      }
+    function onScroll(event: Event) {
+      // Ignore scrolling that happens inside the menu itself.
+      if (menuRef.current?.contains(event.target as Node)) return;
+      close(false);
     }
-    // A menu pinned to the viewport must not drift when the page scrolls.
-    function onScrollOrResize() {
-      setOpen(false);
+    // Escape is also handled document-wide, so it works even if focus has
+    // drifted outside the menu (the in-menu handler returns focus to the
+    // trigger; this one is the safety net).
+    function onDocumentKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') close(true);
     }
+    document.addEventListener('keydown', onDocumentKeyDown);
     document.addEventListener('mousedown', onDocumentClick);
-    document.addEventListener('keydown', onKeyDown);
-    window.addEventListener('scroll', onScrollOrResize, true);
-    window.addEventListener('resize', onScrollOrResize);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', () => close(false));
     return () => {
+      document.removeEventListener('keydown', onDocumentKeyDown);
       document.removeEventListener('mousedown', onDocumentClick);
-      document.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('scroll', onScrollOrResize, true);
-      window.removeEventListener('resize', onScrollOrResize);
+      window.removeEventListener('scroll', onScroll, true);
     };
-  }, [open]);
+  }, [open, close]);
+
+  function onMenuKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    const entries = Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
+    if (entries.length === 0) return;
+    const index = entries.indexOf(document.activeElement as HTMLElement);
+    switch (event.key) {
+      case 'ArrowDown':
+        event.preventDefault();
+        entries[(index + 1) % entries.length].focus();
+        break;
+      case 'ArrowUp':
+        event.preventDefault();
+        entries[(index - 1 + entries.length) % entries.length].focus();
+        break;
+      case 'Home':
+        event.preventDefault();
+        entries[0].focus();
+        break;
+      case 'End':
+        event.preventDefault();
+        entries[entries.length - 1].focus();
+        break;
+      case 'Escape':
+      case 'Tab':
+        event.preventDefault();
+        close(true);
+        break;
+      default:
+        break;
+    }
+  }
 
   return (
     <>
@@ -904,6 +965,10 @@ function RowMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}
+        onKeyDown={(event) => {
+          // Opening with the keyboard should land inside the menu.
+          if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') setOpen(true);
+        }}
         className="rounded-input px-2 py-1 text-[15px] leading-none text-text-secondary transition hover:bg-surface-alt hover:text-text-primary"
       >
         ⋯
@@ -913,6 +978,8 @@ function RowMenu({
             <div
               ref={menuRef}
               role="menu"
+              aria-label={label}
+              onKeyDown={onMenuKeyDown}
               style={{ position: 'fixed', top: position.top, right: position.right }}
               className="z-50 w-48 overflow-hidden rounded-input-lg border border-border bg-surface py-1 shadow-modal"
             >
@@ -922,10 +989,10 @@ function RowMenu({
                   type="button"
                   role="menuitem"
                   onClick={() => {
-                    setOpen(false);
+                    close(true);
                     item.onSelect();
                   }}
-                  className={`block w-full px-3 py-2 text-left text-[13px] transition hover:bg-surface-alt ${
+                  className={`block w-full px-3 py-2 text-left text-[13px] transition hover:bg-surface-alt focus:bg-surface-alt focus:outline-none ${
                     item.danger ? 'text-danger' : 'text-text-primary'
                   }`}
                 >

@@ -323,6 +323,29 @@ describe('row actions', () => {
     expect((within(dialog).getByLabelText('Location') as HTMLSelectElement).value).toBe('loc-2');
   });
 
+  it('is operable from the keyboard: opening focuses an item, arrows move, Escape returns', async () => {
+    await renderPage();
+    const trigger = rowFor('Majirel 6.0').getByRole('button', { name: /More actions/ });
+    fireEvent.click(trigger);
+
+    const menu = await screen.findByRole('menu');
+    const items = within(menu).getAllByRole('menuitem');
+    // Focus lands inside the menu even though the portal puts it at the end
+    // of the document, where Tab order would never reach it next.
+    await waitFor(() => expect(document.activeElement).toBe(items[0]));
+
+    fireEvent.keyDown(menu, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(items[1]);
+    fireEvent.keyDown(menu, { key: 'ArrowUp' });
+    expect(document.activeElement).toBe(items[0]);
+    fireEvent.keyDown(menu, { key: 'End' });
+    expect(document.activeElement).toBe(items[items.length - 1]);
+
+    fireEvent.keyDown(menu, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    expect(document.activeElement).toBe(trigger);
+  });
+
   it('closes the menu on Escape', async () => {
     await renderPage();
     fireEvent.click(rowFor('Majirel 6.0').getByRole('button', { name: /More actions/ }));
@@ -340,6 +363,37 @@ describe('row actions', () => {
 
     await waitFor(() => expect(api.archiveInventoryProduct).toHaveBeenCalledWith('token', 'prod-1'));
     confirmSpy.mockRestore();
+  });
+});
+
+describe('after saving a product', () => {
+  it('reopens with the SAVED values while the catalogue refetch is still in flight', async () => {
+    await renderPage();
+    fireEvent.click(rowFor('Majirel 6.0').getByRole('button', { name: 'Edit' }));
+    await screen.findByRole('dialog');
+
+    const saved = product({ name: 'Majirel 6.0', sku: 'CHANGED-SKU', updatedAt: '2026-08-26T12:00:00.000Z' });
+    api.updateInventoryProduct.mockResolvedValue({ product: saved });
+    // The refetch has not answered yet — the window in which the page used to
+    // serve the pre-save snapshot back to the drawer.
+    api.listInventoryProducts.mockReturnValue(new Promise(() => undefined));
+
+    fireEvent.change(screen.getByLabelText(/SKU/), { target: { value: 'CHANGED-SKU' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+
+    fireEvent.click(rowFor('Majirel 6.0').getByRole('button', { name: 'Edit' }));
+    const reopened = await screen.findByRole('dialog');
+    expect((within(reopened).getByLabelText(/SKU/) as HTMLInputElement).value).toBe('CHANGED-SKU');
+  });
+
+  it('recomputes dead stock, because the threshold that drives it lives on the product', async () => {
+    await renderPage();
+    api.listInventoryDeadStock.mockClear();
+    fireEvent.click(rowFor('Majirel 6.0').getByRole('button', { name: 'Edit' }));
+    await screen.findByRole('dialog');
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(api.listInventoryDeadStock).toHaveBeenCalled());
   });
 });
 
