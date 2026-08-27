@@ -90,6 +90,11 @@ describe('provider failure classification', () => {
   it.each([
     [{ status: 400, message: 'Your credit balance is too low to access the Anthropic API' }, 'credit'],
     [{ status: 401, message: 'invalid x-api-key' }, 'auth'],
+    // Observed live on this account: a 400 whose remedy is a console action,
+    // not a code change. Misreading it as 'schema' points the operator at the
+    // one thing that is provably fine.
+    [{ status: 400, message: 'Identity verification is required to continue.' }, 'auth'],
+    [{ status: 400, message: 'Your organization has been disabled.' }, 'auth'],
     [
       { status: 400, message: "tools.0.custom: For 'number' type, properties maximum, minimum are not supported" },
       'schema',

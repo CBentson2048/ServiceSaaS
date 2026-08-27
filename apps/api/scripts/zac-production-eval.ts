@@ -153,7 +153,7 @@ async function main(): Promise<void> {
       modelCalls += 1;
       modelCostUsd += completion.estimatedCostUsd;
     }
-    return { item, mode: classification.mode };
+    return { item, mode: classification.mode, failure: classification.classifierFailure };
   });
 
   const scoredModes = modeOutcomes.filter((o) => !o.item.metricsExempt && !o.item.injection);
@@ -353,7 +353,11 @@ async function main(): Promise<void> {
     'REQUEST-MODE ERRORS',
     scoredModes
       .filter((o) => o.mode !== o.item.expected && !(o.item.acceptable ?? []).includes(o.mode))
-      .map((o) => `want=${o.item.expected} got=${o.mode} role=${o.item.role} | ${o.item.prompt}`),
+      .map(
+        (o) =>
+          `want=${o.item.expected} got=${o.mode} role=${o.item.role}` +
+          `${o.failure ? ` [classifier ${o.failure} — fell back, not a misread]` : ''} | ${o.item.prompt}`,
+      ),
   );
   bucket(
     'ANALYSIS-INTENT ERRORS',
@@ -382,6 +386,15 @@ async function main(): Promise<void> {
     ],
   );
   bucket(
+    'NARROW -> UNNECESSARY MULTI-TOOL',
+    narrow
+      .filter((o) => o.tools > 1)
+      .map(
+        (o) =>
+          `want=${o.item.expectedIntent} got=${o.intent ?? 'not_live_data'} tools=${o.tools} | ${o.item.prompt}`,
+      ),
+  );
+  bucket(
     'REFUSAL-REASON ERRORS',
     reasonOutcomes
       .filter((o) => o.reason !== (o.item.expectedReason ?? 'none'))
@@ -390,7 +403,7 @@ async function main(): Promise<void> {
 
   console.log(`\n    advice cases reaching the live pipeline (orchestration set): ${pct(notLiveToData, notLive.length)} (${notLiveToData}/${notLive.length})`);
   console.log(
-    `    classifier failures: ${[...failures.entries()].map(([k, v]) => `${k}=${v}`).join(' ') || 'none'}`,
+    `\n    classifier failures: ${[...failures.entries()].map(([k, v]) => `${k}=${v}`).join(' ') || 'none'}`,
   );
   console.log(`    model calls ${modelCalls}   estimated cost $${modelCostUsd.toFixed(2)} (router priced at opus rates — overstated)`);
   console.log(`    per-turn classification latency  p50 ${p(0.5)}ms  p95 ${p(0.95)}ms  max ${latencies[latencies.length - 1]}ms\n`);

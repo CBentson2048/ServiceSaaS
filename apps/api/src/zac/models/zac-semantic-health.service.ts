@@ -191,6 +191,19 @@ export function classifySemanticFailure(error: unknown): ZacSemanticFailureKind 
   if (status === 401 || status === 403 || /authentication|api key|unauthorized/i.test(message)) {
     return 'auth';
   }
+  // Account-state rejections arrive as a 400 with no schema content: identity
+  // verification pending, an organisation disabled or suspended, access not
+  // granted. The remedy is in the provider console, so they belong with auth —
+  // and without this they fell through to the 4xx catch-all below and were
+  // reported as a schema defect, sending an operator to audit tool schemas
+  // that the boot-time validator had already proved correct.
+  if (
+    /identity verification|organization (?:has been )?(?:disabled|suspended)|account (?:has been )?(?:disabled|suspended)|not (?:been )?(?:granted|allowed) access|verify your identity/i.test(
+      message,
+    )
+  ) {
+    return 'auth';
+  }
   if (/credit balance|insufficient (?:credit|funds)|billing/i.test(message)) return 'credit';
   if (/not supported|invalid_request_error.*schema|tools\.\d+\./i.test(message)) return 'schema';
   if (status === 429 || /rate limit|overloaded/i.test(message)) return 'rate_limit';
