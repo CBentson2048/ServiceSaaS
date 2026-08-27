@@ -2,6 +2,8 @@
 export * from './tax';
 // Financial Rules Engine contracts (payroll, commission, settlement).
 export * from './payroll';
+// Client Intelligence contracts + the single trusted lapsed-client calculation.
+export * from './client-intelligence';
 import type { AppointmentBillingTax } from './tax';
 
 export type UserRole = 'owner' | 'manager' | 'stylist' | 'client';

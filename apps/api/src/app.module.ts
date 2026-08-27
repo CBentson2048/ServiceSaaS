@@ -6,6 +6,7 @@ import { AuthModule } from './auth/auth.module';
 import { BillsModule } from './bills/bills.module';
 import { CommunicationsModule } from './communications/communications.module';
 import { RequestResponseLoggingMiddleware } from './common/request-response-logging.middleware';
+import { ClientIntelligenceModule } from './client-intelligence/client-intelligence.module';
 import { CrmModule } from './crm/crm.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { EodModule } from './eod/eod.module';
@@ -74,6 +75,7 @@ import { validateEnv } from './config/env.validation';
     StaffBookingModule,
     TwilioModule,
     CrmModule,
+    ClientIntelligenceModule,
     DashboardModule,
     KpiModule,
     RetailSalesModule,
