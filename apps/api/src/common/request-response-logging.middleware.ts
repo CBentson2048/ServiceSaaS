@@ -15,6 +15,18 @@ const CREDENTIAL_KEYS = [
   'secret',
   'pin',
   'signature',
+  // Push/device delivery addresses. Matching here is EXACT on the lowercased key,
+  // so the generic 'token' entry above does NOT cover a field called `pushToken` —
+  // both the camelCase-squashed and snake_case spellings have to be listed. A push
+  // token is enough to deliver notifications to somebody's phone, so it belongs
+  // with the credentials even though the server never verifies it.
+  'pushtoken',
+  'push_token',
+  'devicetoken',
+  'device_token',
+  'expopushtoken',
+  'devicesessiontoken',
+  'device_session_token',
 ];
 
 /**
@@ -54,6 +66,13 @@ const PERSONAL_DATA_KEYS = [
   'content',
   'leavenotes',
   'avatarurl',
+  // In-app notification content. `body` routinely carries a client's first name
+  // ("Jane has arrived.") and `title` is free text a producer chose, so both are
+  // personal data the moment a notification is about a person. Neither was covered
+  // by the entries above — matching here is EXACT on the lowercased key, so
+  // 'name'/'message' do not reach them.
+  'title',
+  'body',
 ];
 
 const REDACTED_KEYS = new Set([...CREDENTIAL_KEYS, ...PERSONAL_DATA_KEYS]);

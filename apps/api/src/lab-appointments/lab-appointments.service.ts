@@ -55,6 +55,7 @@ import {
   toMultirangeLiteral,
 } from '../common/occupied-ranges';
 import { AuditService } from '../audit/audit.service';
+import { ArrivalNotificationService } from '../notifications/arrival-notification.service';
 import { BookingNotificationService } from '../communications/booking-notification.service';
 import { RebookingNudgeService } from '../communications/rebooking-nudge.service';
 import type { LabRuntimeSession } from '../lab-session/lab-session.service';
@@ -352,6 +353,7 @@ export class LabAppointmentsService {
     private readonly rebookingNudges: RebookingNudgeService,
     private readonly stripe: StripeService,
     private readonly audit: AuditService,
+    private readonly arrivalNotifications: ArrivalNotificationService,
   ) {
     const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
@@ -713,10 +715,29 @@ export class LabAppointmentsService {
 
   /**
    * Mark an accepted appointment as arrived (client checked in at the desk).
-   * Moves 'accepted' → 'checked_in' and stamps check_in_at. The status change is
-   * itself the in-app signal to the assigned stylist — their book shows the client
-   * as arrived. Idempotent: a booking already arrived (or further along) is returned
-   * unchanged so a double-tap never errors.
+   * Moves 'accepted' → 'checked_in' and stamps check_in_at. The status change shows
+   * the client as arrived in the assigned stylist's book, and — since the in-app
+   * notification foundation landed — also pushes them an arrival notification.
+   * Idempotent: a booking already arrived (or further along) is returned unchanged
+   * so a double-tap never errors.
+   *
+   * The notification is emitted ONLY on the branch that actually won the conditional
+   * status update, and only after it has committed. Two consequences, both
+   * deliberate: a double-tapped front-desk button does not re-notify (the early
+   * return above never reaches the emit), and a notification failure cannot fail the
+   * check-in — `notifyClientArrivedSafe` does not throw, matching how every other
+   * side effect on this path (booking notifications, rebooking, audit) already
+   * behaves. There is no transaction to join: PostgREST has no multi-statement
+   * transaction.
+   *
+   * DELIVERY SEMANTICS, precisely: this is AT-MOST-ONCE, not at-least-once. The
+   * single attempt is made by the winner of the transition; if it fails, the
+   * notification is lost and re-tapping check-in will NOT recover it, because an
+   * already-arrived booking returns early above. That is an accepted limit of the
+   * foundation ticket — notifications are best-effort operational support, and
+   * losing one must never cost a check-in. The `dedupeKey` is what makes it safe for
+   * a future retry path (the durable dispatcher, per the ticket's §18 future scope)
+   * to re-attempt without ever producing a duplicate.
    */
   async checkIn(actor: AuthUser, id: string): Promise<CheckInAppointmentResponse> {
     const appointment = await this.fetchAppointmentForActor(actor, id);
@@ -742,9 +763,40 @@ export class LabAppointmentsService {
       this.logger.error(`checkIn failed: ${error.message}`);
       throw new InternalServerErrorException('Unable to check in appointment');
     }
+    // `data` is populated only for the request that won the `.eq('status','accepted')`
+    // claim. A concurrent second check-in falls through to a re-read instead, and
+    // must not emit a second arrival notification.
+    //
+    // `!= null` rather than `!== null`: the typed contract is `T | null`, but an
+    // undefined here would read as "we won" under a strict comparison and produce a
+    // duplicate notification on the losing request. Loose is the safe direction.
+    const wonTheTransition = data != null;
     const checkedIn = data ?? (await this.fetchAppointmentById(id, actor.businessId));
     if (!CHECKED_IN_OR_LATER_STATUSES.includes(checkedIn.status)) {
       throw new ConflictException('Appointment was updated before it could be checked in');
+    }
+
+    if (wonTheTransition) {
+      // The status write is already committed. `notifyClientArrivedSafe` is
+      // contractually non-throwing, and the trailing catch is deliberate belt-and-
+      // braces at the boundary: if that contract is ever broken, the client is still
+      // checked in — the desk must never see a 500 for an alert that did not send.
+      await this.arrivalNotifications
+        .notifyClientArrivedSafe(
+          {
+            id: checkedIn.id,
+            business_id: checkedIn.business_id,
+            location_id: checkedIn.location_id,
+            client_profile_id: checkedIn.client_profile_id,
+            assigned_staff_profile_id: checkedIn.assigned_staff_profile_id,
+          },
+          actor.id,
+        )
+        .catch((err: unknown) => {
+          this.logger.error(
+            `arrival notification threw for appointment ${checkedIn.id}: ${(err as Error)?.message ?? err}`,
+          );
+        });
     }
 
     const clientsById = await this.fetchClientProfiles(actor.businessId, [checkedIn.client_profile_id]);

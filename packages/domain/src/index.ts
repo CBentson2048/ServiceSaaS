@@ -4,6 +4,8 @@ export * from './tax';
 export * from './payroll';
 // Client Intelligence contracts + the single trusted lapsed-client calculation.
 export * from './client-intelligence';
+// In-app notification contracts + the canonical notification-type registry.
+export * from './notifications';
 import type { AppointmentBillingTax } from './tax';
 
 export type UserRole = 'owner' | 'manager' | 'stylist' | 'client';

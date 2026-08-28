@@ -16,6 +16,7 @@ import { ColourPrepModule } from './colour-prep/colour-prep.module';
 import { OrdersModule } from './orders/orders.module';
 import { RetailPricingModule } from './retail-pricing/retail-pricing.module';
 import { LabAppointmentsModule } from './lab-appointments/lab-appointments.module';
+import { NotificationsModule } from './notifications/notifications.module';
 import { LabBillingRulesModule } from './lab-billing-rules/lab-billing-rules.module';
 import { LabAnalyticsModule } from './lab-analytics/lab-analytics.module';
 import { LabDeviceModule } from './lab-device/lab-device.module';
@@ -91,6 +92,7 @@ import { validateEnv } from './config/env.validation';
     LabSessionModule,
     LabPinModule,
     LabAppointmentsModule,
+    NotificationsModule,
     LabAnalyticsModule,
     LabFormulaModule,
     LabBillingRulesModule,

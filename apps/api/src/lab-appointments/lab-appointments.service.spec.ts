@@ -927,6 +927,105 @@ describe('LabAppointmentsService — cancel appointment', () => {
   });
 });
 
+/**
+ * Check-in is the arrival alert's producer. These specs pin the two properties the
+ * in-app notification ticket depends on:
+ *
+ *   1. EXACTLY-ONCE ON THE REAL TRANSITION. checkIn is idempotent by design — an
+ *      already-arrived booking early-returns without touching the database — so the
+ *      notification must be emitted only on the branch that actually won the
+ *      conditional `status='accepted'` update. Emitting at the end of the method
+ *      unconditionally would re-notify on every double-tap of the front-desk button.
+ *
+ *   2. FAILURE ISOLATION. A notification failure must degrade the notification, not
+ *      the check-in. There is no transaction to join here (PostgREST has none), so
+ *      the emit happens after the status write has committed and cannot roll it back.
+ */
+describe('LabAppointmentsService — check-in arrival notification', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  function arrivalFake() {
+    return { notifyClientArrivedSafe: jest.fn().mockResolvedValue(undefined) };
+  }
+
+  it('notifies the assigned stylist once the arrival transition is committed', async () => {
+    const client = createMockSupabaseClient([
+      { data: appointmentRow(), error: null }, // fetchAppointmentForActor
+      { data: appointmentRow({ status: 'checked_in' }), error: null }, // the winning update
+      { data: [clientProfileRow()], error: null }, // fetchClientProfiles
+    ]);
+    const arrival = arrivalFake();
+    const service = createService(client, undefined, undefined, arrival);
+
+    await service.checkIn(stylistActor(), 'appointment_1');
+
+    expect(arrival.notifyClientArrivedSafe).toHaveBeenCalledTimes(1);
+    expect(arrival.notifyClientArrivedSafe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'appointment_1',
+        business_id: 'business_1',
+        location_id: 'location_1',
+        client_profile_id: 'client_1',
+        assigned_staff_profile_id: 'staff_1',
+      }),
+      'user_1',
+    );
+  });
+
+  it('does NOT re-notify when the booking has already arrived (double-tap)', async () => {
+    const client = createMockSupabaseClient([
+      { data: appointmentRow({ status: 'checked_in' }), error: null }, // already arrived
+      { data: [clientProfileRow()], error: null }, // fetchClientProfiles
+    ]);
+    const arrival = arrivalFake();
+    const service = createService(client, undefined, undefined, arrival);
+
+    await service.checkIn(stylistActor(), 'appointment_1');
+
+    expect(arrival.notifyClientArrivedSafe).not.toHaveBeenCalled();
+  });
+
+  it('does NOT notify the loser of a concurrent check-in race', async () => {
+    // Two front-desk requests: the conditional update returns null for the loser,
+    // which then re-reads the already-checked-in row. Only the winner notifies.
+    const client = createMockSupabaseClient([
+      { data: appointmentRow(), error: null }, // fetchAppointmentForActor
+      { data: null, error: null }, // lost the .eq('status','accepted') claim
+      { data: appointmentRow({ status: 'checked_in' }), error: null }, // fetchAppointmentById re-read
+      { data: [clientProfileRow()], error: null }, // fetchClientProfiles
+    ]);
+    const arrival = arrivalFake();
+    const service = createService(client, undefined, undefined, arrival);
+
+    await service.checkIn(stylistActor(), 'appointment_1');
+
+    expect(arrival.notifyClientArrivedSafe).not.toHaveBeenCalled();
+  });
+
+  it('still checks the client in when the notification path throws', async () => {
+    const client = createMockSupabaseClient([
+      { data: appointmentRow(), error: null },
+      { data: appointmentRow({ status: 'checked_in' }), error: null },
+      { data: [clientProfileRow()], error: null },
+    ]);
+    const arrival = {
+      // Defence in depth: notifyClientArrivedSafe is contractually non-throwing, so
+      // this simulates that contract being broken outright.
+      notifyClientArrivedSafe: jest.fn().mockRejectedValue(new Error('notifications are down')),
+    };
+    const service = createService(client, undefined, undefined, arrival);
+
+    // THE reliability requirement: a notification failure degrades the
+    // notification, never the check-in. The client is at the desk either way.
+    const result = await service.checkIn(stylistActor(), 'appointment_1');
+
+    expect(result.appointment.status).toBe('checked_in');
+    expect(arrival.notifyClientArrivedSafe).toHaveBeenCalledTimes(1);
+  });
+});
+
 function createService(
   client: MockSupabaseClient,
   taxSettings: Record<string, unknown> = {
@@ -939,6 +1038,9 @@ function createService(
   },
   stripe: { refundPaymentIntent: jest.Mock } = {
     refundPaymentIntent: jest.fn().mockResolvedValue({ id: 're_test', status: 'succeeded' }),
+  },
+  arrivalNotifications: { notifyClientArrivedSafe: jest.Mock } = {
+    notifyClientArrivedSafe: jest.fn().mockResolvedValue(undefined),
   },
 ): LabAppointmentsService {
   mockedCreateClient.mockReturnValue(client as never);
@@ -962,6 +1064,7 @@ function createService(
     {
       record: jest.fn().mockResolvedValue(undefined),
     } as never,
+    arrivalNotifications as never,
   );
 }
 
