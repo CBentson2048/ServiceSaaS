@@ -1,6 +1,7 @@
 import type { ConfigService } from '@nestjs/config';
 import { TwilioCallbackService } from './twilio-callback.service';
-import type { BookingNotificationService } from '../communications/booking-notification.service';
+import type { NotificationEscalationService } from '../communications/notification-escalation.service';
+import type { OptOutService } from '../communications/opt-out.service';
 import type { WhatsAppService } from '../communications/whatsapp.service';
 
 interface FakeState {
@@ -8,7 +9,8 @@ interface FakeState {
   rows: Record<string, Record<string, unknown> | null>;
   updates: Array<{ table: string; payload: Record<string, unknown> }>;
   inserts: Array<{ table: string; row: Record<string, unknown> }>;
-  fallbacks: Array<{ appointmentId: string; eventKey: string; failedChannel: string; reason: string }>;
+  fallbacks: Array<{ eventId: string; failedChannel: string; reason: string }>;
+  optOuts: Array<{ businessId: string; clientProfileId: string; channel: string; source: string; cleared: boolean }>;
 }
 
 function makeFakeClient(state: FakeState) {
@@ -47,20 +49,28 @@ function makeFakeClient(state: FakeState) {
 function makeService(state: FakeState): TwilioCallbackService {
   const config = { getOrThrow: () => 'https://example.supabase.co' } as unknown as ConfigService;
   const whatsapp = { provider: 'twilio', verifyWebhookSignature: () => true } as unknown as WhatsAppService;
-  const booking = {
-    escalateToNextChannelSafe: jest.fn(
-      async (appointmentId: string, eventKey: string, failedChannel: string, reason: string) => {
-        state.fallbacks.push({ appointmentId, eventKey, failedChannel, reason });
-      },
-    ),
-  } as unknown as BookingNotificationService;
-  const service = new TwilioCallbackService(config, whatsapp, booking);
+  const escalation = {
+    escalateFromEventSafe: jest.fn(async (eventId: string, failedChannel: string, reason: string) => {
+      state.fallbacks.push({ eventId, failedChannel, reason });
+      return null;
+    }),
+  } as unknown as NotificationEscalationService;
+  const optOuts = {
+    channelsFor: jest.fn().mockResolvedValue({ channels: [], degraded: false }),
+    recordOptOut: jest.fn(async (businessId: string, clientProfileId: string, channel: string, source: string) => {
+      state.optOuts.push({ businessId, clientProfileId, channel, source, cleared: false });
+    }),
+    clearOptOut: jest.fn(async (businessId: string, clientProfileId: string, channel: string) => {
+      state.optOuts.push({ businessId, clientProfileId, channel, source: 'cleared', cleared: true });
+    }),
+  } as unknown as OptOutService;
+  const service = new TwilioCallbackService(config, whatsapp, escalation, optOuts);
   (service as unknown as { admin: unknown }).admin = makeFakeClient(state);
   return service;
 }
 
 function emptyState(rows: FakeState['rows']): FakeState {
-  return { rows, updates: [], inserts: [], fallbacks: [] };
+  return { rows, updates: [], inserts: [], fallbacks: [], optOuts: [] };
 }
 
 describe('TwilioCallbackService.handleStatusCallback', () => {
@@ -97,7 +107,9 @@ describe('TwilioCallbackService.handleStatusCallback', () => {
         channel: 'whatsapp',
         message_type: 'booking_confirmation',
         delivery_status: 'sent',
-        notification_event_id: null,
+        notification_event_id: 'evt1',
+        business_id: 'biz1',
+        client_profile_id: 'cli1',
         appointment_id: 'apt1',
       },
     });
@@ -116,32 +128,61 @@ describe('TwilioCallbackService.handleStatusCallback', () => {
 
     // Async real failure of WhatsApp → escalate to the next channel in the chain for this notification.
     expect(state.fallbacks).toEqual([
-      {
-        appointmentId: 'apt1',
-        eventKey: 'booking_confirmation',
-        failedChannel: 'whatsapp',
-        reason: expect.stringContaining('whatsapp failed'),
-      },
+      { eventId: 'evt1', failedChannel: 'whatsapp', reason: expect.stringContaining('whatsapp failed') },
     ]);
+    // 63016 is a freeform-window error, not an unsubscribe — it must not record an opt-out.
+    expect(state.optOuts).toHaveLength(0);
   });
 
-  it('delegates from an SMS failure but the chain has no next channel (no duplicate SMS)', async () => {
+  it('records a per-channel opt-out when Twilio reports the recipient as unsubscribed (21610)', async () => {
     const state = emptyState({
       message_logs: {
-        id: 'log2',
+        id: 'log1',
         channel: 'sms',
         message_type: 'booking_confirmation',
         delivery_status: 'sent',
-        notification_event_id: null,
+        notification_event_id: 'evt1',
+        business_id: 'biz1',
+        client_profile_id: 'cli1',
         appointment_id: 'apt1',
       },
     });
     const service = makeService(state);
-    await service.handleStatusCallback({ MessageSid: 'SM2', MessageStatus: 'failed', ErrorCode: '30006' });
-    // The callback delegates with the failed channel; SMS is last in the chain, so the booking
-    // service finds no next channel and no fallback event is created (verified in its own spec).
+    await service.handleStatusCallback({
+      MessageSid: 'SM1',
+      MessageStatus: 'failed',
+      ErrorCode: '21610',
+      ErrorMessage: 'Attempt to send to unsubscribed recipient',
+    });
+
+    expect(state.optOuts).toEqual([
+      { businessId: 'biz1', clientProfileId: 'cli1', channel: 'sms', source: 'provider_error', cleared: false },
+    ]);
+    // The opt-out is recorded AND the message still escalates to the next channel.
     expect(state.fallbacks).toEqual([
-      { appointmentId: 'apt1', eventKey: 'booking_confirmation', failedChannel: 'sms', reason: expect.any(String) },
+      { eventId: 'evt1', failedChannel: 'sms', reason: expect.any(String) },
+    ]);
+  });
+
+  it('delegates from an SMS failure by notification event, whatever it is attached to', async () => {
+    const state = emptyState({
+      message_logs: {
+        id: 'log2',
+        channel: 'sms',
+        message_type: 'campaign:winback',
+        delivery_status: 'sent',
+        notification_event_id: 'evt2',
+        business_id: 'biz1',
+        client_profile_id: 'cli1',
+        // A campaign message has no appointment. Escalation used to be keyed on this column and
+        // silently did nothing when it was null.
+        appointment_id: null,
+      },
+    });
+    const service = makeService(state);
+    await service.handleStatusCallback({ MessageSid: 'SM2', MessageStatus: 'failed', ErrorCode: '30006' });
+    expect(state.fallbacks).toEqual([
+      { eventId: 'evt2', failedChannel: 'sms', reason: expect.any(String) },
     ]);
   });
 
@@ -207,6 +248,53 @@ describe('TwilioCallbackService.handleInboundMessage', () => {
     expect(insert?.row.business_id).toBe('biz1');
     expect(insert?.row.client_profile_id).toBe('cli1');
     expect(insert?.row.content_preview).toContain('move my appointment');
+    // An ordinary reply is conversation, not an unsubscribe.
+    expect(state.optOuts).toHaveLength(0);
+  });
+
+  it('records a WhatsApp opt-out when the client replies STOP, and still logs the reply', async () => {
+    const state = emptyState({
+      message_logs: {
+        id: 'log1',
+        channel: 'whatsapp',
+        message_type: 'booking_confirmation',
+        delivery_status: 'delivered',
+        notification_event_id: null,
+        business_id: 'biz1',
+        location_id: 'loc1',
+        client_profile_id: 'cli1',
+        appointment_id: 'apt1',
+      },
+    });
+    const service = makeService(state);
+    await service.handleInboundMessage({ MessageSid: 'SM-in', From: 'whatsapp:+447700900123', Body: 'STOP' });
+
+    expect(state.inserts.some((i) => i.table === 'message_logs' && i.row.direction === 'inbound')).toBe(true);
+    expect(state.optOuts).toEqual([
+      { businessId: 'biz1', clientProfileId: 'cli1', channel: 'whatsapp', source: 'inbound_keyword', cleared: false },
+    ]);
+  });
+
+  it('clears the opt-out when the client replies START', async () => {
+    const state = emptyState({
+      message_logs: {
+        id: 'log1',
+        channel: 'sms',
+        message_type: 'booking_confirmation',
+        delivery_status: 'delivered',
+        notification_event_id: null,
+        business_id: 'biz1',
+        location_id: 'loc1',
+        client_profile_id: 'cli1',
+        appointment_id: 'apt1',
+      },
+    });
+    const service = makeService(state);
+    await service.handleInboundMessage({ MessageSid: 'SM-in', From: '+447700900123', Body: 'start' });
+
+    expect(state.optOuts).toEqual([
+      { businessId: 'biz1', clientProfileId: 'cli1', channel: 'sms', source: 'cleared', cleared: true },
+    ]);
   });
 
   it('does not persist an inbound reply it cannot attribute to a client', async () => {

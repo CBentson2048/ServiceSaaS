@@ -7,14 +7,11 @@ import {
   loadAppointmentContext,
   type AppointmentNotificationContext,
 } from './appointment-context';
-import {
-  resolveChannelPlan,
-  nextChannelAfter,
-  type ContactEligibility,
-  type DeliveryChannel,
-} from './channel-policy';
+import { resolveChannelPlan, type ContactEligibility, type DeliveryChannel } from './channel-policy';
+import { MessagingService } from './messaging.service';
+import { OptOutService } from './opt-out.service';
 import { isValidEmail, normalizeE164 } from './phone';
-import { NotificationEventKey, REMINDER_EVENT_KEYS } from './notification.types';
+import { NotificationEventKey } from './notification.types';
 import { computeDesiredEvents, enabledEventKeys, type DesiredEvent } from './reminder-schedule';
 
 interface ExistingEventRow {
@@ -48,6 +45,8 @@ export class BookingNotificationService {
   constructor(
     config: ConfigService,
     private readonly settingsService: CommunicationSettingsService,
+    private readonly messaging: MessagingService,
+    private readonly optOuts: OptOutService,
   ) {
     const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
@@ -89,10 +88,18 @@ export class BookingNotificationService {
       context.appointment.location_id,
     );
 
-    // Resolve the channel chain for this client (WhatsApp → Email → SMS, narrowed by preference and
-    // eligibility). When no channel is deliverable (master switch off, no enabled channel, opted out,
-    // or no valid contact) we cancel any pending events so nothing stale goes out.
-    const plan = resolveChannelPlan(settings, context.communicationPreference, this.contactFor(context));
+    // Resolve the channel chain for this client (WhatsApp → SMS → Email, narrowed by preference,
+    // eligibility and recorded opt-outs). When no channel is deliverable (master switch off, no
+    // enabled channel, opted out, or no valid contact) we cancel any pending events so nothing stale
+    // goes out.
+    const optOuts = await this.optOuts.channelsFor(
+      context.appointment.business_id,
+      context.appointment.client_profile_id,
+    );
+    const plan = resolveChannelPlan(settings, context.communicationPreference, {
+      ...this.contactFor(context),
+      optedOutChannels: optOuts.channels,
+    });
     if (!plan.deliverable) {
       await this.cancelPending(existing);
       return;
@@ -102,9 +109,9 @@ export class BookingNotificationService {
     const enabledKeys = enabledEventKeys(settings);
     const desired = computeDesiredEvents(settings, start, now);
 
-    // Events are scheduled on the PRIMARY channel only. Fallback events (email, then SMS) are created
-    // lazily by the dispatcher/callbacks when the channel before them is clearly ineligible or has a
-    // real failure — never up-front, so a pending WhatsApp/email delivery does not trigger a fallback.
+    // Events are scheduled on the PRIMARY channel only. Fallback events (SMS, then email) are created
+    // lazily by NotificationEscalationService when the channel before them is clearly ineligible or
+    // has a real failure — never up-front, so a pending delivery does not trigger a fallback.
     await this.reconcile(context, existing, desired, enabledKeys, plan.primary, now);
   }
 
@@ -142,6 +149,21 @@ export class BookingNotificationService {
         continue;
       }
 
+      // A reminder whose attempt handed over to a fallback is history, not a live occupant of this
+      // channel slot — but the partial unique index still counts it, so it has to be retired before
+      // a reminder for the NEW appointment time can be queued. Only when the time actually moved:
+      // an unchanged appointment's fallback is legitimately still in flight and must not be
+      // duplicated. Confirmations are one-shot and are never re-queued, whatever state they are in.
+      if (
+        match.status === 'fallback_pending' &&
+        item.eventKey !== NotificationEventKey.BookingConfirmation &&
+        match.scheduled_for !== item.scheduledFor.toISOString()
+      ) {
+        await this.retireHandedOverEvent(match.id);
+        await this.insertEvent(context, item, primaryChannel, now);
+        continue;
+      }
+
       // Only queued events are still mutable. Confirmations are one-shot (never rescheduled);
       // reminders follow the appointment time if it moved.
       if (match.status === 'queued' && item.eventKey !== NotificationEventKey.BookingConfirmation) {
@@ -152,7 +174,7 @@ export class BookingNotificationService {
       }
     }
 
-    // 2. Cancel stale queued events. Fallback events (SMS created by the dispatcher/callbacks) are
+    // 2. Cancel stale queued events. Fallback events (created by the escalation service) are
     //    left untouched. Non-fallback events on a channel other than the current primary are stale
     //    from a previous preference/channel (e.g. the client switched whatsapp → email) and are
     //    cancelled. Primary-channel events whose rule is disabled or window disappeared are cancelled.
@@ -174,6 +196,11 @@ export class BookingNotificationService {
     }
   }
 
+  /**
+   * Queue one reminder/confirmation. The channel is already decided here (the plan is resolved once
+   * for the whole reminder set), so this uses the single send API's channel-explicit writer rather
+   * than re-resolving policy per event. Duplicate keys are handled inside as the idempotent outcome.
+   */
   private async insertEvent(
     context: AppointmentNotificationContext,
     item: DesiredEvent,
@@ -181,27 +208,16 @@ export class BookingNotificationService {
     now: Date,
   ): Promise<void> {
     const { appointment } = context;
-    const { error } = await this.admin
-      .schema('comms')
-      .from('notification_events')
-      .insert({
-        business_id: appointment.business_id,
-        location_id: appointment.location_id,
-        client_profile_id: appointment.client_profile_id,
-        appointment_id: appointment.id,
-        channel,
-        event_key: item.eventKey,
-        status: 'queued',
-        scheduled_for: item.scheduledFor.toISOString(),
-        payload_json: this.buildPayload(context, item.eventKey, channel, now),
-      });
-
-    if (error) {
-      // The partial unique index (appointment_id, event_key, channel) may reject a
-      // concurrent duplicate — that's the desired idempotent outcome, so swallow it.
-      if (isUniqueViolation(error)) return;
-      throw new Error(`insert notification_event failed: ${error.message}`);
-    }
+    await this.messaging.enqueueOnChannel({
+      businessId: appointment.business_id,
+      locationId: appointment.location_id,
+      clientProfileId: appointment.client_profile_id,
+      appointmentId: appointment.id,
+      channel,
+      eventKey: item.eventKey,
+      scheduledFor: item.scheduledFor,
+      payload: this.buildPayload(context, item.eventKey, channel, now),
+    });
   }
 
   private async updateEventSchedule(
@@ -241,88 +257,6 @@ export class BookingNotificationService {
     };
   }
 
-  /**
-   * Escalate a notification to the NEXT channel in its WhatsApp → Email → SMS chain after
-   * `failedChannel` was ineligible or had a real failure. Never throws (used from delivery/callback
-   * paths). This is the ONLY place a fallback event is created, and only ever for the single next
-   * channel — so a pending/accepted message never triggers a fallback, and a real failure produces
-   * at most one new channel attempt.
-   */
-  async escalateToNextChannelSafe(
-    appointmentId: string,
-    eventKey: string,
-    failedChannel: DeliveryChannel,
-    reason: string,
-  ): Promise<void> {
-    try {
-      await this.escalateToNextChannel(appointmentId, eventKey, failedChannel, reason);
-    } catch (err) {
-      this.logger.error(
-        `escalateToNextChannel failed for appointment ${appointmentId} / ${eventKey}: ${(err as Error).message}`,
-      );
-    }
-  }
-
-  /**
-   * Enqueue the next fallback channel after `failedChannel`. Returns the channel that was enqueued
-   * (or already existed — idempotent), or `null` when there is no further channel to try, the
-   * appointment is inactive, or the reminder is no longer time-valid. Idempotent: the partial unique
-   * index on (appointment_id, event_key, channel) prevents a duplicate fallback for the same event.
-   */
-  async escalateToNextChannel(
-    appointmentId: string,
-    eventKey: string,
-    failedChannel: DeliveryChannel,
-    reason: string,
-    now: Date = new Date(),
-  ): Promise<DeliveryChannel | null> {
-    const context = await loadAppointmentContext(this.admin, appointmentId);
-    if (!context) return null;
-    if (INACTIVE_APPOINTMENT_STATUSES.has(context.appointment.status)) return null;
-
-    // Stale (rescheduled) or already-passed reminders are no longer time-valid to send.
-    if (REMINDER_EVENT_KEYS.has(eventKey)) {
-      if (new Date(context.appointment.scheduled_start_at).getTime() <= now.getTime()) return null;
-    }
-
-    const settings = await this.settingsService.getForLocation(
-      context.appointment.business_id,
-      context.appointment.location_id,
-    );
-    const plan = resolveChannelPlan(settings, context.communicationPreference, this.contactFor(context));
-    const next = nextChannelAfter(plan, failedChannel);
-    if (!next) return null;
-
-    const { appointment } = context;
-    const { error } = await this.admin
-      .schema('comms')
-      .from('notification_events')
-      .insert({
-        business_id: appointment.business_id,
-        location_id: appointment.location_id,
-        client_profile_id: appointment.client_profile_id,
-        appointment_id: appointment.id,
-        channel: next,
-        event_key: eventKey,
-        status: 'queued',
-        scheduled_for: now.toISOString(),
-        payload_json: this.buildPayload(context, eventKey as NotificationEventKey, next, now, {
-          fallback: true,
-          primary_channel: failedChannel,
-          fallback_reason: reason,
-        }),
-      });
-
-    if (error) {
-      if (isUniqueViolation(error)) return next; // fallback already exists — idempotent, no duplicate.
-      throw new Error(`insert ${next} fallback event failed: ${error.message}`);
-    }
-    this.logger.log(
-      `${next} fallback queued for appointment ${appointmentId} / ${eventKey} (after ${failedChannel} ${reason})`,
-    );
-    return next;
-  }
-
   private async cancelPending(existing: ExistingEventRow[]): Promise<void> {
     const ids = existing.filter((e) => e.status === 'queued').map((e) => e.id);
     if (ids.length === 0) return;
@@ -333,6 +267,22 @@ export class BookingNotificationService {
       .in('id', ids)
       .eq('status', 'queued');
     if (error) throw new Error(`cancel notification_events failed: ${error.message}`);
+  }
+
+  /**
+   * Retire an event that already handed over to a fallback, so the channel slot (and the partial
+   * unique index that guards it) is free for a reminder at the rescheduled time. Guarded on the
+   * status so it can never touch a queued or delivered event. The successor it spawned carries the
+   * old `appointment_start` and is cancelled as stale when it comes due, so nothing is double-sent.
+   */
+  private async retireHandedOverEvent(eventId: string): Promise<void> {
+    const { error } = await this.admin
+      .schema('comms')
+      .from('notification_events')
+      .update({ status: 'cancelled', locked_until: null })
+      .eq('id', eventId)
+      .eq('status', 'fallback_pending');
+    if (error) throw new Error(`retire handed-over notification_event failed: ${error.message}`);
   }
 
   private async cancelEvent(eventId: string): Promise<void> {
@@ -355,8 +305,4 @@ export class BookingNotificationService {
     if (error) throw new Error(`fetch notification_events failed: ${error.message}`);
     return data ?? [];
   }
-}
-
-function isUniqueViolation(error: { code?: string; message?: string }): boolean {
-  return error.code === '23505' || /duplicate key value/i.test(error.message ?? '');
 }

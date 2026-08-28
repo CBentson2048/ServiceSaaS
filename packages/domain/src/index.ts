@@ -1317,15 +1317,15 @@ export interface LocationCommunicationSettings {
   reminder48hEnabled: boolean;
   reminder1wEnabled: boolean;
   /**
-   * Secondary fallback. When true, a real WhatsApp failure or WhatsApp-ineligibility falls back to
-   * **email** for the same notification (when the client has a valid email). Email is never sent
-   * while WhatsApp is merely pending/queued.
+   * Last-resort fallback. When true, a notification falls back to **email** once the channels before
+   * it in the WhatsApp → SMS → Email chain are ineligible or have a real failure (when the client
+   * has a valid email). Email is never sent while a prior channel is merely pending/queued.
    */
   emailFallbackEnabled: boolean;
   /**
-   * Last-resort fallback. When true, a notification falls back to **SMS** once the channels before
-   * it in the WhatsApp → Email → SMS chain are ineligible or have a real failure. SMS is never sent
-   * while a prior channel is merely pending/queued.
+   * Secondary fallback. When true, a real WhatsApp failure, a WhatsApp opt-out or
+   * WhatsApp-ineligibility falls back to **SMS** for the same notification (when the client has a
+   * valid phone). SMS is never sent while WhatsApp is merely pending/queued.
    */
   smsFallbackEnabled: boolean;
 }
@@ -4215,7 +4215,7 @@ export type CrmVisitPhotoType = 'before' | 'after' | 'inspiration' | 'condition'
  * Delivery channels for the messaging foundation. Channel-agnostic by design so
  * the provider abstraction (Twilio for now) can be swapped without touching core
  * tables. `in_app`/`push` are recorded for in-app notification states; the
- * outbound fallback chain today is WhatsApp → Email → SMS (logic in Week 6).
+ * outbound fallback chain is WhatsApp → SMS → Email (Wrike #4507284095).
  */
 export type MessageChannel = 'whatsapp' | 'sms' | 'email' | 'in_app' | 'push';
 

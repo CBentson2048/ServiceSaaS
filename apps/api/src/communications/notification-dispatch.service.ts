@@ -7,67 +7,43 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import {
-  INACTIVE_APPOINTMENT_STATUSES,
-  loadAppointmentContext,
-  type AppointmentNotificationContext,
-} from './appointment-context';
-import { BookingNotificationService } from './booking-notification.service';
-import {
   channelAllowedByPlan,
-  nextChannelAfter,
-  resolveChannelPlan,
   type ChannelPlan,
   type DeliveryChannel,
 } from './channel-policy';
-import { CommunicationSettingsService } from './communication-settings.service';
+import { MessagingService } from './messaging.service';
+import { NotificationEscalationService } from './notification-escalation.service';
+import { EMAIL_CHANNEL, SMS_CHANNEL, WHATSAPP_CHANNEL } from './notification.types';
 import {
-  EMAIL_CHANNEL,
-  NotificationEventKey,
-  REMINDER_EVENT_KEYS,
-  SMS_CHANNEL,
-  WHATSAPP_CHANNEL,
-} from './notification.types';
-import { isReminderStale } from './reminder-schedule';
-import {
-  buildContentVariables,
-  renderEmail,
-  renderNotification,
-  type NotificationContext,
-  type RenderedMessage,
-} from './notification.templates';
-import { isValidEmail, normalizeE164, toWhatsAppAddress } from './phone';
+  NOTIFICATION_EVENT_COLUMNS,
+  type NotificationEventRow,
+  type NotificationSubject,
+  type RenderedChannelMessage,
+} from './notification-subject';
+import { NotificationSubjectRegistry } from './notification-subject.registry';
+import { normalizeE164, toWhatsAppAddress } from './phone';
 import { MessageProviderRegistry } from './providers/message-provider.registry';
 import { WhatsAppTemplateConfig } from './whatsapp-template.config';
 
-interface DueEventRow {
-  id: string;
-  business_id: string;
-  location_id: string;
-  client_profile_id: string | null;
-  appointment_id: string | null;
-  channel: string;
-  event_key: string;
-  status: string;
-  scheduled_for: string | null;
-  attempts: number;
-  message_log_id: string | null;
-  payload_json: Record<string, unknown> | null;
-}
+const DELIVERY_CHANNELS: DeliveryChannel[] = [WHATSAPP_CHANNEL, SMS_CHANNEL, EMAIL_CHANNEL];
 
 /**
- * Background poller that delivers due `comms.notification_events` over the WhatsApp → Email → SMS
+ * Background poller that delivers due `comms.notification_events` over the WhatsApp → SMS → Email
  * chain.
+ *
+ * What a message is *about* is resolved through {@link NotificationSubjectRegistry}, so the same
+ * queue, retry, logging and fallback machinery serves booking notifications, rebooking nudges and
+ * campaigns alike. The dispatcher itself knows nothing about appointments, campaigns or providers.
  *
  * Robustness model (no external queue/cron dependency):
  *  - Concurrency / restart safety: each tick claims events with an atomic `status='queued'` +
  *    `locked_until` guarded UPDATE, so only one worker (or tick) owns an event at a time.
- *  - Idempotency: an event transitions queued → sent exactly once; the partial unique index
- *    (appointment_id, event_key, channel) prevents duplicate events — including duplicate fallbacks
- *    for the same failed notification.
- *  - Stale protection: cancelled/no-show or rescheduled (start time moved) appointments cancel the
- *    event instead of sending.
+ *  - Idempotency: an event transitions queued → sent exactly once; the partial unique indexes
+ *    prevent duplicate events — including duplicate fallbacks for the same failed notification.
+ *  - Stale protection: the subject's send-time precheck (cancelled/rescheduled appointment, client
+ *    already rebooked, marketing consent withdrawn) cancels the event instead of sending.
  *  - Channel policy: the primary channel is attempted first. A fallback (the next channel in the
- *    WhatsApp → Email → SMS chain) is enqueued only when the current channel is clearly
+ *    WhatsApp → SMS → Email chain) is enqueued only when the current channel is clearly
  *    ineligible/unavailable (sync) or has a real failure — never while it is merely pending. A
  *    "sent" (accepted-but-undelivered) message does NOT trigger a fallback here; the async status
  *    callback (Twilio) or bounce webhook (Resend) enqueues the fallback if the provider later
@@ -76,6 +52,9 @@ interface DueEventRow {
  *    queued during downtime fire promptly on the next tick rather than one batch per interval.
  *  - Retries: transient failures requeue with backoff up to `maxAttempts`, then terminate as
  *    `failed` (and escalate to the next channel in the chain). Delivery is never faked.
+ *  - Delivery state: an event that has handed over to a fallback is recorded as `fallback_pending`,
+ *    distinguishing "this attempt is over but the message is still in flight" from a terminal
+ *    `failed`/`cancelled`. The failed attempt's own `comms.message_logs` row stays `failed`/`skipped`.
  */
 @Injectable()
 export class NotificationDispatchService implements OnModuleInit, OnModuleDestroy {
@@ -89,8 +68,6 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
   private readonly maxDrainBatches: number;
   private static readonly LOCK_TTL_MS = 5 * 60 * 1000;
   private static readonly RETRY_BACKOFF_MS = 5 * 60 * 1000;
-  private static readonly EVENT_COLUMNS =
-    'id,business_id,location_id,client_profile_id,appointment_id,channel,event_key,status,scheduled_for,attempts,message_log_id,payload_json';
 
   private timer: ReturnType<typeof setInterval> | null = null;
   private running = false;
@@ -99,8 +76,9 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
     config: ConfigService,
     private readonly providers: MessageProviderRegistry,
     private readonly templates: WhatsAppTemplateConfig,
-    private readonly settingsService: CommunicationSettingsService,
-    private readonly booking: BookingNotificationService,
+    private readonly subjects: NotificationSubjectRegistry,
+    private readonly messaging: MessagingService,
+    private readonly escalation: NotificationEscalationService,
   ) {
     const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
@@ -163,26 +141,26 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
     }
   }
 
-  private async fetchDueCandidates(): Promise<DueEventRow[]> {
+  private async fetchDueCandidates(): Promise<NotificationEventRow[]> {
     const nowIso = new Date().toISOString();
     const { data, error } = await this.admin
       .schema('comms')
       .from('notification_events')
-      .select(NotificationDispatchService.EVENT_COLUMNS)
+      .select(NOTIFICATION_EVENT_COLUMNS)
       .eq('status', 'queued')
-      .in('channel', [WHATSAPP_CHANNEL, SMS_CHANNEL, EMAIL_CHANNEL])
+      .in('channel', DELIVERY_CHANNELS)
       .lte('scheduled_for', nowIso)
       .or(`locked_until.is.null,locked_until.lt.${nowIso}`)
       .order('scheduled_for', { ascending: true })
       .limit(this.batchSize)
-      .returns<DueEventRow[]>();
+      .returns<NotificationEventRow[]>();
 
     if (error) throw new Error(`fetch due events failed: ${error.message}`);
     return data ?? [];
   }
 
   /** Atomically take ownership of an event. Returns the row only if this worker won the claim. */
-  private async claim(candidate: DueEventRow): Promise<DueEventRow | null> {
+  private async claim(candidate: NotificationEventRow): Promise<NotificationEventRow | null> {
     const now = new Date();
     const lockUntil = new Date(now.getTime() + NotificationDispatchService.LOCK_TTL_MS).toISOString();
     const { data, error } = await this.admin
@@ -196,8 +174,8 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
       .eq('id', candidate.id)
       .eq('status', 'queued')
       .or(`locked_until.is.null,locked_until.lt.${now.toISOString()}`)
-      .select(NotificationDispatchService.EVENT_COLUMNS)
-      .returns<DueEventRow[]>();
+      .select(NOTIFICATION_EVENT_COLUMNS)
+      .returns<NotificationEventRow[]>();
 
     if (error) {
       this.logger.error(`claim event ${candidate.id} failed: ${error.message}`);
@@ -206,228 +184,116 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
     return data && data.length === 1 ? data[0] : null;
   }
 
-  private async process(event: DueEventRow): Promise<void> {
-    if (!event.appointment_id) {
+  private async process(event: NotificationEventRow): Promise<void> {
+    const channel = event.channel as DeliveryChannel;
+    if (!DELIVERY_CHANNELS.includes(channel)) {
+      await this.cancelEvent(event.id); // unknown channel
+      return;
+    }
+
+    // What is this message about? An appointment, a client, or nothing we can still identify.
+    const subject = await this.subjects.resolve(event);
+    if (!subject) {
       await this.cancelEvent(event.id);
       return;
     }
 
-    const context = await loadAppointmentContext(this.admin, event.appointment_id);
-    if (!context) {
+    // Send-time suppression: cancelled/rescheduled appointment, client already rebooked, marketing
+    // consent withdrawn since the message was queued.
+    const blocked = await subject.precheck(new Date(), 'dispatch');
+    if (blocked) {
+      if (blocked.logSkip) await this.logSkippedAttempt(event, subject, channel, blocked.reason);
       await this.cancelEvent(event.id);
       return;
     }
 
-    // Scheduling correction (cancelled/no-show/rescheduled/passed) → cancel silently for ANY channel.
-    if (this.isSchedulingCancelled(event, context)) {
-      await this.cancelEvent(event.id);
-      return;
-    }
-
-    // Rebooking nudge is suppressed the moment the client has rebooked. This is
-    // checked at send time (not schedule time) because a client may rebook any
-    // time in the weeks between completion and the nudge firing.
-    if (event.event_key === NotificationEventKey.RebookingNudge && (await this.clientAlreadyRebooked(event, context))) {
-      await this.cancelEvent(event.id);
-      this.logger.log(`rebooking nudge ${event.id} cancelled — client already rebooked`);
-      return;
-    }
-
-    const settings = await this.settingsService.getForLocation(event.business_id, event.location_id);
-    const plan = resolveChannelPlan(settings, context.communicationPreference, {
-      phoneValid: Boolean(normalizeE164(context.clientPhone)),
-      emailValid: isValidEmail(context.clientEmail),
-    });
-
-    if (event.channel === WHATSAPP_CHANNEL) return this.processWhatsApp(event, context, plan);
-    if (event.channel === SMS_CHANNEL) return this.processSms(event, context, plan);
-    if (event.channel === EMAIL_CHANNEL) return this.processEmail(event, context, plan);
-    await this.cancelEvent(event.id); // unknown channel
+    const plan = await this.messaging.resolvePlan(subject);
+    await this.attempt(event, subject, channel, plan);
   }
 
   /**
-   * True when the client already has a future active appointment — i.e. they have
-   * rebooked, so the retention nudge is no longer warranted. Excludes the source
-   * appointment itself. Fails "not suppressed" on query error so a transient DB
-   * blip doesn't silently swallow the nudge (the send path has its own guards).
+   * One delivery attempt on one channel. Identical for every channel and every kind of message —
+   * the differences (approved template vs freeform, address form, email subject/HTML) come from the
+   * subject's rendering and from the provider adapter, not from branching here.
    */
-  private async clientAlreadyRebooked(
-    event: DueEventRow,
-    context: AppointmentNotificationContext,
-  ): Promise<boolean> {
-    const clientProfileId = context.appointment.client_profile_id;
-    if (!clientProfileId) return false;
-    const nowIso = new Date().toISOString();
-    const { data, error } = await this.admin
-      .schema('booking')
-      .from('appointments')
-      .select('id')
-      .eq('business_id', event.business_id)
-      .eq('client_profile_id', clientProfileId)
-      .neq('id', context.appointment.id)
-      .gt('scheduled_start_at', nowIso)
-      .not('status', 'in', '("cancelled","no_show","rejected")')
-      .limit(1)
-      .returns<{ id: string }[]>();
-    if (error) {
-      this.logger.error(`clientAlreadyRebooked check failed for event ${event.id}: ${error.message}`);
-      return false;
-    }
-    return (data?.length ?? 0) > 0;
-  }
-
-  /** Cancellation/reschedule/passed checks that apply to every channel. */
-  private isSchedulingCancelled(event: DueEventRow, context: AppointmentNotificationContext): boolean {
-    if (INACTIVE_APPOINTMENT_STATUSES.has(context.appointment.status)) return true;
-    if (REMINDER_EVENT_KEYS.has(event.event_key)) {
-      if (isReminderStale(event.payload_json?.['appointment_start'], context.appointment.scheduled_start_at)) {
-        return true;
-      }
-      if (new Date(context.appointment.scheduled_start_at).getTime() <= Date.now()) return true;
-    }
-    return false;
-  }
-
-  private async processWhatsApp(
-    event: DueEventRow,
-    context: AppointmentNotificationContext,
+  private async attempt(
+    event: NotificationEventRow,
+    subject: NotificationSubject,
+    channel: DeliveryChannel,
     plan: ChannelPlan,
   ): Promise<void> {
-    const provider = this.providers.forChannel(WHATSAPP_CHANNEL);
-    const whatsappViable = Boolean(provider?.isEnabled) && channelAllowedByPlan(plan, WHATSAPP_CHANNEL);
-    if (!whatsappViable || !provider) {
-      // WhatsApp ineligible/unavailable now → escalate to the next channel in the chain, or skip.
-      await this.escalateOrSkip(event, context, WHATSAPP_CHANNEL, plan);
+    const provider = this.providers.forChannel(channel);
+    const viable = Boolean(provider?.isEnabled) && channelAllowedByPlan(plan, channel);
+    if (!viable || !provider) {
+      // Ineligible/unavailable now → escalate to the next channel in the chain, or skip truthfully.
+      await this.escalateOrSkip(event, subject, channel, plan);
       return;
     }
 
-    const eventKey = event.event_key as NotificationEventKey;
-    const renderCtx = this.renderContext(context);
-    const message = renderNotification(eventKey, renderCtx);
-    const contentSid = this.templates.contentSidFor(eventKey);
-    const contentVariables = buildContentVariables(renderCtx);
+    const recipient = this.recipientFor(channel, subject);
+    if (!recipient) {
+      await this.escalateOrSkip(event, subject, channel, plan);
+      return;
+    }
 
-    if (!contentSid) {
-      // No approved Content template for this event → we can only send a freeform body, which WhatsApp
-      // rejects for business-initiated messages outside the 24h session window. Make it loud so a
-      // missing TWILIO_WHATSAPP_<EVENT>_CONTENT_SID in the running env is obvious rather than silent.
+    const rendered = subject.render(channel);
+    if (channel === WHATSAPP_CHANNEL && !rendered.templateId) {
+      // No approved Content template → we can only send a freeform body, which WhatsApp rejects for
+      // business-initiated messages outside the 24h session window. Make it loud so a missing
+      // template SID in the running env is obvious rather than silent.
       this.logger.warn(
-        `WhatsApp ${eventKey} for appointment ${event.appointment_id} has no approved Content template ` +
-          'SID configured; sending a freeform body (delivers only inside the 24h session window). ' +
-          'Configure the template SID to send the approved template.',
+        `WhatsApp ${event.event_key} for event ${event.id} has no approved Content template configured; ` +
+          'sending a freeform body (delivers only inside the 24h session window).',
       );
     }
 
-    const logId = await this.ensureMessageLog(event, context, WHATSAPP_CHANNEL, message, contentSid, contentVariables);
+    const logId = await this.ensureMessageLog(event, subject, channel, rendered);
     const result = await provider.send({
-      to: context.clientPhone!,
-      templateId: contentSid,
-      templateVariables: contentVariables,
-      body: message.body,
-      statusCallbackUrl: this.templates.statusCallbackUrl,
+      to: recipient,
+      body: rendered.body,
+      subject: rendered.subject,
+      html: rendered.html,
+      text: rendered.text,
+      templateId: rendered.templateId,
+      templateVariables: rendered.templateVariables,
+      statusCallbackUrl: channel === EMAIL_CHANNEL ? undefined : this.templates.statusCallbackUrl,
+      ...(channel === EMAIL_CHANNEL ? { tags: [{ name: 'type', value: event.event_key }] } : {}),
     });
 
     if (result.accepted) {
+      // The provider *accepted* the message → `sent`, NOT `delivered`. The status webhook advances it
+      // to delivered/failed/undelivered/read once the real outcome is known. An accepted message is
+      // never counted as delivered, and never triggers a fallback.
       await this.markAccepted(event, logId, provider.providerName, result.providerMessageId, result.providerStatus);
-    } else {
-      // A real send failure. Retry; on terminal failure escalate to the next channel in the chain.
-      await this.markFailed(event, logId, result.error ?? 'WhatsApp send failed', plan);
-    }
-  }
-
-  private async processSms(
-    event: DueEventRow,
-    context: AppointmentNotificationContext,
-    plan: ChannelPlan,
-  ): Promise<void> {
-    const provider = this.providers.forChannel(SMS_CHANNEL);
-    const smsViable = Boolean(provider?.isEnabled) && channelAllowedByPlan(plan, SMS_CHANNEL);
-    if (!smsViable || !provider) {
-      // SMS is the last channel in the chain → escalateOrSkip records a truthful skip.
-      await this.escalateOrSkip(event, context, SMS_CHANNEL, plan);
-      return;
-    }
-
-    const eventKey = event.event_key as NotificationEventKey;
-    const renderCtx = this.renderContext(context);
-    const message = renderNotification(eventKey, renderCtx);
-
-    const logId = await this.ensureMessageLog(event, context, SMS_CHANNEL, message, undefined, buildContentVariables(renderCtx));
-    const result = await provider.send({
-      to: context.clientPhone!,
-      body: message.body,
-      statusCallbackUrl: this.templates.statusCallbackUrl,
-    });
-
-    if (result.accepted) {
-      await this.markAccepted(event, logId, provider.providerName, result.providerMessageId, result.providerStatus);
-    } else {
-      // SMS is the last channel — markFailed finds no next channel, so there is no further fallback.
-      await this.markFailed(event, logId, result.error ?? 'SMS send failed', plan);
-    }
-  }
-
-  private async processEmail(
-    event: DueEventRow,
-    context: AppointmentNotificationContext,
-    plan: ChannelPlan,
-  ): Promise<void> {
-    const provider = this.providers.forChannel(EMAIL_CHANNEL);
-    const emailViable = Boolean(provider?.isEnabled) && channelAllowedByPlan(plan, EMAIL_CHANNEL);
-    if (!emailViable || !provider) {
-      // Email ineligible/unavailable now → escalate to the next channel (SMS), or skip truthfully.
-      await this.escalateOrSkip(event, context, EMAIL_CHANNEL, plan);
-      return;
-    }
-
-    const eventKey = event.event_key as NotificationEventKey;
-    const renderCtx = this.renderContext(context);
-    const message = renderNotification(eventKey, renderCtx); // for content_preview parity
-    const email = renderEmail(eventKey, renderCtx);
-
-    const logId = await this.ensureMessageLog(event, context, EMAIL_CHANNEL, message, undefined, buildContentVariables(renderCtx));
-    const result = await provider.send({
-      to: context.clientEmail!,
-      subject: email.subject,
-      html: email.html,
-      text: email.text,
-      tags: [{ name: 'type', value: eventKey }],
-    });
-
-    if (result.accepted) {
-      // Resend accepted the message → `sent`. The Resend bounce/delivery webhook advances it to
-      // delivered/failed and escalates to SMS on a real bounce. We never claim `delivered` here, and
-      // a merely-accepted (pending) email never triggers SMS.
-      await this.markAccepted(event, logId, provider.providerName, result.providerMessageId, undefined);
     } else if (result.skipped) {
       // Sender lost its config between scheduling and dispatch → escalate to the next channel / skip.
-      await this.escalateOrSkip(event, context, EMAIL_CHANNEL, plan);
+      await this.escalateOrSkip(event, subject, channel, plan);
     } else {
-      // A real send rejection. Retry; on terminal failure escalate to the next channel (SMS).
-      await this.markFailed(event, logId, result.error ?? 'Email send failed', plan);
+      // A real send failure. Retry; on terminal failure escalate to the next channel in the chain.
+      await this.markFailed(event, subject, logId, result.error ?? `${channel} send failed`, plan);
     }
   }
 
   /**
    * The current channel is ineligible/unavailable. Escalate to the next channel in the
-   * WhatsApp → Email → SMS chain when there is one (recording a truthful `skipped` attempt for the
+   * WhatsApp → SMS → Email chain when there is one (recording a truthful `skipped` attempt for the
    * current channel first, so CRM history shows every attempt), otherwise record a terminal skip.
    * This is the synchronous-ineligibility counterpart of {@link markFailed}'s terminal escalation.
    */
   private async escalateOrSkip(
-    event: DueEventRow,
-    context: AppointmentNotificationContext,
+    event: NotificationEventRow,
+    subject: NotificationSubject,
     channel: DeliveryChannel,
     plan: ChannelPlan,
   ): Promise<void> {
     const reason = this.channelUnavailableReason(channel, plan);
-    const next = nextChannelAfter(plan, channel);
-    if (next && event.appointment_id) {
-      await this.logSkippedAttempt(event, context, channel, `${reason}; falling back to ${next}`);
-      await this.booking.escalateToNextChannelSafe(event.appointment_id, event.event_key, channel, reason);
-      await this.cancelEvent(event.id);
+    const next = await this.escalation.escalateWithSubject(event, subject, plan, channel, reason);
+    if (next) {
+      // Escalation has already moved the event to `fallback_pending`; all that is owed here is a
+      // truthful record of the attempt that could not be made.
+      await this.logSkippedAttempt(event, subject, channel, `${reason}; falling back to ${next}`);
     } else {
-      await this.skipEvent(event, context, channel, reason);
+      await this.skipEvent(event, subject, channel, reason);
     }
   }
 
@@ -441,21 +307,10 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
     return !this.providers.isChannelEnabled(channel);
   }
 
-  private renderContext(context: AppointmentNotificationContext): NotificationContext {
-    return {
-      clientFirstName: context.clientFirstName,
-      locationName: context.locationName,
-      timezone: context.timezone,
-      scheduledStartAt: context.appointment.scheduled_start_at,
-      serviceNames: context.serviceNames,
-      stylistName: context.stylistName,
-    };
-  }
-
-  private recipientFor(channel: DeliveryChannel, context: AppointmentNotificationContext): string | null {
-    if (channel === EMAIL_CHANNEL) return context.clientEmail ?? null;
-    if (channel === WHATSAPP_CHANNEL) return toWhatsAppAddress(context.clientPhone) ?? context.clientPhone ?? null;
-    return normalizeE164(context.clientPhone) ?? context.clientPhone ?? null;
+  private recipientFor(channel: DeliveryChannel, subject: NotificationSubject): string | null {
+    if (channel === EMAIL_CHANNEL) return subject.email ?? null;
+    if (channel === WHATSAPP_CHANNEL) return toWhatsAppAddress(subject.phone) ?? subject.phone ?? null;
+    return normalizeE164(subject.phone) ?? subject.phone ?? null;
   }
 
   private providerFor(channel: DeliveryChannel): string {
@@ -464,16 +319,15 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
 
   /** Find the existing message log for retries, or create one in `queued` state. */
   private async ensureMessageLog(
-    event: DueEventRow,
-    context: AppointmentNotificationContext,
+    event: NotificationEventRow,
+    subject: NotificationSubject,
     channel: DeliveryChannel,
-    message: RenderedMessage,
-    contentSid: string | undefined,
-    contentVariables: Record<string, string>,
+    rendered: RenderedChannelMessage,
   ): Promise<string | null> {
     if (event.message_log_id) return event.message_log_id;
 
     const payload = event.payload_json ?? {};
+    const contentSid = rendered.templateId;
 
     const { data, error } = await this.admin
       .schema('comms')
@@ -491,21 +345,22 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
         message_type: event.event_key,
         // Template reference: the approved Content SID when configured (WhatsApp), else the event key.
         template_key: contentSid ?? event.event_key,
-        recipient: this.recipientFor(channel, context),
-        content_preview: message.preview,
+        recipient: this.recipientFor(channel, subject),
+        content_preview: rendered.preview,
         scheduled_for: event.scheduled_for,
         metadata: {
           primary_intended_channel: (payload['primary_channel'] as string) ?? channel,
           fallback: payload['fallback'] === true,
           ...(payload['fallback_reason'] ? { fallback_reason: payload['fallback_reason'] } : {}),
+          subject_kind: subject.kind,
           // For WhatsApp, record whether an approved Content template was used (vs a freeform body
           // fallback) so it is auditable per message in CRM history.
           ...(channel === WHATSAPP_CHANNEL ? { used_template: Boolean(contentSid) } : {}),
         },
         payload_snapshot: {
           content_sid: contentSid ?? null,
-          content_variables: contentVariables,
-          fallback_body: contentSid ? undefined : message.body,
+          content_variables: rendered.templateVariables,
+          fallback_body: contentSid ? undefined : rendered.body,
           ...payload,
         },
       })
@@ -527,12 +382,12 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
   }
 
   /**
-   * Twilio *accepted* the message. The log moves to `sent` (NOT `delivered`) — the status webhook
-   * advances it to delivered/failed/undelivered/read once Twilio reports the real outcome. We never
-   * count an accepted message as delivered.
+   * The provider *accepted* the message. The log moves to `sent` (NOT `delivered`) — the status
+   * webhook advances it to delivered/failed/undelivered/read once the real outcome is reported. We
+   * never count an accepted message as delivered.
    */
   private async markAccepted(
-    event: DueEventRow,
+    event: NotificationEventRow,
     logId: string | null,
     provider: string,
     providerMessageId?: string,
@@ -561,16 +416,16 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
   }
 
   /**
-   * Recipient/channel was ineligible. Record a truthful `skipped` message log (with the reason) and
-   * retire the event — never fake a send.
+   * Recipient/channel was ineligible and there is no further channel. Record a truthful `skipped`
+   * message log (with the reason) and retire the event — never fake a send.
    */
   private async skipEvent(
-    event: DueEventRow,
-    context: AppointmentNotificationContext,
+    event: NotificationEventRow,
+    subject: NotificationSubject,
     channel: DeliveryChannel,
     reason: string,
   ): Promise<void> {
-    if (!event.message_log_id) await this.logSkippedAttempt(event, context, channel, reason);
+    if (!event.message_log_id) await this.logSkippedAttempt(event, subject, channel, reason);
     await this.admin
       .schema('comms')
       .from('notification_events')
@@ -581,8 +436,8 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
 
   /** Insert a truthful `skipped` message-log row for one channel attempt (keeps CRM history honest). */
   private async logSkippedAttempt(
-    event: DueEventRow,
-    context: AppointmentNotificationContext,
+    event: NotificationEventRow,
+    subject: NotificationSubject,
     channel: DeliveryChannel,
     reason: string,
   ): Promise<void> {
@@ -601,7 +456,7 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
         delivery_status: 'skipped',
         message_type: event.event_key,
         template_key: event.event_key,
-        recipient: this.recipientFor(channel, context),
+        recipient: this.recipientFor(channel, subject),
         content_preview: `Skipped (${channel}): ${reason}`,
         error_message: reason,
         scheduled_for: event.scheduled_for,
@@ -609,6 +464,7 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
           skipped: true,
           channel,
           reason,
+          subject_kind: subject.kind,
           primary_intended_channel: (event.payload_json?.['primary_channel'] as string) ?? channel,
         },
         payload_snapshot: { skipped: true, reason, ...(event.payload_json ?? {}) },
@@ -618,14 +474,16 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
 
   /**
    * A real send failure. Records the failure on the log and requeues with backoff up to maxAttempts.
-   * On terminal failure, escalates to the next channel in the WhatsApp → Email → SMS chain (a no-op
-   * when the failed channel is already last in the chain).
+   * On terminal failure, escalates to the next channel in the WhatsApp → SMS → Email chain; the event
+   * then reads `fallback_pending` when a successor was queued and `failed` when the chain is
+   * exhausted.
    */
   private async markFailed(
-    event: DueEventRow,
+    event: NotificationEventRow,
+    subject: NotificationSubject,
     logId: string | null,
     errorMessage: string,
-    plan?: ChannelPlan,
+    plan: ChannelPlan,
   ): Promise<void> {
     const nowIso = new Date().toISOString();
     const terminal = event.attempts >= this.maxAttempts;
@@ -642,27 +500,7 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
         .eq('id', logId);
     }
 
-    if (terminal) {
-      await this.admin
-        .schema('comms')
-        .from('notification_events')
-        .update({ status: 'failed', last_error_message: errorMessage.slice(0, 500), locked_until: null })
-        .eq('id', event.id);
-      this.logger.warn(
-        `event ${event.id} (${event.channel}) failed permanently after ${event.attempts} attempts: ${errorMessage}`,
-      );
-
-      // Real, persistent failure → escalate to the next channel in the WhatsApp → Email → SMS chain
-      // (idempotent enqueue). No-op when the failed channel is already last in the chain (e.g. SMS).
-      if (plan && event.appointment_id) {
-        await this.booking.escalateToNextChannelSafe(
-          event.appointment_id,
-          event.event_key,
-          event.channel as DeliveryChannel,
-          `${event.channel} delivery failed: ${errorMessage.slice(0, 160)}`,
-        );
-      }
-    } else {
+    if (!terminal) {
       // Requeue with backoff so we don't hammer the provider on the next tick.
       const retryLock = new Date(Date.now() + NotificationDispatchService.RETRY_BACKOFF_MS).toISOString();
       await this.admin
@@ -670,7 +508,31 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
         .from('notification_events')
         .update({ status: 'queued', last_error_message: errorMessage.slice(0, 500), locked_until: retryLock })
         .eq('id', event.id);
+      return;
     }
+
+    this.logger.warn(
+      `event ${event.id} (${event.channel}) failed permanently after ${event.attempts} attempts: ${errorMessage}`,
+    );
+
+    // Real, persistent failure → escalate to the next channel in the chain (idempotent enqueue).
+    // Returns null when the failed channel is already last in the chain (e.g. email).
+    const reason = `${event.channel} delivery failed: ${errorMessage.slice(0, 160)}`;
+    const next = await this.escalation.escalateWithSubject(
+      event,
+      subject,
+      plan,
+      event.channel as DeliveryChannel,
+      reason,
+    );
+
+    // A successful escalation has already moved the event to `fallback_pending`.
+    if (next) return;
+    await this.admin
+      .schema('comms')
+      .from('notification_events')
+      .update({ status: 'failed', last_error_message: errorMessage.slice(0, 500), locked_until: null })
+      .eq('id', event.id);
   }
 
   private async cancelEvent(eventId: string): Promise<void> {

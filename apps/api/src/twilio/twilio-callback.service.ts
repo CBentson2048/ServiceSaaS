@@ -1,9 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { BookingNotificationService } from '../communications/booking-notification.service';
 import type { DeliveryChannel } from '../communications/channel-policy';
+import { NotificationEscalationService } from '../communications/notification-escalation.service';
 import { SMS_CHANNEL, WHATSAPP_CHANNEL } from '../communications/notification.types';
+import { isProviderOptOut, parseOptOutKeyword } from '../communications/opt-out';
+import { OptOutService } from '../communications/opt-out.service';
 import { normalizeWhatsAppAddress, WhatsAppService } from '../communications/whatsapp.service';
 import { isFailureStatus, mapTwilioStatus, shouldApplyStatus } from './twilio-status';
 
@@ -51,7 +53,8 @@ export class TwilioCallbackService {
   constructor(
     config: ConfigService,
     private readonly whatsapp: WhatsAppService,
-    private readonly booking: BookingNotificationService,
+    private readonly escalation: NotificationEscalationService,
+    private readonly optOuts: OptOutService,
   ) {
     const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
@@ -121,15 +124,33 @@ export class TwilioCallbackService {
         .eq('id', log.notification_event_id);
     }
 
+    // Twilio told us the recipient has unsubscribed from this channel. Record it before escalating,
+    // so every later message skips this channel up front instead of burning another failed attempt
+    // on a send the carrier will always reject.
+    if (
+      isFailureStatus(mapped) &&
+      log.client_profile_id &&
+      isChannelName(log.channel) &&
+      isProviderOptOut(body.ErrorCode, body.ErrorMessage)
+    ) {
+      await this.optOuts.recordOptOut(
+        log.business_id,
+        log.client_profile_id,
+        log.channel,
+        'provider_error',
+        errorMessage ?? `${log.channel} reported the recipient as unsubscribed`,
+      );
+    }
+
     // Async real failure (Twilio reported failed/undelivered) → escalate to the next channel in the
-    // WhatsApp → Email → SMS chain for the same notification. This is the only place a
+    // WhatsApp → SMS → Email chain for the same notification. This is the only place a
     // delivered-then-failed (or accepted-then-undelivered) message triggers a fallback; a
-    // merely-pending message never reaches here. Idempotent via the fallback event's unique index.
-    // A failure on the last channel (SMS) finds no next channel and is a no-op.
-    if (isFailureStatus(mapped) && log.appointment_id && log.message_type && log.channel) {
-      await this.booking.escalateToNextChannelSafe(
-        log.appointment_id,
-        log.message_type,
+    // merely-pending message never reaches here. Keyed on the notification event, so a campaign
+    // message escalates exactly like a booking notification. Idempotent via the fallback event's
+    // unique index. A failure on the last channel finds no next channel and is a no-op.
+    if (isFailureStatus(mapped) && log.notification_event_id && log.channel) {
+      await this.escalation.escalateFromEventSafe(
+        log.notification_event_id,
         log.channel as DeliveryChannel,
         `${log.channel} ${mapped}${errorMessage ? `: ${errorMessage}` : ''}`,
       );
@@ -137,9 +158,13 @@ export class TwilioCallbackService {
   }
 
   /**
-   * Log an inbound WhatsApp reply. Minimal today (Phase 9): we record it against the same
-   * business/location/client as the most recent outbound message to that number, so it shows up in
-   * the client's CRM message history. Future two-way logic can build on this row.
+   * Log an inbound WhatsApp/SMS reply, and act on it when it is a subscription command.
+   *
+   * The reply is recorded against the same business/location/client as the most recent outbound
+   * message to that number, so it shows up in the client's CRM message history. A STOP (or any of the
+   * standard opt-out keywords) additionally records a per-channel opt-out, and START/UNSTOP clears
+   * it. The message is always logged first, whatever it says — the opt-out record is an action taken
+   * on top of the history, never a replacement for it.
    */
   async handleInboundMessage(body: TwilioInboundMessage): Promise<void> {
     const from = body.From?.trim();
@@ -177,6 +202,22 @@ export class TwilioCallbackService {
         delivered_at: new Date().toISOString(),
       });
     if (error) this.logger.error(`insert inbound message_log failed: ${error.message}`);
+
+    // Carriers and WhatsApp honour these keywords whether or not we do; recording our own copy stops
+    // us queueing messages the provider will silently drop.
+    const intent = parseOptOutKeyword(body.Body);
+    if (!intent || !context.client_profile_id) return;
+    if (intent === 'opt_out') {
+      await this.optOuts.recordOptOut(
+        context.business_id,
+        context.client_profile_id,
+        channel,
+        'inbound_keyword',
+        `client replied "${(body.Body ?? '').trim().slice(0, 60)}"`,
+      );
+    } else {
+      await this.optOuts.clearOptOut(context.business_id, context.client_profile_id, channel);
+    }
   }
 
   private async findLogBySid(sid: string): Promise<MessageLogRow | null> {
@@ -217,6 +258,11 @@ export class TwilioCallbackService {
     }
     return data ?? null;
   }
+}
+
+/** Narrow a message-log channel string to a channel we can record an opt-out against. */
+function isChannelName(value: string | null): value is DeliveryChannel {
+  return value === 'whatsapp' || value === 'sms' || value === 'email';
 }
 
 function buildError(body: TwilioStatusCallback): string {

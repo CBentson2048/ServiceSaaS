@@ -2,6 +2,8 @@ import type { ConfigService } from '@nestjs/config';
 import type { LocationCommunicationSettings } from '@sheer/domain';
 import { BookingNotificationService } from './booking-notification.service';
 import type { CommunicationSettingsService } from './communication-settings.service';
+import type { EnqueueOnChannelRequest, MessagingService } from './messaging.service';
+import type { OptOutService } from './opt-out.service';
 
 const DAY = 86_400_000;
 const NOW = new Date('2026-06-02T09:00:00.000Z');
@@ -62,15 +64,40 @@ function makeFakeClient(state: FakeState) {
   return { schema: (schema: string) => ({ from: (table: string) => builder(schema, table) }) };
 }
 
-function makeService(state: FakeState, settings: LocationCommunicationSettings): BookingNotificationService {
+function makeService(
+  state: FakeState,
+  settings: LocationCommunicationSettings,
+  optedOut: string[] = [],
+): BookingNotificationService {
   const config = {
     getOrThrow: () => 'https://example.supabase.co',
   } as unknown as ConfigService;
   const settingsService = {
     getForLocation: jest.fn().mockResolvedValue(settings),
   } as unknown as CommunicationSettingsService;
+  // Queue writes now go through the single send API. The fake records them in the same shape the
+  // raw insert used to take, so these assertions still describe what lands in the queue.
+  const messaging = {
+    enqueueOnChannel: jest.fn(async (req: EnqueueOnChannelRequest) => {
+      state.inserts.push({
+        business_id: req.businessId,
+        location_id: req.locationId,
+        client_profile_id: req.clientProfileId,
+        appointment_id: req.appointmentId,
+        channel: req.channel,
+        event_key: req.eventKey,
+        status: 'queued',
+        scheduled_for: req.scheduledFor.toISOString(),
+        payload_json: req.payload,
+      });
+      return { status: 'queued' as const, eventId: `evt-${state.inserts.length}` };
+    }),
+  } as unknown as MessagingService;
+  const optOuts = {
+    channelsFor: jest.fn().mockResolvedValue({ channels: optedOut, degraded: false }),
+  } as unknown as OptOutService;
 
-  const service = new BookingNotificationService(config, settingsService);
+  const service = new BookingNotificationService(config, settingsService, messaging, optOuts);
   (service as unknown as { admin: unknown }).admin = makeFakeClient(state);
   return service;
 }
@@ -247,72 +274,80 @@ describe('BookingNotificationService.syncBookingNotifications', () => {
 
     expect(state.inserts.every((i) => i.channel === 'whatsapp')).toBe(true);
   });
-});
 
-describe('BookingNotificationService.escalateToNextChannel', () => {
-  it('escalates a failed WhatsApp notification to SMS when SMS is the next enabled channel', async () => {
-    const state = baseState();
-    const service = makeService(state, settings({ sendBookingConfirmation: true, smsFallbackEnabled: true }));
-
-    const next = await service.escalateToNextChannel('appt-1', 'booking_confirmation', 'whatsapp', 'WhatsApp failed', NOW);
-
-    expect(next).toBe('sms');
-    expect(state.inserts).toHaveLength(1);
-    expect(state.inserts[0].channel).toBe('sms');
-    expect(state.inserts[0].event_key).toBe('booking_confirmation');
-    const payload = state.inserts[0].payload_json as Record<string, unknown>;
-    expect(payload.fallback).toBe(true);
-    expect(payload.primary_channel).toBe('whatsapp');
-  });
-
-  it('escalates a failed WhatsApp notification to EMAIL when email is the next enabled channel', async () => {
-    const state = baseState();
-    const service = makeService(state, settings({ sendBookingConfirmation: true, emailFallbackEnabled: true }));
-
-    const next = await service.escalateToNextChannel('appt-1', 'booking_confirmation', 'whatsapp', 'WhatsApp failed', NOW);
-
-    expect(next).toBe('email');
-    expect(state.inserts).toHaveLength(1);
-    expect(state.inserts[0].channel).toBe('email');
-  });
-
-  it('escalates a failed EMAIL notification to SMS (next in the WhatsApp → Email → SMS chain)', async () => {
+  it('schedules on SMS when the client has opted out of WhatsApp', async () => {
     const state = baseState();
     const service = makeService(
       state,
-      settings({ sendBookingConfirmation: true, emailFallbackEnabled: true, smsFallbackEnabled: true }),
+      settings({ sendBookingConfirmation: true, smsFallbackEnabled: true }),
+      ['whatsapp'],
     );
 
-    const next = await service.escalateToNextChannel('appt-1', 'booking_confirmation', 'email', 'email bounced', NOW);
+    await service.syncBookingNotifications('appt-1', NOW);
 
-    expect(next).toBe('sms');
-    expect(state.inserts).toHaveLength(1);
-    expect(state.inserts[0].channel).toBe('sms');
-    expect((state.inserts[0].payload_json as Record<string, unknown>).primary_channel).toBe('email');
+    expect(state.inserts.map((i) => i.channel)).toEqual(['sms']);
   });
 
-  it('does not escalate when there is no next channel in the chain', async () => {
-    const state = baseState();
-    const service = makeService(state, settings({ sendBookingConfirmation: true }));
-
-    const next = await service.escalateToNextChannel('appt-1', 'booking_confirmation', 'whatsapp', 'WhatsApp failed', NOW);
-
-    expect(next).toBeNull();
-    expect(state.inserts).toHaveLength(0);
-  });
-
-  it('does not escalate a reminder once the appointment has passed (no longer time-valid)', async () => {
+  it('cancels pending events when the client has opted out of every eligible channel', async () => {
     const state = baseState({
-      appointment: {
-        ...baseState().appointment!,
-        scheduled_start_at: new Date(NOW.getTime() - DAY).toISOString(),
-      },
+      existingEvents: [
+        { id: 'e1', event_key: 'booking_confirmation', channel: 'whatsapp', status: 'queued', scheduled_for: NOW.toISOString() },
+      ],
     });
-    const service = makeService(state, settings({ reminder24hEnabled: true, smsFallbackEnabled: true }));
+    const service = makeService(
+      state,
+      settings({ sendBookingConfirmation: true, smsFallbackEnabled: true, emailFallbackEnabled: true }),
+      ['whatsapp', 'sms', 'email'],
+    );
 
-    const next = await service.escalateToNextChannel('appt-1', 'appointment_reminder_24h', 'whatsapp', 'WhatsApp failed', NOW);
+    await service.syncBookingNotifications('appt-1', NOW);
 
-    expect(next).toBeNull();
     expect(state.inserts).toHaveLength(0);
+    expect(state.updates.some((u) => u.status === 'cancelled')).toBe(true);
+  });
+
+  it('re-queues a rescheduled reminder whose earlier attempt had handed over to a fallback', async () => {
+    // The WhatsApp attempt was ineligible at dispatch and handed over, leaving the source event
+    // `fallback_pending`. That row is history, but the partial unique index still counts it, so it
+    // has to be retired or the reminder for the NEW time is silently never queued.
+    const state = baseState({
+      existingEvents: [
+        {
+          id: 'e1',
+          event_key: 'appointment_reminder_24h',
+          channel: 'whatsapp',
+          status: 'fallback_pending',
+          scheduled_for: new Date(NOW.getTime() + 5 * DAY).toISOString(), // the pre-reschedule time
+        },
+      ],
+    });
+    const service = makeService(state, settings({ reminder24hEnabled: true }));
+
+    await service.syncBookingNotifications('appt-1', NOW);
+
+    expect(state.updates.some((u) => u.status === 'cancelled')).toBe(true);
+    expect(state.inserts.map((i) => i.event_key)).toEqual(['appointment_reminder_24h']);
+    expect(state.inserts[0]?.scheduled_for).toBe(new Date(NOW.getTime() + 2 * DAY).toISOString());
+  });
+
+  it('leaves a fallback_pending reminder alone when the appointment time has not moved', async () => {
+    // Its fallback is legitimately still in flight; re-queueing the primary here would double-send.
+    const state = baseState({
+      existingEvents: [
+        {
+          id: 'e1',
+          event_key: 'appointment_reminder_24h',
+          channel: 'whatsapp',
+          status: 'fallback_pending',
+          scheduled_for: new Date(NOW.getTime() + 2 * DAY).toISOString(), // exactly the desired time
+        },
+      ],
+    });
+    const service = makeService(state, settings({ reminder24hEnabled: true }));
+
+    await service.syncBookingNotifications('appt-1', NOW);
+
+    expect(state.inserts).toHaveLength(0);
+    expect(state.updates.some((u) => u.status === 'cancelled')).toBe(false);
   });
 });

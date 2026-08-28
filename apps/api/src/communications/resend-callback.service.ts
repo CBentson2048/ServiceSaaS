@@ -1,8 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { BookingNotificationService } from './booking-notification.service';
+import { NotificationEscalationService } from './notification-escalation.service';
 import { EMAIL_CHANNEL } from './notification.types';
+import { OptOutService } from './opt-out.service';
 import { mapResendEvent, shouldApplyEmailStatus } from './resend-status';
 
 const EMAIL_PROVIDER = 'resend';
@@ -14,9 +15,12 @@ interface EmailLogRow {
   delivery_status: string | null;
   notification_event_id: string | null;
   appointment_id: string | null;
+  business_id: string;
+  client_profile_id: string | null;
 }
 
-const LOG_COLUMNS = 'id,channel,message_type,delivery_status,notification_event_id,appointment_id';
+const LOG_COLUMNS =
+  'id,channel,message_type,delivery_status,notification_event_id,appointment_id,business_id,client_profile_id';
 
 /** Resend webhook payload (Svix-wrapped). We only need the type and the provider message id. */
 export interface ResendWebhookEvent {
@@ -26,10 +30,13 @@ export interface ResendWebhookEvent {
 
 /**
  * Applies Resend email delivery/bounce webhooks to `comms.message_logs`, keeping CRM history
- * truthful, and — critically for the WhatsApp → Email → SMS chain — escalates to the next channel
- * (SMS) when an email **hard-bounces**. A merely-accepted ("sent") or delivered email never triggers
- * SMS. Lookups are by provider message id (indexed), so callbacks are idempotent under replay and a
- * later out-of-order status never downgrades a more-advanced one.
+ * truthful, recording an email opt-out on a spam complaint, and escalating to the next channel in
+ * the chain when an email **hard-bounces**. Email is
+ * last in the WhatsApp → SMS → Email order, so for a client on the standard chain a bounce has
+ * nowhere to escalate to and is simply terminal; for an email-primary client with a further eligible
+ * channel it moves on. A merely-accepted ("sent") or delivered email never escalates. Lookups are by
+ * provider message id (indexed), so callbacks are idempotent under replay and a later out-of-order
+ * status never downgrades a more-advanced one.
  */
 @Injectable()
 export class ResendCallbackService {
@@ -38,7 +45,8 @@ export class ResendCallbackService {
 
   constructor(
     private readonly config: ConfigService,
-    private readonly booking: BookingNotificationService,
+    private readonly escalation: NotificationEscalationService,
+    private readonly optOuts: OptOutService,
   ) {
     const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
@@ -99,12 +107,25 @@ export class ResendCallbackService {
         .eq('id', log.notification_event_id);
     }
 
-    // Hard bounce → escalate to the next channel (SMS) for the same notification. Idempotent via the
-    // fallback event's unique index. Spam complaints do NOT escalate (the email arrived).
-    if (mapped.escalate && log.channel === EMAIL_CHANNEL && log.appointment_id && log.message_type) {
-      await this.booking.escalateToNextChannelSafe(
-        log.appointment_id,
-        log.message_type,
+    // A spam complaint means the email arrived and was unwanted. Re-sending it on another channel
+    // would be the opposite of what the client asked for, so it records an email opt-out instead of
+    // escalating — which also protects the sending domain's reputation for every other client.
+    if (mapped.optOut && log.client_profile_id) {
+      await this.optOuts.recordOptOut(
+        log.business_id,
+        log.client_profile_id,
+        EMAIL_CHANNEL,
+        'provider_error',
+        `client marked ${event.type ?? 'an email'} as spam`,
+      );
+    }
+
+    // Hard bounce → escalate to the next channel for the same notification. Keyed on the
+    // notification event, so this works for a campaign as well as for a booking notification.
+    // Idempotent via the fallback event's unique index.
+    if (mapped.escalate && log.channel === EMAIL_CHANNEL && log.notification_event_id) {
+      await this.escalation.escalateFromEventSafe(
+        log.notification_event_id,
         EMAIL_CHANNEL,
         `email ${event.type ?? 'bounced'}`,
       );

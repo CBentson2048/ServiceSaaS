@@ -2,19 +2,19 @@ import { isEmailFailure, mapResendEvent, shouldApplyEmailStatus } from './resend
 
 describe('mapResendEvent', () => {
   it('maps delivered (no escalation)', () => {
-    expect(mapResendEvent('email.delivered')).toEqual({ status: 'delivered', escalate: false });
+    expect(mapResendEvent('email.delivered')).toEqual({ status: 'delivered', escalate: false, optOut: false });
   });
 
   it('maps a hard bounce to a failure that escalates', () => {
-    expect(mapResendEvent('email.bounced')).toEqual({ status: 'failed', escalate: true });
+    expect(mapResendEvent('email.bounced')).toEqual({ status: 'failed', escalate: true, optOut: false });
   });
 
-  it('maps a spam complaint to a failure that does NOT escalate (the email arrived)', () => {
-    expect(mapResendEvent('email.complained')).toEqual({ status: 'failed', escalate: false });
+  it('maps a spam complaint to a failure that opts the client out rather than escalating', () => {
+    expect(mapResendEvent('email.complained')).toEqual({ status: 'failed', escalate: false, optOut: true });
   });
 
   it('is case-insensitive on the event type', () => {
-    expect(mapResendEvent('EMAIL.DELIVERED')).toEqual({ status: 'delivered', escalate: false });
+    expect(mapResendEvent('EMAIL.DELIVERED')).toEqual({ status: 'delivered', escalate: false, optOut: false });
   });
 
   it('ignores untracked events', () => {

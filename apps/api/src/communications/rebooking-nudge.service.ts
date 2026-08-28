@@ -1,10 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { CommunicationSettingsService } from './communication-settings.service';
 import { loadAppointmentContext } from './appointment-context';
-import { resolveChannelPlan, type ContactEligibility } from './channel-policy';
-import { isValidEmail, normalizeE164 } from './phone';
+import { MessagingService } from './messaging.service';
 import { NotificationEventKey } from './notification.types';
 
 interface AppointmentServiceRow {
@@ -26,9 +24,10 @@ interface ServiceNudgeRow {
  * `completed_at + interval`, where `interval` is the shortest enabled interval
  * among the appointment's services (nudge when the soonest-due service is due).
  *
- * Delivery reuses the existing WhatsApp → Email → SMS dispatcher. The dispatcher
- * suppresses the nudge at send time if the client has meanwhile rebooked, so the
- * "no nudge if already rebooked" rule holds even weeks after scheduling.
+ * Delivery reuses the existing WhatsApp → SMS → Email dispatcher. The nudge is
+ * suppressed at send time if the client has meanwhile rebooked, so the "no nudge
+ * if already rebooked" rule holds even weeks after scheduling — and now also when
+ * a fallback channel is attempted.
  *
  * Idempotent: the partial unique index (appointment_id, event_key, channel)
  * guarantees at most one nudge per appointment per channel, so re-running the
@@ -41,7 +40,7 @@ export class RebookingNudgeService {
 
   constructor(
     config: ConfigService,
-    private readonly settingsService: CommunicationSettingsService,
+    private readonly messaging: MessagingService,
   ) {
     const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
@@ -66,56 +65,37 @@ export class RebookingNudgeService {
 
   async scheduleForCompletedAppointment(appointmentId: string, completedAtIso?: string): Promise<void> {
     const context = await loadAppointmentContext(this.admin, appointmentId);
-    if (!context || !context.appointment.client_profile_id) return;
+    const clientProfileId = context?.appointment.client_profile_id;
+    if (!context || !clientProfileId) return;
 
     const intervalDays = await this.resolveIntervalDays(appointmentId);
     if (intervalDays === null) return; // no service opts into the nudge
-
-    // Respect the location's messaging switch and the client's channel/contact
-    // eligibility — same policy the booking notifications use.
-    const settings = await this.settingsService.getForLocation(
-      context.appointment.business_id,
-      context.appointment.location_id,
-    );
-    const plan = resolveChannelPlan(settings, context.communicationPreference, this.contactFor(context));
-    if (!plan.deliverable) return;
 
     const anchor = completedAtIso ? new Date(completedAtIso) : new Date();
     if (Number.isNaN(anchor.getTime())) return;
     const scheduledFor = new Date(anchor.getTime() + intervalDays * 24 * 60 * 60 * 1000);
 
     const { appointment } = context;
-    const { error } = await this.admin
-      .schema('comms')
-      .from('notification_events')
-      .insert({
-        business_id: appointment.business_id,
-        location_id: appointment.location_id,
-        client_profile_id: appointment.client_profile_id,
-        appointment_id: appointment.id,
-        channel: plan.primary,
-        event_key: NotificationEventKey.RebookingNudge,
-        status: 'queued',
-        scheduled_for: scheduledFor.toISOString(),
-        payload_json: {
-          event_key: NotificationEventKey.RebookingNudge,
-          channel: plan.primary,
-          // Snapshot the completed appointment's start so CRM history is legible;
-          // the dispatcher never treats the nudge as a (stale) reminder.
-          appointment_start: appointment.scheduled_start_at,
-          interval_days: intervalDays,
-          generated_at: new Date().toISOString(),
-        },
-      });
+    // Queued through the single send API, so the nudge gets exactly the same channel policy,
+    // opt-out handling and fallback chain as every other message. Content is not snapshotted: the
+    // nudge is appointment-anchored, so it renders from the approved rebooking template.
+    const result = await this.messaging.send({
+      businessId: appointment.business_id,
+      locationId: appointment.location_id,
+      clientProfileId,
+      appointmentId: appointment.id,
+      eventKey: NotificationEventKey.RebookingNudge,
+      scheduledFor,
+      metadata: { interval_days: intervalDays },
+    });
 
-    if (error) {
-      // Idempotent: the partial unique index rejects a concurrent/duplicate nudge.
-      if (isUniqueViolation(error)) return;
-      throw new Error(`insert rebooking_nudge event failed: ${error.message}`);
+    if (result.status === 'queued') {
+      this.logger.log(
+        `rebooking nudge queued for appointment ${appointmentId} on ${result.channel} at ${scheduledFor.toISOString()} (+${intervalDays}d)`,
+      );
+    } else if (result.status === 'skipped') {
+      this.logger.log(`rebooking nudge not scheduled for appointment ${appointmentId}: ${result.reason}`);
     }
-    this.logger.log(
-      `rebooking nudge queued for appointment ${appointmentId} on ${plan.primary} at ${scheduledFor.toISOString()} (+${intervalDays}d)`,
-    );
   }
 
   /**
@@ -152,17 +132,4 @@ export class RebookingNudgeService {
     return Math.min(...intervals);
   }
 
-  private contactFor(context: {
-    clientPhone?: string | null;
-    clientEmail?: string | null;
-  }): ContactEligibility {
-    return {
-      phoneValid: Boolean(normalizeE164(context.clientPhone)),
-      emailValid: isValidEmail(context.clientEmail),
-    };
-  }
-}
-
-function isUniqueViolation(error: { code?: string; message?: string }): boolean {
-  return error.code === '23505' || /duplicate key value/i.test(error.message ?? '');
 }

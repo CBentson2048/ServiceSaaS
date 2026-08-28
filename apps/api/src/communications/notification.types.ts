@@ -15,7 +15,7 @@ export const NotificationEventKey = {
   /**
    * Post-completion retention nudge (Wrike #4507281502). Scheduled when a
    * qualifying appointment completes, at a per-service interval, and delivered
-   * over the same WhatsApp → Email → SMS chain. Not a reminder — it fires long
+   * over the same WhatsApp → SMS → Email chain. Not a reminder — it fires long
    * after the appointment, so it is excluded from REMINDER_EVENT_KEYS.
    */
   RebookingNudge: 'rebooking_nudge',

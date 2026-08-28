@@ -1,11 +1,13 @@
 import type { ConfigService } from '@nestjs/config';
 import { ResendCallbackService } from './resend-callback.service';
-import type { BookingNotificationService } from './booking-notification.service';
+import type { NotificationEscalationService } from './notification-escalation.service';
+import type { OptOutService } from './opt-out.service';
 
 interface FakeState {
   log: Record<string, unknown> | null;
   updates: Array<{ table: string; payload: Record<string, unknown> }>;
-  escalations: Array<{ appointmentId: string; eventKey: string; failedChannel: string; reason: string }>;
+  escalations: Array<{ eventId: string; failedChannel: string; reason: string }>;
+  optOuts: Array<{ businessId: string; clientProfileId: string; channel: string; source: string }>;
 }
 
 function makeFakeClient(state: FakeState) {
@@ -38,14 +40,20 @@ function makeService(state: FakeState): ResendCallbackService {
     getOrThrow: () => 'https://example.supabase.co',
     get: () => 'whsec_test',
   } as unknown as ConfigService;
-  const booking = {
-    escalateToNextChannelSafe: jest.fn(
-      async (appointmentId: string, eventKey: string, failedChannel: string, reason: string) => {
-        state.escalations.push({ appointmentId, eventKey, failedChannel, reason });
+  const escalation = {
+    escalateFromEventSafe: jest.fn(async (eventId: string, failedChannel: string, reason: string) => {
+      state.escalations.push({ eventId, failedChannel, reason });
+      return null;
+    }),
+  } as unknown as NotificationEscalationService;
+  const optOuts = {
+    recordOptOut: jest.fn(
+      async (businessId: string, clientProfileId: string, channel: string, source: string) => {
+        state.optOuts.push({ businessId, clientProfileId, channel, source });
       },
     ),
-  } as unknown as BookingNotificationService;
-  const service = new ResendCallbackService(config, booking);
+  } as unknown as OptOutService;
+  const service = new ResendCallbackService(config, escalation, optOuts);
   (service as unknown as { admin: unknown }).admin = makeFakeClient(state);
   return service;
 }
@@ -58,12 +66,14 @@ function emailLog(over: Record<string, unknown> = {}): Record<string, unknown> {
     delivery_status: 'sent',
     notification_event_id: 'evt1',
     appointment_id: 'apt1',
+    business_id: 'biz1',
+    client_profile_id: 'client1',
     ...over,
   };
 }
 
 function state(log: Record<string, unknown> | null): FakeState {
-  return { log, updates: [], escalations: [] };
+  return { log, updates: [], escalations: [], optOuts: [] };
 }
 
 describe('ResendCallbackService.handleEvent', () => {
@@ -87,7 +97,7 @@ describe('ResendCallbackService.handleEvent', () => {
     expect(logUpdate?.payload.delivery_status).toBe('failed');
     expect(logUpdate?.payload.failed_at).toBeDefined();
     expect(s.escalations).toEqual([
-      { appointmentId: 'apt1', eventKey: 'booking_confirmation', failedChannel: 'email', reason: expect.stringContaining('bounced') },
+      { eventId: 'evt1', failedChannel: 'email', reason: expect.stringContaining('bounced') },
     ]);
   });
 
@@ -97,6 +107,25 @@ describe('ResendCallbackService.handleEvent', () => {
 
     expect(s.updates.find((u) => u.table === 'message_logs')?.payload.delivery_status).toBe('failed');
     expect(s.escalations).toHaveLength(0);
+  });
+
+  it('records an email opt-out on a spam complaint (the client asked us to stop)', async () => {
+    const s = state(emailLog());
+    await makeService(s).handleEvent({ type: 'email.complained', data: { email_id: 'rs1' } });
+
+    expect(s.optOuts).toEqual([
+      { businessId: 'biz1', clientProfileId: 'client1', channel: 'email', source: 'provider_error' },
+    ]);
+    // Complaining is not a delivery failure to route around — nothing escalates.
+    expect(s.escalations).toHaveLength(0);
+  });
+
+  it('does not record an opt-out on a hard bounce (the address failed, the client did not object)', async () => {
+    const s = state(emailLog());
+    await makeService(s).handleEvent({ type: 'email.bounced', data: { email_id: 'rs1' } });
+
+    expect(s.optOuts).toHaveLength(0);
+    expect(s.escalations).toHaveLength(1);
   });
 
   it('ignores untracked event types and missing ids', async () => {
