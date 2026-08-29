@@ -385,35 +385,44 @@ export class OrdersService {
   // Ticket 9 — the state machine
   // ---------------------------------------------------------------------------
 
+  /**
+   * "Submit for order" — the only step between a draft and sending.
+   *
+   * Goes straight to `approved`, which since 0100 means READY TO SEND rather than
+   * "somebody else has authorised this". There is no separate approve() any more:
+   * the authority that used to live in that click now lives on the `orders.approve`
+   * permission guarding {@link send}, so an owner who wants sign-off restricts the
+   * permission instead of reinstating a status.
+   *
+   * Both timestamps are stamped together because one action now covers both facts —
+   * `submitted_at` is when it was raised, `approved_at` when it became sendable,
+   * and here they are the same instant. Keeping both columns populated means the
+   * order history and the existing UI copy stay truthful without a schema change.
+   */
   async submit(actor: AuthUser, orderId: string): Promise<PurchaseOrderResponse> {
+    const now = new Date().toISOString();
     return this.transition(actor, orderId, {
       permission: 'orders.manage',
       from: ['draft'],
-      patch: { status: 'pending_approval', submitted_at: new Date().toISOString() },
-      action: 'purchase_order.submitted',
-      failure: 'Only a draft order can be submitted for approval',
-    });
-  }
-
-  async approve(actor: AuthUser, orderId: string): Promise<PurchaseOrderResponse> {
-    return this.transition(actor, orderId, {
-      permission: 'orders.approve',
-      from: ['pending_approval'],
       patch: {
         status: 'approved',
-        approved_at: new Date().toISOString(),
+        submitted_at: now,
+        approved_at: now,
         approved_by: actor.id,
       },
-      action: 'purchase_order.approved',
-      failure: 'Only a submitted order can be approved',
+      action: 'purchase_order.submitted',
+      failure: 'Only a draft order can be submitted',
     });
   }
 
   async cancel(actor: AuthUser, orderId: string): Promise<PurchaseOrderResponse> {
     const row = await this.fetchOrderRow(actor.businessId, orderId);
-    // Cancelling an APPROVED order un-authorises spend, so it needs the same
-    // authority that approved it; open drafts can be withdrawn by whoever
-    // prepares orders. Sent orders are history and can never be cancelled here.
+    // Cancelling a READY-TO-SEND order withdraws something already cleared for
+    // spend, so it needs the same authority as sending it; open drafts can be
+    // withdrawn by whoever prepares orders. Sent orders are history and can never
+    // be cancelled here. `pending_approval` stays in the `from` set so any order
+    // left in the legacy state by an older API instance mid-deploy is still
+    // cancellable rather than stuck.
     const permission: Permission = row.status === 'approved' ? 'orders.approve' : 'orders.manage';
     return this.transition(actor, orderId, {
       permission,

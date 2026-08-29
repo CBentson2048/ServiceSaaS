@@ -8,8 +8,9 @@
 --
 -- 8 numbered cases. Read the RESULT column of each; every one must read PASS.
 --
--- Run against a SCRATCH database that has every migration through 0095 applied
--- (0095 widened OPEN to include approved-but-unsent orders):
+-- Run against a SCRATCH database that has every migration through 0100 applied
+-- (0095 widened OPEN to include approved-but-unsent orders; 0100 made that state
+-- the normal ready-to-send one and gave managers the send key):
 --   psql -d <scratch> -f supabase/tests/week6_purchase_orders.sql
 
 \set ON_ERROR_STOP off
@@ -145,18 +146,26 @@ select '07_OUTBOUND_ONLY_WINDOW' as case,
        else 'FAIL: expected 200 (120+80; restock and the 60-day-old usage excluded)' end as result;
 
 -- ===========================================================================
--- 8. PERMISSION SEEDS — manager prepares, only owner/group_admin approve.
+-- 8. PERMISSION SEEDS — every ordering key is seeded on a system level.
+--
+--    REVISED BY 0100. This case used to assert that the manager level must NOT
+--    hold orders.approve, which was the three-step posture; ordering is now a
+--    two-step manager-facing flow and the manager level holds it too. The clause
+--    is flipped rather than deleted so the file does not silently encode the old
+--    model.
+--
+--    Note this case is VACUOUS on a scratch database, which has no businesses and
+--    therefore no core.security_levels rows: every `not exists` is trivially true.
+--    supabase/tests/ordering_two_step.sql proves the seed properly, against
+--    fixtures that model the pre-migration state.
 -- ===========================================================================
 select '08_PERMISSION_SEEDS' as case,
        case when not exists (
               select 1 from core.security_levels
               where is_system = true and key = 'manager'
                 and not (permissions @> '["orders.view"]'::jsonb
-                     and permissions @> '["orders.manage"]'::jsonb))
-         and not exists (
-              select 1 from core.security_levels
-              where is_system = true and key = 'manager'
-                and permissions @> '["orders.approve"]'::jsonb)
+                     and permissions @> '["orders.manage"]'::jsonb
+                     and permissions @> '["orders.approve"]'::jsonb))
          and not exists (
               select 1 from core.security_levels
               where is_system = true and key in ('owner','group_admin')

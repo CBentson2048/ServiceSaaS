@@ -469,8 +469,12 @@ async function phaseOrders(): Promise<{ zeroNinetyFiveApplied: boolean }> {
     .select('key,permissions').eq('is_system', true).in('key', ['owner', 'group_admin', 'manager']) as never) as { key: string; permissions: string[] }[];
   const managers = levels.filter((level) => level.key === 'manager');
   const admins = levels.filter((level) => level.key !== 'manager');
-  report('C8 permission seeds: manager prepares (view+manage), never approves; owner/group_admin approve',
-    managers.length > 0 && managers.every((m) => m.permissions.includes('orders.view') && m.permissions.includes('orders.manage') && !m.permissions.includes('orders.approve'))
+  // 0100 inverted half of this: ordering is a two-step manager-facing flow, so the
+  // manager level now holds orders.approve (the SEND gate) as well. The assertion
+  // still pins that every ordering key is seeded on a system level and never
+  // leaked to role defaults — it just no longer expects managers to be excluded.
+  report('C8 permission seeds: manager prepares AND sends (0100); owner/group_admin unchanged',
+    managers.length > 0 && managers.every((m) => m.permissions.includes('orders.view') && m.permissions.includes('orders.manage') && m.permissions.includes('orders.approve'))
       && admins.length > 0 && admins.every((a) => a.permissions.includes('orders.approve')),
     `managers=${managers.length} admins=${admins.length}`);
   return { zeroNinetyFiveApplied };

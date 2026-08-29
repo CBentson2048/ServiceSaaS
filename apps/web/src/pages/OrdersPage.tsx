@@ -8,7 +8,6 @@ import type {
 } from '@sheer/domain';
 import { userHasAnyRole, userHasPermission } from '@sheer/domain';
 import {
-  approvePurchaseOrder,
   cancelPurchaseOrder,
   generatePurchaseOrders,
   listPurchaseOrders,
@@ -23,8 +22,10 @@ type StatusFilter = PurchaseOrderStatus | 'all';
 
 const STATUS_LABELS: Record<PurchaseOrderStatus, string> = {
   draft: 'Draft',
+  // Legacy: nothing reaches this state since migration 0100, which moved every
+  // row to 'approved'. The label stays so a historical row still renders.
   pending_approval: 'Awaiting approval',
-  approved: 'Approved',
+  approved: 'Ready to send',
   sent: 'Sent',
   cancelled: 'Cancelled',
 };
@@ -50,6 +51,9 @@ export function OrdersPage() {
   const [generateLocationId, setGenerateLocationId] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [lineEdits, setLineEdits] = useState<Record<string, string>>({});
+  // Draft notes keyed by order id. Undefined means "not touched in this session",
+  // which is what keeps an untouched order out of the PATCH payload entirely.
+  const [noteEdits, setNoteEdits] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -141,7 +145,7 @@ export function OrdersPage() {
       if (result.delivered) {
         setNotice(`${result.order.orderNumber} sent to ${result.order.sentToEmail}.`);
       } else {
-        setError(`Send failed: ${result.error ?? 'unknown error'}. The order stays approved — fix and retry.`);
+        setError(`Send failed: ${result.error ?? 'unknown error'}. The order stays ready to send — fix and retry.`);
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not send order');
@@ -150,8 +154,16 @@ export function OrdersPage() {
     }
   }
 
-  async function handleSaveLines(order: PurchaseOrder) {
-    if (!accessToken) return;
+  /**
+   * Saves quantities AND notes in one request — `PATCH /orders/:id` already
+   * accepts both, so there is no reason to make staff press two buttons or to
+   * risk saving one and losing the other.
+   *
+   * Returns true when the order is safe to act on next (saved, or nothing to
+   * save), so `handleSubmit` can chain onto it without re-implementing any of it.
+   */
+  async function handleSaveChanges(order: PurchaseOrder, silent = false): Promise<boolean> {
+    if (!accessToken) return false;
     const changes = order.lines
       .map((line) => {
         const edited = lineEdits[line.id];
@@ -161,19 +173,51 @@ export function OrdersPage() {
         return { id: line.id, orderedQuantity: quantity };
       })
       .filter((change): change is { id: string; orderedQuantity: number } => change !== null);
-    if (changes.length === 0) return;
+
+    const editedNote = noteEdits[order.id];
+    const noteChanged = editedNote !== undefined && editedNote.trim() !== (order.notes ?? '').trim();
+
+    if (changes.length === 0 && !noteChanged) return true;
+
     setBusy(`save-${order.id}`);
     setError(null);
     try {
-      const result = await updatePurchaseOrder(accessToken, order.id, { lines: changes });
+      const result = await updatePurchaseOrder(accessToken, order.id, {
+        ...(changes.length > 0 ? { lines: changes } : {}),
+        ...(noteChanged ? { notes: editedNote } : {}),
+      });
       upsertOrder(result.order);
       setLineEdits({});
-      setNotice(`${result.order.orderNumber} quantities updated.`);
+      setNoteEdits((current) => {
+        const next = { ...current };
+        delete next[order.id];
+        return next;
+      });
+      if (!silent) {
+        setNotice(
+          `${result.order.orderNumber} updated${noteChanged ? ' (including notes)' : ''}.`,
+        );
+      }
+      return true;
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not update order');
+      return false;
     } finally {
       setBusy(null);
     }
+  }
+
+  /**
+   * "Submit for order". Flushes any unsaved edits first: notes typed but not
+   * explicitly saved must reach the supplier, and submitting locks the order for
+   * editing — so a silent drop here would be invisible until the email went out
+   * missing the note. If the save fails the submit does not run.
+   */
+  async function handleSubmit(order: PurchaseOrder) {
+    if (!accessToken) return;
+    const saved = await handleSaveChanges(order, true);
+    if (!saved) return;
+    await runAction(order, 'submitted', () => submitPurchaseOrder(accessToken, order.id));
   }
 
   return (
@@ -182,8 +226,9 @@ export function OrdersPage() {
         <div>
           <h1 className="text-[22px] font-semibold leading-7 text-text-primary">Purchase orders</h1>
           <p className="mt-1 max-w-lg text-[13px] text-text-secondary">
-            Suggested from trailing usage, grouped by supplier. Drafts are editable; approval
-            authorises the spend; sending emails the order form to the supplier.
+            Suggested from trailing usage, grouped by supplier. Drafts are editable — adjust
+            quantities and add any notes for the supplier, submit for order, then send the
+            order form by email.
           </p>
         </div>
         {canManage ? (
@@ -227,7 +272,7 @@ export function OrdersPage() {
       ) : null}
 
       <div className="mb-4 flex flex-wrap gap-2">
-        {(['all', 'draft', 'pending_approval', 'approved', 'sent', 'cancelled'] as StatusFilter[]).map((status) => (
+        {(['all', 'draft', 'approved', 'sent', 'cancelled'] as StatusFilter[]).map((status) => (
           <button
             key={status}
             type="button"
@@ -335,10 +380,47 @@ export function OrdersPage() {
                       </table>
                     </div>
 
+                    {/*
+                      Notes reach the SUPPLIER: renderPurchaseOrderEmail puts this
+                      text in the order email, so the label says so plainly rather
+                      than leaving staff to guess it is an internal memo.
+                      Editable only while the order is a draft, matching the API,
+                      which rejects edits once an order is ready to send.
+                    */}
+                    {isDraft && canManage ? (
+                      <div className="border-t border-border px-5 py-4">
+                        <label
+                          htmlFor={`notes-${order.id}`}
+                          className="mb-1.5 block text-[13px] font-medium text-text-secondary"
+                        >
+                          Notes
+                          <span className="ml-2 font-normal text-text-muted">
+                            Included in the email to {order.supplierName}
+                          </span>
+                        </label>
+                        <textarea
+                          id={`notes-${order.id}`}
+                          rows={3}
+                          maxLength={1000}
+                          value={noteEdits[order.id] ?? order.notes ?? ''}
+                          onChange={(event) =>
+                            setNoteEdits((current) => ({ ...current, [order.id]: event.target.value }))
+                          }
+                          placeholder="e.g. Please deliver before Friday"
+                          className="w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-text-primary outline-none focus:border-border-strong"
+                        />
+                      </div>
+                    ) : order.notes ? (
+                      <div className="border-t border-border px-5 py-4">
+                        <div className="mb-1 text-[13px] font-medium text-text-secondary">Notes</div>
+                        <p className="whitespace-pre-wrap text-[13px] text-text-primary">{order.notes}</p>
+                      </div>
+                    ) : null}
+
                     <div className="flex flex-col gap-3 border-t border-border px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
                       <div className="text-[12px] text-text-muted">
                         {order.submittedAt ? `Submitted ${formatDate(order.submittedAt)}. ` : ''}
-                        {order.approvedAt ? `Approved ${formatDate(order.approvedAt)}. ` : ''}
+                        {order.approvedAt && !order.submittedAt ? `Approved ${formatDate(order.approvedAt)}. ` : ''}
                         {order.sentAt ? `Sent ${formatDate(order.sentAt)} to ${order.sentToEmail}. ` : ''}
                         {order.cancelledAt ? `Cancelled ${formatDate(order.cancelledAt)}. ` : ''}
                         {!order.supplierEmail && order.status !== 'sent'
@@ -349,33 +431,17 @@ export function OrdersPage() {
                         {isDraft && canManage ? (
                           <>
                             <ActionButton
-                              label="Save quantities"
+                              label="Save changes"
                               busy={busy === `save-${order.id}`}
-                              onClick={() => void handleSaveLines(order)}
+                              onClick={() => void handleSaveChanges(order)}
                             />
                             <ActionButton
-                              label="Submit for approval"
+                              label="Submit for order"
                               primary
                               busy={busy === `submitted-${order.id}`}
-                              onClick={() =>
-                                void runAction(order, 'submitted', () =>
-                                  submitPurchaseOrder(accessToken as string, order.id),
-                                )
-                              }
+                              onClick={() => void handleSubmit(order)}
                             />
                           </>
-                        ) : null}
-                        {order.status === 'pending_approval' && canApprove ? (
-                          <ActionButton
-                            label="Approve"
-                            primary
-                            busy={busy === `approved-${order.id}`}
-                            onClick={() =>
-                              void runAction(order, 'approved', () =>
-                                approvePurchaseOrder(accessToken as string, order.id),
-                              )
-                            }
-                          />
                         ) : null}
                         {order.status === 'approved' && canApprove ? (
                           <ActionButton

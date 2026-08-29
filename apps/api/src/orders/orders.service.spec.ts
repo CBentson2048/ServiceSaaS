@@ -269,12 +269,14 @@ describe('generate', () => {
 });
 
 describe('state machine', () => {
-  it('submits a draft and audits the transition', async () => {
+  // Two-step flow (0100): submit takes a draft straight to READY TO SEND. There is
+  // no separate approve step, and no state a manager can strand an order in.
+  it('submits a draft straight to ready-to-send and audits the transition', async () => {
     const { service, captured, audit } = build(baseRows());
     await service.submit(MANAGER, 'po-1');
 
     const update = captured.find((c) => c.key === 'purchase_orders' && c.method === 'update');
-    expect(update?.args[0]).toMatchObject({ status: 'pending_approval' });
+    expect(update?.args[0]).toMatchObject({ status: 'approved', approved_by: 'user-2' });
     // The conditional transition is pinned to the legal source states.
     const ins = captured.filter((c) => c.key === 'purchase_orders' && c.method === 'in').map((c) => c.args);
     expect(ins).toEqual(expect.arrayContaining([['status', ['draft']]]));
@@ -284,18 +286,33 @@ describe('state machine', () => {
     );
   });
 
-  it('refuses approval from a manager without orders.approve', async () => {
-    const { service } = build(baseRows());
-    await expect(service.approve(MANAGER, 'po-1')).rejects.toThrow(ForbiddenException);
+  it('stamps submitted_at and approved_at together — one action, both facts', async () => {
+    const { service, captured } = build(baseRows());
+    await service.submit(MANAGER, 'po-1');
+    const patch = captured.find((c) => c.key === 'purchase_orders' && c.method === 'update')
+      ?.args[0] as Record<string, unknown>;
+    expect(patch.submitted_at).toBeTruthy();
+    expect(patch.approved_at).toBe(patch.submitted_at);
   });
 
-  it('lets the owner approve a submitted order, stamping who approved', async () => {
-    const { service, captured } = build(
-      baseRows({ purchase_orders: [{ ...ORDER, status: 'pending_approval' }] }),
-    );
-    await service.approve(OWNER, 'po-1');
-    const update = captured.find((c) => c.key === 'purchase_orders' && c.method === 'update');
-    expect(update?.args[0]).toMatchObject({ status: 'approved', approved_by: 'user-1' });
+  it('lets a manager submit without orders.approve — preparing is not spending', async () => {
+    // MANAGER deliberately holds only view+manage here. The spend gate moved to
+    // send(), so an owner who strips orders.approve leaves the manager able to
+    // prepare an order for someone else to send — the flow degrades to an
+    // approval workflow rather than breaking.
+    const { service } = build(baseRows());
+    await expect(service.submit(MANAGER, 'po-1')).resolves.toBeDefined();
+  });
+
+  it('lets a manager WITH orders.approve send — the 0100 default', async () => {
+    // Migration 0100 seeds orders.approve onto the manager level, so by default a
+    // location manager completes their own order end to end.
+    const sender = {
+      ...MANAGER,
+      permissions: ['orders.view', 'orders.manage', 'orders.approve'],
+    } as unknown as AuthUser;
+    const { service } = build(baseRows({ purchase_orders: [{ ...ORDER, status: 'approved' }] }));
+    await expect(service.send(sender, 'po-1')).resolves.toBeDefined();
   });
 
   it('reports an illegal transition as a conflict, not a server error', async () => {

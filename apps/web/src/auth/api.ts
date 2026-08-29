@@ -1394,16 +1394,6 @@ export async function submitPurchaseOrder(
   });
 }
 
-export async function approvePurchaseOrder(
-  accessToken: string,
-  orderId: string,
-): Promise<PurchaseOrderResponse> {
-  return request<PurchaseOrderResponse>(`/orders/${encodeURIComponent(orderId)}/approve`, {
-    method: 'POST',
-    accessToken,
-  });
-}
-
 export async function sendPurchaseOrder(
   accessToken: string,
   orderId: string,

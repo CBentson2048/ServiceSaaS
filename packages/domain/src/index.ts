@@ -358,8 +358,8 @@ export const PERMISSION_CATALOG: readonly PermissionDefinition[] = [
   // Seeded into core.security_levels by migration 0094 — these catalog entries are
   // the mandatory other half (keys missing from ALL_PERMISSIONS are stripped on save).
   { key: 'orders.view', label: 'View purchase orders', description: 'View draft and sent supplier orders and their history.', kind: 'feature', group: 'Operations' },
-  { key: 'orders.manage', label: 'Prepare purchase orders', description: 'Generate, edit and submit draft supplier orders for approval.', kind: 'feature', group: 'Operations', requires: ['orders.view'] },
-  { key: 'orders.approve', label: 'Approve & send orders', description: 'Approve submitted orders and send them to suppliers. This is the spend control.', kind: 'feature', group: 'Operations', requires: ['orders.view'] },
+  { key: 'orders.manage', label: 'Prepare purchase orders', description: 'Generate, edit and submit draft supplier orders ready for sending.', kind: 'feature', group: 'Operations', requires: ['orders.view'] },
+  { key: 'orders.approve', label: 'Send orders to suppliers', description: 'Email submitted orders to suppliers. This is the spend control: remove it to require someone else to send what a manager prepares.', kind: 'feature', group: 'Operations', requires: ['orders.view'] },
   { key: 'services.manage', label: 'Manage services', description: 'Manage the service catalogue.', kind: 'feature', group: 'Operations', requires: ['services.view'] },
   { key: 'rota.manage', label: 'Manage rota', description: 'Manage schedules and shifts.', kind: 'feature', group: 'Operations', requires: ['rota.view'] },
   { key: 'staff.view', label: 'View team', description: 'View the team list.', kind: 'feature', group: 'Team' },
@@ -550,9 +550,20 @@ export const SYSTEM_SECURITY_LEVELS: readonly SystemSecurityLevelDefinition[] = 
     // default (see DEFAULT_ROLE_PERMISSIONS.manager). Mirrors migration 0074, which
     // added payroll.view to this system level only. Owners can grant the remaining
     // payroll keys per business at /settings/security-levels.
-    // Ordering (0094): managers PREPARE orders; orders.approve is the spend
-    // control and stays owner/group_admin unless granted per business.
-    permissions: [...DEFAULT_ROLE_PERMISSIONS.manager, 'payroll.view', 'orders.view', 'orders.manage'],
+    // Ordering (0094, revised by 0100): ordering is a two-step manager-facing
+    // flow, so the manager level prepares AND sends its own location's orders.
+    // orders.approve is still the spend control — an owner who wants sign-off
+    // removes it here per business, and the manager's flow then stops after
+    // "Submit for order" with the owner's "Send to supplier" acting as approval.
+    // Must stay in step with the seed in migration 0100, or a newly provisioned
+    // business would get a manager level that cannot send.
+    permissions: [
+      ...DEFAULT_ROLE_PERMISSIONS.manager,
+      'payroll.view',
+      'orders.view',
+      'orders.manage',
+      'orders.approve',
+    ],
   },
   {
     key: 'receptionist',

@@ -14,10 +14,18 @@ import { GenerateOrdersDto, ListOrdersQueryDto, UpdateOrderDto } from './dto';
 import { OrdersService } from './orders.service';
 
 /**
- * Purchase orders (Week 6 tickets 8/9). The class gate is the READ key;
- * preparing (generate/edit/submit) needs orders.manage and the spend controls
- * (approve/send) need orders.approve — the service re-checks both, so the
- * decorator here is the surface and the service check is the authority.
+ * Purchase orders (Week 6 tickets 8/9; two-step flow since 0100).
+ *
+ * Two actions move an order: `submit` (draft -> ready to send) and `send` (email
+ * the supplier). The class gate is the READ key; preparing (generate/edit/submit)
+ * needs orders.manage, and SENDING needs orders.approve — that permission is the
+ * spend control now that the separate approve step is gone. The service re-checks
+ * both, so the decorator here is the surface and the service check is the
+ * authority.
+ *
+ * Managers hold orders.approve by default (0100), so they complete their own
+ * location's orders end to end. An owner who wants sign-off removes that key: the
+ * manager's flow then stops after `submit` and the owner's `send` is the approval.
  */
 @Controller('orders')
 @UseGuards(SupabaseAuthGuard, RolesGuard, PermissionsGuard)
@@ -59,12 +67,6 @@ export class OrdersController {
   @RequirePermissions('orders.manage')
   submit(@CurrentUser() actor: AuthUser, @Param('id') id: string): Promise<PurchaseOrderResponse> {
     return this.orders.submit(actor, id);
-  }
-
-  @Post(':id/approve')
-  @RequirePermissions('orders.approve')
-  approve(@CurrentUser() actor: AuthUser, @Param('id') id: string): Promise<PurchaseOrderResponse> {
-    return this.orders.approve(actor, id);
   }
 
   @Post(':id/send')
