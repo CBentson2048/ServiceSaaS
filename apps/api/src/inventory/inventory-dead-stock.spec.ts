@@ -152,6 +152,22 @@ describe('dead stock listing', () => {
     expect(result.totalEstimatedValueCents).toBe(1000);
   });
 
+  it('passes a category-sourced threshold through untouched', async () => {
+    // 0101 added 'category' between product and location default. The service
+    // must not interpret the source — it decorates and forwards, so a level it
+    // has never heard of still reaches the UI intact.
+    const { service } = build(baseRows(), {
+      rows: [{ ...REPORT_ROW, threshold_days: 10, threshold_source: 'category' }],
+    });
+
+    const result = await service.listDeadStock(OWNER);
+
+    expect(result.items[0]).toMatchObject({
+      thresholdDays: 10,
+      thresholdSource: 'category',
+    });
+  });
+
   it('reports never-used stock without a last-outbound date instead of faking one', async () => {
     const { service } = build(baseRows(), {
       rows: [{ ...REPORT_ROW, last_outbound_at: null, idle_since: '2026-04-01T00:00:00.000Z' }],

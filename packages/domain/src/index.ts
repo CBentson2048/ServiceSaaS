@@ -3385,7 +3385,7 @@ export interface ListInventoryLowStockResponse {
 // --- Dead stock (Week 6 ticket 7) -------------------------------------------
 
 /** Which threshold classified the item: the product override or the location default. */
-export type DeadStockThresholdSource = 'product' | 'location_default';
+export type DeadStockThresholdSource = 'product' | 'category' | 'location_default';
 
 export interface InventoryDeadStockItem {
   locationId: string;
@@ -3505,6 +3505,13 @@ export interface InventoryCategory {
   businessId: string;
   name: string;
   description?: string;
+  /**
+   * Days idle before stock in this category counts as dead. Undefined = inherit
+   * the location default. Overrides that default; overridden in turn by a
+   * product's own deadStockDays. See inventory.dead_stock_report (0101) for the
+   * single place the precedence is applied.
+   */
+  deadStockDays?: number;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;

@@ -136,6 +136,7 @@ interface CategoryRow {
   business_id: string;
   name: string;
   description: string | null;
+  dead_stock_days: number | string | null;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -172,7 +173,8 @@ const STOCK_COLUMNS =
   'id,business_id,location_id,product_id,quantity_on_hand_grams,low_stock_threshold_grams,is_active,updated_at';
 const MOVEMENT_COLUMNS =
   'id,business_id,location_id,product_id,location_stock_id,movement_type,quantity_delta_grams,unit_cost_cents,total_cost_cents,reference_type,reference_id,reason,notes,created_by,created_at';
-const CATEGORY_COLUMNS = 'id,business_id,name,description,is_active,created_at,updated_at';
+const CATEGORY_COLUMNS =
+  'id,business_id,name,description,dead_stock_days,is_active,created_at,updated_at';
 const SUPPLIER_COLUMNS =
   'id,business_id,name,contact_email,contact_phone,account_reference,lead_time_days,notes,is_active,created_at,updated_at';
 
@@ -671,6 +673,7 @@ export class InventoryService {
         business_id: actor.businessId,
         name,
         description: clean(dto.description),
+        dead_stock_days: dto.deadStockDays ?? null,
         is_active: dto.isActive ?? true,
       })
       .select(CATEGORY_COLUMNS)
@@ -698,7 +701,14 @@ export class InventoryService {
       if (!name) throw new BadRequestException('name must not be empty');
       patch.name = name;
     }
-    if ('description' in dto) patch.description = clean(dto.description);
+    // `!== undefined`, NOT `'description' in dto`. With target ES2022 the DTO's
+    // class fields are DEFINED (not merely declared), so an optional property the
+    // client never sent is still an own key holding undefined — `in` is therefore
+    // always true, and clean(undefined) returns null. Renaming a category was
+    // silently wiping its description.
+    if (dto.description !== undefined) patch.description = clean(dto.description);
+    // Null is a real value here: it clears the override back to "inherit".
+    if (dto.deadStockDays !== undefined) patch.dead_stock_days = dto.deadStockDays;
     if (dto.isActive !== undefined) patch.is_active = dto.isActive;
     if (Object.keys(patch).length === 0) throw new BadRequestException('No category fields to update');
 
@@ -1491,6 +1501,9 @@ function toCategory(row: CategoryRow): InventoryCategory {
     businessId: row.business_id,
     name: row.name,
     description: row.description ?? undefined,
+    // null means "inherit the location default" and must stay distinguishable
+    // from a real number — never coerce it to 0.
+    deadStockDays: row.dead_stock_days === null ? undefined : Number(row.dead_stock_days),
     isActive: row.is_active,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

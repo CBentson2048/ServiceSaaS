@@ -15,10 +15,18 @@ interface CategoryForm {
   id: string | null;
   name: string;
   description: string;
+  /** Kept as text so the field can be BLANK, which means "inherit". */
+  deadStockDays: string;
   isActive: boolean;
 }
 
-const emptyForm: CategoryForm = { id: null, name: '', description: '', isActive: true };
+const emptyForm: CategoryForm = {
+  id: null,
+  name: '',
+  description: '',
+  deadStockDays: '',
+  isActive: true,
+};
 
 export function InventoryCategoriesPage() {
   const auth = useAuth();
@@ -78,6 +86,7 @@ export function InventoryCategoriesPage() {
       id: category.id,
       name: category.name,
       description: category.description ?? '',
+      deadStockDays: category.deadStockDays === undefined ? '' : String(category.deadStockDays),
       isActive: category.isActive,
     });
     setShowForm(true);
@@ -100,9 +109,21 @@ export function InventoryCategoriesPage() {
     setError(null);
     setActionMessage(null);
     try {
+      // Blank clears the override back to "inherit the location default"; the
+      // API distinguishes null (clear) from an absent key (leave alone), so blank
+      // must send null rather than nothing.
+      const deadStockDaysRaw = form.deadStockDays.trim();
+      const deadStockDays = deadStockDaysRaw === '' ? null : Number(deadStockDaysRaw);
+      if (deadStockDays !== null && (!Number.isInteger(deadStockDays) || deadStockDays < 1)) {
+        setError('Dead stock after (days) must be a whole number, 1 or more — or blank to use the location default.');
+        setSaving(false);
+        return;
+      }
+
       const payload = {
         name: form.name.trim(),
         description: form.description.trim() || null,
+        deadStockDays,
         isActive: form.isActive,
       };
       const result = form.id
@@ -177,6 +198,12 @@ export function InventoryCategoriesPage() {
             label="Description"
             value={form.description}
             onChange={(value) => setForm((current) => ({ ...current, description: value }))}
+          />
+          <TextInput
+            label="Dead stock after (days)"
+            value={form.deadStockDays}
+            onChange={(value) => setForm((current) => ({ ...current, deadStockDays: value }))}
+            hint="Blank uses the location default. A product's own setting still wins."
           />
           <label className="flex items-center gap-2 text-[12px] font-medium text-text-secondary">
             <input
@@ -318,12 +345,14 @@ function TextInput({
   onChange,
   type = 'text',
   required,
+  hint,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   type?: string;
   required?: boolean;
+  hint?: string;
 }) {
   return (
     <label className="text-[12px] font-medium text-text-secondary">
@@ -335,6 +364,7 @@ function TextInput({
         onChange={(event) => onChange(event.target.value)}
         className="mt-1 h-10 w-full rounded-input-lg border border-border-strong bg-surface px-3 text-[13px] text-text-primary outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
       />
+      {hint ? <span className="mt-1 block font-normal text-text-muted">{hint}</span> : null}
     </label>
   );
 }

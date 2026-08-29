@@ -7,9 +7,10 @@
 -- decoration but can never prove that a restock fails to reset the clock.
 -- This file is that proof.
 --
--- 12 numbered cases. Read the RESULT column of each; every one must read PASS.
+-- 17 numbered cases. Read the RESULT column of each; every one must read PASS.
 --
--- Run against a SCRATCH database that has every migration through 0093 applied:
+-- Run against a SCRATCH database that has every migration through 0101 applied
+-- (0101 added the category threshold level, cases 13-17):
 --   psql -d <scratch> -f supabase/tests/week6_dead_stock_alerts.sql
 
 \set ON_ERROR_STOP off
@@ -32,17 +33,20 @@ insert into core.location_settings (business_id,location_id,dead_stock_days_defa
  ('dd000000-0000-0000-0000-000000000001','dd000000-0000-0000-0000-000000000da1',30),
  ('dd000000-0000-0000-0000-000000000001','dd000000-0000-0000-0000-000000000da2',90);
 
-insert into inventory.products (id,business_id,name,default_unit,default_cost_per_gram_cents,low_stock_threshold_grams,stock_unit,dead_stock_days,is_active) values
- ('dd000000-0000-0000-0000-000000000d01','dd000000-0000-0000-0000-000000000001','Dusty Toner','g',5,0,'gram',null,true),
- ('dd000000-0000-0000-0000-000000000d02','dd000000-0000-0000-0000-000000000001','Restocked Dust','g',5,0,'gram',null,true),
- ('dd000000-0000-0000-0000-000000000d03','dd000000-0000-0000-0000-000000000001','Fresh Mover','g',5,0,'gram',null,true),
- ('dd000000-0000-0000-0000-000000000d04','dd000000-0000-0000-0000-000000000001','Sold Out','g',5,0,'gram',null,true),
- ('dd000000-0000-0000-0000-000000000d05','dd000000-0000-0000-0000-000000000001','Patient Product','g',5,0,'gram',60,true),
- ('dd000000-0000-0000-0000-000000000d06','dd000000-0000-0000-0000-000000000001','Impatient Product','g',5,0,'gram',20,true),
- ('dd000000-0000-0000-0000-000000000d07','dd000000-0000-0000-0000-000000000001','Never Touched','g',5,0,'gram',null,true),
- ('dd000000-0000-0000-0000-000000000d08','dd000000-0000-0000-0000-000000000001','Archived Relic','g',5,0,'gram',null,false),
- ('dd000000-0000-0000-0000-000000000d09','dd000000-0000-0000-0000-000000000001','Only Restocked','g',5,0,'gram',null,true),
- ('dd000000-0000-0000-0000-000000000d10','dd000000-0000-0000-0000-000000000002','Rival Dust','g',5,0,'gram',null,true);
+-- Each product carries a DISTINCT sku: inventory.products is UNIQUE NULLS NOT
+-- DISTINCT (business_id, sku) (0021), so leaving sku null makes the second row
+-- for a business collide with the first and aborts the whole suite.
+insert into inventory.products (id,business_id,name,sku,default_unit,default_cost_per_gram_cents,low_stock_threshold_grams,stock_unit,dead_stock_days,is_active) values
+ ('dd000000-0000-0000-0000-000000000d01','dd000000-0000-0000-0000-000000000001','Dusty Toner','DD-D01','g',5,0,'gram',null,true),
+ ('dd000000-0000-0000-0000-000000000d02','dd000000-0000-0000-0000-000000000001','Restocked Dust','DD-D02','g',5,0,'gram',null,true),
+ ('dd000000-0000-0000-0000-000000000d03','dd000000-0000-0000-0000-000000000001','Fresh Mover','DD-D03','g',5,0,'gram',null,true),
+ ('dd000000-0000-0000-0000-000000000d04','dd000000-0000-0000-0000-000000000001','Sold Out','DD-D04','g',5,0,'gram',null,true),
+ ('dd000000-0000-0000-0000-000000000d05','dd000000-0000-0000-0000-000000000001','Patient Product','DD-D05','g',5,0,'gram',60,true),
+ ('dd000000-0000-0000-0000-000000000d06','dd000000-0000-0000-0000-000000000001','Impatient Product','DD-D06','g',5,0,'gram',20,true),
+ ('dd000000-0000-0000-0000-000000000d07','dd000000-0000-0000-0000-000000000001','Never Touched','DD-D07','g',5,0,'gram',null,true),
+ ('dd000000-0000-0000-0000-000000000d08','dd000000-0000-0000-0000-000000000001','Archived Relic','DD-D08','g',5,0,'gram',null,false),
+ ('dd000000-0000-0000-0000-000000000d09','dd000000-0000-0000-0000-000000000001','Only Restocked','DD-D09','g',5,0,'gram',null,true),
+ ('dd000000-0000-0000-0000-000000000d10','dd000000-0000-0000-0000-000000000002','Rival Dust','DD-D10','g',5,0,'gram',null,true);
 
 -- Shelf records. created_at anchors the idle clock when nothing has moved.
 insert into inventory.location_stock (business_id,location_id,product_id,quantity_on_hand_grams,created_at) values
@@ -248,3 +252,109 @@ select '12_PER_LOCATION_PAIRING' as case,
            and last_outbound_at is null
            and days_idle between 299 and 301)
        then 'PASS' else 'FAIL: movement history leaked across locations' end as result;
+
+-- ===========================================================================
+-- CATEGORY THRESHOLDS (migration 0101)
+--
+-- Fixtures appended here, AFTER cases 1-12 have run, so the original set is
+-- untouched by them. Every product below sits at location A1 (30-day default)
+-- with exactly one outbound 45 days ago, so the ONLY thing that differs between
+-- them is which threshold level applies. 45 sits deliberately between the
+-- category values (10 / 90) and the location default (30), so each case has a
+-- different verdict depending on which level won — a precedence bug cannot pass.
+-- ===========================================================================
+insert into inventory.categories (id,business_id,name,dead_stock_days) values
+ ('dd000000-0000-0000-0000-0000000000c1','dd000000-0000-0000-0000-000000000001','Slow Colour',90),
+ ('dd000000-0000-0000-0000-0000000000c2','dd000000-0000-0000-0000-000000000001','Fast Retail',10),
+ ('dd000000-0000-0000-0000-0000000000c3','dd000000-0000-0000-0000-000000000001','No Opinion',null);
+
+insert into inventory.products (id,business_id,name,sku,default_unit,default_cost_per_gram_cents,low_stock_threshold_grams,stock_unit,dead_stock_days,category_id,is_active) values
+ ('dd000000-0000-0000-0000-000000000d11','dd000000-0000-0000-0000-000000000001','Slow Category Item','DD-D11','g',5,0,'gram',null,'dd000000-0000-0000-0000-0000000000c1',true),
+ ('dd000000-0000-0000-0000-000000000d12','dd000000-0000-0000-0000-000000000001','Fast Category Item','DD-D12','g',5,0,'gram',null,'dd000000-0000-0000-0000-0000000000c2',true),
+ ('dd000000-0000-0000-0000-000000000d13','dd000000-0000-0000-0000-000000000001','Overridden In Fast','DD-D13','g',5,0,'gram',60,'dd000000-0000-0000-0000-0000000000c2',true),
+ ('dd000000-0000-0000-0000-000000000d14','dd000000-0000-0000-0000-000000000001','Uncategorised Item','DD-D14','g',5,0,'gram',null,null,true),
+ ('dd000000-0000-0000-0000-000000000d15','dd000000-0000-0000-0000-000000000001','Opinionless Category','DD-D15','g',5,0,'gram',null,'dd000000-0000-0000-0000-0000000000c3',true);
+
+insert into inventory.location_stock (business_id,location_id,product_id,quantity_on_hand_grams,created_at)
+select 'dd000000-0000-0000-0000-000000000001','dd000000-0000-0000-0000-000000000da1', p, 500, now() - interval '300 days'
+from unnest(array[
+  'dd000000-0000-0000-0000-000000000d11','dd000000-0000-0000-0000-000000000d12',
+  'dd000000-0000-0000-0000-000000000d13','dd000000-0000-0000-0000-000000000d14',
+  'dd000000-0000-0000-0000-000000000d15']::uuid[]) p;
+
+insert into inventory.stock_movements (business_id,location_id,product_id,movement_type,quantity_delta_grams,created_at)
+select 'dd000000-0000-0000-0000-000000000001','dd000000-0000-0000-0000-000000000da1', p, 'formula_usage', -100, now() - interval '45 days'
+from unnest(array[
+  'dd000000-0000-0000-0000-000000000d11','dd000000-0000-0000-0000-000000000d12',
+  'dd000000-0000-0000-0000-000000000d13','dd000000-0000-0000-0000-000000000d14',
+  'dd000000-0000-0000-0000-000000000d15']::uuid[]) p;
+
+-- ===========================================================================
+-- 13. A CATEGORY CAN RAISE THE BAR above its location's default. 45 idle days
+--     at a 30-day location would be dead, but the category says 90, so it lives.
+--     This is the case that proves category BEATS the location default: if the
+--     order were reversed the location's 30 would win and this would be dead.
+-- ===========================================================================
+select '13_CATEGORY_RAISES_ABOVE_LOCATION' as case,
+       case when not exists (
+         select 1 from inventory.dead_stock_report(
+           'dd000000-0000-0000-0000-000000000001',
+           array['dd000000-0000-0000-0000-000000000da1']::uuid[])
+         where product_id = 'dd000000-0000-0000-0000-000000000d11')
+       then 'PASS' else 'FAIL: the location default overrode the category threshold' end as result;
+
+-- ===========================================================================
+-- 14. …AND CAN LOWER IT, reporting itself as the source so the UI can explain
+--     the number rather than showing an unexplained 10.
+-- ===========================================================================
+select '14_CATEGORY_LOWERS_AND_SAYS_SO' as case,
+       case when exists (
+         select 1 from inventory.dead_stock_report(
+           'dd000000-0000-0000-0000-000000000001',
+           array['dd000000-0000-0000-0000-000000000da1']::uuid[])
+         where product_id = 'dd000000-0000-0000-0000-000000000d12'
+           and threshold_days = 10
+           and threshold_source = 'category')
+       then 'PASS' else 'FAIL: category threshold or source not reported' end as result;
+
+-- ===========================================================================
+-- 15. A PRODUCT STILL BEATS ITS CATEGORY. d13 sits in the 10-day category but
+--     carries its own 60-day override, and 45 < 60, so it lives. Had the
+--     category won it would be dead — the two answers are opposite, so this
+--     cannot pass by accident.
+-- ===========================================================================
+select '15_PRODUCT_BEATS_CATEGORY' as case,
+       case when not exists (
+         select 1 from inventory.dead_stock_report(
+           'dd000000-0000-0000-0000-000000000001',
+           array['dd000000-0000-0000-0000-000000000da1']::uuid[])
+         where product_id = 'dd000000-0000-0000-0000-000000000d13')
+       then 'PASS' else 'FAIL: the category overrode the product''s own threshold' end as result;
+
+-- ===========================================================================
+-- 16. AN UNCATEGORISED PRODUCT falls through to the location default. The join
+--     to categories is LEFT precisely so a null category_id costs nothing.
+-- ===========================================================================
+select '16_UNCATEGORISED_USES_LOCATION' as case,
+       case when exists (
+         select 1 from inventory.dead_stock_report(
+           'dd000000-0000-0000-0000-000000000001',
+           array['dd000000-0000-0000-0000-000000000da1']::uuid[])
+         where product_id = 'dd000000-0000-0000-0000-000000000d14'
+           and threshold_days = 30
+           and threshold_source = 'location_default')
+       then 'PASS' else 'FAIL: an uncategorised product did not use the location default' end as result;
+
+-- ===========================================================================
+-- 17. A CATEGORY WITH NO THRESHOLD is not an opinion. NULL means inherit, so
+--     the location default applies and the source must say so — not 'category'.
+-- ===========================================================================
+select '17_NULL_CATEGORY_THRESHOLD_INHERITS' as case,
+       case when exists (
+         select 1 from inventory.dead_stock_report(
+           'dd000000-0000-0000-0000-000000000001',
+           array['dd000000-0000-0000-0000-000000000da1']::uuid[])
+         where product_id = 'dd000000-0000-0000-0000-000000000d15'
+           and threshold_days = 30
+           and threshold_source = 'location_default')
+       then 'PASS' else 'FAIL: a null category threshold was treated as an opinion' end as result;

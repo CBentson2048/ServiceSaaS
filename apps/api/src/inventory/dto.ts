@@ -270,6 +270,17 @@ export class CreateInventoryCategoryDto {
   @MaxLength(280)
   description?: string | null;
 
+  /**
+   * Days idle before stock in this category counts as dead. Omit or send null to
+   * inherit the location default. Minimum 1 — 0 would mean "dead on arrival" and
+   * is rejected so it can never be confused with "inherit".
+   */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'deadStockDays must be a whole number of days' })
+  @Min(1, { message: 'deadStockDays must be 1 or more' })
+  deadStockDays?: number | null;
+
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
@@ -286,6 +297,18 @@ export class UpdateInventoryCategoryDto {
   @IsString()
   @MaxLength(280)
   description?: string | null;
+
+  /**
+   * Days idle before stock in this category counts as dead. Send null to CLEAR
+   * the override and fall back to the location default — @IsOptional() skips
+   * validation for null as well as undefined, so null reaches the service while
+   * 0 is still rejected by @Min(1).
+   */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'deadStockDays must be a whole number of days' })
+  @Min(1, { message: 'deadStockDays must be 1 or more' })
+  deadStockDays?: number | null;
 
   @IsOptional()
   @IsBoolean()
