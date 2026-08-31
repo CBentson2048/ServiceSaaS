@@ -73,6 +73,16 @@ interface SupplierRow {
   is_active: boolean;
 }
 
+/** Address columns of `core.locations`, read only for the order email header. */
+interface LocationAddressRow {
+  name: string;
+  address_line_1: string | null;
+  address_line_2: string | null;
+  city: string | null;
+  region: string | null;
+  postal_code: string | null;
+}
+
 interface StockRow {
   product_id: string;
   quantity_on_hand_grams: number | string;
@@ -443,12 +453,13 @@ export class OrdersService {
       );
     }
 
-    const [suppliers, locations, businessName, lines] = await Promise.all([
+    const [suppliers, location, businessName, lines] = await Promise.all([
       this.fetchSuppliers(actor.businessId),
-      this.fetchLocations(actor.businessId, [row.location_id]),
+      this.fetchOrderingLocation(actor.businessId, row.location_id),
       this.fetchBusinessName(actor.businessId),
       this.fetchLineRows([orderId]),
     ]);
+    const locationSummary = { id: row.location_id, name: location.name };
     const supplier = suppliers.get(row.supplier_id);
     if (!supplier) throw new NotFoundException('Supplier no longer exists');
     if (!supplier.contact_email) {
@@ -467,13 +478,14 @@ export class OrdersService {
         quantity: line.ordered_quantity,
       }));
     if (emailLines.length === 0) {
-      throw new BadRequestException('Every line is zero — there is nothing to order');
+      throw new BadRequestException('Every line is zero, so there is nothing to order');
     }
 
     const rendered = renderPurchaseOrderEmail({
       supplierName: supplier.name,
       businessName,
-      locationName: locations[0]?.name ?? 'Unknown location',
+      locationName: location.name,
+      locationAddress: location.address,
       accountReference: supplier.account_reference ?? undefined,
       orderNumber: row.order_number,
       lines: emailLines,
@@ -510,7 +522,9 @@ export class OrdersService {
         .maybeSingle<OrderRow>();
       if (error || !data) {
         this.logger.error(`record sent failed: ${error?.message ?? 'state moved'}`);
-        throw new InternalServerErrorException('Order was emailed but recording the send failed — check before resending');
+        throw new InternalServerErrorException(
+          'Order was emailed but recording the send failed. Check before resending',
+        );
       }
       await this.audit.record(actor, {
         action: 'purchase_order.sent',
@@ -519,7 +533,7 @@ export class OrdersService {
         locationId: row.location_id,
         metadata: { orderNumber: row.order_number, sentToEmail: supplier.contact_email },
       });
-      const [order] = await this.decorateOrders(actor.businessId, [data], locations);
+      const [order] = await this.decorateOrders(actor.businessId, [data], [locationSummary]);
       return { order, delivered: true };
     }
 
@@ -539,7 +553,7 @@ export class OrdersService {
       locationId: row.location_id,
       metadata: { orderNumber: row.order_number, error: failure },
     });
-    const [order] = await this.decorateOrders(actor.businessId, [data ?? row], locations);
+    const [order] = await this.decorateOrders(actor.businessId, [data ?? row], [locationSummary]);
     return { order, delivered: false, error: failure };
   }
 
@@ -736,6 +750,40 @@ export class OrdersService {
     const { data, error } = await query.order('name', { ascending: true }).returns<{ id: string; name: string }[]>();
     if (error) throw new InternalServerErrorException('Unable to load locations');
     return (data ?? []).map((row) => ({ id: row.id, name: row.name }));
+  }
+
+  /**
+   * Name + one-line postal address of the location an order ships to, for the
+   * supplier-facing email. Deliberately separate from {@link fetchLocations}:
+   * the address columns belong in the email only, not in the list/detail API
+   * payloads, which carry the summary shape.
+   */
+  private async fetchOrderingLocation(
+    businessId: string,
+    locationId: string,
+  ): Promise<{ name: string; address?: string }> {
+    const { data, error } = await this.admin
+      .schema('core')
+      .from('locations')
+      .select('name,address_line_1,address_line_2,city,region,postal_code')
+      .eq('business_id', businessId)
+      .eq('id', locationId)
+      .maybeSingle<LocationAddressRow>();
+    if (error) {
+      this.logger.error(`load ordering location failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load location');
+    }
+    const address = [
+      data?.address_line_1,
+      data?.address_line_2,
+      data?.city,
+      data?.region,
+      data?.postal_code,
+    ]
+      .map((part) => part?.trim())
+      .filter((part): part is string => Boolean(part))
+      .join(', ');
+    return { name: data?.name ?? 'Unknown location', address: address || undefined };
   }
 
   private async fetchBusinessName(businessId: string): Promise<string> {

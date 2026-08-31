@@ -162,7 +162,7 @@ export function renderStaffInvitationEmail(input: StaffInvitationEmailInput): Re
     `This invitation expires on ${expires}.`,
     "If you weren't expecting it, you can safely ignore this email.",
     '',
-    `— QLOOQO, on behalf of ${business}`,
+    `QLOOQO, on behalf of ${business}`,
   ];
 
   return { subject, html, text: textLines.join('\n') };

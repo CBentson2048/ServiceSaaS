@@ -145,7 +145,7 @@ export function OrdersPage() {
       if (result.delivered) {
         setNotice(`${result.order.orderNumber} sent to ${result.order.sentToEmail}.`);
       } else {
-        setError(`Send failed: ${result.error ?? 'unknown error'}. The order stays ready to send — fix and retry.`);
+        setError(`Send failed: ${result.error ?? 'unknown error'}. The order stays ready to send. Fix and retry.`);
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not send order');
@@ -226,7 +226,7 @@ export function OrdersPage() {
         <div>
           <h1 className="text-[22px] font-semibold leading-7 text-text-primary">Purchase orders</h1>
           <p className="mt-1 max-w-lg text-[13px] text-text-secondary">
-            Suggested from trailing usage, grouped by supplier. Drafts are editable — adjust
+            Suggested from trailing usage, grouped by supplier. Drafts are editable: adjust
             quantities and add any notes for the supplier, submit for order, then send the
             order form by email.
           </p>
@@ -372,7 +372,7 @@ export function OrdersPage() {
                                 )}
                               </td>
                               <td className="px-5 py-3 text-right text-text-secondary">
-                                {line.lineTotalCents > 0 ? formatPounds(line.lineTotalCents) : '—'}
+                                {line.lineTotalCents > 0 ? formatPounds(line.lineTotalCents) : '-'}
                               </td>
                             </tr>
                           ))}
@@ -424,7 +424,7 @@ export function OrdersPage() {
                         {order.sentAt ? `Sent ${formatDate(order.sentAt)} to ${order.sentToEmail}. ` : ''}
                         {order.cancelledAt ? `Cancelled ${formatDate(order.cancelledAt)}. ` : ''}
                         {!order.supplierEmail && order.status !== 'sent'
-                          ? 'Supplier has no order email — add one under Inventory → Suppliers before sending.'
+                          ? 'Supplier has no order email. Add one under Inventory → Suppliers before sending.'
                           : ''}
                       </div>
                       <div className="flex flex-wrap gap-2">
@@ -490,7 +490,7 @@ export function OrdersPage() {
 
 function describeGenerateResult(result: GeneratePurchaseOrdersResponse): ReactNode {
   if (result.nothingNeeded) {
-    return 'Nothing needs ordering — every stocked product covers its forecast usage.';
+    return 'Nothing needs ordering. Every stocked product covers its forecast usage.';
   }
   const parts: string[] = [];
   if (result.created.length > 0) {
@@ -503,7 +503,7 @@ function describeGenerateResult(result: GeneratePurchaseOrdersResponse): ReactNo
   if (result.skippedExistingOrder.length > 0) {
     parts.push(
       `Skipped ${result.skippedExistingOrder
-        .map((entry) => `${entry.supplierName} — open order ${entry.orderNumber} already exists`)
+        .map((entry) => `${entry.supplierName} (open order ${entry.orderNumber} already exists)`)
         .join('; ')}.`,
     );
   }
@@ -560,7 +560,7 @@ function EmptyState({ label }: { label: string }) {
 
 function packLabel(packSize: number | undefined, stockUnit: 'gram' | 'millilitre' | 'unit'): string {
   if (stockUnit === 'unit') return 'unit';
-  if (!packSize) return '—';
+  if (!packSize) return '-';
   return `${packSize}${stockUnit === 'millilitre' ? 'ml' : 'g'}`;
 }
 

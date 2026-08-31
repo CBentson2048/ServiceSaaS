@@ -150,7 +150,17 @@ const MANAGER: AuthUser = {
 } as unknown as AuthUser;
 
 const baseRows = (overrides: Record<string, unknown[]> = {}) => ({
-  locations: [{ id: 'loc-1', name: 'Main' }],
+  locations: [
+    {
+      id: 'loc-1',
+      name: 'Main',
+      address_line_1: '12 Regent Road',
+      address_line_2: null,
+      city: 'Leeds',
+      region: null,
+      postal_code: 'LS9 1AA',
+    },
+  ],
   purchase_orders: [ORDER],
   purchase_order_lines: [LINE],
   suppliers: [SUPPLIER],
@@ -360,6 +370,29 @@ describe('sending', () => {
       OWNER,
       expect.objectContaining({ action: 'purchase_order.sent' }),
     );
+  });
+
+  it("puts the location's address in brackets after its name in the email", async () => {
+    const { service, email } = build(approvedRows());
+    await service.send(OWNER, 'po-1');
+
+    const sent = (email.send as jest.Mock).mock.calls[0][0];
+    expect(sent.html).toContain('Main (12 Regent Road, Leeds, LS9 1AA)');
+    expect(sent.text).toContain('Main (12 Regent Road, Leeds, LS9 1AA)');
+  });
+
+  it('sends the bare location name when the location has no address on record', async () => {
+    const { service, email } = build(
+      baseRows({
+        purchase_orders: [{ ...ORDER, status: 'approved' }],
+        locations: [{ id: 'loc-1', name: 'Main' }],
+      }),
+    );
+    await service.send(OWNER, 'po-1');
+
+    const sent = (email.send as jest.Mock).mock.calls[0][0];
+    expect(sent.text).toContain('From Luke Ormsby Hair, Main\n');
+    expect(sent.text).not.toContain('Main (');
   });
 
   it('keeps a failed send approved, records the error, and reports it', async () => {

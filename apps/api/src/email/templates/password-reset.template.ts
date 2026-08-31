@@ -130,7 +130,7 @@ export function renderPasswordResetEmail(input: PasswordResetEmailInput): Render
             <tr>
               <td style="padding:8px 32px 28px 32px;">
                 <p style="margin:0;font-size:12px;line-height:18px;color:${MUTED};">
-                  Didn't request a reset? You can safely ignore this email — your password will not change unless you click the link above.
+                  Didn't request a reset? You can safely ignore this email. Your password will not change unless you click the link above.
                 </p>
               </td>
             </tr>
@@ -156,7 +156,7 @@ export function renderPasswordResetEmail(input: PasswordResetEmailInput): Render
     requestIp ? `Request origin IP: ${requestIp}.` : '',
     "Didn't request a reset? You can safely ignore this email.",
     '',
-    '— QLOOQO',
+    'QLOOQO',
   ].filter(Boolean);
 
   return { subject, html, text: textLines.join('\n') };
