@@ -63,6 +63,16 @@ const NAV: NavItem[] = [
     allowedRoles: ['owner', 'manager'],
     permission: 'services.manage',
   },
+  {
+    to: '/settings/add-on-rules',
+    label: 'Suggested add-ons',
+    // Deliberately NOT SparkIcon: that is ZAC's icon, and these suggestions are
+    // deterministic rules + booking history, not AI. Sharing the icon would
+    // imply otherwise before an owner has read a single word.
+    icon: PlusIcon,
+    allowedRoles: ['owner'],
+    permission: 'settings.booking.manage',
+  },
   { to: '/crm', label: 'Client Hub', icon: CrmIcon, permission: 'crm.view' },
   {
     to: '/inventory',

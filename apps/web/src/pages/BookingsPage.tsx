@@ -13,6 +13,7 @@ import type {
   SalonPaymentMethod,
   StaffBookingServiceLine,
   StaffBookingSummary,
+  UpsellSuggestion,
   WeeklyRotaResponse,
 } from '@sheer/domain';
 import { userHasAnyRole } from '@sheer/domain';
@@ -25,6 +26,7 @@ import {
   completeBooking,
   confirmBookingPayment,
   createStylistRebooking,
+  getCheckoutUpsellSuggestions,
   getStaffBookingSelection,
   getWeeklyRota,
   listBookings,
@@ -51,6 +53,7 @@ import { WeekStrip } from '../components/bookings/WeekStrip';
 import { ClientProfileModal } from '../components/bookings/ClientProfileModal';
 import type { CalendarToolbarKey, CalendarToolbarState } from '../components/bookings/CalendarToolbar';
 import { BillPayments, ItemisedBill, formatMoney, formatPaymentMethod } from '../components/bookings/ItemisedBill';
+import { UpsellSuggestions } from '../components/bookings/UpsellSuggestions';
 import { isSameLocalDay, snapToMonday, toIsoDate } from '../components/rota/dateUtils';
 
 export function BookingsPage() {
@@ -1278,6 +1281,40 @@ function formatServicePrice(amount: number, currencyCode: string): string {
   }).format(amount);
 }
 
+/**
+ * Suggested add-ons for the appointment being checked out.
+ *
+ * Self-contained and fail-silent by design: it owns its own request and returns
+ * an empty list on any failure, so a slow or broken suggestion endpoint can
+ * never delay or block taking payment. Checkout is Tier 1; this is not.
+ */
+function useCheckoutUpsellSuggestions(appointmentId: string): UpsellSuggestion[] {
+  const accessToken = useAuth().session?.accessToken;
+  const [suggestions, setSuggestions] = useState<UpsellSuggestion[]>([]);
+
+  useEffect(() => {
+    if (!accessToken || !appointmentId) {
+      setSuggestions([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await getCheckoutUpsellSuggestions(accessToken, appointmentId);
+        if (!cancelled) setSuggestions(result.suggestions);
+      } catch {
+        // Intentionally silent — no banner, no retry. Checkout carries on.
+        if (!cancelled) setSuggestions([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, appointmentId]);
+
+  return suggestions;
+}
+
 function CheckoutPanel({
   summary,
   paymentLoading,
@@ -1301,6 +1338,7 @@ function CheckoutPanel({
   // Tenders recorded by a just-confirmed payment. Absent when reopening an
   // already-settled checkout — the bill page keeps the full breakdown.
   const paidTenders = (summary as Partial<AppointmentPaymentConfirmationResponse>).payments ?? [];
+  const suggestions = useCheckoutUpsellSuggestions(summary.appointment.id);
   const balanceCents = summary.billing.balanceDueCents;
   const currencyCode = summary.billing.currencyCode;
 
@@ -1385,6 +1423,18 @@ function CheckoutPanel({
       </div>
 
       <ItemisedBill billing={summary.billing} />
+
+      {/* Suggested add-ons, READ-ONLY at checkout. There is deliberately no Add
+          button here: service edits stop at 'checked_in'
+          (RESCHEDULABLE_BOOKING_STATUSES), so by the time this panel is open the
+          platform has no canonical way to add a service to the visit, and
+          inventing a bill-mutation path is exactly the duplicated billing logic
+          this must not create. What staff get is the prompt — to offer it now
+          through Edit Appointment before checking out, or on the rebooking
+          below. Nothing here changes the bill. */}
+      <div className="mt-4">
+        <UpsellSuggestions suggestions={suggestions} compact />
+      </div>
 
       <RebookingPanel
         summary={summary}

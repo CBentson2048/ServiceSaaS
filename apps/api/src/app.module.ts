@@ -40,6 +40,7 @@ import { RetailSalesModule } from './retail-sales/retail-sales.module';
 import { RotaModule } from './rota/rota.module';
 import { SalonDirectoryModule } from './salon-directory/salon-directory.module';
 import { ServicesModule } from './services/services.module';
+import { UpsellModule } from './upsell/upsell.module';
 import { StaffModule } from './staff/staff.module';
 import { StaffBookingModule } from './staff-booking/staff-booking.module';
 import { TwilioModule } from './twilio/twilio.module';
@@ -82,6 +83,7 @@ import { validateEnv } from './config/env.validation';
     RetailSalesModule,
     RotaModule,
     ServicesModule,
+    UpsellModule,
     InventoryModule,
     ColourPrepModule,
     OrdersModule,

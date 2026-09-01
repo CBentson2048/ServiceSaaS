@@ -57,6 +57,7 @@ import { RotaPage } from './pages/RotaPage';
 import { NewWeekRotaPage } from './pages/NewWeekRotaPage';
 import { ServiceCategoriesPage } from './pages/ServiceCategoriesPage';
 import { ServiceManagementPage } from './pages/ServiceManagementPage';
+import { UpsellRulesPage } from './pages/UpsellRulesPage';
 import { ServicesPage } from './pages/ServicesPage';
 import { SheerLabPage } from './pages/SheerLabPage';
 import { SupportPage } from './pages/SupportPage';
@@ -348,6 +349,9 @@ export function App() {
             }
           >
             <Route path="/locations/:id/booking-settings" element={<BookingSettingsPage />} />
+            {/* Suggested add-on rules. Business-wide as well as per-location, so
+                it sits on its own route rather than inside a location's settings. */}
+            <Route path="/settings/add-on-rules" element={<UpsellRulesPage />} />
             {/* Legacy URL from before the location settings hub — redirects into it. */}
             <Route path="/settings/booking" element={<LegacyBookingSettingsRedirect />} />
           </Route>

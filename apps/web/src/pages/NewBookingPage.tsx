@@ -9,6 +9,7 @@ import type {
   PublicBookingStylistSummary,
   StaffBookingPaymentMode,
   StaffBookingSource,
+  UpsellSuggestion,
 } from '@sheer/domain';
 import { applyStylistServicePrices, userHasAnyRole } from '@sheer/domain';
 import {
@@ -17,11 +18,13 @@ import {
   createStaffBookingClient,
   getStaffBookingAvailability,
   getStaffBookingSelection,
+  getDraftUpsellSuggestions,
   getStaffBookingStylists,
   searchStaffBookingClients,
 } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
 import { DuplicateClientHint } from '../components/clients/DuplicateClientHint';
+import { UpsellSuggestions } from '../components/bookings/UpsellSuggestions';
 import { useLocationScope } from '../components/LocationScopeContext';
 
 type CommPreference = 'whatsapp' | 'sms' | 'email';
@@ -97,6 +100,7 @@ export function NewBookingPage() {
   const [selection, setSelection] = useState<PublicBookingServiceSelectionResponse | null>(null);
   const [loadingSelection, setLoadingSelection] = useState(false);
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
+  const [suggestions, setSuggestions] = useState<UpsellSuggestion[]>([]);
 
   // Stylist
   const [stylists, setStylists] = useState<PublicBookingStylistSummary[]>([]);
@@ -292,6 +296,35 @@ export function NewBookingPage() {
       cancelled = true;
     };
   }, [accessToken, locationId, selectedServiceIds, stylistChoice, date]);
+
+  // --- Suggested add-ons -----------------------------------------------------
+  // Its own effect, deliberately separate from the availability and stylist
+  // reads above: it can fail on its own without disturbing either. A rejection
+  // clears the list and is otherwise swallowed — a booking must never be
+  // blocked, delayed or error-flagged because a suggestion could not be found.
+  useEffect(() => {
+    if (!accessToken || !locationId || selectedServiceIds.length === 0) {
+      setSuggestions([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await getDraftUpsellSuggestions(accessToken, {
+          locationId,
+          serviceIds: selectedServiceIds,
+          staffProfileId: stylistChoice === ANY_STYLIST ? undefined : stylistChoice,
+        });
+        if (!cancelled) setSuggestions(result.suggestions);
+      } catch {
+        // Intentionally silent: no error banner, no retry, no console noise.
+        if (!cancelled) setSuggestions([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, locationId, selectedServiceIds, stylistChoice]);
 
   if (
     auth.status === 'authenticated' &&
@@ -734,6 +767,16 @@ export function NewBookingPage() {
                   : ''}
               </p>
             ) : null}
+            {/* Suggestions sit BELOW the picker and never interrupt it: no modal,
+                no auto-selection. "Add" runs the same toggleService the checkbox
+                runs, so price, duration, stylist filtering and availability all
+                recalculate through the existing booking flow. */}
+            <div className="mt-3">
+              <UpsellSuggestions
+                suggestions={suggestions}
+                onAdd={(suggestion) => toggleService(suggestion.serviceId)}
+              />
+            </div>
           </>
         )}
       </Section>

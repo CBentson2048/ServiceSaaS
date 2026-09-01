@@ -6,6 +6,8 @@ export * from './payroll';
 export * from './client-intelligence';
 // In-app notification contracts + the canonical notification-type registry.
 export * from './notifications';
+// Upsell contracts + the canonical rule/pattern precedence and ranking.
+export * from './upsell';
 import type { AppointmentBillingTax } from './tax';
 
 export type UserRole = 'owner' | 'manager' | 'stylist' | 'client';

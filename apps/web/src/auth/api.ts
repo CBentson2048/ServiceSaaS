@@ -155,6 +155,11 @@ import type {
   UpdateStaffMemberResponse,
   UpsertServiceRequirementRuleRequest,
   UpsertServiceUpgradeSuggestionRequest,
+  DraftUpsellContextRequest,
+  ListUpsellRulesResponse,
+  UpsellRuleDetail,
+  UpsellSuggestionsResponse,
+  UpsertUpsellRuleRequest,
   WeeklyRotaResponse,
   AdminUpdateProfileRequest,
   BookOutTypeMutationResponse,
@@ -3032,5 +3037,88 @@ export async function recordProductConsumption(
     method: 'POST',
     accessToken,
     body: payload,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Upsell suggestions (Wrike 4507283916)
+//
+// Every caller of these MUST treat a rejection as "show no suggestions", never
+// as an error worth surfacing: suggestions are optional intelligence layered
+// over booking and checkout, and those two must keep working when this does not.
+// ---------------------------------------------------------------------------
+
+/** Suggested add-ons for a saved appointment, in the booking screen. */
+export async function getBookingUpsellSuggestions(
+  accessToken: string,
+  appointmentId: string,
+): Promise<UpsellSuggestionsResponse> {
+  return request<UpsellSuggestionsResponse>(
+    `/upsell/suggestions/appointment/${encodeURIComponent(appointmentId)}`,
+    { accessToken },
+  );
+}
+
+/** The same appointment at checkout — same candidates, checkout wording. */
+export async function getCheckoutUpsellSuggestions(
+  accessToken: string,
+  appointmentId: string,
+): Promise<UpsellSuggestionsResponse> {
+  return request<UpsellSuggestionsResponse>(
+    `/upsell/suggestions/checkout/${encodeURIComponent(appointmentId)}`,
+    { accessToken },
+  );
+}
+
+/** Suggestions for a booking still being built, which has no id yet. */
+export async function getDraftUpsellSuggestions(
+  accessToken: string,
+  payload: DraftUpsellContextRequest,
+): Promise<UpsellSuggestionsResponse> {
+  return request<UpsellSuggestionsResponse>('/upsell/suggestions/draft', {
+    method: 'POST',
+    accessToken,
+    body: payload,
+  });
+}
+
+export async function listUpsellRules(
+  accessToken: string,
+  params: { locationId?: string } = {},
+): Promise<ListUpsellRulesResponse> {
+  const search = new URLSearchParams();
+  if (params.locationId) search.set('locationId', params.locationId);
+  const query = search.toString();
+  return request<ListUpsellRulesResponse>(`/upsell/rules${query ? `?${query}` : ''}`, { accessToken });
+}
+
+export async function createUpsellRule(
+  accessToken: string,
+  payload: UpsertUpsellRuleRequest,
+): Promise<UpsellRuleDetail> {
+  const result = await request<{ rule: UpsellRuleDetail }>('/upsell/rules', {
+    method: 'POST',
+    accessToken,
+    body: payload,
+  });
+  return result.rule;
+}
+
+export async function updateUpsellRule(
+  accessToken: string,
+  ruleId: string,
+  payload: Partial<UpsertUpsellRuleRequest>,
+): Promise<UpsellRuleDetail> {
+  const result = await request<{ rule: UpsellRuleDetail }>(
+    `/upsell/rules/${encodeURIComponent(ruleId)}`,
+    { method: 'PATCH', accessToken, body: payload },
+  );
+  return result.rule;
+}
+
+export async function deleteUpsellRule(accessToken: string, ruleId: string): Promise<void> {
+  await request<void>(`/upsell/rules/${encodeURIComponent(ruleId)}`, {
+    method: 'DELETE',
+    accessToken,
   });
 }
