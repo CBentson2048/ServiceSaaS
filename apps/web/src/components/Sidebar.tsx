@@ -64,6 +64,13 @@ const NAV: NavItem[] = [
     permission: 'services.manage',
   },
   {
+    to: '/settings/formula-change',
+    label: 'Formula change alerts',
+    icon: BoxIcon,
+    allowedRoles: ['owner', 'manager'],
+    permission: 'settings.location.manage',
+  },
+  {
     to: '/campaigns',
     label: 'Campaigns',
     // Deliberately NOT SparkIcon. Campaigns are deterministic owner-written

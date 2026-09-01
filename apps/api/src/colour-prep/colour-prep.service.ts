@@ -8,6 +8,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type {
+  FormulaChangeAssessment,
   AppointmentStatus,
   AuthUser,
   ColourPrepAppointment,
@@ -22,6 +23,7 @@ import type {
 } from '@sheer/domain';
 import { userHasPermission, userHasRole } from '@sheer/domain';
 import { resolveStockUnit, roundBaseQuantity } from '../inventory/unit-conversion';
+import { FormulaChangeService } from '../formula-change/formula-change.service';
 import { resolveColourPrepWindow } from './date-range';
 import type { ColourPrepQueryDto } from './dto';
 
@@ -158,7 +160,10 @@ export class ColourPrepService {
   private readonly logger = new Logger(ColourPrepService.name);
   private readonly admin: SupabaseClient;
 
-  constructor(config: ConfigService) {
+  constructor(
+    config: ConfigService,
+    private readonly formulaChange: FormulaChangeService,
+  ) {
     const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
     this.admin = createClient(supabaseUrl, serviceRoleKey, {
@@ -218,10 +223,14 @@ export class ColourPrepService {
     const clientIds = unique(colourAppointments.map((appointment) => appointment.client_profile_id));
     const staffIds = unique(colourAppointments.map((appointment) => appointment.assigned_staff_profile_id));
 
-    const [clients, staff, formulasByClient] = await Promise.all([
+    const [clients, staff, formulasByClient, formulaChangeByClient] = await Promise.all([
       this.loadClients(actor.businessId, clientIds),
       this.canSeeStylist(actor) ? this.loadStaff(actor.businessId, staffIds) : Promise.resolve(new Map()),
       this.loadLatestFormulas(actor.businessId, clientIds),
+      // ONE bounded, set-based assessment for the whole day — never one call per
+      // appointment (Wrike section 40). `Safe` because prep is an operational
+      // screen: a detection failure degrades to "no flag", never a broken page.
+      this.formulaChange.assessClientsSafe(actor.businessId, clientIds, location.id),
     ]);
 
     const formulaIds = [...formulasByClient.values()].map((formula) => formula.id);
@@ -235,6 +244,7 @@ export class ColourPrepService {
       formulasByClient,
       itemsByFormula,
       wasteAllowancePercent,
+      formulaChangeByClient,
     });
 
     const products = await this.buildProductRequirements(
@@ -566,6 +576,7 @@ export class ColourPrepService {
     formulasByClient: Map<string, FormulaRow>;
     itemsByFormula: Map<string, FormulaItemRow[]>;
     wasteAllowancePercent: number;
+    formulaChangeByClient: Map<string, FormulaChangeAssessment>;
   }): {
     appointments: ColourPrepAppointment[];
     requiredByProduct: Map<string, { grams: number; appointments: Set<string> }>;
@@ -636,6 +647,10 @@ export class ColourPrepService {
         formulaId: formula?.id,
         formulaSavedAt: formula?.saved_at ?? undefined,
         items,
+        // Only a SIGNIFICANT change reaches the prep card. A minor one is real
+        // detail but it is not what a stylist needs at 10:30 with a client in
+        // the chair, and a flag nobody can ignore is a flag everyone ignores.
+        formulaChange: significantChange(input.formulaChangeByClient.get(row.client_profile_id)),
       });
     }
 
@@ -760,4 +775,18 @@ export class ColourPrepService {
     }
     return new Map((data ?? []).map((row) => [row.product_id, row]));
   }
+}
+
+/**
+ * The assessment, but only when it is a SIGNIFICANT change.
+ *
+ * Colour Prep shows one line beside an appointment, so the bar for occupying it
+ * is high: minor variation and "no comparable history" both render as nothing at
+ * all. The full assessment, including minor detail, stays available on the
+ * client profile.
+ */
+function significantChange(
+  assessment: FormulaChangeAssessment | undefined,
+): FormulaChangeAssessment | undefined {
+  return assessment?.available && assessment.significant ? assessment : undefined;
 }

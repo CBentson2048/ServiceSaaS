@@ -18,6 +18,7 @@ import {
   createCrmClientPatchTest,
   getCrmClientDetail,
 } from '../auth/api';
+import { FormulaChangeFlag } from '../components/FormulaChangeFlag';
 import { useAuth } from '../auth/AuthProvider';
 
 export function CrmClientDetailPage() {
@@ -212,6 +213,7 @@ export function CrmClientDetailPage() {
           <div className="grid gap-5 lg:grid-cols-[1.15fr_0.85fr]">
             <div className="space-y-5">
               <VisitHistory visits={detail.visits} />
+              {detail.formulaChange ? <FormulaChangeFlag assessment={detail.formulaChange} /> : null}
               <ColourFormulas formulas={detail.formulas} />
               <Notes notes={detail.notes} value={noteContent} onChange={setNoteContent} onSubmit={handleAddNote} />
               <Messages messages={detail.messages} />

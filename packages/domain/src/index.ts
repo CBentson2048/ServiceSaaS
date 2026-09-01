@@ -6,11 +6,14 @@ export * from './payroll';
 export * from './client-intelligence';
 
 export * from './campaigns';
+
+export * from './formula-change';
 // In-app notification contracts + the canonical notification-type registry.
 export * from './notifications';
 // Upsell contracts + the canonical rule/pattern precedence and ranking.
 export * from './upsell';
 import type { AppointmentBillingTax } from './tax';
+import type { FormulaChangeAssessment } from './formula-change';
 
 export type UserRole = 'owner' | 'manager' | 'stylist' | 'client';
 
@@ -4496,6 +4499,12 @@ export interface CrmClientDetailResponse {
   visits: CrmVisitSummary[];
   /** Saved colour-formula history for the client, newest first. */
   formulas: CrmClientFormula[];
+  /**
+   * Deterministic formula-change intelligence (Wrike 4507283774). Computed on
+   * read, so it always reflects the salon's current sensitivity settings.
+   * Undefined when detection was unavailable — the profile still renders.
+   */
+  formulaChange?: FormulaChangeAssessment;
   allergies: CrmAllergyRecord[];
   patchTests: CrmPatchTestRecord[];
   messages: CrmMessageLog[];
@@ -5259,6 +5268,13 @@ export interface ColourPrepAppointment {
   formulaId?: string;
   formulaSavedAt?: string;
   items: ColourPrepAppointmentItem[];
+  /**
+   * Present ONLY when the client's latest formula differs significantly from
+   * their previous comparable one (Wrike 4507283774). Minor changes and clients
+   * with no comparable history are omitted entirely, so the prep card stays
+   * quiet unless it has something worth a stylist's attention.
+   */
+  formulaChange?: FormulaChangeAssessment;
 }
 
 export interface ColourPrepProductRequirement {

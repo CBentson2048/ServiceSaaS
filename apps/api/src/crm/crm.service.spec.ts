@@ -12,6 +12,7 @@ import { createClient } from '@supabase/supabase-js';
 import type { AuthUser } from '@sheer/domain';
 import { CrmService } from './crm.service';
 import type { AuditService } from '../audit/audit.service';
+import type { FormulaChangeService } from '../formula-change/formula-change.service';
 import type { LabFormulaService } from '../lab-formula/lab-formula.service';
 
 jest.mock('@supabase/supabase-js', () => ({
@@ -91,7 +92,12 @@ function createService(
     historyForClient: jest.fn(async () => []),
   } as unknown as LabFormulaService;
   const audit = { record: jest.fn(async () => undefined) } as unknown as AuditService;
-  return { service: new CrmService(config, labFormulas, audit), captured: mock.captured };
+  // Detection is not exercised by the create-path tests; a stub keeps the
+  // constructor satisfied without a second Supabase client.
+  const formulaChange = {
+    assessForClient: jest.fn(async () => ({ available: false, significant: false })),
+  } as unknown as FormulaChangeService;
+  return { service: new CrmService(config, labFormulas, audit, formulaChange), captured: mock.captured };
 }
 
 // Search harness: captures every `schema('crm').rpc('search_clients', …)` call
@@ -112,7 +118,10 @@ function createSearchService(rpcRows: Array<Record<string, unknown>> = []) {
     historyForClient: jest.fn(async () => []),
   } as unknown as LabFormulaService;
   const audit = { record: jest.fn(async () => undefined) } as unknown as AuditService;
-  return { service: new CrmService(config, labFormulas, audit), rpcCalls };
+  const formulaChange = {
+    assessForClient: jest.fn(async () => ({ available: false, significant: false })),
+  } as unknown as FormulaChangeService;
+  return { service: new CrmService(config, labFormulas, audit, formulaChange), rpcCalls };
 }
 
 describe('CrmService — permissions and search', () => {

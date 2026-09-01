@@ -10,7 +10,8 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import { createClient } from '@supabase/supabase-js';
-import type { AuthUser } from '@sheer/domain';
+import type { AuthUser, FormulaChangeAssessment } from '@sheer/domain';
+import type { FormulaChangeService } from '../formula-change/formula-change.service';
 import { ColourPrepService } from './colour-prep.service';
 
 jest.mock('@supabase/supabase-js', () => ({ createClient: jest.fn() }));
@@ -123,7 +124,7 @@ function buildService(rows: Record<string, unknown[]>) {
   const { root, captured } = createMockAdmin(rows);
   mockedCreateClient.mockReturnValue(root as never);
   const config = { getOrThrow: (key: string) => `test-${key}` } as unknown as ConfigService;
-  return { service: new ColourPrepService(config), captured };
+  return { service: new ColourPrepService(config, formulaChangeStub()), captured };
 }
 
 beforeEach(() => {
@@ -134,6 +135,17 @@ beforeEach(() => {
 afterEach(() => {
   jest.useRealTimers();
 });
+
+/**
+ * Detection is asserted in its own suites; here it is stubbed so Colour Prep's
+ * own behaviour is what these tests measure. `assessClientsSafe` never throws in
+ * production either, which is exactly the contract this stub reproduces.
+ */
+function formulaChangeStub(overrides: Map<string, FormulaChangeAssessment> = new Map()) {
+  return {
+    assessClientsSafe: jest.fn(async () => overrides),
+  } as unknown as FormulaChangeService;
+}
 
 describe('permissions and tenancy', () => {
   it('refuses a caller without inventory.manage', async () => {

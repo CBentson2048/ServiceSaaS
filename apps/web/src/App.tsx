@@ -58,6 +58,7 @@ import { NewWeekRotaPage } from './pages/NewWeekRotaPage';
 import { ServiceCategoriesPage } from './pages/ServiceCategoriesPage';
 import { ServiceManagementPage } from './pages/ServiceManagementPage';
 import { CampaignsPage } from './pages/CampaignsPage';
+import { FormulaChangeSettingsPage } from './pages/FormulaChangeSettingsPage';
 import { UpsellRulesPage } from './pages/UpsellRulesPage';
 import { ServicesPage } from './pages/ServicesPage';
 import { SheerLabPage } from './pages/SheerLabPage';
@@ -340,6 +341,9 @@ export function App() {
             <Route path="/locations" element={<LocationsPage />} />
             <Route path="/locations/:id" element={<LocationDetailPage />} />
             <Route path="/locations/:id/record-settings" element={<LocationRecordSettingsPage />} />
+            {/* Formula change sensitivity. Business-wide as well as per-location,
+                so it sits on its own route rather than inside one location. */}
+            <Route path="/settings/formula-change" element={<FormulaChangeSettingsPage />} />
           </Route>
           <Route
             element={

@@ -10,6 +10,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type {
+  FormulaChangeAssessment,
   AuthUser,
   ClientDuplicateGroup,
   CreateCrmAllergyRecordRequest,
@@ -44,6 +45,7 @@ import type {
 import { userHasRole, userHasAnyRole } from '@sheer/domain';
 import type { ListCrmClientsQueryDto, SearchCrmClientsQueryDto } from './dto';
 import { AuditService } from '../audit/audit.service';
+import { FormulaChangeService } from '../formula-change/formula-change.service';
 import {
   LabFormulaService,
   type LabClientFormulaHistoryRecord,
@@ -265,6 +267,7 @@ export class CrmService {
     config: ConfigService,
     private readonly labFormulas: LabFormulaService,
     private readonly audit: AuditService,
+    private readonly formulaChange: FormulaChangeService,
   ) {
     const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
@@ -560,6 +563,7 @@ export class CrmService {
       activeAllergyCounts,
       expiredPatchCounts,
       lastVisitByClient,
+      formulaChange,
     ] = await Promise.all([
       this.fetchNotes(actor.businessId, client.id),
       this.fetchVisitsForClient(actor.businessId, client.id),
@@ -572,6 +576,9 @@ export class CrmService {
       this.fetchActiveAllergyCounts(actor.businessId, [client.id]),
       this.fetchExpiredPatchCounts(actor.businessId, [client.id]),
       this.fetchLastVisitByClient(actor.businessId, [client.id]),
+      // Best-effort intelligence: a detection failure must not blank a client
+      // record the salon needs to run the appointment (Wrike section 58).
+      this.fetchFormulaChange(actor, client.id),
     ]);
 
     return {
@@ -588,7 +595,28 @@ export class CrmService {
       patchTests,
       messages,
       photos,
+      formulaChange,
     };
+  }
+
+  /**
+   * The client's current formula-change assessment.
+   *
+   * Computed on read from live formula rows, so it always reflects the salon's
+   * CURRENT sensitivity settings. Best-effort by design: if detection fails the
+   * profile still renders with every other section intact, and the flag is
+   * simply absent rather than the page being lost.
+   */
+  private async fetchFormulaChange(
+    actor: AuthUser,
+    clientId: string,
+  ): Promise<FormulaChangeAssessment | undefined> {
+    try {
+      return await this.formulaChange.assessForClient(actor, clientId);
+    } catch (err) {
+      this.logger.error(`fetchFormulaChange failed for client ${clientId}: ${(err as Error).message}`);
+      return undefined;
+    }
   }
 
   /**

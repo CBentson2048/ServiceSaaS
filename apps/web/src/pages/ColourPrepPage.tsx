@@ -10,6 +10,7 @@ import type {
 } from '@sheer/domain';
 import { useAuth } from '../auth/AuthProvider';
 import { getColourPrep } from '../auth/api';
+import { FormulaChangeFlag } from '../components/FormulaChangeFlag';
 import { useLocationScope } from '../components/LocationScopeContext';
 
 /**
@@ -480,6 +481,9 @@ function AppointmentRow({
           {appointment.serviceNames.join(', ')}
           {appointment.stylistName ? ` · with ${appointment.stylistName}` : ''}
         </div>
+        {appointment.formulaChange ? (
+          <FormulaChangeFlag assessment={appointment.formulaChange} variant="inline" />
+        ) : null}
         {needsConsultation ? (
           <p className="mt-1.5 text-[12px] text-text-muted">
             No saved formula, so nothing can be pre-weighed — allow consultation time.

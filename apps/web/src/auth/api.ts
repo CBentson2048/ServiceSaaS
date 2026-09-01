@@ -1,4 +1,6 @@
 import type {
+  FormulaChangeSettingsResponse,
+  UpsertFormulaChangeSettingsRequest,
   CampaignAudiencePreview,
   CampaignDetail,
   CampaignResponse,
@@ -3128,6 +3130,28 @@ export async function deleteUpsellRule(accessToken: string, ruleId: string): Pro
   await request<void>(`/upsell/rules/${encodeURIComponent(ruleId)}`, {
     method: 'DELETE',
     accessToken,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Formula change detection (Wrike 4507283774)
+// ---------------------------------------------------------------------------
+
+export async function getFormulaChangeSettings(
+  accessToken: string,
+): Promise<FormulaChangeSettingsResponse> {
+  return request<FormulaChangeSettingsResponse>('/settings/formula-change', { accessToken });
+}
+
+/** PUT: the three thresholds are saved together as one scope. */
+export async function saveFormulaChangeSettings(
+  accessToken: string,
+  payload: UpsertFormulaChangeSettingsRequest,
+): Promise<FormulaChangeSettingsResponse> {
+  return request<FormulaChangeSettingsResponse>('/settings/formula-change', {
+    method: 'PUT',
+    accessToken,
+    body: payload,
   });
 }
 

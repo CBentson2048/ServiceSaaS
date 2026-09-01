@@ -11,6 +11,7 @@ import { ClientIntelligenceModule } from './client-intelligence/client-intellige
 import { CrmModule } from './crm/crm.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { EodModule } from './eod/eod.module';
+import { FormulaChangeModule } from './formula-change/formula-change.module';
 import { HealthModule } from './health/health.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { ColourPrepModule } from './colour-prep/colour-prep.module';
@@ -80,6 +81,7 @@ import { validateEnv } from './config/env.validation';
     CrmModule,
     ClientIntelligenceModule,
     CampaignsModule,
+    FormulaChangeModule,
     DashboardModule,
     KpiModule,
     RetailSalesModule,
