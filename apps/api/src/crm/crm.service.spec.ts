@@ -13,6 +13,7 @@ import type { AuthUser } from '@sheer/domain';
 import { CrmService } from './crm.service';
 import type { AuditService } from '../audit/audit.service';
 import type { FormulaChangeService } from '../formula-change/formula-change.service';
+import type { OperationalSignalsService } from '../operational-signals/operational-signals.service';
 import type { LabFormulaService } from '../lab-formula/lab-formula.service';
 
 jest.mock('@supabase/supabase-js', () => ({
@@ -97,7 +98,13 @@ function createService(
   const formulaChange = {
     assessForClient: jest.fn(async () => ({ available: false, significant: false })),
   } as unknown as FormulaChangeService;
-  return { service: new CrmService(config, labFormulas, audit, formulaChange), captured: mock.captured };
+  const operationalSignals = {
+    clientSignalsSafe: jest.fn(async () => undefined),
+  } as unknown as OperationalSignalsService;
+  return {
+    service: new CrmService(config, labFormulas, audit, formulaChange, operationalSignals),
+    captured: mock.captured,
+  };
 }
 
 // Search harness: captures every `schema('crm').rpc('search_clients', …)` call
@@ -121,7 +128,10 @@ function createSearchService(rpcRows: Array<Record<string, unknown>> = []) {
   const formulaChange = {
     assessForClient: jest.fn(async () => ({ available: false, significant: false })),
   } as unknown as FormulaChangeService;
-  return { service: new CrmService(config, labFormulas, audit, formulaChange), rpcCalls };
+  const operationalSignals = {
+    clientSignalsSafe: jest.fn(async () => undefined),
+  } as unknown as OperationalSignalsService;
+  return { service: new CrmService(config, labFormulas, audit, formulaChange, operationalSignals), rpcCalls };
 }
 
 describe('CrmService — permissions and search', () => {

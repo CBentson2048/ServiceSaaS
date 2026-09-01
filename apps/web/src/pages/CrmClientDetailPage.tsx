@@ -19,6 +19,7 @@ import {
   getCrmClientDetail,
 } from '../auth/api';
 import { FormulaChangeFlag } from '../components/FormulaChangeFlag';
+import { NoShowRiskCard, SpendTrendCard } from '../components/OperationalSignals';
 import { useAuth } from '../auth/AuthProvider';
 
 export function CrmClientDetailPage() {
@@ -214,6 +215,14 @@ export function CrmClientDetailPage() {
             <div className="space-y-5">
               <VisitHistory visits={detail.visits} />
               {detail.formulaChange ? <FormulaChangeFlag assessment={detail.formulaChange} /> : null}
+              {/* Client-level operational signals only. Diary signals describe a
+                  stylist's day, not a client, and are not shown here. */}
+              {detail.spendTrend || detail.noShowRisk ? (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {detail.spendTrend ? <SpendTrendCard signal={detail.spendTrend} /> : null}
+                  {detail.noShowRisk ? <NoShowRiskCard signal={detail.noShowRisk} /> : null}
+                </div>
+              ) : null}
               <ColourFormulas formulas={detail.formulas} />
               <Notes notes={detail.notes} value={noteContent} onChange={setNoteContent} onSubmit={handleAddNote} />
               <Messages messages={detail.messages} />

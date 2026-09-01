@@ -45,6 +45,18 @@ export class CreateStylistRebookingDto {
   clientNote?: string;
 }
 
+/**
+ * Marking a no-show carries no deposit decision: whether a missed appointment
+ * forfeits a deposit is a separate product rule, and folding it into a status
+ * change would smuggle a charging policy into an attendance fact.
+ */
+export class MarkNoShowDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
+}
+
 export class CancelAppointmentDto {
   @IsOptional()
   @IsString()

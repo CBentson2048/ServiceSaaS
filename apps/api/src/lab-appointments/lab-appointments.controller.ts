@@ -21,6 +21,7 @@ import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { LabSessionService } from '../lab-session/lab-session.service';
 import {
   CancelAppointmentDto,
+  MarkNoShowDto,
   CreateStylistRebookingDto,
   LinkStylistRebookingDto,
   RejectBookingDto,
@@ -85,6 +86,20 @@ export class LabAppointmentsController {
     @Param('id') id: string,
   ): Promise<CheckInAppointmentResponse> {
     return this.labAppointmentsService.checkIn(actor, id);
+  }
+
+  /**
+   * Mark a confirmed appointment as a no-show. The transition `no_show` has
+   * always existed in the enum and been read across the product, but nothing
+   * wrote it until now — see LabAppointmentsService.markNoShow.
+   */
+  @Post(':id/no-show')
+  markNoShow(
+    @CurrentUser() actor: AuthUser,
+    @Param('id') id: string,
+    @Body() body: MarkNoShowDto,
+  ): Promise<{ appointment: StaffBookingDetail }> {
+    return this.labAppointmentsService.markNoShow(actor, id, body.reason);
   }
 
   @Post(':id/cancel')

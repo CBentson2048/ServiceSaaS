@@ -46,6 +46,7 @@ import { userHasRole, userHasAnyRole } from '@sheer/domain';
 import type { ListCrmClientsQueryDto, SearchCrmClientsQueryDto } from './dto';
 import { AuditService } from '../audit/audit.service';
 import { FormulaChangeService } from '../formula-change/formula-change.service';
+import { OperationalSignalsService } from '../operational-signals/operational-signals.service';
 import {
   LabFormulaService,
   type LabClientFormulaHistoryRecord,
@@ -268,6 +269,7 @@ export class CrmService {
     private readonly labFormulas: LabFormulaService,
     private readonly audit: AuditService,
     private readonly formulaChange: FormulaChangeService,
+    private readonly operationalSignals: OperationalSignalsService,
   ) {
     const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
@@ -564,6 +566,7 @@ export class CrmService {
       expiredPatchCounts,
       lastVisitByClient,
       formulaChange,
+      clientSignals,
     ] = await Promise.all([
       this.fetchNotes(actor.businessId, client.id),
       this.fetchVisitsForClient(actor.businessId, client.id),
@@ -579,6 +582,7 @@ export class CrmService {
       // Best-effort intelligence: a detection failure must not blank a client
       // record the salon needs to run the appointment (Wrike section 58).
       this.fetchFormulaChange(actor, client.id),
+      this.operationalSignals.clientSignalsSafe(actor, client.id),
     ]);
 
     return {
@@ -596,6 +600,10 @@ export class CrmService {
       messages,
       photos,
       formulaChange,
+      // Client-level operational signals only. Diary signals (colour sequencing,
+      // slot gaps) describe a stylist's day, not a client, and belong on the diary.
+      spendTrend: clientSignals?.spendTrend,
+      noShowRisk: clientSignals?.noShowRisk,
     };
   }
 

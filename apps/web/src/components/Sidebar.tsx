@@ -64,6 +64,13 @@ const NAV: NavItem[] = [
     permission: 'services.manage',
   },
   {
+    to: '/settings/intelligence',
+    label: 'Intelligence sensitivity',
+    icon: CrmIcon,
+    allowedRoles: ['owner', 'manager'],
+    permission: 'settings.location.manage',
+  },
+  {
     to: '/settings/formula-change',
     label: 'Formula change alerts',
     icon: BoxIcon,

@@ -312,6 +312,15 @@ const CANCELLABLE_BOOKING_STATUSES: AppointmentStatus[] = ['pending', 'accepted'
 // Statuses a booking can be moved/reassigned from. Once a visit exists
 // (awaiting_payment onwards) the time is locked.
 const RESCHEDULABLE_BOOKING_STATUSES: AppointmentStatus[] = ['pending', 'accepted', 'checked_in'];
+/**
+ * Statuses a booking can be marked as a NO-SHOW from.
+ *
+ * `pending` is excluded deliberately: a request the salon never accepted is not
+ * an appointment the client failed to attend. `checked_in` is excluded because
+ * the client demonstrably arrived. That leaves `accepted` — a confirmed booking
+ * whose time has passed with nobody in the chair.
+ */
+const NO_SHOW_BOOKING_STATUSES: AppointmentStatus[] = ['accepted'];
 
 // What a CUSTOMER may self-cancel / self-rebook from the mobile app. Narrower than
 // the staff lists: once the client has arrived ('checked_in') the salon owns the
@@ -812,6 +821,73 @@ export class LabAppointmentsService {
    * refund + notification re-sync — so concurrent front-desk cancels can never
    * double-refund. 'reject' stays the path for client requests still awaiting acceptance.
    */
+  /**
+   * Mark a confirmed appointment as a no-show.
+   *
+   * WHY THIS EXISTS. `no_show` has been in `booking.appointment_status_enum`
+   * since 0004 and is read by the dashboard, the rebooking rules and the
+   * communications guards — but until now NOTHING in the platform ever wrote it.
+   * It was a dead value, which meant every no-show figure the product displayed
+   * was structurally zero. Wrike 4507283793 asks for a no-show risk signal
+   * "based on actual client appointment history", and that history cannot exist
+   * without this transition.
+   *
+   * It is the missing sibling of accept / reject / check-in / cancel / complete
+   * and follows their exact shape: owner-or-manager only, an atomic
+   * `.in(status, ...)` claim so two racing requests cannot both apply it, and an
+   * audit record. It deliberately does NOT touch deposits, billing or stock —
+   * whether a no-show forfeits a deposit is a separate product decision, and
+   * making it here would smuggle a charging policy into a status change.
+   */
+  async markNoShow(actor: AuthUser, id: string, reason?: string): Promise<{ appointment: StaffBookingDetail }> {
+    this.assertOwnerOrManager(actor);
+    const appointment = await this.fetchAppointmentForActor(actor, id);
+
+    // Idempotent: re-marking an existing no-show is a no-op, not a conflict.
+    if (appointment.status === 'no_show') {
+      const clientsById = await this.fetchClientProfiles(actor.businessId, [appointment.client_profile_id]);
+      return { appointment: toBookingDetail(appointment, clientsById.get(appointment.client_profile_id)) };
+    }
+    if (!NO_SHOW_BOOKING_STATUSES.includes(appointment.status)) {
+      throw new ConflictException(`Appointment cannot be marked as a no-show from ${appointment.status}`);
+    }
+
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('appointments')
+      .update({
+        status: 'no_show',
+        cancellation_reason: reason?.trim() || 'Marked as no-show',
+      })
+      .eq('id', appointment.id)
+      .eq('business_id', appointment.business_id)
+      .in('status', NO_SHOW_BOOKING_STATUSES)
+      .select(DETAIL_COLUMNS)
+      .maybeSingle<AppointmentRow>();
+
+    if (error) {
+      this.logger.error(`markNoShow failed for ${id}: ${error.message}`);
+      throw new InternalServerErrorException('Unable to mark the appointment as a no-show');
+    }
+    if (!data) {
+      // Lost the race — another request already moved it out of `accepted`.
+      throw new ConflictException('Appointment status changed before it could be marked as a no-show');
+    }
+
+    await this.audit.record(actor, {
+      action: 'booking.no_show',
+      entityType: 'booking',
+      entityId: appointment.id,
+      locationId: appointment.location_id,
+      before: { status: appointment.status },
+      after: { status: 'no_show' },
+      metadata: { clientProfileId: appointment.client_profile_id },
+    });
+
+    const clientsById = await this.fetchClientProfiles(actor.businessId, [data.client_profile_id]);
+    return { appointment: toBookingDetail(data, clientsById.get(data.client_profile_id)) };
+  }
+
   async cancel(
     actor: AuthUser,
     id: string,

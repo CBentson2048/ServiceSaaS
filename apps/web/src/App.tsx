@@ -59,6 +59,7 @@ import { ServiceCategoriesPage } from './pages/ServiceCategoriesPage';
 import { ServiceManagementPage } from './pages/ServiceManagementPage';
 import { CampaignsPage } from './pages/CampaignsPage';
 import { FormulaChangeSettingsPage } from './pages/FormulaChangeSettingsPage';
+import { OperationalSignalSettingsPage } from './pages/OperationalSignalSettingsPage';
 import { UpsellRulesPage } from './pages/UpsellRulesPage';
 import { ServicesPage } from './pages/ServicesPage';
 import { SheerLabPage } from './pages/SheerLabPage';
@@ -344,6 +345,7 @@ export function App() {
             {/* Formula change sensitivity. Business-wide as well as per-location,
                 so it sits on its own route rather than inside one location. */}
             <Route path="/settings/formula-change" element={<FormulaChangeSettingsPage />} />
+            <Route path="/settings/intelligence" element={<OperationalSignalSettingsPage />} />
           </Route>
           <Route
             element={

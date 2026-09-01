@@ -1,4 +1,6 @@
 import type {
+  OperationalSignalReport,
+  OperationalSignalThresholds,
   FormulaChangeSettingsResponse,
   UpsertFormulaChangeSettingsRequest,
   CampaignAudiencePreview,
@@ -3134,6 +3136,52 @@ export async function deleteUpsellRule(accessToken: string, ruleId: string): Pro
 }
 
 // ---------------------------------------------------------------------------
+// Operational intelligence signals (Wrike 4507283793)
+// ---------------------------------------------------------------------------
+//
+// Staff-only. There is deliberately no client-facing equivalent: a client must
+// never receive "no-show risk: high" or "spend trend: falling".
+
+/** Back-to-back colour, slot gaps and per-appointment attendance flags for a day. */
+export async function getDiarySignals(
+  accessToken: string,
+  params: { locationId: string; date?: string },
+): Promise<DiarySignalsResponse> {
+  const search = new URLSearchParams({ locationId: params.locationId });
+  if (params.date) search.set('date', params.date);
+  return request<DiarySignalsResponse>(`/diary/signals?${search.toString()}`, { accessToken });
+}
+
+export async function getOperationalSignalSettings(
+  accessToken: string,
+): Promise<OperationalSignalSettingsResponse> {
+  return request<OperationalSignalSettingsResponse>('/settings/operational-signals', { accessToken });
+}
+
+/** PUT: the four threshold groups are saved together as one scope. */
+export async function saveOperationalSignalSettings(
+  accessToken: string,
+  payload: OperationalSignalThresholds & { locationId?: string | null },
+): Promise<OperationalSignalSettingsResponse> {
+  return request<OperationalSignalSettingsResponse>('/settings/operational-signals', {
+    method: 'PUT',
+    accessToken,
+    body: payload,
+  });
+}
+
+export async function getOperationalSignalReport(
+  accessToken: string,
+  params: { locationId: string; date?: string },
+): Promise<OperationalSignalReport> {
+  const search = new URLSearchParams({ locationId: params.locationId });
+  if (params.date) search.set('date', params.date);
+  return request<OperationalSignalReport>(`/reports/operational-signals?${search.toString()}`, {
+    accessToken,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Formula change detection (Wrike 4507283774)
 // ---------------------------------------------------------------------------
 
@@ -3240,4 +3288,24 @@ export async function runCampaignNow(
     `/campaigns/${encodeURIComponent(campaignId)}/run`,
     { method: 'POST', accessToken },
   );
+}
+
+/**
+ * Response shapes for the operational-signal endpoints. Declared here rather
+ * than in @sheer/domain because they are transport envelopes around domain
+ * types the package already owns.
+ */
+export interface DiarySignalsResponse {
+  locationId: string;
+  date: string;
+  timezone: string;
+  backToBackColour: import('@sheer/domain').BackToBackColourSignal[];
+  slotGaps: import('@sheer/domain').SlotGapSignal[];
+  noShowByAppointment: Record<string, import('@sheer/domain').NoShowRiskSignal>;
+  thresholds: OperationalSignalThresholds;
+}
+
+export interface OperationalSignalSettingsResponse {
+  scopes: Array<OperationalSignalThresholds & { locationId: string | null; configured: boolean }>;
+  defaults: OperationalSignalThresholds;
 }

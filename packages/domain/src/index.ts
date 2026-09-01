@@ -8,12 +8,15 @@ export * from './client-intelligence';
 export * from './campaigns';
 
 export * from './formula-change';
+
+export * from './operational-signals';
 // In-app notification contracts + the canonical notification-type registry.
 export * from './notifications';
 // Upsell contracts + the canonical rule/pattern precedence and ranking.
 export * from './upsell';
 import type { AppointmentBillingTax } from './tax';
 import type { FormulaChangeAssessment } from './formula-change';
+import type { NoShowRiskSignal, SpendTrendSignal } from './operational-signals';
 
 export type UserRole = 'owner' | 'manager' | 'stylist' | 'client';
 
@@ -4505,6 +4508,16 @@ export interface CrmClientDetailResponse {
    * Undefined when detection was unavailable — the profile still renders.
    */
   formulaChange?: FormulaChangeAssessment;
+  /**
+   * Deterministic client-level operational signals (Wrike 4507283793). Computed
+   * on read, so they always reflect current data and current thresholds.
+   * Undefined when the calculation was unavailable — the profile still renders.
+   *
+   * Diary signals (back-to-back colour, slot gaps) are deliberately absent: they
+   * describe a stylist's day, not a client.
+   */
+  spendTrend?: SpendTrendSignal;
+  noShowRisk?: NoShowRiskSignal;
   allergies: CrmAllergyRecord[];
   patchTests: CrmPatchTestRecord[];
   messages: CrmMessageLog[];

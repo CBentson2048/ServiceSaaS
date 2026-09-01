@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode, type SVGProps } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import type { DiarySignalsResponse } from '../auth/api';
 import type {
   AppointmentCompletionResponse,
   AppointmentPaymentConfirmationResponse,
@@ -35,12 +36,14 @@ import {
   listServices,
   markRotaAbsence,
   rejectBooking,
+  getDiarySignals,
   rescheduleBooking,
   updateRotaAbsence,
   deleteRotaAbsence,
 } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
 import { useLocationScope } from '../components/LocationScopeContext';
+import { DiaryIntelligencePanel } from '../components/OperationalSignals';
 import {
   DayCalendarBoard,
   type AddAppointmentInput,
@@ -83,6 +86,7 @@ export function BookingsPage() {
   const [rebookingSkipped, setRebookingSkipped] = useState<Record<string, boolean>>({});
   const [reviewLoadingId, setReviewLoadingId] = useState<string | null>(null);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
+  const [diarySignals, setDiarySignals] = useState<DiarySignalsResponse | null>(null);
   const [rescheduleTarget, setRescheduleTarget] = useState<StaffBookingSummary | null>(null);
   const [rescheduleLoading, setRescheduleLoading] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<StaffBookingSummary | null>(null);
@@ -129,6 +133,32 @@ export function BookingsPage() {
       setLoading(false);
     }
   }, [accessToken]);
+
+  /**
+   * Operational intelligence for the day (Wrike 4507283793).
+   *
+   * Loaded SEPARATELY from the bookings and deliberately never awaited alongside
+   * them: intelligence is optional, so a failure here must leave the diary fully
+   * usable. One call covers the whole day — colour sequencing, slot gaps and
+   * every per-appointment attendance flag — rather than one call per appointment.
+   */
+  const loadDiarySignals = useCallback(async () => {
+    if (!accessToken || !selectedLocationId) {
+      setDiarySignals(null);
+      return;
+    }
+    try {
+      setDiarySignals(await getDiarySignals(accessToken, { locationId: selectedLocationId }));
+    } catch {
+      // Silent by design: the diary is an operational screen and a missing
+      // signal panel is far better than a blocked day.
+      setDiarySignals(null);
+    }
+  }, [accessToken, selectedLocationId]);
+
+  useEffect(() => {
+    void loadDiarySignals();
+  }, [loadDiarySignals]);
 
   const handleComplete = useCallback(
     async (booking: StaffBookingSummary) => {
@@ -796,6 +826,26 @@ export function BookingsPage() {
         </div>
 
         {colorLegend.length > 0 ? <CategoryLegend categories={colorLegend} /> : null}
+
+        {/* Operational intelligence for the day. Renders nothing at all when
+            there is nothing worth saying, and is absent entirely if the signal
+            call failed — the calendar below is unaffected either way. */}
+        {diarySignals ? (
+          <div className="shrink-0">
+            <DiaryIntelligencePanel
+              backToBackColour={diarySignals.backToBackColour}
+              slotGaps={diarySignals.slotGaps}
+              noShowClients={bookings
+                .filter((booking) => diarySignals.noShowByAppointment[booking.id])
+                .map((booking) => ({
+                  clientName: booking.clientDisplayName,
+                  startsAt: booking.startsAt,
+                  signal: diarySignals.noShowByAppointment[booking.id],
+                }))}
+              timeZone={diarySignals.timezone}
+            />
+          </div>
+        ) : null}
 
         {!selectedLocationId ? (
           <AppCard padding="none" elevation="card" className="flex min-h-0 flex-1 items-center justify-center">

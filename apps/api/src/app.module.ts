@@ -15,6 +15,7 @@ import { FormulaChangeModule } from './formula-change/formula-change.module';
 import { HealthModule } from './health/health.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { ColourPrepModule } from './colour-prep/colour-prep.module';
+import { OperationalSignalsModule } from './operational-signals/operational-signals.module';
 import { OrdersModule } from './orders/orders.module';
 import { RetailPricingModule } from './retail-pricing/retail-pricing.module';
 import { LabAppointmentsModule } from './lab-appointments/lab-appointments.module';
@@ -82,6 +83,7 @@ import { validateEnv } from './config/env.validation';
     ClientIntelligenceModule,
     CampaignsModule,
     FormulaChangeModule,
+    OperationalSignalsModule,
     DashboardModule,
     KpiModule,
     RetailSalesModule,
