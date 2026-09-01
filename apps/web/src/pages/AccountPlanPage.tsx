@@ -1,4 +1,5 @@
 import { useAuth } from '../auth/AuthProvider';
+import { MessageUsagePanel } from '../components/account/MessageUsagePanel';
 import { PlanCard } from '../components/account/PlanCard';
 
 /**
@@ -21,6 +22,8 @@ export function AccountPlanPage() {
       </header>
 
       {accessToken ? <PlanCard accessToken={accessToken} /> : null}
+      {/* What the plan INCLUDES is above; what has actually been USED is here. */}
+      {accessToken ? <MessageUsagePanel accessToken={accessToken} /> : null}
     </div>
   );
 }

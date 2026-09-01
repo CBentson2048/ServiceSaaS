@@ -1,4 +1,5 @@
 import type {
+  MessageUsageResponse,
   OperationalSignalReport,
   OperationalSignalThresholds,
   FormulaChangeSettingsResponse,
@@ -3133,6 +3134,17 @@ export async function deleteUpsellRule(accessToken: string, ruleId: string): Pro
     method: 'DELETE',
     accessToken,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Message usage (Wrike 4507284256)
+// ---------------------------------------------------------------------------
+//
+// Read-only by design. There is deliberately no write counterpart: a salon
+// cannot tell the server how many messages it sent.
+
+export async function getMessageUsage(accessToken: string): Promise<MessageUsageResponse> {
+  return request<MessageUsageResponse>('/account/message-usage', { accessToken });
 }
 
 // ---------------------------------------------------------------------------

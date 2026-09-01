@@ -28,6 +28,7 @@ import { LabPinModule } from './lab-pin/lab-pin.module';
 import { LabSessionModule } from './lab-session/lab-session.module';
 import { KpiModule } from './kpi/kpi.module';
 import { LocationsModule } from './locations/locations.module';
+import { MessageUsageModule } from './message-usage/message-usage.module';
 import { MobileDashboardModule } from './mobile-dashboard/mobile-dashboard.module';
 import { OwnerBillingSettingsModule } from './owner-billing-settings/owner-billing-settings.module';
 import { OwnerBookingSettingsModule } from './owner-booking-settings/owner-booking-settings.module';
@@ -84,6 +85,7 @@ import { validateEnv } from './config/env.validation';
     CampaignsModule,
     FormulaChangeModule,
     OperationalSignalsModule,
+    MessageUsageModule,
     DashboardModule,
     KpiModule,
     RetailSalesModule,

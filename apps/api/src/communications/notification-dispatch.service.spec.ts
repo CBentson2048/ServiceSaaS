@@ -3,6 +3,7 @@ import type { LocationCommunicationSettings } from '@sheer/domain';
 import type { CommunicationSettingsService } from './communication-settings.service';
 import { MessagingService } from './messaging.service';
 import { NotificationDispatchService } from './notification-dispatch.service';
+import type { MessageUsageService } from '../message-usage/message-usage.service';
 import { NotificationEscalationService } from './notification-escalation.service';
 import { NotificationSubjectRegistry } from './notification-subject.registry';
 import type { OptOutService } from './opt-out.service';
@@ -213,7 +214,17 @@ function makeDispatcher(
   (messaging as unknown as { admin: unknown }).admin = admin;
   const escalation = new NotificationEscalationService(subjects, messaging);
 
-  const d = new NotificationDispatchService(config, providers, templates, subjects, messaging, escalation);
+  // Usage accounting is asserted in its own suites. Here it is a permissive stub:
+  // `checkCap` allowing everything reproduces the shipped `track_only` default,
+  // so these dispatcher specs measure dispatcher behaviour and nothing else.
+  const messageUsage = {
+    checkCap: jest.fn(async () => ({ allow: true, warn: false })),
+    recordSend: jest.fn(async () => ({ counted: true })),
+  } as unknown as MessageUsageService;
+
+  const d = new NotificationDispatchService(
+    config, providers, templates, subjects, messaging, escalation, messageUsage,
+  );
   (d as unknown as { admin: unknown }).admin = admin;
   return { d, whatsapp, sms, email };
 }

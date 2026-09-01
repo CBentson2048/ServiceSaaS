@@ -10,6 +10,8 @@ export * from './campaigns';
 export * from './formula-change';
 
 export * from './operational-signals';
+
+export * from './message-usage';
 // In-app notification contracts + the canonical notification-type registry.
 export * from './notifications';
 // Upsell contracts + the canonical rule/pattern precedence and ranking.

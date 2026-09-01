@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { EmailModule } from '../email/email.module';
+import { MessageUsageModule } from '../message-usage/message-usage.module';
 import { BookingNotificationService } from './booking-notification.service';
 import { CommunicationSettingsService } from './communication-settings.service';
 import { MessagingService } from './messaging.service';
@@ -33,7 +34,7 @@ import { WhatsAppTemplateConfig } from './whatsapp-template.config';
  * (`POST /api/email/status`), whose bounces feed {@link NotificationEscalationService}.
  */
 @Module({
-  imports: [EmailModule],
+  imports: [EmailModule, MessageUsageModule],
   controllers: [ResendWebhookController],
   providers: [
     WhatsAppService,

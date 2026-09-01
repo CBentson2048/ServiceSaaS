@@ -14,8 +14,11 @@ import {
 import { MessagingService } from './messaging.service';
 import { NotificationEscalationService } from './notification-escalation.service';
 import { EMAIL_CHANNEL, SMS_CHANNEL, WHATSAPP_CHANNEL } from './notification.types';
+import { MESSAGE_CAP_REACHED_REASON } from '@sheer/domain';
+import { MessageUsageService } from '../message-usage/message-usage.service';
 import {
   NOTIFICATION_EVENT_COLUMNS,
+  readMessageClass,
   type NotificationEventRow,
   type NotificationSubject,
   type RenderedChannelMessage,
@@ -79,6 +82,7 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
     private readonly subjects: NotificationSubjectRegistry,
     private readonly messaging: MessagingService,
     private readonly escalation: NotificationEscalationService,
+    private readonly messageUsage: MessageUsageService,
   ) {
     const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
@@ -247,6 +251,18 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
       );
     }
 
+    // ENFORCEMENT, before the provider is touched (Wrike 4507284256 §24/§38).
+    // Only a `block_at_cap` plan ever refuses; the shipped default tracks and
+    // records an overage instead, so a salon is never unexpectedly silenced. A
+    // refusal is recorded with its own structured reason — never disguised as a
+    // provider failure — and the originating booking/checkout is unaffected
+    // because nothing upstream awaits this dispatcher at all.
+    const capDecision = await this.messageUsage.checkCap(event.business_id, channel);
+    if (!capDecision.allow) {
+      await this.skipEvent(event, subject, channel, MESSAGE_CAP_REACHED_REASON);
+      return;
+    }
+
     const logId = await this.ensureMessageLog(event, subject, channel, rendered);
     const result = await provider.send({
       to: recipient,
@@ -413,6 +429,28 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
       .from('notification_events')
       .update({ status: 'sent', sent_at: nowIso, locked_until: null })
       .eq('id', event.id);
+
+    // ACCOUNTING (Wrike 4507284256). This is the platform's single "a provider
+    // accepted a client message" transition, so recording here is what makes the
+    // allowance platform-wide: campaigns, confirmations, reminders and nudges all
+    // pass through it without a line of caller-side code.
+    //
+    // Exactly once per LOGICAL message — the recorder keys on identity that is
+    // stable across retries of this event AND across the WhatsApp → SMS → Email
+    // fallback chain, so a message that failed over costs one unit, not two.
+    //
+    // Never throws: the message HAS been sent, and failing here must not make the
+    // dispatcher re-send it. A failure is logged with the logical key and is
+    // recoverable from `sent_at` via MessageUsageService.backfillUnrecordedSends.
+    await this.messageUsage.recordSend({
+      eventId: event.id,
+      businessId: event.business_id,
+      dedupeKey: event.dedupe_key,
+      appointmentId: event.appointment_id,
+      eventKey: event.event_key,
+      channel: event.channel,
+      messageClass: readMessageClass(event.payload_json),
+    });
   }
 
   /**
