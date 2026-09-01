@@ -57,6 +57,7 @@ import { RotaPage } from './pages/RotaPage';
 import { NewWeekRotaPage } from './pages/NewWeekRotaPage';
 import { ServiceCategoriesPage } from './pages/ServiceCategoriesPage';
 import { ServiceManagementPage } from './pages/ServiceManagementPage';
+import { CampaignsPage } from './pages/CampaignsPage';
 import { UpsellRulesPage } from './pages/UpsellRulesPage';
 import { ServicesPage } from './pages/ServicesPage';
 import { SheerLabPage } from './pages/SheerLabPage';
@@ -354,6 +355,20 @@ export function App() {
             <Route path="/settings/add-on-rules" element={<UpsellRulesPage />} />
             {/* Legacy URL from before the location settings hub — redirects into it. */}
             <Route path="/settings/booking" element={<LegacyBookingSettingsRedirect />} />
+          </Route>
+          {/* Campaigns are OWNER-only, not owner-or-manager: they decide who the
+              salon messages. The API enforces the same pair (owner role +
+              settings.booking.manage) independently, so this guard only spares a
+              manager a 403 they could not have acted on anyway. */}
+          <Route
+            element={
+              <ProtectedRoute
+                allowedRoles={['owner']}
+                requiredPermissions={['settings.booking.manage']}
+              />
+            }
+          >
+            <Route path="/campaigns" element={<CampaignsPage />} />
           </Route>
           <Route
             element={

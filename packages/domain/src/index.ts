@@ -4,6 +4,8 @@ export * from './tax';
 export * from './payroll';
 // Client Intelligence contracts + the single trusted lapsed-client calculation.
 export * from './client-intelligence';
+
+export * from './campaigns';
 // In-app notification contracts + the canonical notification-type registry.
 export * from './notifications';
 // Upsell contracts + the canonical rule/pattern precedence and ranking.

@@ -1,4 +1,12 @@
 import type {
+  CampaignAudiencePreview,
+  CampaignDetail,
+  CampaignResponse,
+  CampaignRunSummary,
+  CampaignStatus,
+  ListCampaignRunsResponse,
+  ListCampaignsResponse,
+  UpsertCampaignRequest,
   AbsenceMutationResponse,
   AcceptBookingResponse,
   CancelAppointmentRequest,
@@ -3121,4 +3129,91 @@ export async function deleteUpsellRule(accessToken: string, ruleId: string): Pro
     method: 'DELETE',
     accessToken,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Campaigns (Wrike 4507283957)
+// ---------------------------------------------------------------------------
+//
+// Owner-only, gated server-side on the owner role plus `settings.booking.manage`.
+// There is deliberately no "send to these clients" call: the server always
+// derives the audience from the campaign's own configuration.
+
+export async function listCampaigns(
+  accessToken: string,
+  params: { includeArchived?: boolean } = {},
+): Promise<ListCampaignsResponse> {
+  const search = new URLSearchParams();
+  if (params.includeArchived) search.set('includeArchived', 'true');
+  const query = search.toString();
+  return request<ListCampaignsResponse>(`/campaigns${query ? `?${query}` : ''}`, { accessToken });
+}
+
+export async function createCampaign(
+  accessToken: string,
+  payload: UpsertCampaignRequest,
+): Promise<CampaignDetail> {
+  const result = await request<CampaignResponse>('/campaigns', {
+    method: 'POST',
+    accessToken,
+    body: payload,
+  });
+  return result.campaign;
+}
+
+export async function updateCampaign(
+  accessToken: string,
+  campaignId: string,
+  payload: Partial<Omit<UpsertCampaignRequest, 'campaignType'>>,
+): Promise<CampaignDetail> {
+  const result = await request<CampaignResponse>(`/campaigns/${encodeURIComponent(campaignId)}`, {
+    method: 'PATCH',
+    accessToken,
+    body: payload,
+  });
+  return result.campaign;
+}
+
+export async function setCampaignStatus(
+  accessToken: string,
+  campaignId: string,
+  status: CampaignStatus,
+): Promise<CampaignDetail> {
+  const result = await request<CampaignResponse>(`/campaigns/${encodeURIComponent(campaignId)}/status`, {
+    method: 'PATCH',
+    accessToken,
+    body: { status },
+  });
+  return result.campaign;
+}
+
+/** Read-only: the server enqueues nothing and sends nothing for a preview. */
+export async function previewCampaignAudience(
+  accessToken: string,
+  campaignId: string,
+): Promise<CampaignAudiencePreview> {
+  return request<CampaignAudiencePreview>(
+    `/campaigns/${encodeURIComponent(campaignId)}/audience-preview`,
+    { accessToken },
+  );
+}
+
+export async function listCampaignRuns(
+  accessToken: string,
+  campaignId: string,
+): Promise<ListCampaignRunsResponse> {
+  return request<ListCampaignRunsResponse>(`/campaigns/${encodeURIComponent(campaignId)}/runs`, {
+    accessToken,
+  });
+}
+
+/** Evaluate an active campaign now — the same guarded run path the scheduler uses. */
+export async function runCampaignNow(
+  accessToken: string,
+  campaignId: string,
+): Promise<{ run: CampaignRunSummary | null; message: string }> {
+  return request<{ run: CampaignRunSummary | null; message: string }>(
+    `/campaigns/${encodeURIComponent(campaignId)}/run`,
+    { method: 'POST', accessToken },
+  );
 }

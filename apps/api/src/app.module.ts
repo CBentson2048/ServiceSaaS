@@ -4,6 +4,7 @@ import { AccountModule } from './account/account.module';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
 import { BillsModule } from './bills/bills.module';
+import { CampaignsModule } from './campaigns/campaigns.module';
 import { CommunicationsModule } from './communications/communications.module';
 import { RequestResponseLoggingMiddleware } from './common/request-response-logging.middleware';
 import { ClientIntelligenceModule } from './client-intelligence/client-intelligence.module';
@@ -78,6 +79,7 @@ import { validateEnv } from './config/env.validation';
     TwilioModule,
     CrmModule,
     ClientIntelligenceModule,
+    CampaignsModule,
     DashboardModule,
     KpiModule,
     RetailSalesModule,

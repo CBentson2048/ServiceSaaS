@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import type { CommunicationPreference } from '@sheer/domain';
 import { CommunicationSettingsService } from './communication-settings.service';
 import { resolveChannelPlan, type ChannelPlan, type DeliveryChannel } from './channel-policy';
 import {
@@ -36,6 +37,19 @@ export interface SendMessageRequest {
   scheduledFor?: Date;
   /** Optional appointment anchor — makes this an appointment-subject message. */
   appointmentId?: string;
+  /**
+   * Narrow the delivery chain for this message — nothing more. Treated as an additional starting
+   * point in the canonical WhatsApp → SMS → Email order: the message starts at whichever of this
+   * and the client's own stored preference sits FURTHER DOWN the chain.
+   *
+   * A campaign configured "email only" therefore reaches an email-preferring client on email and a
+   * WhatsApp-preferring client on email, while a campaign configured "WhatsApp" can never drag an
+   * email-preferring client back up to WhatsApp. Callers cannot widen a chain, reorder it, or skip
+   * a channel in the middle of it — WhatsApp-first stays canonical and stays here.
+   *
+   * Snapshotted onto the event, so every fallback the dispatcher later queues honours it too.
+   */
+  channelPreference?: CommunicationPreference;
   /** Extra fields recorded on the event payload for audit. */
   metadata?: Record<string, unknown>;
 }
@@ -235,6 +249,7 @@ export class MessagingService {
       event_key: request.eventKey,
       message_class: messageClass,
       generated_at: now.toISOString(),
+      ...(request.channelPreference ? { channel_preference: request.channelPreference } : {}),
       ...(request.content ? { content: request.content } : {}),
     };
   }

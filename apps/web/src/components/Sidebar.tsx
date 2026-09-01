@@ -64,6 +64,15 @@ const NAV: NavItem[] = [
     permission: 'services.manage',
   },
   {
+    to: '/campaigns',
+    label: 'Campaigns',
+    // Deliberately NOT SparkIcon. Campaigns are deterministic owner-written
+    // rules and templates; sharing ZAC's icon would suggest AI wrote the copy.
+    icon: CrmIcon,
+    allowedRoles: ['owner'],
+    permission: 'settings.booking.manage',
+  },
+  {
     to: '/settings/add-on-rules',
     label: 'Suggested add-ons',
     // Deliberately NOT SparkIcon: that is ZAC's icon, and these suggestions are

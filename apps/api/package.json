@@ -18,6 +18,7 @@
     "seed-week6-colour-prep": "ts-node --transpile-only scripts/seed-week6-colour-prep.ts",
     "seed-dead-stock": "ts-node --transpile-only scripts/seed-dead-stock.ts",
     "seed-upsell-demo": "ts-node --transpile-only scripts/seed-upsell-demo.ts",
+    "seed-campaign-demo": "ts-node --transpile-only scripts/seed-campaign-demo.ts",
     "week6-acceptance": "ts-node --transpile-only scripts/week6-acceptance.ts",
     "notifications-acceptance": "ts-node --transpile-only scripts/notifications-acceptance.ts",
     "zac-routing-eval": "ts-node --transpile-only scripts/zac-routing-eval.ts",

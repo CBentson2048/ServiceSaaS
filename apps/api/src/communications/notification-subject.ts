@@ -148,6 +148,46 @@ export function readMessageClass(payload: Record<string, unknown> | null): Messa
   return payload?.['message_class'] === 'marketing' ? 'marketing' : 'transactional';
 }
 
+/** The canonical chain order. Must match CANONICAL_ORDER in channel-policy.ts. */
+const CANONICAL_PREFERENCE_ORDER: CommunicationPreference[] = ['whatsapp', 'sms', 'email'];
+
+/**
+ * A caller-supplied narrowing of the delivery chain, snapshotted onto the event
+ * payload at enqueue time (`payload_json.channel_preference`).
+ *
+ * Campaigns need this: an owner may configure a campaign to go out by email only.
+ * It is stored on the EVENT rather than passed at send time so it survives into
+ * every fallback the dispatcher later queues for the same message — otherwise a
+ * WhatsApp-excluded campaign could escalate onto WhatsApp days later.
+ */
+export function readChannelPreference(
+  payload: Record<string, unknown> | null,
+): CommunicationPreference | null {
+  const raw = payload?.['channel_preference'];
+  return CANONICAL_PREFERENCE_ORDER.includes(raw as CommunicationPreference)
+    ? (raw as CommunicationPreference)
+    : null;
+}
+
+/**
+ * The more RESTRICTIVE of two starting points in the WhatsApp → SMS → Email
+ * chain — the one further down it.
+ *
+ * Narrow-only by construction. A caller's preference can remove channels from a
+ * client's chain but can never move the client back up it: a client who has
+ * chosen email is never messaged on WhatsApp because a campaign asked for
+ * WhatsApp. This is what stops a campaign becoming a second channel policy.
+ */
+export function narrowerPreference(
+  a: CommunicationPreference | null | undefined,
+  b: CommunicationPreference | null | undefined,
+): CommunicationPreference | null {
+  const ia = a ? CANONICAL_PREFERENCE_ORDER.indexOf(a) : -1;
+  const ib = b ? CANONICAL_PREFERENCE_ORDER.indexOf(b) : -1;
+  const i = Math.max(ia, ib);
+  return i < 0 ? null : CANONICAL_PREFERENCE_ORDER[i];
+}
+
 function isStringRecord(value: unknown): boolean {
   return (
     Boolean(value) &&

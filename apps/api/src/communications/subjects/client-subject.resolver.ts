@@ -4,6 +4,8 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { CommunicationPreference } from '@sheer/domain';
 import type { ContactEligibility, DeliveryChannel } from '../channel-policy';
 import {
+  narrowerPreference,
+  readChannelPreference,
   readMessageClass,
   readSnapshotContent,
   type MessageClass,
@@ -107,8 +109,19 @@ class ClientSubject implements NotificationSubject {
     return this.event.client_profile_id;
   }
 
+  /**
+   * The client's own stored preference, narrowed by any caller-supplied one on the event payload.
+   *
+   * The narrowing only ever moves the starting point FURTHER DOWN the WhatsApp → SMS → Email chain
+   * (see {@link narrowerPreference}), so an email-only campaign is honoured while a client who chose
+   * email is never pulled back onto WhatsApp. Reading it here — rather than at enqueue time — is what
+   * makes it hold for the dispatcher's send-time plan and for every fallback it later queues.
+   */
   get preference(): CommunicationPreference | null {
-    return (this.client.communication_preference as CommunicationPreference | null) ?? null;
+    return narrowerPreference(
+      (this.client.communication_preference as CommunicationPreference | null) ?? null,
+      readChannelPreference(this.event.payload_json),
+    );
   }
 
   get phone(): string | null {
@@ -140,9 +153,13 @@ class ClientSubject implements NotificationSubject {
 
   /** The content snapshot travels with every fallback, so a later channel sends the same message. */
   payloadSnapshot(): Record<string, unknown> {
+    const channelPreference = readChannelPreference(this.event.payload_json);
     return {
       content: this.content,
       message_class: readMessageClass(this.event.payload_json),
+      // Carried onto every fallback event, so a campaign restricted to one channel cannot escalate
+      // onto a channel the owner excluded days after the original attempt.
+      ...(channelPreference ? { channel_preference: channelPreference } : {}),
     };
   }
 
