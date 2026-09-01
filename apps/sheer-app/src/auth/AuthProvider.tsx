@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import * as SecureStore from 'expo-secure-store';
+import { disablePushDevice } from '../notifications/pushRegistration';
 import { router } from 'expo-router';
 import type { AuthSession, AuthUser } from '@sheer/domain';
 import * as authApi from './api';
@@ -121,6 +122,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     const currentSession = session;
+    // Stop pushing to this handset BEFORE the token is discarded — afterwards
+    // there is nothing left to authenticate the call with, and the next person to
+    // pick the phone up would keep buzzing for the previous stylist's clients.
+    // Best effort: a failure here must never block signing out.
+    await disablePushDevice(currentSession?.accessToken).catch(() => undefined);
     await clearSession();
     await authApi.logout(currentSession?.accessToken, currentSession?.refreshToken).catch(() => undefined);
   }, [clearSession, session]);

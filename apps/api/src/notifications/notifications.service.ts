@@ -186,6 +186,13 @@ export class NotificationsService {
       deduplicated: Boolean(row.deduplicated),
     };
 
+    // Push is queued only for a notification that actually exists and is NEW. A
+    // deduplicated call means the recipients were already notified (and already
+    // pushed) the first time, so re-queueing would push the same arrival twice.
+    if (result.notificationId && !result.deduplicated) {
+      await this.enqueuePushSafe(result.notificationId);
+    }
+
     if (!result.notificationId) {
       // Everyone requested was ineligible at write time. Nothing was written — say
       // so loudly, because a producer silently notifying nobody is a real defect
@@ -485,6 +492,45 @@ export class NotificationsService {
     }
     if (!data) return null;
     return toNotificationDto(data);
+  }
+
+  /**
+   * Queue a push attempt per registered device of the notification's recipients.
+   *
+   * NEVER THROWS, and deliberately so: the in-app notification is already written
+   * and is the durable record the stylist reads. A failure to queue push must
+   * degrade to "their phone stayed quiet", never to a failed create() — which, via
+   * createSafe, would otherwise be indistinguishable from the notification itself
+   * failing, and via a future throwing caller could reach a check-in.
+   *
+   * The database decides who gets a push: comms.enqueue_push_for_notification
+   * reads the recipients this notification already has and expands them to their
+   * own enabled, token-carrying devices. No recipient logic is repeated here, and
+   * a user with no device simply queues nothing — that is the "push not supported"
+   * path, not an error.
+   */
+  private async enqueuePushSafe(notificationId: string): Promise<void> {
+    try {
+      const { data, error } = await this.admin
+        .schema('comms')
+        .rpc('enqueue_push_for_notification', { p_notification_id: notificationId });
+
+      if (error) {
+        this.logger.error(`enqueue push for ${notificationId} failed: ${error.message}`);
+        return;
+      }
+      const queued = Number(Array.isArray(data) ? data[0] : data) || 0;
+      if (queued === 0) {
+        // Normal and common at pilot scale: the stylist has not installed the app
+        // or has not granted notification permission. Logged at debug so it does
+        // not read as a fault in production logs.
+        this.logger.debug(`notification ${notificationId}: no push-capable device, in-app only`);
+      } else {
+        this.logger.log(`notification ${notificationId}: queued ${queued} push delivery(ies)`);
+      }
+    } catch (err) {
+      this.logger.error(`enqueue push for ${notificationId} threw: ${(err as Error)?.message ?? err}`);
+    }
   }
 
   private assertValidInput(input: CreateNotificationInput): void {

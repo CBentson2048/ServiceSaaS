@@ -28,6 +28,12 @@ import type {
   MobileOwnerDashboardResponse,
   MobileStylistDashboardResponse,
   MyLeaveRequestsResponse,
+  ListNotificationsResponse,
+  MarkAllNotificationsReadResponse,
+  MarkNotificationResponse,
+  RegisterUserDeviceResponse,
+  UnreadCountResponse,
+  DevicePlatform,
   MyPaySummariesResponse,
   PaySummaryDetailResponse,
   PublicBookingAttemptResponse,
@@ -696,4 +702,83 @@ function extractErrorMessage(payload: unknown): string | undefined {
     return value.map((entry) => (typeof entry === 'string' ? entry : JSON.stringify(entry))).join(', ');
   }
   return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// In-app notifications (Wrike 4507284172 — arrival alerts)
+// ---------------------------------------------------------------------------
+//
+// Thin bindings over the routes migration 0099's service layer already exposes.
+// No filtering, scoping or read-state logic lives here on purpose: the API
+// derives the recipient from the access token, so there is no userId to pass and
+// no way for this client to widen what it sees.
+
+/** The signed-in stylist's own feed, newest first. */
+export async function listNotifications(
+  accessToken: string,
+  options: { unreadOnly?: boolean; page?: number; pageSize?: number } = {},
+): Promise<ListNotificationsResponse> {
+  const query = new URLSearchParams();
+  if (options.unreadOnly) query.set('unreadOnly', 'true');
+  if (options.page) query.set('page', String(options.page));
+  if (options.pageSize) query.set('pageSize', String(options.pageSize));
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return request<ListNotificationsResponse>(`/notifications${suffix}`, { accessToken });
+}
+
+/** Just the badge number. Cheap enough to poll. */
+export async function getUnreadNotificationCount(
+  accessToken: string,
+): Promise<UnreadCountResponse> {
+  return request<UnreadCountResponse>('/notifications/unread-count', { accessToken });
+}
+
+export async function markNotificationRead(
+  accessToken: string,
+  notificationId: string,
+): Promise<MarkNotificationResponse> {
+  return request<MarkNotificationResponse>(
+    `/notifications/${encodeURIComponent(notificationId)}/read`,
+    { method: 'PATCH', accessToken },
+  );
+}
+
+export async function markAllNotificationsRead(
+  accessToken: string,
+): Promise<MarkAllNotificationsReadResponse> {
+  return request<MarkAllNotificationsReadResponse>('/notifications/read-all', {
+    method: 'POST',
+    accessToken,
+  });
+}
+
+/**
+ * Register (or refresh) this installation for push. Idempotent — called on every
+ * sign-in and again whenever the OS rotates the token.
+ *
+ * `pushToken` is omitted when the user has not granted notification permission;
+ * the device row is still created so the stylist appears as a known installation,
+ * and comms.register_user_device preserves any previously stored token rather
+ * than clearing it.
+ */
+export async function registerPushDevice(
+  accessToken: string,
+  payload: { deviceIdentifier: string; platform: DevicePlatform; pushToken?: string },
+): Promise<RegisterUserDeviceResponse> {
+  return request<RegisterUserDeviceResponse>('/notifications/devices', {
+    method: 'POST',
+    accessToken,
+    body: payload,
+  });
+}
+
+/** Stop pushing to this installation. Called on sign-out. */
+export async function disablePushDevice(
+  accessToken: string,
+  deviceId: string,
+): Promise<RegisterUserDeviceResponse> {
+  return request<RegisterUserDeviceResponse>(
+    `/notifications/devices/${encodeURIComponent(deviceId)}`,
+    { method: 'DELETE', accessToken },
+  );
 }

@@ -99,11 +99,22 @@ function feedRow(
   };
 }
 
+/**
+ * Push enqueue stand-in. Registered by default in every test so the shared
+ * creation path does not log a "not faked" error in unrelated specs; a test that
+ * cares about push overrides it. Returns the number of delivery rows created,
+ * exactly as comms.enqueue_push_for_notification does.
+ */
+const enqueuePushRpcOk: RpcHandler = () => ({ data: 1, error: null });
+
 function makeService(
   seed: Record<string, Array<Record<string, unknown>>> = {},
   rpcs: Record<string, RpcHandler> = {},
 ): { service: NotificationsService; state: SupabaseFakeState } {
-  const state = createSupabaseFakeState(seed, rpcs);
+  const state = createSupabaseFakeState(seed, {
+    enqueue_push_for_notification: enqueuePushRpcOk,
+    ...rpcs,
+  });
   (globalThis as { __supabaseFake?: unknown }).__supabaseFake = createSupabaseFake(state);
   const config = {
     get: jest.fn(),
@@ -668,5 +679,120 @@ describe('NotificationsService read state', () => {
       ],
     });
     expect(await service.markAllRead(actor())).toEqual({ markedCount: 0, unreadCount: 0 });
+  });
+});
+
+/**
+ * Push enqueue, from the creation path's point of view.
+ *
+ * The RULE these guard: queueing push is downstream of a notification that has
+ * already been written, and it can never change whether creation succeeded. The
+ * delivery itself is PushDispatchService's job and is tested there.
+ */
+describe('NotificationsService push enqueue', () => {
+  const membership = {
+    'core.user_memberships': [{ business_id: BUSINESS_ID, user_profile_id: STYLIST_ID }],
+  };
+
+  const input = () => ({
+    businessId: BUSINESS_ID,
+    locationId: LOCATION_ID,
+    type: NotificationType.ClientArrived,
+    title: 'Client arrived',
+    body: 'Jane has arrived.',
+    recipientUserProfileIds: [STYLIST_ID],
+  });
+
+  it('queues push for the notification it just created', async () => {
+    const { service, state } = makeService(membership, { create_notification: createRpcOk });
+
+    await service.create(input());
+
+    const call = state.rpcLog.find((entry) => entry.name === 'enqueue_push_for_notification');
+    expect(call).toBeDefined();
+    // The id comes from the create RPC's answer, never from the caller: push must
+    // attach to the row that was actually written.
+    expect(call?.args).toEqual({ p_notification_id: 'n0000000-0000-0000-0000-0000000000ff' });
+  });
+
+  it('does NOT queue push for a deduplicated create', async () => {
+    const { service, state } = makeService(membership, {
+      create_notification: () => ({
+        data: [
+          {
+            notification_id: 'n0000000-0000-0000-0000-0000000000ff',
+            recipient_count: 1,
+            requested_count: 1,
+            deduplicated: true,
+          },
+        ],
+        error: null,
+      }),
+    });
+
+    const result = await service.create({ ...input(), dedupeKey: 'client_arrived:appt-1' });
+
+    expect(result.deduplicated).toBe(true);
+    // A double-tapped check-in resolves to the FIRST notification, which was
+    // already pushed. Queueing again would buzz the stylist twice for one arrival.
+    expect(state.rpcLog.some((entry) => entry.name === 'enqueue_push_for_notification')).toBe(false);
+  });
+
+  it('does NOT queue push when no notification was written', async () => {
+    const { service, state } = makeService(membership, {
+      create_notification: () => ({
+        data: [
+          {
+            notification_id: null,
+            recipient_count: 0,
+            requested_count: 1,
+            deduplicated: false,
+          },
+        ],
+        error: null,
+      }),
+    });
+
+    await service.create(input());
+
+    expect(state.rpcLog.some((entry) => entry.name === 'enqueue_push_for_notification')).toBe(false);
+  });
+
+  it('still reports success when the push queue is broken', async () => {
+    const { service } = makeService(membership, {
+      create_notification: createRpcOk,
+      enqueue_push_for_notification: () => ({ data: null, error: { message: 'outbox unavailable' } }),
+    });
+
+    // The in-app notification is the durable record. A dead push outbox must not
+    // turn a written notification into a failed create — which, through createSafe,
+    // would be indistinguishable from the notification itself failing.
+    const result = await service.create(input());
+    expect(result.notificationId).toBe('n0000000-0000-0000-0000-0000000000ff');
+    expect(result.recipientCount).toBe(1);
+  });
+
+  it('still reports success when the push queue throws', async () => {
+    const { service } = makeService(membership, {
+      create_notification: createRpcOk,
+      enqueue_push_for_notification: () => {
+        throw new Error('connection reset');
+      },
+    });
+
+    await expect(service.create(input())).resolves.toMatchObject({
+      notificationId: 'n0000000-0000-0000-0000-0000000000ff',
+    });
+  });
+
+  it('treats zero push-capable devices as normal, not as a failure', async () => {
+    const { service } = makeService(membership, {
+      create_notification: createRpcOk,
+      // The stylist has not installed the app, or denied notification permission.
+      // This is the "push not supported" path the ticket asks to degrade gracefully.
+      enqueue_push_for_notification: () => ({ data: 0, error: null }),
+    });
+
+    await expect(service.create(input())).resolves.toMatchObject({ recipientCount: 1 });
   });
 });

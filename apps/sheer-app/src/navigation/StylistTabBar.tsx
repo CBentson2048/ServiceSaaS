@@ -5,6 +5,7 @@ import { router, usePathname } from 'expo-router';
 import { userHasPermission } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { useAuth } from '../auth/AuthProvider';
+import { useNotifications } from '../notifications/NotificationsProvider';
 
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 
@@ -23,6 +24,16 @@ const TABS: StylistTab[] = [
   { key: 'home', label: 'Home', href: '/performance', icon: 'home-outline', activeIcon: 'home' },
   { key: 'schedule', label: 'Schedule', href: '/bookings', icon: 'calendar-outline', activeIcon: 'calendar' },
   { key: 'rota', label: 'Rota', href: '/rota', icon: 'time-outline', activeIcon: 'time' },
+  // Arrival alerts (Wrike 4507284172) live here rather than behind a bell in a
+  // header: this app has no persistent header, and a tab carrying a badge is the
+  // only surface a stylist sees from every screen.
+  {
+    key: 'alerts',
+    label: 'Alerts',
+    href: '/notifications',
+    icon: 'notifications-outline',
+    activeIcon: 'notifications',
+  },
   { key: 'profile', label: 'Profile', href: '/profile', icon: 'person-outline', activeIcon: 'person' },
 ];
 
@@ -40,6 +51,7 @@ const ZAC_TAB: StylistTab = {
 export function StylistTabBar() {
   const pathname = usePathname();
   const { user } = useAuth();
+  const { unreadCount } = useNotifications();
   const tabs = userHasPermission(user, 'zac.access') ? [...TABS, ZAC_TAB] : TABS;
 
   return (
@@ -52,7 +64,11 @@ export function StylistTabBar() {
               key={tab.key}
               accessibilityRole="tab"
               accessibilityState={{ selected: active }}
-              accessibilityLabel={tab.label}
+              accessibilityLabel={
+                tab.key === 'alerts' && unreadCount > 0
+                  ? `${tab.label}, ${unreadCount} unread`
+                  : tab.label
+              }
               // Tabs replace the current route so the stack stays flat — there
               // is no "back" between top-level tabs, matching native tab UX.
               onPress={() => {
@@ -60,11 +76,21 @@ export function StylistTabBar() {
               }}
               style={({ pressed }) => [s.item, pressed && s.pressed]}
             >
-              <Ionicons
-                name={active ? tab.activeIcon : tab.icon}
-                size={22}
-                color={active ? BRAND_LIGHT : INACTIVE}
-              />
+              <View>
+                <Ionicons
+                  name={active ? tab.activeIcon : tab.icon}
+                  size={22}
+                  color={active ? BRAND_LIGHT : INACTIVE}
+                />
+                {tab.key === 'alerts' && unreadCount > 0 ? (
+                  // Hidden from the accessibility tree because the count is
+                  // already in the tab's accessibilityLabel below; announcing it
+                  // twice is worse than not announcing it.
+                  <View style={s.badge} accessibilityElementsHidden>
+                    <Text style={s.badgeText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
+                  </View>
+                ) : null}
+              </View>
               <Text style={[s.label, active && s.labelActive]}>{tab.label}</Text>
             </Pressable>
           );
@@ -104,4 +130,17 @@ const s = StyleSheet.create({
     letterSpacing: 0.3,
   },
   labelActive: { color: BRAND_LIGHT },
+  badge: {
+    position: 'absolute',
+    top: -5,
+    right: -9,
+    minWidth: 16,
+    height: 16,
+    paddingHorizontal: 4,
+    borderRadius: 8,
+    backgroundColor: palette.brand[500],
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  badgeText: { color: '#FFFFFF', fontSize: 10, fontWeight: '800' },
 });

@@ -3,6 +3,7 @@ import { StatusBar } from 'expo-status-bar';
 import { StripeProvider } from '@stripe/stripe-react-native';
 import { AuthProvider } from '../src/auth/AuthProvider';
 import { BookingFlowProvider } from '../src/booking/BookingFlowProvider';
+import { NotificationsProvider } from '../src/notifications/NotificationsProvider';
 import {
   STRIPE_MERCHANT_IDENTIFIER,
   STRIPE_PUBLISHABLE_KEY,
@@ -17,7 +18,12 @@ export default function RootLayout() {
       merchantIdentifier={STRIPE_MERCHANT_IDENTIFIER}
     >
       <AuthProvider>
-        <BookingFlowProvider>
+        {/*
+          Inside AuthProvider because it reads the session, and outside the
+          navigator because the alerts badge renders on every screen's tab bar.
+        */}
+        <NotificationsProvider>
+          <BookingFlowProvider>
           <StatusBar style="light" />
           <Stack
             screenOptions={{
@@ -54,6 +60,7 @@ export default function RootLayout() {
             <Stack.Screen name="new-booking" options={{ title: 'New booking' }} />
             <Stack.Screen name="rota" options={{ title: 'Rota' }} />
             <Stack.Screen name="performance" options={{ headerShown: false }} />
+            <Stack.Screen name="notifications" options={{ headerShown: false }} />
             <Stack.Screen name="booking/location" options={{ headerShown: false }} />
             <Stack.Screen name="booking/services" options={{ headerShown: false }} />
             <Stack.Screen name="booking/date-time" options={{ headerShown: false }} />
@@ -70,7 +77,8 @@ export default function RootLayout() {
               options={{ headerShown: false, gestureEnabled: false }}
             />
           </Stack>
-        </BookingFlowProvider>
+          </BookingFlowProvider>
+        </NotificationsProvider>
       </AuthProvider>
     </StripeProvider>
   );

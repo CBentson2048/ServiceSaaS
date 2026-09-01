@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import type { AppointmentCompletionResponse, CreateStylistRebookingRequest, StaffBookingSummary } from '@sheer/domain';
 import { userHasRole } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
@@ -13,6 +13,12 @@ import * as api from '../src/auth/api';
 export default function BookingsScreen() {
   const auth = useAuth();
   const accessToken = auth.session?.accessToken ?? '';
+  // Set when the stylist arrives from an arrival alert
+  // (/bookings?appointmentId=…, emitted by ArrivalNotificationService). This is
+  // the stylist's OWN schedule, loaded through getMyBookings, so opening a
+  // booking here widens no permission — an id that is not theirs simply is not in
+  // the list and nothing opens.
+  const { appointmentId } = useLocalSearchParams<{ appointmentId?: string }>();
   const [bookings, setBookings] = useState<StaffBookingSummary[]>([]);
   const [selectedBooking, setSelectedBooking] = useState<StaffBookingSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -24,6 +30,8 @@ export default function BookingsScreen() {
   const [rebookingLoading, setRebookingLoading] = useState(false);
   const [rebookingSkipped, setRebookingSkipped] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
+  // Which deep-linked appointment has already been auto-opened this session.
+  const openedDeepLinkFor = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     if (!accessToken) return;
@@ -42,6 +50,22 @@ export default function BookingsScreen() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Deep link from an arrival alert: once the schedule has loaded, open the
+  // appointment the notification pointed at. Guarded on `openedDeepLinkFor` so
+  // re-renders (or a later refresh) cannot yank the stylist back to it after they
+  // have navigated away themselves.
+  useEffect(() => {
+    if (!appointmentId || loading) return;
+    if (openedDeepLinkFor.current === appointmentId) return;
+    const target = bookings.find((booking) => booking.id === appointmentId);
+    if (!target) return;
+    openedDeepLinkFor.current = appointmentId;
+    void openBooking(target);
+    // openBooking is stable enough for this effect's purpose and is intentionally
+    // omitted: including it would re-run the effect on every render it recreates.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appointmentId, bookings, loading]);
 
   async function openBooking(booking: StaffBookingSummary) {
     if (!accessToken) return;

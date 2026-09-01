@@ -16,7 +16,7 @@
  * not send to them.
  */
 
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import type { AuthUser } from '@sheer/domain';
 import {
@@ -258,5 +258,49 @@ describe('UserDevicesService — a customer who has not joined a salon', () => {
   it('gets a 404 when disabling', async () => {
     const { service } = makeService({ 'comms.user_devices': [deviceRow()] });
     await expect(service.disable(salonless(), DEVICE_ID)).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+/**
+ * Push-token containment in logs (Wrike 4507284172).
+ *
+ * The class contract says a push token is never logged. The request/response
+ * middleware redacts it from HTTP bodies, but it does not touch Nest `Logger`
+ * output — so the service itself has to be careful, and a database error is the
+ * one place a token can leak, because Postgres quotes the failing statement.
+ */
+describe('UserDevicesService log containment', () => {
+  it('never writes the provider error message (which can quote the push token) to the log', async () => {
+    const { service } = makeService(
+      {},
+      {
+        register_user_device: () => ({
+          data: null,
+          error: {
+            // Exactly the shape that leaks: the statement, with the token in it.
+            message:
+              'insert into comms.user_devices ... push_token = \'ExponentPushToken[SECRET-abc123]\' violates constraint',
+            code: '23505',
+          },
+        }),
+      },
+    );
+    const errorLog = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+    await expect(
+      service.register(actor(), {
+        deviceIdentifier: 'sam-phone-0001',
+        platform: 'ios',
+        pushToken: 'ExponentPushToken[SECRET-abc123]',
+      }),
+    ).rejects.toThrow(InternalServerErrorException);
+
+    const logged = errorLog.mock.calls.map((call) => String(call[0])).join(' | ');
+    expect(logged).not.toContain('SECRET-abc123');
+    expect(logged).not.toContain('ExponentPushToken');
+    // The SQLSTATE is what actually helps diagnosis and carries no data.
+    expect(logged).toContain('23505');
+
+    errorLog.mockRestore();
   });
 });

@@ -244,6 +244,53 @@ export class EnvConfig {
   @IsString()
   COMMS_DISPATCH_MAX_DRAIN_BATCHES?: string;
 
+  // ---------------------------------------------------------------------------
+  // In-app notification push delivery (Expo). All optional: with none of these
+  // set, push runs with its defaults, and with push disabled entirely the in-app
+  // notification path is unaffected.
+  // ---------------------------------------------------------------------------
+
+  /** Set to `false` to stop draining the push outbox (in-app alerts still work). Defaults on. */
+  @IsOptional()
+  @IsString()
+  PUSH_DISPATCH_ENABLED?: string;
+
+  /** Push poll interval in ms (default 15000, clamped 5000-600000). Lower than the
+   * outbound dispatcher because an arrival alert ages badly. */
+  @IsOptional()
+  @IsString()
+  PUSH_DISPATCH_INTERVAL_MS?: string;
+
+  /** Max deliveries per push tick (default 50, capped at Expo's 100-message limit). */
+  @IsOptional()
+  @IsString()
+  PUSH_DISPATCH_BATCH_SIZE?: string;
+
+  /** Max send attempts before a push delivery is marked failed (default 3). */
+  @IsOptional()
+  @IsString()
+  PUSH_DISPATCH_MAX_ATTEMPTS?: string;
+
+  /** Max full batches a single push tick may drain for downtime catch-up (default 20). */
+  @IsOptional()
+  @IsString()
+  PUSH_DISPATCH_MAX_DRAIN_BATCHES?: string;
+
+  /** Set to `false` to turn the Expo transport off entirely. Defaults on. */
+  @IsOptional()
+  @IsString()
+  EXPO_PUSH_ENABLED?: string;
+
+  /** Expo access token. Only needed if the Expo project enables enhanced push security. */
+  @IsOptional()
+  @IsString()
+  EXPO_ACCESS_TOKEN?: string;
+
+  /** Expo request timeout in ms (default 10000, clamped 1000-60000). */
+  @IsOptional()
+  @IsString()
+  EXPO_PUSH_TIMEOUT_MS?: string;
+
   /**
    * Set to `true` to include HTTP request/response bodies in the application log.
    * LOCAL DEVELOPMENT ONLY — ordinary QLOOQO payloads carry client and staff

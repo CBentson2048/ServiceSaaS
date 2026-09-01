@@ -74,10 +74,16 @@ export class UserDevicesService {
     });
 
     if (error) {
-      // Deliberately does not echo error.message to the client: it can contain the
-      // statement, and the statement contains the push token.
+      // The message is not echoed to the client AND not logged verbatim: a
+      // PostgREST/Postgres error can quote the failing statement, and the
+      // statement carries the push token. Logging it would put a delivery
+      // address for someone's phone into the application log, contradicting the
+      // "never logged" contract this class states at the top — and the
+      // request/response log redaction does not cover Nest Logger output.
+      // The SQLSTATE is the part that aids diagnosis; it never contains data.
       this.logger.error(
-        `register device failed for user ${actor.id} business ${actor.businessId}: ${error.message}`,
+        `register device failed for user ${actor.id} business ${actor.businessId}` +
+          `${error.code ? ` (sqlstate ${error.code})` : ''}`,
       );
       throw new InternalServerErrorException('Unable to register device');
     }
