@@ -245,6 +245,37 @@ export class EnvConfig {
   COMMS_DISPATCH_MAX_DRAIN_BATCHES?: string;
 
   // ---------------------------------------------------------------------------
+  // Message-usage accounting recovery (0108). Repairs ledger gaps for messages a
+  // provider already accepted. It NEVER sends anything, so leaving it on is the
+  // safe default and turning it off only means gaps go unrepaired.
+  // ---------------------------------------------------------------------------
+
+  /** Set to `false` to stop the automatic accounting-recovery worker. Defaults on. */
+  @IsOptional()
+  @IsString()
+  MESSAGE_USAGE_RECOVERY_ENABLED?: string;
+
+  /** Recovery poll interval in ms (default 900000, clamped 60000-3600000). */
+  @IsOptional()
+  @IsString()
+  MESSAGE_USAGE_RECOVERY_INTERVAL_MS?: string;
+
+  /** Unaccounted sends repaired per batch (default 200, clamped 1-1000). Bounds MISSING entries, not recent sends. */
+  @IsOptional()
+  @IsString()
+  MESSAGE_USAGE_RECOVERY_BATCH_SIZE?: string;
+
+  /** Max batches one recovery tick may drain (default 5, clamped 1-100). */
+  @IsOptional()
+  @IsString()
+  MESSAGE_USAGE_RECOVERY_MAX_DRAIN_BATCHES?: string;
+
+  /** Seconds after sent_at before an event is eligible, so recovery never races the dispatcher (default 300, clamped 0-86400). */
+  @IsOptional()
+  @IsString()
+  MESSAGE_USAGE_RECOVERY_GRACE_SECONDS?: string;
+
+  // ---------------------------------------------------------------------------
   // In-app notification push delivery (Expo). All optional: with none of these
   // set, push runs with its defaults, and with push disabled entirely the in-app
   // notification path is unaffected.

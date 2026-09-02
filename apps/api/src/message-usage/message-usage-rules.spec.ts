@@ -119,6 +119,113 @@ describe('logical message identity', () => {
     expect(logicalMessageKey(base)).toBe('ev:evt-1');
   });
 
+  it('follows the CHAIN ROOT for a message with neither, so a fallback counts once', () => {
+    // Test G/H. The WhatsApp attempt is its own root; the SMS and email hops
+    // carry that root forward. Before 0108 each hop was a new event id and so a
+    // new logical message — one client message, three billed units.
+    const whatsapp = logicalMessageKey({ ...base, eventId: 'evt-wa' });
+    const sms = logicalMessageKey({ ...base, eventId: 'evt-sms', rootEventId: 'evt-wa' });
+    const email = logicalMessageKey({ ...base, eventId: 'evt-email', rootEventId: 'evt-wa' });
+
+    expect(whatsapp).toBe('ev:evt-wa');
+    expect(sms).toBe(whatsapp);
+    expect(email).toBe(whatsapp);
+    expect(new Set([whatsapp, sms, email]).size).toBe(1);
+  });
+
+  it('keeps two genuinely separate rootless messages apart', () => {
+    // The root must never MERGE messages: that would undercount, which is the
+    // failure a synthesised dedupe key would have introduced.
+    expect(logicalMessageKey({ ...base, eventId: 'evt-a' })).not.toBe(
+      logicalMessageKey({ ...base, eventId: 'evt-b' }),
+    );
+  });
+
+  it('ignores the root once a dedupe key or appointment exists', () => {
+    // Precedence is unchanged: the root is strictly the last resort.
+    expect(logicalMessageKey({ ...base, dedupeKey: 'dk-1', rootEventId: 'evt-root' })).toBe(
+      `dk:${BUSINESS}:dk-1`,
+    );
+    expect(logicalMessageKey({ ...base, appointmentId: 'appt-9', rootEventId: 'evt-root' })).toBe(
+      'ap:appt-9:booking_confirmation',
+    );
+  });
+
+  it('treats a blank root as no root at all', () => {
+    expect(logicalMessageKey({ ...base, rootEventId: '   ' })).toBe('ev:evt-1');
+    expect(logicalMessageKey({ ...base, rootEventId: null })).toBe('ev:evt-1');
+  });
+
+  // -------------------------------------------------------------------------
+  // Reminder OCCURRENCE identity (Wrike 4507284256 section 13)
+  // -------------------------------------------------------------------------
+
+  it('gives a reminder re-created for a NEW appointment time a NEW identity', () => {
+    // Occurrence A: the 24h reminder for the original appointment time.
+    const a = logicalMessageKey({
+      ...base,
+      appointmentId: 'appt-1',
+      eventKey: 'appointment_reminder_24h',
+      occurrenceKey: '2026-10-01T09:00:00Z',
+    });
+    // The appointment moves; occurrence B is a genuinely second message.
+    const b = logicalMessageKey({
+      ...base,
+      appointmentId: 'appt-1',
+      eventKey: 'appointment_reminder_24h',
+      occurrenceKey: '2026-10-08T09:00:00Z',
+    });
+
+    expect(a).not.toBe(b);
+    expect(a).toBe('ap:appt-1:appointment_reminder_24h@2026-10-01T09:00:00Z');
+  });
+
+  it('keeps ONE identity across a retry and a fallback of the SAME occurrence', () => {
+    // Same occurrence anchor, different event rows and channels — one unit.
+    const attempt = { ...base, appointmentId: 'appt-1', eventKey: 'appointment_reminder_24h', occurrenceKey: '2026-10-01T09:00:00Z' };
+    const whatsapp = logicalMessageKey({ ...attempt, eventId: 'evt-wa' });
+    const retry = logicalMessageKey({ ...attempt, eventId: 'evt-wa' });
+    const smsFallback = logicalMessageKey({ ...attempt, eventId: 'evt-sms' });
+
+    expect(new Set([whatsapp, retry, smsFallback]).size).toBe(1);
+  });
+
+  it('keeps reminder OFFSETS independently countable', () => {
+    // Four reminders for one appointment at one time are four messages, and
+    // adding the occurrence must not accidentally merge them.
+    const at = '2026-10-01T09:00:00Z';
+    const keys = ['appointment_reminder_2h', 'appointment_reminder_24h', 'appointment_reminder_48h', 'appointment_reminder_1w'].map(
+      (eventKey) => logicalMessageKey({ ...base, appointmentId: 'appt-1', eventKey, occurrenceKey: at }),
+    );
+    expect(new Set(keys).size).toBe(4);
+  });
+
+  it('leaves a one-shot appointment message unchanged when no occurrence applies', () => {
+    // A booking confirmation supplies no occurrence, so its key is byte-for-byte
+    // what it was before this change — the previous fix stays intact.
+    expect(logicalMessageKey({ ...base, appointmentId: 'appt-1', eventKey: 'booking_confirmation' })).toBe(
+      'ap:appt-1:booking_confirmation',
+    );
+    expect(logicalMessageKey({ ...base, appointmentId: 'appt-1', eventKey: 'rebooking_nudge' })).toBe(
+      'ap:appt-1:rebooking_nudge',
+    );
+  });
+
+  it('ignores an occurrence on a campaign key — dk: identities are untouched', () => {
+    expect(logicalMessageKey({ ...base, dedupeKey: 'campaign:x:1', occurrenceKey: '2026-10-01T09:00:00Z' })).toBe(
+      `dk:${BUSINESS}:campaign:x:1`,
+    );
+  });
+
+  it('treats a blank occurrence as no occurrence', () => {
+    expect(logicalMessageKey({ ...base, appointmentId: 'appt-1', occurrenceKey: '  ' })).toBe(
+      'ap:appt-1:booking_confirmation',
+    );
+    expect(logicalMessageKey({ ...base, appointmentId: 'appt-1', occurrenceKey: null })).toBe(
+      'ap:appt-1:booking_confirmation',
+    );
+  });
+
   it('never uses a provider message id — it changes per attempt', () => {
     const key = logicalMessageKey({ ...base, dedupeKey: 'dk-1' });
     expect(key).not.toMatch(/SM[0-9a-f]{10,}|provider/i);

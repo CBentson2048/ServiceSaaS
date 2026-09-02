@@ -70,6 +70,16 @@ export interface EnqueueOnChannelRequest {
   scheduledFor: Date;
   payload: Record<string, unknown>;
   dedupeKey?: string | null;
+  /**
+   * The first event of this message's fallback chain (0108). Set by
+   * NotificationEscalationService when it queues the next channel; omitted for
+   * an originating send, which is its own root.
+   *
+   * This is what keeps a message with neither a dedupe key nor an appointment
+   * anchored to ONE logical identity across the chain, so it costs one unit
+   * rather than one per hop.
+   */
+  rootEventId?: string | null;
 }
 
 export type EnqueueOutcome =
@@ -171,6 +181,7 @@ export class MessagingService {
         scheduled_for: request.scheduledFor.toISOString(),
         payload_json: request.payload,
         ...(request.dedupeKey ? { dedupe_key: request.dedupeKey } : {}),
+        ...(request.rootEventId ? { root_event_id: request.rootEventId } : {}),
       })
       .select('id')
       .maybeSingle<{ id: string }>();

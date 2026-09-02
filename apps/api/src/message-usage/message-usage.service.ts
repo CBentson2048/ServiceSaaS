@@ -98,10 +98,11 @@ export class MessageUsageService {
    *
    * NEVER THROWS INTO THE SEND PATH — but never silently swallows either. A
    * failure here is logged at error level WITH the logical key, and
-   * {@link backfillUnrecordedSends} recovers it from `sent_at` on the event,
-   * which is durable. That is the honest boundary: a provider call cannot be
-   * transactional with a database write, so this is effectively-once accounting
-   * with a deterministic repair, not exactly-once delivery.
+   * {@link recoverUnaccountedSends} recovers it from `sent_at` on the event,
+   * which is durable, on a timer that needs no operator. That is the honest
+   * boundary: a provider call cannot be transactional with a database write, so
+   * this is effectively-once accounting with an automatic deterministic repair,
+   * not exactly-once delivery.
    */
   async recordSend(input: {
     eventId: string;
@@ -111,6 +112,24 @@ export class MessageUsageService {
     eventKey: string;
     channel: string;
     messageClass?: string | null;
+    /** Chain root for a message with no dedupe key and no appointment (0108). */
+    rootEventId?: string | null;
+    /**
+     * Which occurrence of an appointment message this is — for reminders, the
+     * appointment start it was scheduled against. Null for one-shot messages.
+     * Computed by reminderOccurrenceKey(); see 0108 for the SQL mirror.
+     */
+    occurrenceKey?: string | null;
+    /**
+     * When the provider ACCEPTED the message — `notification_events.sent_at`.
+     *
+     * The period is derived from this, never from the clock at accounting time.
+     * That distinction is the whole of Area 2: a September message whose ledger
+     * write failed and is recovered on 1 October belongs to SEPTEMBER, and
+     * posting it into October would misstate two months at once. Omitted means
+     * "now", which is correct for the live send path and only for it.
+     */
+    occurredAt?: Date | string | null;
   }): Promise<{ counted: boolean } | null> {
     if (!isCountableMessage(input.channel)) return { counted: false };
 
@@ -120,10 +139,15 @@ export class MessageUsageService {
       dedupeKey: input.dedupeKey,
       appointmentId: input.appointmentId,
       eventKey: input.eventKey,
+      rootEventId: input.rootEventId,
+      occurrenceKey: input.occurrenceKey,
     });
 
     try {
-      const { period, entitlement, tier } = await this.resolveContext(input.businessId);
+      const { period, entitlement, tier } = await this.resolveContext(
+        input.businessId,
+        toDate(input.occurredAt),
+      );
       const { data, error } = await this.admin.schema('comms').rpc('record_message_usage', {
         p_business_id: input.businessId,
         p_logical_message_key: key,
@@ -147,7 +171,7 @@ export class MessageUsageService {
       // Loud, and recoverable: the key is in the log and `sent_at` is on the row.
       this.logger.error(
         `message usage NOT recorded for business ${input.businessId}, logical key ${key}: ` +
-          `${(err as Error).message} — recoverable via backfillUnrecordedSends`,
+          `${(err as Error).message} — recoverable via recoverUnaccountedSends`,
       );
       return null;
     }
@@ -157,11 +181,76 @@ export class MessageUsageService {
   // Reading
   // =========================================================================
 
-  /** The current period's summary for a business. Cheap: no COUNT(*) anywhere. */
+  /**
+   * The current period's summary for a business. Cheap: no COUNT(*) anywhere.
+   *
+   * THE SNAPSHOT IS AUTHORITATIVE UNTIL THE NEXT PERIOD (V1.1 entitlement
+   * semantics, Wrike section 6). Once a period row exists, its stored
+   * tier/allowance/location count drives everything — remaining, overage,
+   * near-limit status, the block_at_cap decision, this panel and reconciliation
+   * alike. A mid-month tier change or a location added or disabled applies to the
+   * NEXT period.
+   *
+   * WHY. Before this, the allowance was resolved LIVE here while the stored
+   * overage counter derived from the snapshot, so one month was priced two
+   * different ways at once: an owner could be shown "400 of 600, you're fine"
+   * while the billing evidence for that same month recorded 300 messages of
+   * overage. Two numbers for one month is not a rounding difference, it is a
+   * dispute. Only one of them can be authoritative, and it has to be the one
+   * written down when the period opened — the live figure is not reconstructible
+   * after the fact, and rewriting the snapshot would destroy the evidence.
+   *
+   * No proration, deliberately: it is not asked for, and a part-month allowance
+   * would need a second set of formulas that nothing else on the platform uses.
+   */
   async currentSummary(businessId: string): Promise<MessageUsageSummary> {
-    const { period, entitlement, tier } = await this.resolveContext(businessId);
-    const used = await this.readUsedCount(businessId, period.periodStart);
-    return summariseUsage({ tier, period, used, entitlement });
+    const business = await this.readBusiness(businessId);
+    const period = monthlyPeriodFor(localDate(business.timezone), business.timezone);
+    const row = await this.readPeriod(businessId, period.periodStart);
+
+    if (!row) {
+      // No message has been sent this period, so there is no snapshot to honour
+      // yet. Resolve live — and deliberately do NOT create the row here: a READ
+      // that writes billing evidence would let merely LOOKING at the panel
+      // decide which allowance a month is priced at. The first send creates it,
+      // moments later, with this same value.
+      const entitlement = await this.entitlementFor(business.tier, businessId);
+      return summariseUsage({ tier: business.tier, period, used: 0, entitlement });
+    }
+
+    const entitlement = await this.snapshotEntitlement(row, business.tier);
+    return summariseUsage({
+      tier: entitlement.tier,
+      period,
+      used: Number(row.used_count),
+      entitlement,
+    });
+  }
+
+  /**
+   * The entitlement a period was OPENED with, rehydrated from its snapshot.
+   *
+   * Policy (`enforcementMode` / `warnAtPercent`) is deliberately still read live:
+   * it is platform operational configuration with no snapshot column, and it says
+   * how to BEHAVE at the cap rather than what the cap is. It is looked up for the
+   * SNAPSHOT tier, though — the tier whose allowance actually governs this
+   * period — so the two halves can never describe different plans.
+   */
+  private async snapshotEntitlement(
+    row: PeriodRow,
+    fallbackTier: BusinessTier,
+  ): Promise<TierMessageEntitlement> {
+    const tier = (row.tier_key as BusinessTier) || fallbackTier;
+    const policy = await this.policyFor(tier);
+    return {
+      tier,
+      // `== null` deliberately: an absent column and a stored NULL both mean
+      // "no allowance was resolved", and neither may become NaN.
+      monthlyAllowance: row.allowance == null ? null : Number(row.allowance),
+      isUnlimited: row.is_unlimited === true,
+      locationCount: Math.max(1, Number(row.location_count ?? 1)),
+      ...policy,
+    };
   }
 
   /** The admin surface: current period plus history, newest first. */
@@ -172,7 +261,7 @@ export class MessageUsageService {
     const { data, error } = await this.admin
       .schema('comms')
       .from('message_usage_periods')
-      .select('period_start,period_end,tier_key,allowance,is_unlimited,used_count,overage_count')
+      .select(PERIOD_COLUMNS)
       .eq('business_id', actor.businessId)
       .order('period_start', { ascending: false })
       .limit(24)
@@ -241,35 +330,70 @@ export class MessageUsageService {
   }
 
   /**
-   * Recover usage for messages the provider accepted but whose accounting write
-   * failed (a crash between the provider call and the RPC, or a transient DB
-   * error).
+   * Recover accounting for messages a provider accepted but whose ledger write
+   * failed — a crash between the provider call and the RPC, or a transient DB
+   * error.
+   *
+   * IT CANNOT SEND ANYTHING. It reaches no provider and enqueues no message; it
+   * only reads events the platform already recorded as sent and re-runs the
+   * idempotent recorder. So the worst failure available to it is that a unit
+   * stays uncounted for one more interval.
    *
    * `comms.notification_events.sent_at` is the durable evidence that a provider
-   * accepted the message — it is stamped in the same update that sets
-   * `status='sent'`. Any such event with no ledger entry for its logical key is
-   * unrecorded usage, and re-running the recorder is safe because the ledger key
-   * makes it idempotent.
+   * accepted the message — stamped in the same update that sets `status='sent'`,
+   * and the only writer of that column anywhere.
    *
-   * Bounded and explicit: an operator or a test runs it, nothing schedules it.
+   * THE ANTI-JOIN LIVES IN SQL because the ledger key is not a column: it is
+   * recomputed there from the same inputs (comms.find_unaccounted_sends, 0108).
+   * That is what lets the LIMIT bound ACTUAL MISSING ENTRIES rather than recent
+   * traffic. The previous implementation read the newest 500 sent events and
+   * re-recorded them all, so a gap behind 500 newer sends was unreachable
+   * forever — the bound was being spent on messages that were already counted.
+   *
+   * The key WRITTEN is still the one computed here, so SQL can never widen what
+   * gets counted; at worst it offers a row that turns out to be already counted.
    */
-  async backfillUnrecordedSends(businessId: string, limit = 500): Promise<{ examined: number; recorded: number }> {
-    const { data, error } = await this.admin
-      .schema('comms')
-      .from('notification_events')
-      .select('id,business_id,dedupe_key,appointment_id,event_key,channel,payload_json,sent_at')
-      .eq('business_id', businessId)
-      .not('sent_at', 'is', null)
-      .in('channel', ['whatsapp', 'sms', 'email'])
-      .order('sent_at', { ascending: false })
-      .limit(limit)
-      .returns<SentEventRow[]>();
+  async recoverUnaccountedSends(
+    options: {
+      businessId?: string | null;
+      limit?: number;
+      graceSeconds?: number;
+      after?: { sentAt: string; id: string } | null;
+    } = {},
+  ): Promise<UsageRecoveryOutcome> {
+    const { data, error } = await this.admin.schema('comms').rpc('find_unaccounted_sends', {
+      p_limit: options.limit ?? 200,
+      p_grace_seconds: options.graceSeconds ?? 300,
+      p_business_id: options.businessId ?? null,
+      p_after_sent_at: options.after?.sentAt ?? null,
+      p_after_id: options.after?.id ?? null,
+    });
+    if (error) throw new InternalServerErrorException(`Unable to find unaccounted sends: ${error.message}`);
 
-    if (error) throw new InternalServerErrorException(`Unable to load sent events: ${error.message}`);
-
-    const rows = data ?? [];
+    const rows = (data ?? []) as UnaccountedSendRow[];
     let recorded = 0;
+    let failed = 0;
+
     for (const row of rows) {
+      // DRIFT DETECTOR. SQL proposed a key; we recompute the authoritative one.
+      // A mismatch is harmless — the ledger absorbs it — but it means 0108 and
+      // logicalMessageKey() have diverged, which should never be silent.
+      const key = logicalMessageKey({
+        eventId: row.id,
+        businessId: row.business_id,
+        dedupeKey: row.dedupe_key,
+        appointmentId: row.appointment_id,
+        eventKey: row.event_key,
+        rootEventId: row.root_event_id,
+        occurrenceKey: row.occurrence_key,
+      });
+      if (key !== row.logical_message_key) {
+        this.logger.warn(
+          `logical key drift on event ${row.id}: sql=${row.logical_message_key} api=${key} — ` +
+            'comms.logical_message_key (0108) and logicalMessageKey() disagree',
+        );
+      }
+
       const result = await this.recordSend({
         eventId: row.id,
         businessId: row.business_id,
@@ -277,12 +401,35 @@ export class MessageUsageService {
         appointmentId: row.appointment_id,
         eventKey: row.event_key,
         channel: row.channel,
-        messageClass: readMessageClass(row.payload_json),
+        messageClass: row.message_class,
+        rootEventId: row.root_event_id,
+        occurrenceKey: row.occurrence_key,
+        // The period the message BELONGS to, not the period we noticed it in.
+        occurredAt: row.sent_at,
       });
-      // `counted: true` means this one was genuinely missing from the ledger.
-      if (result?.counted) recorded += 1;
+      if (result === null) failed += 1;
+      else if (result.counted) recorded += 1;
     }
-    return { examined: rows.length, recorded };
+
+    const last = rows[rows.length - 1];
+    return {
+      found: rows.length,
+      recorded,
+      failed,
+      cursor: last ? { sentAt: last.sent_at, id: last.id } : null,
+    };
+  }
+
+  /**
+   * The owner-initiated pass, scoped to the caller's own business.
+   *
+   * Not the primary path — MessageUsageRecoveryService runs the same code on a
+   * timer across every account. This exists so an owner or an operator can force
+   * a pass without waiting for the interval.
+   */
+  async recoverForActor(actor: AuthUser, limit?: number): Promise<UsageRecoveryOutcome> {
+    this.assertUsageAccess(actor);
+    return this.recoverUnaccountedSends({ businessId: actor.businessId, limit });
   }
 
   // =========================================================================
@@ -296,14 +443,20 @@ export class MessageUsageService {
    * account, never one per location, because the allowance is an account-level
    * entitlement and a multi-location salon must not receive a second one.
    */
-  private async resolveContext(businessId: string): Promise<{
+  private async resolveContext(
+    businessId: string,
+    at?: Date,
+  ): Promise<{
     tier: BusinessTier;
     entitlement: TierMessageEntitlement;
     period: MessageUsagePeriodWindow;
   }> {
     const business = await this.readBusiness(businessId);
     const entitlement = await this.entitlementFor(business.tier, businessId);
-    const period = monthlyPeriodFor(localDate(business.timezone), business.timezone);
+    // `at` is the moment the message was ACCEPTED, not the moment this ran. For
+    // the live send path they are the same; for recovery they are not, and using
+    // the clock there would move a September unit into October.
+    const period = monthlyPeriodFor(localDate(business.timezone, at), business.timezone);
     return { tier: business.tier, entitlement, period };
   }
 
@@ -382,17 +535,24 @@ export class MessageUsageService {
     return Math.max(1, count ?? 1);
   }
 
-  private async readUsedCount(businessId: string, periodStart: string): Promise<number> {
+  /**
+   * One period row, or null when nothing has been sent in it yet.
+   *
+   * Reads the SNAPSHOT columns as well as the counters, because the snapshot is
+   * what prices the period (see {@link currentSummary}). It used to select
+   * `used_count` alone, which is precisely why the allowance had to be resolved
+   * live and why the two could disagree.
+   */
+  private async readPeriod(businessId: string, periodStart: string): Promise<PeriodRow | null> {
     const { data, error } = await this.admin
       .schema('comms')
       .from('message_usage_periods')
-      .select('used_count')
+      .select(PERIOD_COLUMNS)
       .eq('business_id', businessId)
       .eq('period_start', periodStart)
-      .maybeSingle<{ used_count: number | string }>();
+      .maybeSingle<PeriodRow>();
     if (error) throw new Error(`load usage period failed: ${error.message}`);
-    // No row yet simply means no message has been sent this period.
-    return data ? Number(data.used_count) : 0;
+    return data ?? null;
   }
 
   /**
@@ -411,12 +571,20 @@ export class MessageUsageService {
 // Row shapes and helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Every column a period is priced from. One list, used by both readers, so the
+ * summary and the history can never be built from different subsets of the row.
+ */
+const PERIOD_COLUMNS =
+  'period_start,period_end,tier_key,allowance,is_unlimited,location_count,used_count,overage_count';
+
 interface PeriodRow {
   period_start: string;
   period_end: string;
   tier_key: string;
   allowance: number | string | null;
   is_unlimited: boolean;
+  location_count?: number | string | null;
   used_count: number | string;
   overage_count: number | string;
 }
@@ -435,19 +603,34 @@ interface ReconcileRow {
   applied: boolean;
 }
 
-interface SentEventRow {
+/** One candidate returned by comms.find_unaccounted_sends (0108). */
+interface UnaccountedSendRow {
   id: string;
   business_id: string;
   dedupe_key: string | null;
   appointment_id: string | null;
   event_key: string;
   channel: string;
-  payload_json: Record<string, unknown> | null;
-  sent_at: string | null;
+  message_class: string;
+  root_event_id: string | null;
+  occurrence_key: string | null;
+  sent_at: string;
+  logical_message_key: string;
 }
 
-function readMessageClass(payload: Record<string, unknown> | null): string {
-  return payload?.['message_class'] === 'marketing' ? 'marketing' : 'transactional';
+/** What one recovery pass did. `cursor` is the keyset position to resume from. */
+export interface UsageRecoveryOutcome {
+  found: number;
+  recorded: number;
+  failed: number;
+  cursor: { sentAt: string; id: string } | null;
+}
+
+/** Coerce an accepted-at value to a Date; undefined/null/invalid means "now". */
+function toDate(value: Date | string | null | undefined): Date | undefined {
+  if (!value) return undefined;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date;
 }
 
 const dateFormatterCache = new Map<string, Intl.DateTimeFormat>();

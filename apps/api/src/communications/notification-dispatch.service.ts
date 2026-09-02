@@ -13,7 +13,7 @@ import {
 } from './channel-policy';
 import { MessagingService } from './messaging.service';
 import { NotificationEscalationService } from './notification-escalation.service';
-import { EMAIL_CHANNEL, SMS_CHANNEL, WHATSAPP_CHANNEL } from './notification.types';
+import { EMAIL_CHANNEL, reminderOccurrenceKey, SMS_CHANNEL, WHATSAPP_CHANNEL } from './notification.types';
 import { MESSAGE_CAP_REACHED_REASON } from '@sheer/domain';
 import { MessageUsageService } from '../message-usage/message-usage.service';
 import {
@@ -441,7 +441,8 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
     //
     // Never throws: the message HAS been sent, and failing here must not make the
     // dispatcher re-send it. A failure is logged with the logical key and is
-    // recoverable from `sent_at` via MessageUsageService.backfillUnrecordedSends.
+    // recoverable from `sent_at` by MessageUsageRecoveryService, which re-runs the
+    // idempotent recorder over sent-but-unaccounted events on its own timer.
     await this.messageUsage.recordSend({
       eventId: event.id,
       businessId: event.business_id,
@@ -450,6 +451,16 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
       eventKey: event.event_key,
       channel: event.channel,
       messageClass: readMessageClass(event.payload_json),
+      rootEventId: event.root_event_id ?? null,
+      // Which OCCURRENCE of this appointment message it is (null for one-shot
+      // messages). A reminder re-created because the appointment moved is a
+      // second real message and must not reuse the first one's identity.
+      occurrenceKey: reminderOccurrenceKey(event.event_key, event.payload_json),
+      // The instant the provider accepted, which is the same value just written
+      // to `sent_at`. Passing it explicitly means the period is derived from WHEN
+      // THE MESSAGE WAS SENT rather than from when the accounting happened to
+      // run — the property recovery depends on, and which is free to state here.
+      occurredAt: nowIso,
     });
   }
 

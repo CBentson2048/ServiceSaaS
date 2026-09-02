@@ -244,6 +244,88 @@ describe('BookingNotificationService.syncBookingNotifications', () => {
     expect(state.inserts.map((i) => i.channel)).toEqual(['email']);
   });
 
+  it('does NOT re-queue an already-SENT confirmation when the channel changes (test F)', async () => {
+    // THE BILLING DEFECT THIS FIXES. The confirmation was already delivered on
+    // WhatsApp. The client then switches to email, and a later reschedule
+    // re-runs this sync. The sent WhatsApp row is invisible to a match scoped to
+    // email, so a second confirmation used to be inserted — the partial unique
+    // index allows it because the channel differs — and the client received the
+    // same message twice. Both attempts compute `ap:appt-1:booking_confirmation`,
+    // so the ledger counted the second as zero and nothing could detect it.
+    const state = baseState({
+      appointment: { ...baseState().appointment!, communication_preference: 'email' },
+      client: { first_name: 'Sam', phone: '+447725485160', email: 'sam@example.com', communication_preference: 'email' },
+      existingEvents: [
+        {
+          id: 'e1',
+          event_key: 'booking_confirmation',
+          channel: 'whatsapp',
+          status: 'sent',
+          scheduled_for: NOW.toISOString(),
+          payload_json: { appointment_start: baseState().appointment!.scheduled_start_at },
+        },
+      ],
+    });
+    const service = makeService(state, settings({ sendBookingConfirmation: true }));
+
+    await service.syncBookingNotifications('appt-1', NOW);
+
+    // No second confirmation on any channel, and no provider send to follow.
+    expect(state.inserts.map((i) => i.event_key)).not.toContain('booking_confirmation');
+    // The sent row is left exactly as it is: it is history, not a queue entry.
+    expect(state.updates.every((u) => u.status !== 'cancelled')).toBe(true);
+  });
+
+  it('still re-routes an UNSENT confirmation when the channel changes', async () => {
+    // The counterpart guarantee. A queued event has reached no provider, so it
+    // is only a routing decision and must follow the client's new preference —
+    // otherwise the fix above would silently stop legitimate messages.
+    const state = baseState({
+      appointment: { ...baseState().appointment!, communication_preference: 'email' },
+      client: { first_name: 'Sam', phone: '+447725485160', email: 'sam@example.com', communication_preference: 'email' },
+      existingEvents: [
+        {
+          id: 'e1',
+          event_key: 'booking_confirmation',
+          channel: 'whatsapp',
+          status: 'queued',
+          scheduled_for: NOW.toISOString(),
+          payload_json: { appointment_start: baseState().appointment!.scheduled_start_at },
+        },
+      ],
+    });
+    const service = makeService(state, settings({ sendBookingConfirmation: true }));
+
+    await service.syncBookingNotifications('appt-1', NOW);
+
+    expect(state.inserts.map((i) => i.channel)).toEqual(['email']);
+    expect(state.updates.some((u) => u.status === 'cancelled')).toBe(true);
+  });
+
+  it('does not re-queue a message whose fallback is still in flight on another channel', async () => {
+    // fallback_pending means the next channel is already carrying this message.
+    // Inserting again would race the successor and deliver twice.
+    const state = baseState({
+      appointment: { ...baseState().appointment!, communication_preference: 'email' },
+      client: { first_name: 'Sam', phone: '+447725485160', email: 'sam@example.com', communication_preference: 'email' },
+      existingEvents: [
+        {
+          id: 'e1',
+          event_key: 'booking_confirmation',
+          channel: 'whatsapp',
+          status: 'fallback_pending',
+          scheduled_for: NOW.toISOString(),
+          payload_json: { appointment_start: baseState().appointment!.scheduled_start_at },
+        },
+      ],
+    });
+    const service = makeService(state, settings({ sendBookingConfirmation: true }));
+
+    await service.syncBookingNotifications('appt-1', NOW);
+
+    expect(state.inserts.map((i) => i.event_key)).not.toContain('booking_confirmation');
+  });
+
   it('does not schedule when the master switch is off', async () => {
     const state = baseState();
     const service = makeService(state, settings({ enabled: false, sendBookingConfirmation: true, reminder24hEnabled: true }));
@@ -328,6 +410,64 @@ describe('BookingNotificationService.syncBookingNotifications', () => {
     expect(state.updates.some((u) => u.status === 'cancelled')).toBe(true);
     expect(state.inserts.map((i) => i.event_key)).toEqual(['appointment_reminder_24h']);
     expect(state.inserts[0]?.scheduled_for).toBe(new Date(NOW.getTime() + 2 * DAY).toISOString());
+  });
+
+  it('reschedules an UNSENT reminder in place, refreshing its occurrence anchor (test 4)', async () => {
+    // The reminder has not been sent, so there is no second communication and no
+    // second unit: the SAME row is updated to the new time. Its payload snapshot
+    // is refreshed with it, which is what keeps the send-time staleness check
+    // (and, now, the usage occurrence) correct for the reminder that goes out.
+    const state = baseState({
+      existingEvents: [
+        {
+          id: 'e1',
+          event_key: 'appointment_reminder_24h',
+          channel: 'whatsapp',
+          status: 'queued',
+          scheduled_for: new Date(NOW.getTime() + 5 * DAY).toISOString(), // pre-reschedule
+          payload_json: { appointment_start: new Date(NOW.getTime() + 6 * DAY).toISOString() },
+        },
+      ],
+    });
+    const service = makeService(state, settings({ reminder24hEnabled: true }));
+
+    await service.syncBookingNotifications('appt-1', NOW);
+
+    // Updated in place — no new event, so nothing new to count.
+    expect(state.inserts).toHaveLength(0);
+    const rescheduled = state.updates.find((u) => u.scheduled_for);
+    expect(rescheduled?.scheduled_for).toBe(new Date(NOW.getTime() + 2 * DAY).toISOString());
+    expect((rescheduled?.payload_json as Record<string, unknown>)?.appointment_start).toBe(
+      baseState().appointment!.scheduled_start_at,
+    );
+  });
+
+  it('gives the re-queued reminder the NEW appointment time as its occurrence anchor (test 5)', async () => {
+    // The prior attempt left the queue (it handed over to a fallback) and the
+    // appointment has since moved, so this IS a genuine second communication.
+    // The new event must carry the NEW appointment_start, because that anchor is
+    // what makes its usage identity different from the first occurrence's.
+    const state = baseState({
+      existingEvents: [
+        {
+          id: 'e1',
+          event_key: 'appointment_reminder_24h',
+          channel: 'whatsapp',
+          status: 'fallback_pending',
+          scheduled_for: new Date(NOW.getTime() + 5 * DAY).toISOString(),
+          payload_json: { appointment_start: new Date(NOW.getTime() + 6 * DAY).toISOString() },
+        },
+      ],
+    });
+    const service = makeService(state, settings({ reminder24hEnabled: true }));
+
+    await service.syncBookingNotifications('appt-1', NOW);
+
+    expect(state.inserts).toHaveLength(1);
+    const inserted = state.inserts[0].payload_json as Record<string, unknown>;
+    const previous = new Date(NOW.getTime() + 6 * DAY).toISOString();
+    expect(inserted.appointment_start).toBe(baseState().appointment!.scheduled_start_at);
+    expect(inserted.appointment_start).not.toBe(previous);
   });
 
   it('leaves a fallback_pending reminder alone when the appointment time has not moved', async () => {

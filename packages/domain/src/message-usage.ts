@@ -64,6 +64,33 @@ export interface LogicalMessageIdentitySource {
   dedupeKey?: string | null;
   appointmentId?: string | null;
   eventKey: string;
+  /**
+   * The first event of this message's fallback chain, when it has one
+   * (`comms.notification_events.root_event_id`, added by 0108).
+   *
+   * Only ever consulted by the last branch. A message with a dedupe key or an
+   * appointment already has a shared identity that survives a fallback; this is
+   * for the message that has neither, whose chain would otherwise split into one
+   * logical message per hop.
+   */
+  rootEventId?: string | null;
+  /**
+   * What makes this an OCCURRENCE of an appointment message rather than just an
+   * appointment message — for reminders, the appointment start it was scheduled
+   * against (`payload_json.appointment_start`).
+   *
+   * An appointment can legitimately produce the same `event_key` more than once
+   * over its life: reschedule an appointment after its 24h reminder has gone out
+   * and the client must be reminded again, at the new time. That is a second
+   * outbound communication and a second unit. Without a discriminator both
+   * collapse onto `ap:<appointment>:<event_key>` and the second is free.
+   *
+   * Supplied ONLY for messages whose occurrence is well defined; see
+   * reminderOccurrenceKey(). A retry or a fallback of the SAME occurrence must
+   * always resolve to the SAME value, which is why the anchor is the SNAPSHOT
+   * taken when the event was queued and never the live appointment.
+   */
+  occurrenceKey?: string | null;
 }
 
 /**
@@ -87,10 +114,21 @@ export interface LogicalMessageIdentitySource {
 export function logicalMessageKey(source: LogicalMessageIdentitySource): string {
   const dedupe = source.dedupeKey?.trim();
   if (dedupe) return `dk:${source.businessId}:${dedupe}`;
-  if (source.appointmentId) return `ap:${source.appointmentId}:${source.eventKey}`;
-  // No shared identity to group on: a lone event is its own logical message.
-  // Its own id is stable across retries, which is the guarantee that matters.
-  return `ev:${source.eventId}`;
+  if (source.appointmentId) {
+    const base = `ap:${source.appointmentId}:${source.eventKey}`;
+    // A new occurrence of the same appointment message is a new logical message.
+    // Absent for one-shot messages (a confirmation, a nudge), whose key is
+    // unchanged — so this cannot re-identify anything that already worked.
+    const occurrence = source.occurrenceKey?.trim();
+    return occurrence ? `${base}@${occurrence}` : base;
+  }
+  // Nothing else to group on, so the chain's ROOT event is the identity: the
+  // first attempt is its own root, and every fallback the escalation service
+  // queues carries that same root forward. Before 0108 this branch returned the
+  // event's own id, which meant a fallback — a new row with a new id — became a
+  // second logical message and cost a second unit. A retry was always safe
+  // (same row, same id); only the fallback split, and only here.
+  return `ev:${source.rootEventId?.trim() || source.eventId}`;
 }
 
 // ---------------------------------------------------------------------------

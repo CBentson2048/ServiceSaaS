@@ -46,6 +46,50 @@ export const REMINDER_EVENT_KEYS = new Set<string>([
   NotificationEventKey.Reminder1w,
 ]);
 
+/**
+ * The usage-identity discriminator for one REMINDER OCCURRENCE, or null when the
+ * message has no meaningful occurrence.
+ *
+ * WHY REMINDERS NEED ONE. An appointment produces its confirmation once, but it
+ * can legitimately produce the same reminder `event_key` more than once: send the
+ * 24h reminder, then reschedule the appointment, and the client must be reminded
+ * again at the new time. That second reminder is a genuine second outbound
+ * communication and a second unit — but both collapse onto
+ * `ap:<appointment>:<event_key>` unless the occurrence is part of the identity.
+ *
+ * WHY `payload_json.appointment_start` IS THE RIGHT ANCHOR, and not a new column:
+ *
+ *   * It ALREADY means exactly this. isReminderStale() compares it against the
+ *     live appointment to decide "was this reminder scheduled for a different
+ *     appointment time?" — which is the same question as "is this a different
+ *     occurrence?", asked for a different purpose.
+ *   * It is STABLE ACROSS A FALLBACK. A reminder whose snapshot no longer matches
+ *     the live appointment is cancelled by the subject precheck before any
+ *     escalation can run (both in the dispatcher and in the delivery callbacks),
+ *     so a reminder fallback can only ever exist while the two are equal. The
+ *     escalation service refreshes the snapshot when it copies the payload, and
+ *     for a reminder that refresh is provably a no-op.
+ *   * It is STABLE ACROSS A RETRY, because a retry is the same row.
+ *   * It CHANGES exactly when a new occurrence is created — booking-notification
+ *     writes the new appointment start into the new event's payload.
+ *
+ * `scheduled_for` would NOT work: the escalation service queues a fallback for
+ * `now`, not for the original instant, so every hop would differ and one reminder
+ * would cost one unit per channel.
+ *
+ * Returns null for confirmations and rebooking nudges. Those are one-shot, their
+ * prechecks do NOT compare the snapshot, and so their payload CAN legitimately be
+ * refreshed mid-chain — including them would make a fallback count twice.
+ */
+export function reminderOccurrenceKey(
+  eventKey: string,
+  payload: Record<string, unknown> | null | undefined,
+): string | null {
+  if (!REMINDER_EVENT_KEYS.has(eventKey)) return null;
+  const anchor = payload?.['appointment_start'];
+  return typeof anchor === 'string' && anchor.trim() ? anchor.trim() : null;
+}
+
 export const DEFAULT_COMMUNICATION_SETTINGS: Omit<LocationCommunicationSettings, 'locationId'> = {
   enabled: false,
   enabledChannels: ['whatsapp'],

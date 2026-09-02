@@ -9,10 +9,14 @@
 -- any of that. This file runs the constraints, the functions and the policies for
 -- real.
 --
--- 30 numbered cases. Every one must read PASS.
+-- 42 numbered cases. Every one must read PASS.
 --
--- Run against a SCRATCH database with every migration through 0107 applied:
+-- Run against a SCRATCH database with every migration through 0108 applied:
 --   psql -d <scratch> -f supabase/tests/message_usage_accounting.sql
+--
+-- Cases 31-42 cover the 0108 hardening: the SQL/TypeScript key mirror, the
+-- chain root, the anti-join that bounds its LIMIT by MISSING ledger entries, and
+-- the reminder OCCURRENCE discriminator.
 --
 -- KNOWN LIMITATION, stated rather than hidden: this suite runs on ONE connection,
 -- so it cannot execute two genuinely simultaneous transactions. What it proves
@@ -494,6 +498,227 @@ exception when others then
   insert into probe_results values ('30_CROSS_BUSINESS_HIDDEN','FAIL: unexpected ' || sqlerrm);
 end $$;
 select case_name as case, result from probe_results where case_name='30_CROSS_BUSINESS_HIDDEN';
+
+-- ===========================================================================
+-- 31-33. THE SQL KEY MIRRORS THE TYPESCRIPT ONE (0108).
+--
+-- comms.logical_message_key only ever FILTERS the recovery scan — the key
+-- written to the ledger is always the API's. But a divergence would still waste
+-- work and hide gaps, so the same golden vectors are pinned here and in
+-- message-usage-rules.spec.ts. Change one without the other and this goes red.
+-- ===========================================================================
+
+select '31_KEY_GOLDEN_VECTORS' as case,
+       case when comms.logical_message_key(
+                   '05500000-0000-0000-0000-000000000001', 'camp:1', null, 'k', '05500000-0000-0000-0000-0000000000e1')
+                 = 'dk:05500000-0000-0000-0000-000000000001:camp:1'
+             and comms.logical_message_key(
+                   '05500000-0000-0000-0000-000000000001', null,
+                   '05500000-0000-0000-0000-0000000000b1', 'booking_confirmation',
+                   '05500000-0000-0000-0000-0000000000e1')
+                 = 'ap:05500000-0000-0000-0000-0000000000b1:booking_confirmation'
+             and comms.logical_message_key(
+                   '05500000-0000-0000-0000-000000000001', null, null, 'k', '05500000-0000-0000-0000-0000000000e1')
+                 = 'ev:05500000-0000-0000-0000-0000000000e1'
+            then 'PASS' else 'FAIL: SQL key does not match the TypeScript vectors' end as result;
+
+select '32_KEY_PRECEDENCE_AND_TRIM' as case,
+       case when comms.logical_message_key(
+                   '05500000-0000-0000-0000-000000000001', ' camp:1 ',
+                   '05500000-0000-0000-0000-0000000000b1', 'k', '05500000-0000-0000-0000-0000000000e1')
+                 = 'dk:05500000-0000-0000-0000-000000000001:camp:1'
+             -- A whitespace-only dedupe key is NOT a key, exactly as JS trim() decides.
+             and comms.logical_message_key(
+                   '05500000-0000-0000-0000-000000000001', '   ',
+                   '05500000-0000-0000-0000-0000000000b1', 'k', '05500000-0000-0000-0000-0000000000e1')
+                 = 'ap:05500000-0000-0000-0000-0000000000b1:k'
+            then 'PASS' else 'FAIL: precedence or trimming differs from logicalMessageKey()' end as result;
+
+select '33_KEY_FOLLOWS_CHAIN_ROOT' as case,
+       case when comms.logical_message_key(
+                   '05500000-0000-0000-0000-000000000001', null, null, 'k',
+                   '05500000-0000-0000-0000-0000000000e2', '05500000-0000-0000-0000-0000000000e1')
+                 = 'ev:05500000-0000-0000-0000-0000000000e1'
+             -- ...and a message with a real key ignores the root entirely.
+             and comms.logical_message_key(
+                   '05500000-0000-0000-0000-000000000001', 'camp:1', null, 'k',
+                   '05500000-0000-0000-0000-0000000000e2', '05500000-0000-0000-0000-0000000000e1')
+                 = 'dk:05500000-0000-0000-0000-000000000001:camp:1'
+            then 'PASS' else 'FAIL: the chain root is not honoured as the last-resort identity' end as result;
+
+-- ===========================================================================
+-- 34-38. THE ANTI-JOIN. The bound must apply to MISSING entries, not to traffic.
+-- ===========================================================================
+
+-- Three sent events for the fixture business: two already accounted, one not.
+insert into comms.notification_events
+  (id, business_id, location_id, client_profile_id, appointment_id, channel, event_key, status,
+   scheduled_for, sent_at, dedupe_key, payload_json)
+values
+  ('05500000-0000-0000-0000-0000000000c1','05500000-0000-0000-0000-000000000001',
+   '05500000-0000-0000-0000-0000000000a1', null, null, 'whatsapp', 'campaign:x', 'sent',
+   now() - interval '10 days', now() - interval '10 days', 'acc-old-1', '{}'::jsonb),
+  ('05500000-0000-0000-0000-0000000000c2','05500000-0000-0000-0000-000000000001',
+   '05500000-0000-0000-0000-0000000000a1', null, null, 'whatsapp', 'campaign:x', 'sent',
+   now() - interval '9 days', now() - interval '9 days', 'acc-old-2', '{}'::jsonb),
+  -- THE GAP: older than nothing in particular, but it must still be found.
+  ('05500000-0000-0000-0000-0000000000c3','05500000-0000-0000-0000-000000000001',
+   '05500000-0000-0000-0000-0000000000a1', null, null, 'whatsapp', 'campaign:x', 'sent',
+   now() - interval '30 days', now() - interval '30 days', 'the-gap', '{}'::jsonb),
+  -- Push is not countable and must never be offered for recovery.
+  ('05500000-0000-0000-0000-0000000000c4','05500000-0000-0000-0000-000000000001',
+   '05500000-0000-0000-0000-0000000000a1', null, null, 'push', 'campaign:x', 'sent',
+   now() - interval '5 days', now() - interval '5 days', 'push-msg', '{}'::jsonb),
+  -- Never sent: no sent_at, so there is nothing to account for.
+  ('05500000-0000-0000-0000-0000000000c5','05500000-0000-0000-0000-000000000001',
+   '05500000-0000-0000-0000-0000000000a1', null, null, 'whatsapp', 'campaign:x', 'queued',
+   now(), null, 'never-sent', '{}'::jsonb);
+
+select pg_temp.send('dk:05500000-0000-0000-0000-000000000001:acc-old-1');
+select pg_temp.send('dk:05500000-0000-0000-0000-000000000001:acc-old-2');
+
+select '34_ANTIJOIN_FINDS_ONLY_THE_GAP' as case,
+       case when (select count(*) from comms.find_unaccounted_sends(
+                    100, 0, '05500000-0000-0000-0000-000000000001')) = 1
+             and (select f.dedupe_key from comms.find_unaccounted_sends(
+                    100, 0, '05500000-0000-0000-0000-000000000001') f) = 'the-gap'
+            then 'PASS' else 'FAIL: the anti-join did not isolate the unaccounted send' end as result;
+
+select '35_LIMIT_BOUNDS_GAPS_NOT_TRAFFIC' as case,
+       -- A limit of 1 with two accounted sends in the way STILL returns the gap.
+       -- Under the old newest-500 scan the bound was spent on accounted rows.
+       case when (select f.dedupe_key from comms.find_unaccounted_sends(
+                    1, 0, '05500000-0000-0000-0000-000000000001') f) = 'the-gap'
+            then 'PASS' else 'FAIL: the limit is being spent on already-accounted sends' end as result;
+
+select '36_NON_COUNTABLE_AND_UNSENT_EXCLUDED' as case,
+       case when not exists (
+              select 1 from comms.find_unaccounted_sends(100, 0, '05500000-0000-0000-0000-000000000001') f
+               where f.dedupe_key in ('push-msg', 'never-sent'))
+            then 'PASS' else 'FAIL: a push or unsent event was offered for recovery' end as result;
+
+select '37_GRACE_WINDOW_HOLDS_BACK_FRESH_SENDS' as case,
+       -- A 60-day grace excludes everything here, so recovery can never race the
+       -- recordSend the dispatcher is running right now.
+       case when (select count(*) from comms.find_unaccounted_sends(
+                    100, 5184000, '05500000-0000-0000-0000-000000000001')) = 0
+            then 'PASS' else 'FAIL: the grace window did not hold back a recent send' end as result;
+
+-- Recording it must be a separate statement from re-scanning: two scalar
+-- subqueries in one CASE have no guaranteed evaluation order, so the scan could
+-- otherwise run BEFORE the write it is meant to observe.
+select r.counted as recorded_the_gap
+from pg_temp.send('dk:05500000-0000-0000-0000-000000000001:the-gap') r;
+
+select '38_RECOVERY_CLOSES_THE_GAP' as case,
+       case when (select count(*) from comms.find_unaccounted_sends(
+                    100, 0, '05500000-0000-0000-0000-000000000001')) = 0
+            then 'PASS' else 'FAIL: recording the gap did not remove it from the scan' end as result;
+
+-- ===========================================================================
+-- 39-42. THE REMINDER OCCURRENCE DISCRIMINATOR (Wrike section 13).
+--
+-- One appointment can legitimately emit the same reminder event_key twice: send
+-- the 24h reminder, reschedule, and the client must be reminded again. Both used
+-- to collapse onto ap:<appointment>:<event_key> and the second was free.
+-- ===========================================================================
+
+select '39_OCCURRENCE_KEY_REMINDERS_ONLY' as case,
+       case when comms.reminder_occurrence_key('appointment_reminder_24h',
+                   '{"appointment_start":"2026-10-01T09:00:00Z"}'::jsonb) = '2026-10-01T09:00:00Z'
+             -- One-shot messages have no occurrence: their snapshot may be
+             -- refreshed mid-fallback, so keying on it would count twice.
+             and comms.reminder_occurrence_key('booking_confirmation',
+                   '{"appointment_start":"2026-10-01T09:00:00Z"}'::jsonb) is null
+             and comms.reminder_occurrence_key('rebooking_nudge',
+                   '{"appointment_start":"2026-10-01T09:00:00Z"}'::jsonb) is null
+             and comms.reminder_occurrence_key('appointment_reminder_24h', '{}'::jsonb) is null
+            then 'PASS' else 'FAIL: occurrence key does not match reminderOccurrenceKey()' end as result;
+
+select '40_OCCURRENCE_SPLITS_TWO_REMINDERS' as case,
+       case when comms.logical_message_key(
+                   '05500000-0000-0000-0000-000000000001', null,
+                   '05500000-0000-0000-0000-0000000000b1', 'appointment_reminder_24h',
+                   '05500000-0000-0000-0000-0000000000e1', null, '2026-10-01T09:00:00Z')
+                 <> comms.logical_message_key(
+                   '05500000-0000-0000-0000-000000000001', null,
+                   '05500000-0000-0000-0000-0000000000b1', 'appointment_reminder_24h',
+                   '05500000-0000-0000-0000-0000000000e2', null, '2026-10-08T09:00:00Z')
+             -- ...while a fallback of ONE occurrence (different event id, same
+             -- anchor) still resolves to a single identity.
+             and comms.logical_message_key(
+                   '05500000-0000-0000-0000-000000000001', null,
+                   '05500000-0000-0000-0000-0000000000b1', 'appointment_reminder_24h',
+                   '05500000-0000-0000-0000-0000000000e1', null, '2026-10-01T09:00:00Z')
+                 = comms.logical_message_key(
+                   '05500000-0000-0000-0000-000000000001', null,
+                   '05500000-0000-0000-0000-0000000000b1', 'appointment_reminder_24h',
+                   '05500000-0000-0000-0000-0000000000e2', null, '2026-10-01T09:00:00Z')
+            then 'PASS' else 'FAIL: occurrence does not separate two reminders, or splits one' end as result;
+
+select '41_ONE_SHOT_KEYS_UNCHANGED' as case,
+       -- The previous fix's keys must be byte-for-byte what they were.
+       case when comms.logical_message_key(
+                   '05500000-0000-0000-0000-000000000001', null,
+                   '05500000-0000-0000-0000-0000000000b1', 'booking_confirmation',
+                   '05500000-0000-0000-0000-0000000000e1')
+                 = 'ap:05500000-0000-0000-0000-0000000000b1:booking_confirmation'
+             and comms.logical_message_key(
+                   '05500000-0000-0000-0000-000000000001', 'camp:1', null, 'k',
+                   '05500000-0000-0000-0000-0000000000e1', null, '2026-10-01T09:00:00Z')
+                 = 'dk:05500000-0000-0000-0000-000000000001:camp:1'
+            then 'PASS' else 'FAIL: a one-shot or campaign identity changed' end as result;
+
+-- THE REAL SEQUENCE, and note what it proves about the schema. The partial index
+-- notification_events_booking_event_unique_idx (appointment_id, event_key,
+-- channel) where status <> 'cancelled' means two LIVE occurrences cannot coexist
+-- on one channel — so a second occurrence only ever exists because the first was
+-- retired to 'cancelled' by retireHandedOverEvent after it handed over. That is
+-- exactly the path this ticket is about, and it is the only one that can produce
+-- a genuine second reminder today.
+insert into core.client_profiles (id, business_id, first_name, last_name)
+values ('05500000-0000-0000-0000-0000000000c9','05500000-0000-0000-0000-000000000001','Rem','Inder');
+
+insert into booking.appointments
+  (id, business_id, location_id, client_profile_id, scheduled_start_at, scheduled_end_at, occupied_ranges)
+values ('05500000-0000-0000-0000-0000000000b9','05500000-0000-0000-0000-000000000001',
+        '05500000-0000-0000-0000-0000000000a1','05500000-0000-0000-0000-0000000000c9',
+        timestamptz '2026-10-08 09:00:00+00', timestamptz '2026-10-08 10:00:00+00',
+        tstzmultirange(tstzrange(timestamptz '2026-10-08 09:00:00+00',
+                                 timestamptz '2026-10-08 10:00:00+00')));
+
+insert into comms.notification_events
+  (id, business_id, location_id, client_profile_id, appointment_id, channel, event_key, status,
+   scheduled_for, sent_at, payload_json)
+values
+  -- Occurrence A on WhatsApp: never sent, handed over, then retired.
+  ('05500000-0000-0000-0000-0000000000d1','05500000-0000-0000-0000-000000000001',
+   '05500000-0000-0000-0000-0000000000a1', null, '05500000-0000-0000-0000-0000000000b9',
+   'whatsapp', 'appointment_reminder_24h', 'cancelled', now() - interval '3 days', null,
+   '{"appointment_start":"2026-10-01T09:00:00Z"}'::jsonb),
+  -- The SMS fallback of occurrence A: SENT, and carrying the SAME anchor.
+  ('05500000-0000-0000-0000-0000000000d2','05500000-0000-0000-0000-000000000001',
+   '05500000-0000-0000-0000-0000000000a1', null, '05500000-0000-0000-0000-0000000000b9',
+   'sms', 'appointment_reminder_24h', 'sent', now() - interval '3 days', now() - interval '3 days',
+   '{"appointment_start":"2026-10-01T09:00:00Z"}'::jsonb),
+  -- The appointment moved. Occurrence B is a genuinely second communication,
+  -- and the retired row above is what frees the channel slot for it.
+  ('05500000-0000-0000-0000-0000000000d3','05500000-0000-0000-0000-000000000001',
+   '05500000-0000-0000-0000-0000000000a1', null, '05500000-0000-0000-0000-0000000000b9',
+   'whatsapp', 'appointment_reminder_24h', 'sent', now() - interval '2 days', now() - interval '2 days',
+   '{"appointment_start":"2026-10-08T09:00:00Z"}'::jsonb);
+
+select '42_ANTIJOIN_SEES_TWO_OCCURRENCES_NOT_THREE_SENDS' as case,
+       -- Two SENT rows, two distinct occurrences, two logical messages. Before
+       -- this fix both collapsed onto one key and the second was billed as zero.
+       case when (select count(distinct f.logical_message_key)
+                    from comms.find_unaccounted_sends(100, 0, '05500000-0000-0000-0000-000000000001') f
+                   where f.appointment_id = '05500000-0000-0000-0000-0000000000b9') = 2
+            then 'PASS'
+            else 'FAIL: expected 2 logical messages across 3 reminder sends, got '
+                 || (select count(distinct f.logical_message_key)::text
+                       from comms.find_unaccounted_sends(100, 0, '05500000-0000-0000-0000-000000000001') f
+                      where f.appointment_id = '05500000-0000-0000-0000-0000000000b9') end as result;
 
 -- ---------------------------------------------------------------------------
 -- Summary. Any row that is not PASS is a failure, and a count of zero means the

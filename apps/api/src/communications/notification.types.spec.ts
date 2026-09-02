@@ -3,6 +3,7 @@ import {
   metadataToSettings,
   REMINDER_OFFSET_HOURS,
   NotificationEventKey,
+  reminderOccurrenceKey,
   settingsToMetadata,
 } from './notification.types';
 
@@ -110,5 +111,54 @@ describe('settingsToMetadata', () => {
     const settings = metadataToSettings('loc-1', { ...original, enabledChannels: ['whatsapp'] });
     const meta = settingsToMetadata(settings, null);
     expect(new Set(meta.reminderOffsetsHours)).toEqual(new Set([168, 48, 24]));
+  });
+});
+
+// ===========================================================================
+// Reminder occurrence identity — Wrike 4507284256 section 13
+// ===========================================================================
+
+describe('reminderOccurrenceKey', () => {
+  const start = '2026-10-01T09:00:00Z';
+
+  it('returns the snapshotted appointment start for every reminder offset', () => {
+    for (const key of [
+      NotificationEventKey.Reminder2h,
+      NotificationEventKey.Reminder24h,
+      NotificationEventKey.Reminder48h,
+      NotificationEventKey.Reminder1w,
+    ]) {
+      expect(reminderOccurrenceKey(key, { appointment_start: start })).toBe(start);
+    }
+  });
+
+  it('returns null for one-shot appointment messages', () => {
+    // A confirmation and a nudge have no second occurrence, and their prechecks
+    // do not pin the snapshot — so their payload can legitimately be refreshed
+    // mid-fallback. Including them would split one chain into two units.
+    expect(reminderOccurrenceKey(NotificationEventKey.BookingConfirmation, { appointment_start: start })).toBeNull();
+    expect(reminderOccurrenceKey(NotificationEventKey.RebookingNudge, { appointment_start: start })).toBeNull();
+  });
+
+  it('returns null for a campaign or any non-appointment key', () => {
+    expect(reminderOccurrenceKey('campaign:winback', { appointment_start: start })).toBeNull();
+  });
+
+  it('returns null when the snapshot is missing, blank or not a string', () => {
+    const key = NotificationEventKey.Reminder24h;
+    expect(reminderOccurrenceKey(key, null)).toBeNull();
+    expect(reminderOccurrenceKey(key, {})).toBeNull();
+    expect(reminderOccurrenceKey(key, { appointment_start: '   ' })).toBeNull();
+    expect(reminderOccurrenceKey(key, { appointment_start: 12345 })).toBeNull();
+  });
+
+  it('is stable for one occurrence and different across two', () => {
+    const key = NotificationEventKey.Reminder24h;
+    expect(reminderOccurrenceKey(key, { appointment_start: start })).toBe(
+      reminderOccurrenceKey(key, { appointment_start: start }),
+    );
+    expect(reminderOccurrenceKey(key, { appointment_start: start })).not.toBe(
+      reminderOccurrenceKey(key, { appointment_start: '2026-10-08T09:00:00Z' }),
+    );
   });
 });

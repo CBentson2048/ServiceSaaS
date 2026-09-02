@@ -104,6 +104,19 @@
 -- Leaving it in place would be worse than dropping it: a future engineer would
 -- find two usage tables with incompatible grains and no way to tell which one
 -- the platform actually believes.
+--
+-- HOSTED PREFLIGHT, BEFORE APPLYING THIS MIGRATION. Points 1-3 above are
+-- verifiable from the repository and hold; what the repository cannot tell you is
+-- what is in the HOSTED table. Run:
+--
+--     select count(*) from comms.messaging_usage_counters;
+--
+-- Zero is expected. If it is NOT zero, do not apply this migration: something
+-- outside this repository wrote to it, export the rows and investigate first.
+-- The contents cannot be mechanically carried across — the grains are
+-- contradictory (per-location vs per-account) and the tier names belong to the
+-- deleted 0051 model — so it is a judgement call about historical billing, not a
+-- transform. See docs/V1.1/message-usage-deployment-preflight.md.
 
 drop table if exists comms.messaging_usage_counters;
 

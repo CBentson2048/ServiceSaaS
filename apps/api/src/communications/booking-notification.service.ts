@@ -145,6 +145,25 @@ export class BookingNotificationService {
       );
 
       if (!match) {
+        // CHANNEL-INDEPENDENT GUARD (Wrike 4507284256, section 4).
+        //
+        // `match` is deliberately still channel-scoped: the partial unique index
+        // guarantees at most one non-cancelled row per (appointment, event_key,
+        // channel), which is what makes that find deterministic even though a
+        // fallback chain legitimately has two live rows for one event_key.
+        //
+        // But "no row on the primary channel" is NOT the same as "this message
+        // has never been produced". If the client's channel plan moves after a
+        // confirmation was already sent — a preference edit, an opt-out, or the
+        // owner disabling a channel — the sent WhatsApp row is invisible to a
+        // find scoped to email, so this used to insert a second event, the index
+        // permitted it because the channel differed, and the client received a
+        // GENUINE SECOND confirmation. Both attempts compute the same
+        // `ap:<appointment>:<event_key>` usage key, so the second was billed as
+        // zero, and neither recovery nor reconciliation could see it.
+        //
+        // So: ask the channel-independent question before inserting.
+        if (this.alreadyLeftTheQueue(existing, item.eventKey)) continue;
         await this.insertEvent(context, item, primaryChannel, now);
         continue;
       }
@@ -267,6 +286,35 @@ export class BookingNotificationService {
       .in('id', ids)
       .eq('status', 'queued');
     if (error) throw new Error(`cancel notification_events failed: ${error.message}`);
+  }
+
+  /**
+   * Has this logical message already left the queue on ANY channel?
+   *
+   * `queued` and `cancelled` are the two states that mean it has not:
+   *   queued    — an unsent routing decision. Nothing has reached a provider, so
+   *               it is free to be re-routed: the step-2 sweep cancels the
+   *               off-primary row and the fresh insert takes over. This is how a
+   *               preference change legitimately moves an unsent reminder, and
+   *               excluding it here is what keeps that behaviour intact.
+   *   cancelled — retired without being delivered.
+   *
+   * Every other state (`sent`, `delivered`, `read`, `undelivered`, `failed`,
+   * `skipped`, `fallback_pending`) means a provider already took the message or
+   * the next channel in the chain is already carrying it. Re-queueing then is
+   * not rescheduling, it is a duplicate — one the ledger counts as zero, because
+   * the whole point of the appointment-anchored key is that a fallback of the
+   * SAME message costs one unit.
+   *
+   * Note the division of labour this preserves: retrying and falling back belong
+   * to NotificationEscalationService, which owns the chain. This service decides
+   * what SHOULD exist, and it must not re-open a message that has already been
+   * handed over.
+   */
+  private alreadyLeftTheQueue(existing: ExistingEventRow[], eventKey: string): boolean {
+    return existing.some(
+      (row) => row.event_key === eventKey && row.status !== 'queued' && row.status !== 'cancelled',
+    );
   }
 
   /**

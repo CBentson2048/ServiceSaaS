@@ -103,6 +103,14 @@ export class NotificationEscalationService {
         generated_at: now.toISOString(),
       },
       dedupeKey: row.dedupe_key ?? null,
+      // THE CHAIN'S IDENTITY (0108). The fallback inherits the ORIGINAL's root —
+      // `row.root_event_id ?? row.id` — so a three-hop WhatsApp -> SMS -> Email
+      // chain carries one root rather than each hop pointing at its predecessor.
+      // For a message with a dedupe key or an appointment this changes nothing,
+      // because those branches already win; it is what stops a message with
+      // NEITHER from becoming a new logical message, and a new billed unit, on
+      // every hop.
+      rootEventId: row.root_event_id ?? row.id,
     });
 
     // The handover is what makes the source event `fallback_pending`, so every route into a

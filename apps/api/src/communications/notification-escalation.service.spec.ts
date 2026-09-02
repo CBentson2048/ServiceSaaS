@@ -170,6 +170,49 @@ describe('NotificationEscalationService (WhatsApp → SMS → Email)', () => {
     ]);
   });
 
+  it('carries the chain ROOT onto the fallback, so a rootless message counts once', async () => {
+    // Test G. A message with neither a dedupe key nor an appointment has only
+    // its event id to be identified by. Before 0108 the fallback got a NEW id
+    // and so a new logical message — one client message, two billed units.
+    const rootless = event({
+      id: 'evt-root',
+      appointment_id: null,
+      dedupe_key: null,
+      event_key: 'client_alert',
+      payload_json: { content: { body: 'Your appointment slot opened up.' } },
+    });
+    const state = baseState({ appointment: null, storedEvent: rootless });
+    const service = makeService(state, settings({ smsFallbackEnabled: true }));
+
+    await service.escalateFromEvent('evt-root', 'whatsapp', 'WhatsApp failed', NOW);
+
+    expect(state.inserts).toHaveLength(1);
+    expect(state.inserts[0].root_event_id).toBe('evt-root');
+    // Nothing else could have identified it: no dedupe key, no appointment.
+    expect(state.inserts[0].dedupe_key).toBeUndefined();
+    expect(state.inserts[0].appointment_id).toBeNull();
+  });
+
+  it('keeps the ORIGINAL root across a second hop, not the previous hop', async () => {
+    // Test H, the three-hop case: WhatsApp -> SMS -> Email must be ONE identity,
+    // so the email hop points at the WhatsApp event, not at the SMS one.
+    const secondHop = event({
+      id: 'evt-sms',
+      root_event_id: 'evt-whatsapp',
+      appointment_id: null,
+      dedupe_key: null,
+      event_key: 'client_alert',
+      payload_json: { content: { body: 'Your appointment slot opened up.' } },
+    });
+    const state = baseState({ appointment: null, storedEvent: secondHop });
+    const service = makeService(state, settings({ smsFallbackEnabled: true, emailFallbackEnabled: true }));
+
+    await service.escalateFromEvent('evt-sms', 'sms', 'sms undelivered', NOW);
+
+    expect(state.inserts).toHaveLength(1);
+    expect(state.inserts[0].root_event_id).toBe('evt-whatsapp');
+  });
+
   it('does not mark the source event fallback_pending when there is nothing to fall back to', async () => {
     const state = baseState();
     const service = makeService(state, settings());

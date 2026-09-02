@@ -19,8 +19,10 @@ import { MessageUsageService } from './message-usage.service';
  * "set usage to zero", and no way to choose a different period — those would
  * make billing evidence untrustworthy.
  *
- * The one write-shaped route is `reconcile`, and it only ever recomputes the
- * materialised counters FROM the immutable ledger; it can never invent usage.
+ * The two write-shaped routes are `reconcile` and `recover`, and neither can
+ * invent usage: one recomputes the materialised counters FROM the immutable
+ * ledger, the other re-runs the idempotent recorder over events the platform had
+ * already recorded as sent. Neither can reach a provider.
  */
 @Controller('account/message-usage')
 @UseGuards(SupabaseAuthGuard, RolesGuard, PermissionsGuard)
@@ -48,5 +50,24 @@ export class MessageUsageController {
     @Query('apply') apply?: string,
   ) {
     return this.usage.reconcile(actor, periodStart, apply === 'true');
+  }
+
+  /**
+   * Account for sends the provider accepted but whose ledger write failed, for
+   * THIS business only.
+   *
+   * Not the primary path — MessageUsageRecoveryService runs the same code on a
+   * timer across every account, because a manual route alone would leave the
+   * guarantee resting on somebody remembering. This exists so an owner or an
+   * operator can force a pass now rather than in fifteen minutes.
+   *
+   * It cannot send a message and cannot invent usage: it only re-runs the
+   * idempotent recorder over events already marked sent, and the ledger's unique
+   * key means a redundant call changes nothing.
+   */
+  @Post('recover')
+  recover(@CurrentUser() actor: AuthUser, @Query('limit') limit?: string) {
+    const parsed = Number.parseInt(limit ?? '', 10);
+    return this.usage.recoverForActor(actor, Number.isNaN(parsed) ? undefined : parsed);
   }
 }

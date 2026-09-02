@@ -19,11 +19,13 @@ export interface NotificationEventRow {
   message_log_id: string | null;
   payload_json: Record<string, unknown> | null;
   dedupe_key?: string | null;
+  /** First event of this message's fallback chain; null when this row is the root (0108). */
+  root_event_id?: string | null;
 }
 
 /** Column list for {@link NotificationEventRow} — used by every reader of the queue. */
 export const NOTIFICATION_EVENT_COLUMNS =
-  'id,business_id,location_id,client_profile_id,appointment_id,channel,event_key,status,scheduled_for,attempts,message_log_id,payload_json,dedupe_key';
+  'id,business_id,location_id,client_profile_id,appointment_id,channel,event_key,status,scheduled_for,attempts,message_log_id,payload_json,dedupe_key,root_event_id';
 
 /** One channel's rendered content. Channels read only the fields that apply to them. */
 export interface RenderedChannelMessage {

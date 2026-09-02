@@ -164,6 +164,8 @@ function makeDispatcher(
     emailResult?: Record<string, unknown>;
     optedOut?: string[];
     optOutReadFailed?: boolean;
+    /** What the accounting stub returns. `null` reproduces a failed ledger write. */
+    recordSendResult?: { counted: boolean } | null;
   } = {},
 ) {
   const config = { getOrThrow: () => 'https://example.supabase.co', get: () => undefined } as unknown as ConfigService;
@@ -219,14 +221,16 @@ function makeDispatcher(
   // so these dispatcher specs measure dispatcher behaviour and nothing else.
   const messageUsage = {
     checkCap: jest.fn(async () => ({ allow: true, warn: false })),
-    recordSend: jest.fn(async () => ({ counted: true })),
+    // `recordSendResult` lets one spec make accounting FAIL the way the real
+    // service does — by returning null, never by throwing into the send path.
+    recordSend: jest.fn(async () => opts.recordSendResult ?? { counted: true }),
   } as unknown as MessageUsageService;
 
   const d = new NotificationDispatchService(
     config, providers, templates, subjects, messaging, escalation, messageUsage,
   );
   (d as unknown as { admin: unknown }).admin = admin;
-  return { d, whatsapp, sms, email };
+  return { d, whatsapp, sms, email, messageUsage };
 }
 
 function event(over: Record<string, unknown> = {}) {
@@ -530,5 +534,80 @@ describe('NotificationDispatchService — messages that are not appointments', (
 
     expect(whatsapp.send).not.toHaveBeenCalled();
     expect(eventUpdates(state)).toContain('cancelled');
+  });
+});
+
+// ===========================================================================
+// Accounting failure at the send path — Wrike 4507284256, test A
+// ===========================================================================
+
+describe('accounting failure never reaches the client', () => {
+  it('does not re-send when the ledger write fails after a durable sent state', async () => {
+    const state = baseState();
+    const { d, whatsapp } = makeDispatcher(state, settings(), { recordSendResult: null });
+
+    await run(d, event());
+
+    // The provider was called exactly once, and the event is terminally `sent`.
+    // The accounting failure is invisible to the send path by construction:
+    // recordSend returns null rather than throwing, and markAccepted ignores it.
+    expect(whatsapp.send).toHaveBeenCalledTimes(1);
+    // (the undefined entry is the message_log_id back-link, not a status change)
+    expect(eventUpdates(state).filter(Boolean)).toEqual(['sent']);
+    // No fallback was queued either — a lost unit must never look like a
+    // delivery failure.
+    expect(queuedChannels(state)).toEqual([]);
+  });
+
+  it('stamps sent_at, which is what makes the lost unit recoverable later', async () => {
+    const state = baseState();
+    const { d } = makeDispatcher(state, settings(), { recordSendResult: null });
+
+    await run(d, event());
+
+    const sent = state.events.find((e) => e.op === 'update' && e.row.status === 'sent');
+    // MessageUsageRecoveryService finds the gap from exactly this column.
+    expect(sent?.row.sent_at).toEqual(expect.any(String));
+  });
+
+  it('passes a reminder OCCURRENCE anchor to the recorder, so a re-send after a reschedule counts', async () => {
+    const state = baseState();
+    const { d, messageUsage } = makeDispatcher(state, settings({ reminder24hEnabled: true }));
+
+    await run(
+      d,
+      event({
+        event_key: 'appointment_reminder_24h',
+        payload_json: { appointment_start: FUTURE },
+      }),
+    );
+
+    const call = (messageUsage.recordSend as jest.Mock).mock.calls[0][0];
+    expect(call.occurrenceKey).toBe(FUTURE);
+  });
+
+  it('passes NO occurrence for a booking confirmation — its identity is unchanged', async () => {
+    const state = baseState();
+    const { d, messageUsage } = makeDispatcher(state, settings());
+
+    await run(d, event());
+
+    const call = (messageUsage.recordSend as jest.Mock).mock.calls[0][0];
+    // A confirmation is one-shot, and its precheck does not pin the snapshot, so
+    // an occurrence would risk splitting one fallback chain into two units.
+    expect(call.occurrenceKey).toBeNull();
+  });
+
+  it('accounts the send against the moment the provider accepted it', async () => {
+    const state = baseState();
+    const { d, messageUsage } = makeDispatcher(state, settings());
+
+    await run(d, event());
+
+    const call = (messageUsage.recordSend as jest.Mock).mock.calls[0][0];
+    const sent = state.events.find((e) => e.op === 'update' && e.row.status === 'sent');
+    // occurredAt IS sent_at, so the period is derived from when the message went
+    // out rather than from when the accounting happened to run.
+    expect(call.occurredAt).toBe(sent?.row.sent_at);
   });
 });
