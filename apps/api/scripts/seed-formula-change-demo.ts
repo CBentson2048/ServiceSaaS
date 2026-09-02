@@ -306,6 +306,9 @@ async function seedVisit(
       scheduled_start_at: at.toISOString(),
       scheduled_end_at: end.toISOString(),
       completed_at: end.toISOString(),
+      // NOT NULL since 0050. Every sibling seed sets it; omitting it here made
+      // this ticket's own demo abort on the first appointment insert.
+      occupied_ranges: `{["${at.toISOString()}","${end.toISOString()}")}`,
     })
     .select('id')
     .maybeSingle<{ id: string }>();

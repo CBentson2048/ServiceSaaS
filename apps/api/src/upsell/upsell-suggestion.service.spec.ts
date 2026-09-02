@@ -59,7 +59,7 @@ function build(options: FakeOptions = {}) {
 
   const makeChain = (table: string) => {
     let rows: Row[] = (tables[table] ?? []).map((row) => ({ ...row }));
-    let verb = 'select';
+    const verb = 'select';
     let payload: unknown;
 
     const chain: Record<string, unknown> = {};

@@ -179,8 +179,34 @@ function clientRow(overrides: Row = {}): Row {
 const BUSINESS_ROW = { id: BUSINESS, timezone: 'Europe/London' };
 
 /** N days before today, so status assertions do not depend on the wall clock. */
+/**
+ * One deterministic reference instant for every fixture date.
+ *
+ * WHY NOT `Date.now()`. The service resolves "today" in the BUSINESS timezone
+ * (`localDateIn('Europe/London', new Date())`), while these fixtures used to
+ * derive visit dates from the UTC clock. During British Summer Time those two
+ * disagree for the 23:00–24:00 UTC hour — London is already on the next
+ * calendar day — so a suite run in that window measured every offset one day
+ * short and `overdueDays` came out 85 instead of 84. The assertion was right;
+ * the fixture was ambiguous.
+ *
+ * Anchoring to LONDON'S current date at MIDDAY removes the ambiguity without
+ * loosening anything: midday is the same calendar day whether it is read at
+ * UTC+0 or UTC+1, so a whole-day offset from it lands on exactly the intended
+ * date all year round. The assertions stay exact.
+ */
+function referenceNow(): Date {
+  const londonToday = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/London',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+  return new Date(`${londonToday}T12:00:00Z`);
+}
+
 function daysAgo(days: number): string {
-  return new Date(Date.now() - days * 86_400_000).toISOString();
+  return new Date(referenceNow().getTime() - days * 86_400_000).toISOString();
 }
 
 function historyRow(dayOffsets: number[], overrides: Row = {}): Row {
