@@ -163,6 +163,14 @@ export interface ZacSemanticRouterRawOutput {
   requires_live_business_data?: unknown;
   reason_code?: unknown;
   /**
+   * The router's coarse analysis-intent reading (semantic-v2 providers only).
+   * Untrusted; validated against the closed intent enum and FORCED to 'none'
+   * for any non-qlooqo_data mode regardless of what the model said.
+   */
+  analysis_intent?: unknown;
+  /** Where the answer's information should come from (semantic-v2 only). */
+  information_source?: unknown;
+  /**
    * WHAT the request reaches for, so the server can apply fixed policy before
    * anything is dispatched. Untrusted like every other field: validated against
    * the closed category enum, and never an authorisation claim — the model is

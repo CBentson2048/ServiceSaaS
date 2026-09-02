@@ -1,20 +1,42 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { ZacRoleContext } from '../context/zac-context.types';
 import {
   ZAC_MODEL_PROVIDER,
   type ZacModelCompletion,
   type ZacModelProvider,
+  type ZacSemanticRouterOutcome,
 } from '../models/zac-model-provider.interface';
-import { ZacSemanticHealthService } from '../models/zac-semantic-health.service';
+import {
+  ZAC_SEMANTIC_PROVIDER,
+  type ZacSemanticProvider,
+} from '../models/zac-semantic-provider.interface';
+import {
+  ZacSemanticHealthService,
+  type ZacSemanticFailureKind,
+} from '../models/zac-semantic-health.service';
 import { ZacRequestModeClassifierService } from './zac-request-mode-classifier.service';
 import { isZacResourceCategory } from '../policy/zac-policy.types';
 import {
+  ZAC_ROUTER_VERSION,
+  ZAC_ROUTER_VERSION_LEGACY,
+  ZAC_SEMANTIC_PROMPT_VERSION,
+} from './zac-semantic-router.prompt';
+import {
+  ZAC_MODE_INFORMATION_SOURCE,
+  confidenceBucketScore,
+  isZacConfidenceBucket,
+  isZacInformationSource,
   isZacRequestMode,
+  isZacRouterAnalysisIntent,
   isZacRoutingReasonCode,
+  parseZacRoutingMode,
   type ZacClassifierFailure,
   type ZacDeterministicVerdict,
   type ZacRequestClassification,
+  type ZacRequestMode,
+  type ZacRouterAnalysisIntent,
+  type ZacRoutingMode,
   type ZacSemanticClassification,
 } from './zac-request-mode.types';
 
@@ -77,6 +99,29 @@ export interface ZacRouteResult {
   classifierLatencyMs: number | null;
   /** True when a semantic call was attempted this turn (for cost observability). */
   classifierInvoked: boolean;
+  /**
+   * The shadow classification, when routing mode is `shadow` and a dedicated
+   * semantic provider is configured. Settles AFTER the route has been decided
+   * — observation only, never awaited on the user's critical path, and the
+   * promise never rejects. Null in every other mode.
+   */
+  shadow: Promise<ZacShadowObservation> | null;
+}
+
+/**
+ * One shadow classification, for the disagreement telemetry the cutover plan
+ * depends on. Contains no question text — only the validated verdict shape,
+ * the typed failure and the billed usage.
+ */
+export interface ZacShadowObservation {
+  provider: string;
+  model: string;
+  /** The VALIDATED shadow verdict; null when nothing usable came back. */
+  semantic: ZacSemanticClassification | null;
+  failure: ZacClassifierFailure | null;
+  failureKind?: ZacSemanticFailureKind;
+  completion: ZacModelCompletion | null;
+  latencyMs: number;
 }
 
 /**
@@ -95,28 +140,37 @@ export interface ZacRouteResult {
 @Injectable()
 export class ZacSemanticRouterService {
   private readonly enabled: boolean;
+  /** Which pipeline is authoritative for meaning. See {@link ZacRoutingMode}. */
+  readonly routingMode: ZacRoutingMode;
 
   constructor(
     private readonly deterministic: ZacRequestModeClassifierService,
     @Inject(ZAC_MODEL_PROVIDER) private readonly modelProvider: ZacModelProvider,
     config: ConfigService,
     private readonly semanticHealth: ZacSemanticHealthService = new ZacSemanticHealthService(),
+    @Optional()
+    @Inject(ZAC_SEMANTIC_PROVIDER)
+    private readonly semanticProvider: ZacSemanticProvider | null = null,
   ) {
     // Default ON: the semantic layer is Phase 1 behaviour, and a provider that
     // cannot classify already degrades safely on its own. The flag exists to
     // force the pre-semantic path in an incident, matching how ZAC_ENABLED is
     // read elsewhere.
     this.enabled = readBooleanFlag(config.get<string>('ZAC_SEMANTIC_ROUTER_ENABLED'), true);
+    this.routingMode = parseZacRoutingMode(config.get<string>('ZAC_ROUTING_MODE'));
   }
 
   /**
    * True when a semantic layer is CONFIGURED for this deployment — the flag is
-   * on and the provider implements it. This says nothing about whether a call
-   * has ever succeeded; see {@link ZacSemanticHealthService.operational} for
-   * that, and never use this alone to claim readiness.
+   * on and the authoritative pipeline for this routing mode has a classifier.
+   * This says nothing about whether a call has ever succeeded; see
+   * {@link ZacSemanticHealthService.operational} for that, and never use this
+   * alone to claim readiness.
    */
   get semanticRoutingAvailable(): boolean {
-    return this.enabled && this.modelProvider.semanticRouting === true;
+    if (!this.enabled) return false;
+    if (this.routingMode === 'semantic') return this.semanticProvider !== null;
+    return this.modelProvider.semanticRouting === true;
   }
 
   /** The recorded runtime state of the semantic layer. */
@@ -124,21 +178,43 @@ export class ZacSemanticRouterService {
     return this.semanticHealth;
   }
 
-  /** The model performing semantic routing, for /zac/health. Null when none. */
+  /** The model performing AUTHORITATIVE semantic routing. Null when none. */
   get routerModel(): string | null {
     if (!this.semanticRoutingAvailable) return null;
+    if (this.routingMode === 'semantic') return this.semanticProvider?.model ?? null;
     const provider = this.modelProvider as ZacModelProvider & { routerModel?: string };
     return provider.routerModel ?? this.modelProvider.model;
+  }
+
+  /** The dedicated semantic provider's identity (any mode), for /zac/health. */
+  get semanticProviderInfo(): { name: string; model: string } | null {
+    return this.semanticProvider
+      ? { name: this.semanticProvider.name, model: this.semanticProvider.model }
+      : null;
+  }
+
+  /** The router contract version the AUTHORITATIVE pipeline runs. */
+  get routerVersion(): string {
+    return this.routingMode === 'semantic' ? ZAC_ROUTER_VERSION : ZAC_ROUTER_VERSION_LEGACY;
+  }
+
+  /** The versioned v2 prompt, when the v2 pipeline is authoritative. */
+  get promptVersion(): string | null {
+    return this.routingMode === 'semantic' ? ZAC_SEMANTIC_PROMPT_VERSION : null;
   }
 
   async route(input: ZacRouteInput): Promise<ZacRouteResult> {
     const { question, roleContext } = input;
 
+    // Shadow starts FIRST so it observes every turn — including the ones
+    // Layer 1 decides without a model. It can never influence the route.
+    const shadow = this.beginShadow(input);
+
     // ---- Layer 1: explicit, unambiguous intent. No model call. --------------
     const explicit = this.deterministic.classifyExplicit(question, roleContext);
     if (explicit) {
       return {
-        classification: {
+        classification: this.finalize({
           mode: explicit.mode,
           source: 'deterministic',
           dataInstruction: explicit.dataInstruction,
@@ -149,10 +225,11 @@ export class ZacSemanticRouterService {
           // Layer 1 rules classify the MODE only; the deterministic resource
           // classifier runs in the orchestrator alongside policy.
           resourceCategory: null,
-        },
+        }),
         completion: null,
         classifierLatencyMs: null,
         classifierInvoked: false,
+        shadow,
       };
     }
 
@@ -164,25 +241,28 @@ export class ZacSemanticRouterService {
     const heuristicVerdict = this.deterministic.classifyHeuristic(question, roleContext);
 
     // ---- Layer 2: semantic intent classification. ---------------------------
+    // Which classifier is Layer 2 depends on the routing mode: in `semantic`
+    // the dedicated provider (OpenAI) is authoritative; in `legacy` and
+    // `shadow` the model provider's own classifier is, exactly as before.
     let semantic: ZacSemanticClassification | null = null;
     let failure: ZacClassifierFailure | null = null;
     let completion: ZacModelCompletion | null = null;
     let latencyMs: number | null = null;
     let invoked = false;
 
+    const layer2 = this.selectLayer2();
     if (!this.enabled) {
       failure = 'router_disabled';
-    } else if (!this.modelProvider.classifyRequestMode || !this.modelProvider.semanticRouting) {
+    } else if (!layer2) {
       failure = 'provider_unavailable';
     } else {
       invoked = true;
       const startedAt = Date.now();
-      const outcome = await this.modelProvider
-        .classifyRequestMode({
-          question,
-          roleContext,
-          recentTurnSummaries: input.recentTurnSummaries,
-        })
+      const outcome = await layer2({
+        question,
+        roleContext,
+        recentTurnSummaries: input.recentTurnSummaries,
+      })
         // A provider is contracted not to throw; belt-and-braces so a routing
         // bug can never take down the user's turn.
         .catch(() => ({
@@ -217,10 +297,11 @@ export class ZacSemanticRouterService {
       );
       if (decision) {
         return {
-          classification: decision,
+          classification: this.finalize(decision),
           completion,
           classifierLatencyMs: latencyMs,
           classifierInvoked: invoked,
+          shadow,
         };
       }
       failure = 'classification_low_confidence';
@@ -228,16 +309,92 @@ export class ZacSemanticRouterService {
 
     // ---- Layer 3: safe fallback ladder. -------------------------------------
     return {
-      classification: this.fallback({
-        question,
-        dataInstruction,
-        heuristicVerdict,
-        failure: failure ?? 'classification_invalid',
-        semantic,
-      }),
+      classification: this.finalize(
+        this.fallback({
+          question,
+          dataInstruction,
+          heuristicVerdict,
+          failure: failure ?? 'classification_invalid',
+          semantic,
+        }),
+      ),
       completion,
       classifierLatencyMs: latencyMs,
       classifierInvoked: invoked,
+      shadow,
+    };
+  }
+
+  /** The authoritative Layer 2 classifier for the configured routing mode. */
+  private selectLayer2():
+    | ((input: {
+        question: string;
+        roleContext: ZacRoleContext;
+        recentTurnSummaries?: string[];
+      }) => Promise<ZacSemanticRouterOutcome>)
+    | null {
+    if (this.routingMode === 'semantic') {
+      const provider = this.semanticProvider;
+      return provider ? (input) => provider.classify(input) : null;
+    }
+    const modelProvider = this.modelProvider;
+    if (!modelProvider.classifyRequestMode || !modelProvider.semanticRouting) return null;
+    return (input) => modelProvider.classifyRequestMode!(input);
+  }
+
+  /**
+   * Fire the shadow classification. Never awaited on the turn, never rejects,
+   * and records its health under `shadow_router` so shadow failures cannot
+   * degrade the authoritative pipeline's readiness.
+   */
+  private beginShadow(input: ZacRouteInput): Promise<ZacShadowObservation> | null {
+    if (this.routingMode !== 'shadow' || !this.enabled || !this.semanticProvider) return null;
+    const provider = this.semanticProvider;
+    const startedAt = Date.now();
+    return provider
+      .classify({
+        question: input.question,
+        roleContext: input.roleContext,
+        recentTurnSummaries: input.recentTurnSummaries,
+      })
+      .catch(() => ({
+        raw: null,
+        failure: 'provider_unavailable' as ZacClassifierFailure,
+        completion: null,
+        failureKind: 'transport' as const,
+      }))
+      .then((outcome) => {
+        const semantic = this.validate(outcome.raw);
+        if (semantic) {
+          this.semanticHealth.recordSuccess('shadow_router');
+        } else {
+          this.semanticHealth.recordFailure(
+            'shadow_router',
+            outcome.failureKind ?? (outcome.raw ? 'invalid_output' : 'transport'),
+          );
+        }
+        return {
+          provider: provider.name,
+          model: outcome.completion?.model ?? provider.model,
+          semantic,
+          failure: semantic ? null : (outcome.failure ?? 'classification_invalid'),
+          failureKind: outcome.failureKind,
+          completion: outcome.completion,
+          latencyMs: Date.now() - startedAt,
+        };
+      });
+  }
+
+  /**
+   * The last line of the §11 invariants, applied to EVERY classification that
+   * leaves the router whatever path produced it: a non-qlooqo_data turn never
+   * carries an analysis intent.
+   */
+  private finalize(classification: ZacRequestClassification): ZacRequestClassification {
+    return {
+      ...classification,
+      analysisIntent:
+        classification.mode === 'qlooqo_data' ? (classification.analysisIntent ?? 'none') : 'none',
     };
   }
 
@@ -253,18 +410,64 @@ export class ZacSemanticRouterService {
     if (!isZacRequestMode(candidate.mode)) return null;
     if (!isZacRoutingReasonCode(candidate.reason_code)) return null;
 
-    const confidence = candidate.confidence;
-    if (typeof confidence !== 'number' || !Number.isFinite(confidence)) return null;
+    // Confidence arrives as a 0..1 number from the legacy (v1) contract or as
+    // a closed bucket from the v2 contract. Buckets project onto the SAME
+    // measured numeric policy, so one confidence policy governs both.
+    const rawConfidence = candidate.confidence;
+    let confidenceBucket: ZacSemanticClassification['confidenceBucket'] = null;
+    let confidence: number;
+    if (isZacConfidenceBucket(rawConfidence)) {
+      confidenceBucket = rawConfidence;
+      confidence = confidenceBucketScore(rawConfidence);
+    } else if (typeof rawConfidence === 'number' && Number.isFinite(rawConfidence)) {
+      confidence = rawConfidence;
+    } else {
+      return null;
+    }
 
     const requiresLive = candidate.requires_live_business_data;
     if (typeof requiresLive !== 'boolean') return null;
+
+    // v2 fields. Their PRESENCE marks a v2 verdict; a legacy verdict that never
+    // carried them is not penalised for their absence. A v2 verdict whose
+    // values fall outside the closed enums is discarded whole — the strict
+    // schema makes that unreachable from a live call, so reaching it means the
+    // pipe itself is untrustworthy.
+    const isV2 = candidate.analysis_intent !== undefined || candidate.information_source !== undefined;
+    let analysisIntent: ZacRouterAnalysisIntent = 'none';
+    let informationSource: ZacSemanticClassification['informationSource'] = null;
+    let semanticallyCoherent = true;
+    if (isV2) {
+      if (!isZacRouterAnalysisIntent(candidate.analysis_intent)) return null;
+      if (!isZacInformationSource(candidate.information_source)) return null;
+      informationSource = candidate.information_source;
+
+      // §11 invariants. Violations are not discarded — the MODE may still be
+      // right — but they void self-consistency, which caps confidence below
+      // the accept threshold: an incoherent verdict cannot reach tool
+      // execution on its own say-so.
+      const mode = candidate.mode as ZacRequestMode;
+      if (mode === 'qlooqo_data') {
+        analysisIntent = candidate.analysis_intent;
+        if (analysisIntent === 'none') semanticallyCoherent = false;
+      } else {
+        // Hard invariant: a non-data turn NEVER carries an intent, whatever
+        // the model said. The claim is still scored for coherence.
+        analysisIntent = 'none';
+        if (candidate.analysis_intent !== 'none') semanticallyCoherent = false;
+      }
+      if (informationSource !== ZAC_MODE_INFORMATION_SOURCE[mode]) {
+        semanticallyCoherent = false;
+      }
+    }
 
     // A verdict that contradicts itself — "this is general advice, and it needs
     // live business data", or "this is a data question that needs none" — is
     // not a reliable verdict. It is not discarded (the mode may still be
     // right), but its confidence is capped below the accept threshold so the
     // corroboration rules and the fallback ladder get a say.
-    const selfConsistent = requiresLive === (candidate.mode === 'qlooqo_data');
+    const selfConsistent =
+      requiresLive === (candidate.mode === 'qlooqo_data') && semanticallyCoherent;
     const clamped = Math.min(1, Math.max(0, confidence));
 
     // The category is ADVISORY input to policy, not part of the verdict's
@@ -284,6 +487,9 @@ export class ZacSemanticRouterService {
       requiresLiveBusinessData: requiresLive,
       reasonCode: candidate.reason_code,
       selfConsistent,
+      analysisIntent,
+      informationSource,
+      confidenceBucket,
     };
   }
 
@@ -312,6 +518,9 @@ export class ZacSemanticRouterService {
         classifierFailure: null,
         requiresLiveBusinessData: semantic.requiresLiveBusinessData,
         resourceCategory: semantic.resourceCategory,
+        // The vetoed turn is advisory: no intent hint survives the rewrite.
+        analysisIntent: 'none',
+        informationSource: semantic.informationSource,
       };
     }
 
@@ -324,6 +533,8 @@ export class ZacSemanticRouterService {
       classifierFailure: null,
       requiresLiveBusinessData: semantic.requiresLiveBusinessData,
       resourceCategory: semantic.resourceCategory,
+      analysisIntent: semantic.analysisIntent,
+      informationSource: semantic.informationSource,
     });
 
     // A follow-up resolved from prior-turn context is recorded as such: it is
@@ -397,6 +608,11 @@ export class ZacSemanticRouterService {
       // decision, and policy re-derives fixed boundaries deterministically, so
       // carrying it forward can only make a refusal more specific.
       resourceCategory: semantic?.resourceCategory ?? null,
+      // The intent HINT survives the same way: it widens no access (the
+      // planner and registry re-validate everything) and finalize() strips it
+      // from any non-data mode this fallback lands on.
+      analysisIntent: semantic?.analysisIntent ?? ('none' as const),
+      informationSource: semantic?.informationSource ?? null,
     };
 
     // 1. An explicit "do not use my data" NEVER falls back to qlooqo_data.

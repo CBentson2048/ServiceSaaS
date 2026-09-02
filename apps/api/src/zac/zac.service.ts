@@ -38,6 +38,12 @@ import {
   ZacSemanticRouterService,
   dataInstructionLabel,
 } from './routing/zac-semantic-router.service';
+import type { ZacShadowObservation } from './routing/zac-semantic-router.service';
+import {
+  ZAC_ROUTER_VERSION,
+  ZAC_SEMANTIC_PROMPT_VERSION,
+} from './routing/zac-semantic-router.prompt';
+import { confidenceScoreBucket } from './routing/zac-request-mode.types';
 import type {
   ZacAdvisoryRequestMode,
   ZacRequestClassification,
@@ -561,7 +567,15 @@ export class ZacService {
     } else if (
       analysis &&
       (this.orchestrator.isMultiTool(analysis.decision.intent) ||
-        (resolvedIntent === null && this.orchestrator.hasAnalysisSignal(question)))
+        (resolvedIntent === null &&
+          // The analysis gate: a keyword signal, OR the semantic router's own
+          // intent reading. The second half is what lets a keyword-free broad
+          // question ("anything jumping out?") reach the analysis pipeline
+          // instead of falling to the capability summary — the router only
+          // ever WIDENS this gate; the planner and the registry still decide
+          // and re-validate everything that actually runs.
+          (this.orchestrator.hasAnalysisSignal(question) ||
+            (classification.analysisIntent ?? 'none') !== 'none')))
     ) {
       // A question whose answer spans the business — OR any live-data question
       // the single-tool router could not place.
@@ -891,6 +905,14 @@ export class ZacService {
           ? {}
           : { semantic_confidence: Number(classification.confidence.toFixed(2)) }),
         semantic_routing_available: this.semanticRouter.semanticRoutingAvailable,
+        routing_mode: this.semanticRouter.routingMode,
+        router_version: this.semanticRouter.routerVersion,
+        ...(classification.analysisIntent && classification.analysisIntent !== 'none'
+          ? { router_analysis_intent: classification.analysisIntent }
+          : {}),
+        ...(classification.informationSource
+          ? { information_source: classification.informationSource }
+          : {}),
         blocking_reason: blockingReason,
         resource_category: decision?.category ?? classification.resourceCategory ?? null,
         response_strategy: responseStrategy,
@@ -986,14 +1008,108 @@ export class ZacService {
       classification_source: classification.source,
       reason_code: classification.reasonCode,
       semantic_confidence: classification.confidence,
+      semantic_confidence_bucket:
+        classification.confidence === null ? null : confidenceScoreBucket(classification.confidence),
       requires_live_business_data: classification.requiresLiveBusinessData,
       explicit_data_instruction: dataInstructionLabel(classification.dataInstruction),
       model_classifier_used: routed.classifierInvoked,
       classifier_latency_ms: routed.classifierLatencyMs,
       classifier_fallback: classification.classifierFailure,
       conversation_id: conversation.conversationId,
+      // The migration's regression-analysis spine (brief §22/§23): which
+      // pipeline decided, under which contract and prompt, on which model.
+      routing_mode: this.semanticRouter.routingMode,
+      router_version: this.semanticRouter.routerVersion,
+      prompt_version: this.semanticRouter.promptVersion,
+      semantic_provider: routed.completion?.provider ?? null,
+      semantic_model: routed.completion?.model ?? null,
+      router_analysis_intent: classification.analysisIntent ?? 'none',
+      information_source: classification.informationSource ?? null,
+      fallback_used: classification.source === 'fallback' || classification.source === 'clarification',
+      fallback_reason: classification.classifierFailure,
+      classifier_input_tokens: routed.completion?.inputTokens ?? null,
+      classifier_output_tokens: routed.completion?.outputTokens ?? null,
+      classifier_estimated_cost_usd: routed.completion?.estimatedCostUsd ?? null,
     });
+
+    // Shadow mode: the OpenAI classification of this same turn, recorded when
+    // it settles. NEVER awaited on the user's turn, and its cost rides the log
+    // spine only — the per-turn DB buffer has usually flushed by the time a
+    // shadow call returns, and a racy row is worse than a log-only one.
+    if (routed.shadow) {
+      const authoritative = classification;
+      void routed.shadow.then((observation) => {
+        this.recordShadowObservation(context, conversation, traceId, authoritative, observation);
+      });
+    }
     return classification;
+  }
+
+  /** Record one shadow route against the decision that actually served. */
+  private recordShadowObservation(
+    context: ZacActingContext,
+    conversation: ZacConversationState,
+    traceId: string,
+    authoritative: ZacRequestClassification,
+    observation: ZacShadowObservation,
+  ): void {
+    const semantic = observation.semantic;
+    // Agreement is judged on the two decisions that matter for cutover: the
+    // MODE, and the live-data direction (the expensive error in both
+    // directions per the acceptance history).
+    const modeAgreement = semantic ? semantic.mode === authoritative.mode : null;
+    const liveDataAgreement = semantic
+      ? (semantic.mode === 'qlooqo_data') === (authoritative.mode === 'qlooqo_data')
+      : null;
+    this.telemetry.recordSpineEvent('shadow_classification', {
+      trace_id: traceId,
+      business_id: context.businessId,
+      actor_user_id: context.actorUserId,
+      role_context: context.roleContext,
+      conversation_id: conversation.conversationId,
+      routing_mode: this.semanticRouter.routingMode,
+      router_version: ZAC_ROUTER_VERSION,
+      prompt_version: ZAC_SEMANTIC_PROMPT_VERSION,
+      shadow_provider: observation.provider,
+      shadow_model: observation.model,
+      legacy_mode: authoritative.mode,
+      legacy_source: authoritative.source,
+      legacy_reason_code: authoritative.reasonCode,
+      shadow_mode: semantic?.mode ?? null,
+      shadow_reason_code: semantic?.reasonCode ?? null,
+      shadow_confidence_bucket: semantic?.confidenceBucket ?? null,
+      shadow_analysis_intent: semantic?.analysisIntent ?? null,
+      shadow_information_source: semantic?.informationSource ?? null,
+      shadow_self_consistent: semantic?.selfConsistent ?? null,
+      shadow_failure: observation.failure,
+      shadow_failure_kind: observation.failureKind ?? null,
+      mode_agreement: modeAgreement,
+      live_data_agreement: liveDataAgreement,
+      latency_ms: observation.latencyMs,
+      input_tokens: observation.completion?.inputTokens ?? null,
+      output_tokens: observation.completion?.outputTokens ?? null,
+      estimated_cost_usd: observation.completion?.estimatedCostUsd ?? null,
+    });
+    if (observation.completion) {
+      this.telemetry.recordCostEvent({
+        trace_id: traceId,
+        conversation_id: conversation.conversationId,
+        business_id: context.businessId,
+        location_id: context.locationId,
+        actor_user_id: context.actorUserId,
+        role_context: context.roleContext,
+        provider: observation.completion.provider,
+        model: observation.completion.model,
+        task_type: 'classification',
+        input_tokens: observation.completion.inputTokens,
+        output_tokens: observation.completion.outputTokens,
+        reasoning_tokens: observation.completion.reasoningTokens,
+        estimated_cost_usd: observation.completion.estimatedCostUsd,
+        latency_ms: observation.latencyMs,
+        tool_calls_used: 0,
+        cache_hit: observation.completion.cacheReadInputTokens > 0,
+      });
+    }
   }
 
   /**
@@ -2140,7 +2256,13 @@ export class ZacService {
    */
   health(actor: AuthUser): ZacHealthResponse {
     this.rollout.assertRolloutFor(actor);
-    const configured = this.modelProvider.classifyRequestMode !== undefined;
+    // "Configured" tracks the AUTHORITATIVE pipeline for this routing mode:
+    // in semantic mode that is the dedicated provider, otherwise the model
+    // provider's own classifier — matching what route() would actually call.
+    const configured =
+      this.semanticRouter.routingMode === 'semantic'
+        ? this.semanticRouter.semanticProviderInfo !== null
+        : this.modelProvider.classifyRequestMode !== undefined;
     const enabled = this.semanticRouter.semanticRoutingAvailable;
     const semanticHealth = this.semanticRouter.health;
     const router = semanticHealth.snapshot('router');
@@ -2154,12 +2276,19 @@ export class ZacService {
     // call has not demonstrated it can, and says so.
     const ready = narrates && configured && enabled && semanticHealth.schemaValid && operational;
 
+    const semanticProvider = this.semanticRouter.semanticProviderInfo;
+
     return {
       enabled: true,
       provider: this.modelProvider.name,
       model: this.modelProvider.model,
       ok: true,
       narrates,
+      routing_mode: this.semanticRouter.routingMode,
+      semantic_provider: semanticProvider?.name ?? null,
+      semantic_model: semanticProvider?.model ?? null,
+      router_version: this.semanticRouter.routerVersion,
+      prompt_version: this.semanticRouter.promptVersion,
       semantic_routing: enabled,
       router_model: enabled ? this.semanticRouter.routerModel : null,
       semantic_routing_configured: configured,

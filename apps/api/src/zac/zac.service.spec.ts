@@ -17,6 +17,7 @@ import { ZacMeasurementService } from './measurement/zac-measurement.service';
 import { ZacMemoryExtractionService } from './memory/zac-memory-extraction.service';
 import { ZacMemoryService } from './memory/zac-memory.service';
 import { StubZacModelProvider } from './models/providers/stub-zac-provider';
+import type { ZacSemanticProvider } from './models/zac-semantic-provider.interface';
 import {
   ZacModelIncompleteError,
   ZacModelRefusedError,
@@ -262,6 +263,7 @@ function makeService(
   utilisation: Partial<UtilisationService> = {
     summary: jest.fn().mockResolvedValue(UTILISATION_FIXTURE),
   },
+  semanticProvider: ZacSemanticProvider | null = null,
 ): {
   service: ZacService;
   telemetry: { recordCostEvent: jest.Mock; recordSpineEvent: jest.Mock };
@@ -306,7 +308,7 @@ function makeService(
       provider,
       semanticHealth,
     ),
-    new ZacSemanticRouterService(requestModes, provider, config, semanticHealth),
+    new ZacSemanticRouterService(requestModes, provider, config, semanticHealth, semanticProvider),
     new ZacMeasurementService(new ZacMeasurementStore(config), telemetryService),
     provider,
   );
@@ -473,6 +475,13 @@ describe('ZacService', () => {
       model: 'zac-stub-1',
       ok: true,
       narrates: false,
+      // The migration seam, dark by default: legacy pipeline, no dedicated
+      // semantic provider, v1 contract.
+      routing_mode: 'legacy',
+      semantic_provider: null,
+      semantic_model: null,
+      router_version: 'semantic-v1',
+      prompt_version: null,
       semantic_routing: false,
       router_model: null,
       semantic_routing_configured: false,
@@ -1380,6 +1389,8 @@ describe('ZacService', () => {
         classification_source: 'deterministic',
         reason_code: 'capability_question',
         semantic_routing_available: false,
+        routing_mode: 'legacy',
+        router_version: 'semantic-v1',
         // The decision record: what was asked for, what (if anything) blocked
         // it, and which strategy answered. 'none' on a fulfilled answer.
         blocking_reason: 'none',
@@ -4857,6 +4868,151 @@ describe('ZacService', () => {
       expect(stylistList).not.toHaveBeenCalled();
       expect(response.tool_calls).toEqual([]);
       expect(response.technical_details.request_mode).toBe('hypothetical');
+    });
+  });
+
+  describe('routing modes (the OpenAI semantic-routing migration seam)', () => {
+    const V2_VERDICT = {
+      mode: 'qlooqo_data',
+      analysis_intent: 'business_priorities',
+      information_source: 'live_qlooqo',
+      confidence: 'high',
+      requires_live_business_data: true,
+      reason_code: 'real_business_analysis',
+      resource_category: 'live_business_metrics',
+    };
+    const OPENAI_COMPLETION = {
+      text: '',
+      provider: 'openai',
+      model: 'gpt-5-mini-2025-08-07',
+      inputTokens: 500,
+      outputTokens: 60,
+      reasoningTokens: 0,
+      cacheReadInputTokens: 2500,
+      cacheCreationInputTokens: 0,
+      estimatedCostUsd: 0.0002,
+    };
+    function makeSemanticProvider(raw: unknown = V2_VERDICT): ZacSemanticProvider {
+      return {
+        name: 'openai',
+        model: 'gpt-5-mini',
+        classify: jest.fn().mockResolvedValue({
+          raw,
+          failure: null,
+          completion: OPENAI_COMPLETION,
+        }),
+      };
+    }
+    /** Let detached shadow .then chains run to completion. */
+    const settleShadow = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    it('semantic mode: health names the provider, and the turn carries the v2 telemetry', async () => {
+      const { service, telemetry } = makeService(
+        { ZAC_ENABLED: 'true', ZAC_ROUTING_MODE: 'semantic' },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        makeSemanticProvider(),
+      );
+
+      const health = service.health(makeActor());
+      expect(health.routing_mode).toBe('semantic');
+      expect(health.semantic_provider).toBe('openai');
+      expect(health.semantic_model).toBe('gpt-5-mini');
+      expect(health.router_version).toBe('semantic-v2');
+      expect(health.prompt_version).not.toBeNull();
+      expect(health.router_model).toBe('gpt-5-mini');
+
+      // A question with NO keyword analysis signal and no single-tool match:
+      // pre-migration it fell to the capability summary ("ZAC has no live
+      // data"); the router's intent hint now carries it into the analysis
+      // pipeline, where the planner and registry still decide everything.
+      const response = await service.ask(makeActor(), { question: 'anything jumping out?' });
+      expect(response.technical_details.request_mode).toBe('qlooqo_data');
+      expect(response.technical_details.classification_source).toBe('semantic_model');
+      expect(response.technical_details.routing_mode).toBe('semantic');
+      expect(response.technical_details.router_version).toBe('semantic-v2');
+      expect(response.technical_details.router_analysis_intent).toBe('business_priorities');
+      expect(response.technical_details.information_source).toBe('live_qlooqo');
+      // The discriminator for the analysis pipeline: orchestration ran.
+      expect(response.technical_details.multi_tool).toBeDefined();
+
+      const classified = telemetry.recordSpineEvent.mock.calls.find(
+        ([name]) => name === 'request_classified',
+      );
+      expect(classified?.[1]).toMatchObject({
+        routing_mode: 'semantic',
+        router_version: 'semantic-v2',
+        semantic_provider: 'openai',
+        semantic_model: 'gpt-5-mini-2025-08-07',
+        router_analysis_intent: 'business_priorities',
+        information_source: 'live_qlooqo',
+        semantic_confidence_bucket: 'high',
+        fallback_used: false,
+      });
+    });
+
+    it('shadow mode: legacy serves the turn; the disagreeing shadow verdict lands on the spine', async () => {
+      const semanticProvider = makeSemanticProvider(); // says qlooqo_data
+      const { service, telemetry } = makeService(
+        { ZAC_ENABLED: 'true', ZAC_ROUTING_MODE: 'shadow' },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        semanticProvider,
+      );
+
+      // A Layer-1 deterministic memory turn — legacy decides it instantly; the
+      // shadow still observes it.
+      const response = await service.ask(makeActor(), {
+        question: 'What did I tell you my rebooking goal was?',
+      });
+      expect(response.technical_details.request_mode).toBe('memory');
+      expect(response.technical_details.routing_mode).toBe('shadow');
+      // Shadow is authoritative-legacy: the version that DECIDED is v1.
+      expect(response.technical_details.router_version).toBe('semantic-v1');
+
+      await settleShadow();
+      const shadow = telemetry.recordSpineEvent.mock.calls.find(
+        ([name]) => name === 'shadow_classification',
+      );
+      expect(shadow).toBeDefined();
+      expect(shadow?.[1]).toMatchObject({
+        shadow_provider: 'openai',
+        legacy_mode: 'memory',
+        legacy_source: 'deterministic',
+        shadow_mode: 'qlooqo_data',
+        shadow_analysis_intent: 'business_priorities',
+        mode_agreement: false,
+        live_data_agreement: false,
+        router_version: 'semantic-v2',
+      });
+      // The shadow call is billed and recorded as a classification cost event.
+      const shadowCost = telemetry.recordCostEvent.mock.calls.find(
+        ([event]) => event.provider === 'openai',
+      );
+      expect(shadowCost?.[0]).toMatchObject({
+        task_type: 'classification',
+        model: 'gpt-5-mini-2025-08-07',
+      });
+    });
+
+    it('legacy mode never constructs shadow telemetry and keeps v1 versioning', async () => {
+      const { service, telemetry } = makeService();
+      await service.ask(makeActor(), { question: 'What did I tell you my rebooking goal was?' });
+      await settleShadow();
+      expect(
+        telemetry.recordSpineEvent.mock.calls.filter(([name]) => name === 'shadow_classification'),
+      ).toEqual([]);
+      const health = service.health(makeActor());
+      expect(health.routing_mode).toBe('legacy');
+      expect(health.semantic_provider).toBeNull();
     });
   });
 });

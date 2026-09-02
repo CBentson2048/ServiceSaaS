@@ -5,7 +5,13 @@ import {
   ZAC_BLOCKING_REASONS,
   type ZacBlockingReason,
 } from '../../policy/zac-policy.types';
-import { ZAC_REQUEST_MODES, type ZacRequestMode } from '../zac-request-mode.types';
+import {
+  ZAC_REQUEST_MODES,
+  type ZacClassificationSource,
+  type ZacRequestMode,
+  type ZacRouterAnalysisIntent,
+} from '../zac-request-mode.types';
+import type { ZacAnalysisIntent } from '../../analysis/zac-analysis.types';
 
 /** One labelled routing example. */
 export interface RoutingEvalCase {
@@ -22,7 +28,20 @@ export interface RoutingEvalCase {
   metricsExempt?: boolean;
   /** Pinned by the client acceptance criteria — these must never regress. */
   mandated?: boolean;
+  /**
+   * A mandated case whose correct routing REQUIRES the semantic layer — the
+   * deterministic floor is known-unable to pin it ("What is a stylist?" has no
+   * keyword shape the floor can safely act on). Exempt from the floor-config
+   * mandated guard; still asserted at 100% for every semantic configuration.
+   */
+  floorExempt?: boolean;
   rationale?: string;
+  /**
+   * The v2 label: WHAT KIND of analysis this turn wants. Present only on
+   * qlooqo_data cases; every other mode's true intent is 'none' by invariant,
+   * so labelling it would state nothing.
+   */
+  expectedIntent?: ZacAnalysisIntent;
   /**
    * The TRUE blocking reason this prompt should produce, for cases where the
    * reason is decidable from the request alone.
@@ -60,6 +79,111 @@ export interface RoutingEvalOutcome {
   actual: ZacRequestMode | null;
   /** True when `actual` is the expected mode or one of its acceptable alternatives. */
   correct: boolean;
+  /** Which layer decided, when the harness captured it. */
+  source?: ZacClassificationSource;
+  /** The router's analysis-intent reading, when the harness captured one. */
+  actualIntent?: ZacRouterAnalysisIntent;
+  /** The router's confidence bucket, when the harness captured one. */
+  confidenceBucket?: 'high' | 'medium' | 'low' | null;
+}
+
+/** Analysis-intent accuracy over the intent-labelled qlooqo_data cases. */
+export interface IntentEvalMetrics {
+  /** Labelled cases where the router ALSO chose qlooqo_data (intent is only defined there). */
+  scored: number;
+  correct: number;
+  accuracy: number;
+  /** The §30 headline: labelled business_priorities cases the router recalled. */
+  businessPriorityRecall: number;
+  businessPrioritySupport: number;
+  /** rows = expected intent, cols = actual intent (incl. 'none'/'unscored'). */
+  confusion: Record<string, Record<string, number>>;
+  failures: RoutingEvalOutcome[];
+}
+
+/**
+ * Score analysis intents. Only cases that carry an intent label AND were
+ * routed to qlooqo_data BY THE SEMANTIC LAYER have a scorable intent — a case
+ * misrouted away from live data is a MODE failure (counted by scoreRouting),
+ * and a Layer-1-decided turn never consulted the router at all: its analysis
+ * intent comes from the downstream analysis layer, measured by the
+ * orchestration eval. Both would blur which layer regressed.
+ */
+export function scoreIntents(outcomes: RoutingEvalOutcome[]): IntentEvalMetrics {
+  const labelled = outcomes.filter(
+    (o) => !o.case.metricsExempt && o.case.expectedIntent !== undefined,
+  );
+  const scorable = labelled.filter(
+    (o) =>
+      o.actual === LIVE_DATA_MODE &&
+      o.actualIntent !== undefined &&
+      (o.source === undefined || o.source === 'semantic_model' || o.source === 'contextual_followup'),
+  );
+
+  const confusion: Record<string, Record<string, number>> = {};
+  const bump = (expected: string, actual: string) => {
+    confusion[expected] ??= {};
+    confusion[expected][actual] = (confusion[expected][actual] ?? 0) + 1;
+  };
+
+  let correct = 0;
+  const failures: RoutingEvalOutcome[] = [];
+  for (const outcome of scorable) {
+    const expected = outcome.case.expectedIntent!;
+    const actual = outcome.actualIntent ?? 'none';
+    bump(expected, actual);
+    if (actual === expected) {
+      correct += 1;
+    } else {
+      failures.push(outcome);
+    }
+  }
+  for (const outcome of labelled) {
+    if (!scorable.includes(outcome)) bump(outcome.case.expectedIntent!, 'unscored');
+  }
+
+  const priorityCases = scorable.filter((o) => o.case.expectedIntent === 'business_priorities');
+  const priorityHits = priorityCases.filter((o) => o.actualIntent === 'business_priorities');
+
+  return {
+    scored: scorable.length,
+    correct,
+    accuracy: scorable.length === 0 ? 0 : correct / scorable.length,
+    businessPriorityRecall:
+      priorityCases.length === 0 ? 0 : priorityHits.length / priorityCases.length,
+    businessPrioritySupport: priorityCases.length,
+    confusion,
+    failures,
+  };
+}
+
+/** Human-readable intent report, mirroring formatRoutingReport. */
+export function formatIntentReport(title: string, metrics: IntentEvalMetrics): string {
+  const pct = (value: number) => `${(value * 100).toFixed(1)}%`;
+  const lines: string[] = [];
+  lines.push('');
+  lines.push(`  ${title} — analysis-intent accuracy (labelled qlooqo_data cases)`);
+  lines.push(
+    `  scored ${metrics.scored}   correct ${metrics.correct}   accuracy ${pct(metrics.accuracy)}`,
+  );
+  lines.push(
+    `  business_priorities recall: ${pct(metrics.businessPriorityRecall)} of ${metrics.businessPrioritySupport}`,
+  );
+  const rows = Object.entries(metrics.confusion);
+  if (rows.length > 0) {
+    lines.push('  Confusion (rows = expected, cols = actual, non-empty only):');
+    for (const [expected, row] of rows) {
+      const cells = Object.entries(row)
+        .filter(([, count]) => count > 0)
+        .map(([actual, count]) => `${actual}=${count}`)
+        .join('  ');
+      lines.push(`    ${expected.padEnd(22)} ${cells}`);
+    }
+  }
+  for (const miss of metrics.failures.slice(0, 10)) {
+    lines.push(`    MISS  "${miss.case.prompt}" want ${miss.case.expectedIntent} got ${miss.actualIntent}`);
+  }
+  return lines.join('\n');
 }
 
 /** One scored blocking-reason case. */

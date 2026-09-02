@@ -1,7 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ZAC_ANALYSIS_PLANNER_SCHEMA } from '../analysis/zac-analysis-planner.prompt';
 import { ZAC_PRIORITY_SYNTHESIS_SCHEMA } from '../analysis/zac-priority-synthesis.prompt';
-import { ZAC_SEMANTIC_ROUTER_SCHEMA } from '../routing/zac-semantic-router.prompt';
+import {
+  ZAC_SEMANTIC_ROUTER_OPENAI_SCHEMA,
+  ZAC_SEMANTIC_ROUTER_SCHEMA,
+} from '../routing/zac-semantic-router.prompt';
 
 /**
  * Why a semantic call failed, at the granularity an operator can act on.
@@ -20,8 +23,13 @@ export type ZacSemanticFailureKind =
   | 'invalid_output'
   | 'transport';
 
-/** Which semantic capability produced the outcome. */
-export type ZacSemanticCapability = 'router' | 'planner' | 'synthesis';
+/**
+ * Which semantic capability produced the outcome. `shadow_router` is the
+ * dedicated semantic provider observed in shadow routing mode — tracked apart
+ * from `router` so shadow failures can never degrade the health of the
+ * pipeline that is actually answering users.
+ */
+export type ZacSemanticCapability = 'router' | 'planner' | 'synthesis' | 'shadow_router';
 
 interface CapabilityState {
   lastSuccessAt: string | null;
@@ -65,6 +73,10 @@ export class ZacSemanticHealthService {
       ...findUnsupportedKeywords('semantic router', ZAC_SEMANTIC_ROUTER_SCHEMA),
       ...findUnsupportedKeywords('analysis planner', ZAC_ANALYSIS_PLANNER_SCHEMA),
       ...findUnsupportedKeywords('priority synthesis', ZAC_PRIORITY_SYNTHESIS_SCHEMA),
+      // The v2 route is held to the STRICTER allowlist contract: OpenAI strict
+      // Structured Outputs additionally requires every object to close itself
+      // (additionalProperties: false) and to require every declared key.
+      ...findStrictSchemaViolations('semantic router v2', ZAC_SEMANTIC_ROUTER_OPENAI_SCHEMA),
     ];
     if (this.schemaProblems.length > 0) {
       // Loud on purpose. Every semantic call will 400 until this is fixed.
@@ -179,6 +191,95 @@ function findUnsupportedKeywords(label: string, schema: unknown, path = '$'): st
 }
 
 /**
+ * The ONLY keys a v2 (strict Structured Outputs) schema may use. An allowlist,
+ * not a blocklist: the silent-failure incident this service exists for was a
+ * keyword nobody thought to blocklist, so the v2 contract inverts the check —
+ * anything not affirmatively known-safe is a boot-time defect.
+ */
+const STRICT_SCHEMA_ALLOWED_KEYS: ReadonlySet<string> = new Set([
+  'type',
+  'enum',
+  'description',
+  'properties',
+  'required',
+  'additionalProperties',
+  'items',
+]);
+
+/**
+ * Validate a schema against the strict Structured Outputs subset shared by the
+ * providers we target: allowlisted keywords only, every object closed with
+ * `additionalProperties: false`, and every declared property required (the
+ * OpenAI strict contract). Returns human-readable problems; empty = valid.
+ * Exported for the contract test.
+ */
+export function findStrictSchemaViolations(
+  label: string,
+  schema: unknown,
+  path = '$',
+): string[] {
+  if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) {
+    return [`${label}${path}: expected a schema object`];
+  }
+  const node = schema as Record<string, unknown>;
+  const problems: string[] = [];
+
+  for (const key of Object.keys(node)) {
+    if (!STRICT_SCHEMA_ALLOWED_KEYS.has(key)) {
+      problems.push(`${label}${path}.${key}: keyword outside the strict subset`);
+    }
+  }
+
+  if (node.type === 'object') {
+    if (node.additionalProperties !== false) {
+      problems.push(`${label}${path}: object must set additionalProperties: false`);
+    }
+    const properties =
+      node.properties && typeof node.properties === 'object' && !Array.isArray(node.properties)
+        ? (node.properties as Record<string, unknown>)
+        : null;
+    const required = Array.isArray(node.required) ? (node.required as unknown[]) : [];
+    if (!properties) {
+      problems.push(`${label}${path}: object must declare properties`);
+    } else {
+      for (const [name, child] of Object.entries(properties)) {
+        if (!required.includes(name)) {
+          // Strict mode demands every key be required; optionality is
+          // expressed downstream, never in the wire schema.
+          problems.push(`${label}${path}.properties.${name}: not listed in required`);
+        }
+        problems.push(...findStrictSchemaViolations(label, child, `${path}.properties.${name}`));
+      }
+      for (const name of required) {
+        if (typeof name !== 'string' || !(name in properties)) {
+          problems.push(`${label}${path}.required: unknown property ${String(name)}`);
+        }
+      }
+    }
+  } else if (node.type === 'array') {
+    if (!('items' in node)) {
+      problems.push(`${label}${path}: array must declare items`);
+    } else {
+      problems.push(...findStrictSchemaViolations(label, node.items, `${path}.items`));
+    }
+  } else if (node.type === 'string') {
+    if ('enum' in node) {
+      const values = node.enum;
+      if (!Array.isArray(values) || values.length === 0 || values.some((v) => typeof v !== 'string')) {
+        problems.push(`${label}${path}.enum: must be a non-empty array of strings`);
+      }
+    }
+  } else if (node.type !== 'boolean') {
+    // Numbers are banned outright from v2 schemas: numeric bounds are the
+    // keyword class that 400ed silently, and an unbounded number invites them
+    // back. Anything numeric belongs in a closed enum.
+    problems.push(`${label}${path}.type: '${String(node.type)}' outside the strict subset`);
+  }
+
+  return problems;
+}
+
+/**
  * Classify a provider error into something actionable. The API states the
  * cause plainly in its message; the old code kept only `error.name`, which
  * reduced "your balance is empty" and "your schema is wrong" to "Error".
@@ -204,7 +305,17 @@ export function classifySemanticFailure(error: unknown): ZacSemanticFailureKind 
   ) {
     return 'auth';
   }
-  if (/credit balance|insufficient (?:credit|funds)|billing/i.test(message)) return 'credit';
+  // OpenAI reports an exhausted balance as HTTP 429 with code
+  // 'insufficient_quota' — an account-state failure, not a rate limit: waiting
+  // will not fix it, so it must degrade health the way an empty balance does.
+  const code = (error as { code?: string } | null)?.code ?? '';
+  if (
+    /credit balance|insufficient (?:credit|funds|quota)|billing|exceeded your current quota/i.test(
+      `${code} ${message}`,
+    )
+  ) {
+    return 'credit';
+  }
   if (/not supported|invalid_request_error.*schema|tools\.\d+\./i.test(message)) return 'schema';
   if (status === 429 || /rate limit|overloaded/i.test(message)) return 'rate_limit';
   if (status === 408 || /timeout|timed out|aborted/i.test(`${candidate?.name ?? ''} ${message}`)) {

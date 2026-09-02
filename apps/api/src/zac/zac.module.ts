@@ -16,9 +16,13 @@ import { ZacMemoryStore } from './persistence/zac-memory.store';
 import { ZacRequestModeClassifierService } from './routing/zac-request-mode-classifier.service';
 import { ZacSemanticRouterService } from './routing/zac-semantic-router.service';
 import { AnthropicZacModelProvider } from './models/providers/anthropic-zac-provider';
+import { OpenAiSemanticProvider } from './models/providers/openai-semantic-provider';
 import { StubZacModelProvider } from './models/providers/stub-zac-provider';
 import { ZAC_MODEL_PROVIDER } from './models/zac-model-provider.interface';
 import type { ZacModelProvider } from './models/zac-model-provider.interface';
+import { ZAC_SEMANTIC_PROVIDER } from './models/zac-semantic-provider.interface';
+import type { ZacSemanticProvider } from './models/zac-semantic-provider.interface';
+import { parseZacRoutingMode } from './routing/zac-request-mode.types';
 import { ZacAnalysisIntentService } from './analysis/zac-analysis-intent.service';
 import { ZacEvidenceService } from './analysis/zac-evidence.service';
 import { ZacPriorityService } from './analysis/zac-priority.service';
@@ -85,6 +89,35 @@ import { ZacService } from './zac.service';
           'ANTHROPIC_API_KEY not set — ZAC answers stay deterministic (stub provider).',
         );
         return new StubZacModelProvider();
+      },
+    },
+    {
+      provide: ZAC_SEMANTIC_PROVIDER,
+      inject: [ConfigService],
+      // The DEDICATED semantic-routing provider (OpenAI). Constructed only
+      // when a non-legacy routing mode asks for it AND the key exists; null
+      // otherwise, which the router treats as "no dedicated router" — shadow
+      // observes nothing, semantic mode degrades through the safe fallback
+      // ladder exactly like a keyless legacy build.
+      useFactory: (config: ConfigService): ZacSemanticProvider | null => {
+        const routingMode = parseZacRoutingMode(config.get<string>('ZAC_ROUTING_MODE'));
+        if (routingMode === 'legacy') return null;
+        const providerName = (config.get<string>('ZAC_SEMANTIC_PROVIDER') ?? 'openai')
+          .trim()
+          .toLowerCase();
+        if (providerName !== 'openai') {
+          new Logger('ZacModule').warn(
+            `ZAC_SEMANTIC_PROVIDER='${providerName}' is not a known semantic provider — ${routingMode} routing runs without one.`,
+          );
+          return null;
+        }
+        if (!config.get<string>('OPENAI_API_KEY')) {
+          new Logger('ZacModule').warn(
+            `ZAC_ROUTING_MODE=${routingMode} but OPENAI_API_KEY is not set — ${routingMode} routing runs without a dedicated semantic provider.`,
+          );
+          return null;
+        }
+        return new OpenAiSemanticProvider(config);
       },
     },
     ZacService,

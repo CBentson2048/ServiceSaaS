@@ -50,6 +50,8 @@ export type ZacSpineEventName =
   | 'persistence_failed'
   /** The turn's request mode was decided (mode + source metadata only). */
   | 'request_classified'
+  /** The SHADOW semantic route for a turn (observation only, never behaviour). */
+  | 'shadow_classification'
   /** A meaningful output row was persisted (ids/metadata only). */
   | 'output_persisted'
   /** A useful/not-useful vote was stored. */

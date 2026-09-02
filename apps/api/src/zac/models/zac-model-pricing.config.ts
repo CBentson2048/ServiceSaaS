@@ -106,6 +106,35 @@ export function resolveZacRouterPricing(
   };
 }
 
+/**
+ * Prices for the DEDICATED semantic provider (a different vendor from the
+ * narration model, so no fallback to the narration prices — an OpenAI call
+ * priced at Anthropic rates is not an estimate, it is a fabrication).
+ * Unpriced deployments estimate 0 and log a startup warning, exactly like an
+ * unpriced narration model.
+ */
+export function resolveZacSemanticPricing(config: ConfigService): {
+  pricing: ZacModelPricing;
+  configured: boolean;
+} {
+  const input = parsePrice(config, 'ZAC_SEMANTIC_PRICE_INPUT_USD_PER_MTOK');
+  const output = parsePrice(config, 'ZAC_SEMANTIC_PRICE_OUTPUT_USD_PER_MTOK');
+  return {
+    configured: input !== undefined && output !== undefined,
+    pricing: {
+      usdPerMillionInputTokens: input ?? 0,
+      usdPerMillionOutputTokens: output ?? 0,
+      usdPerMillionCacheReadTokens: parsePrice(config, 'ZAC_SEMANTIC_PRICE_CACHE_READ_USD_PER_MTOK'),
+      // OpenAI does not bill cache writes separately; leaving the write price
+      // unset would fall back to the 1.25x input formula and invent a charge,
+      // so it is pinned to the input rate (cache-write tokens are reported as
+      // 0 by the provider anyway).
+      usdPerMillionCacheWriteTokens:
+        parsePrice(config, 'ZAC_SEMANTIC_PRICE_CACHE_WRITE_USD_PER_MTOK') ?? input ?? 0,
+    },
+  };
+}
+
 function parsePrice(config: ConfigService, key: string): number | undefined {
   const raw = config.get<string>(key);
   if (raw === undefined || raw.trim() === '') return undefined;

@@ -87,6 +87,19 @@ export interface ZacTechnicalDetails {
   reason_code?: ZacRoutingReasonCode;
   /** The semantic classifier's bounded confidence, when one ran. Diagnostics only. */
   semantic_confidence?: number;
+  /** Which routing pipeline is authoritative in this deployment. */
+  routing_mode?: 'legacy' | 'shadow' | 'semantic';
+  /** The router contract version that decided this turn (e.g. 'semantic-v2'). */
+  router_version?: string;
+  /**
+   * The ROUTER's coarse analysis-intent reading for a qlooqo_data turn —
+   * distinct from `analysis_intent`, which is the planner's decision. Present
+   * only when the router made one; comparing the two is how planner/router
+   * disagreement is audited.
+   */
+  router_analysis_intent?: string;
+  /** Where the router read the answer as coming from (closed enum). */
+  information_source?: string;
   /**
    * False when this deployment is routing on deterministic rules alone (no
    * model provider). Surfaced so a reduced build can never be mistaken for
@@ -192,6 +205,16 @@ export interface ZacHealthResponse {
   ok: boolean;
   /** True when a real model can narrate advisory answers (false on the stub). */
   narrates: boolean;
+  /** Which routing pipeline is authoritative: legacy, shadow or semantic. */
+  routing_mode: 'legacy' | 'shadow' | 'semantic';
+  /** The dedicated semantic provider's name (e.g. 'openai'), null when none. */
+  semantic_provider: string | null;
+  /** The dedicated semantic provider's model, null when none is configured. */
+  semantic_model: string | null;
+  /** The router contract version in force (e.g. 'semantic-v2'). */
+  router_version: string;
+  /** The versioned v2 prompt in force; null while legacy routing is authoritative. */
+  prompt_version: string | null;
   /**
    * Kept for compatibility: semantic routing is CONFIGURED (flag on, provider
    * implements it). It is not evidence that anything works — see

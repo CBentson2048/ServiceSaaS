@@ -1,4 +1,5 @@
 import type { ZacResourceCategory } from '../policy/zac-policy.types';
+import { ZAC_ANALYSIS_INTENTS, type ZacAnalysisIntent } from '../analysis/zac-analysis.types';
 
 /**
  * The closed set of ZAC request modes. The mode decides HOW a question is
@@ -90,6 +91,141 @@ export const ZAC_ROUTING_REASON_CODES: readonly ZacRoutingReasonCode[] = [
 export type ZacDataInstruction = 'ignore_data' | 'use_data' | null;
 
 /**
+ * Which routing pipeline is authoritative for MEANING this deployment.
+ *
+ * - `legacy`   — the pre-migration hybrid: deterministic layers plus the model
+ *                provider's own classifier (Anthropic) where configured.
+ * - `shadow`   — legacy still decides every turn; the dedicated semantic
+ *                provider (OpenAI) classifies the same turn in parallel and
+ *                the two verdicts are recorded for comparison. Observation
+ *                only: the shadow verdict can never influence the turn.
+ * - `semantic` — the dedicated semantic provider IS Layer 2. Deterministic
+ *                explicit directives (Layer 1) and the safe fallback ladder
+ *                (Layer 3) are unchanged in every mode.
+ */
+export type ZacRoutingMode = 'legacy' | 'shadow' | 'semantic';
+
+export const ZAC_ROUTING_MODES: readonly ZacRoutingMode[] = ['legacy', 'shadow', 'semantic'];
+
+/** Parse ZAC_ROUTING_MODE. Anything unrecognised is `legacy` — the safe floor. */
+export function parseZacRoutingMode(raw: string | undefined | null): ZacRoutingMode {
+  const value = (raw ?? '').trim().toLowerCase();
+  return (ZAC_ROUTING_MODES as readonly string[]).includes(value)
+    ? (value as ZacRoutingMode)
+    : 'legacy';
+}
+
+/**
+ * The router's own coarse reading of WHAT KIND of analysis a live-data turn
+ * wants. `'none'` is mandatory for every non-qlooqo_data mode (a server-side
+ * invariant, enforced in validation — never trusted from the model). For
+ * qlooqo_data turns it is a HINT to the analysis pipeline and a telemetry
+ * fact; the tool planner remains the authority on which tools actually run.
+ */
+export type ZacRouterAnalysisIntent = ZacAnalysisIntent | 'none';
+
+export const ZAC_ROUTER_ANALYSIS_INTENTS: readonly ZacRouterAnalysisIntent[] = [
+  'none',
+  ...ZAC_ANALYSIS_INTENTS,
+];
+
+export function isZacRouterAnalysisIntent(
+  candidate: unknown,
+): candidate is ZacRouterAnalysisIntent {
+  return (
+    typeof candidate === 'string' &&
+    (ZAC_ROUTER_ANALYSIS_INTENTS as readonly string[]).includes(candidate)
+  );
+}
+
+/**
+ * Where the ANSWER's information should come from, as the router read the
+ * request. Descriptive, never an access decision — `live_qlooqo` still goes
+ * through policy and per-dispatch permission checks like every other turn.
+ */
+export type ZacInformationSource =
+  | 'live_qlooqo'
+  | 'general_knowledge'
+  | 'user_hypothesis'
+  | 'zac_memory'
+  | 'capability_context'
+  | 'none';
+
+export const ZAC_INFORMATION_SOURCES: readonly ZacInformationSource[] = [
+  'live_qlooqo',
+  'general_knowledge',
+  'user_hypothesis',
+  'zac_memory',
+  'capability_context',
+  'none',
+];
+
+export function isZacInformationSource(candidate: unknown): candidate is ZacInformationSource {
+  return (
+    typeof candidate === 'string' &&
+    (ZAC_INFORMATION_SOURCES as readonly string[]).includes(candidate)
+  );
+}
+
+/**
+ * The information source each mode is REQUIRED to carry. A verdict that
+ * contradicts this is not discarded, but it loses self-consistency and with it
+ * the right to be accepted on confidence alone.
+ */
+export const ZAC_MODE_INFORMATION_SOURCE: Readonly<Record<ZacRequestMode, ZacInformationSource>> = {
+  qlooqo_data: 'live_qlooqo',
+  general_advice: 'general_knowledge',
+  hypothetical: 'user_hypothesis',
+  memory: 'zac_memory',
+  permission_capability: 'capability_context',
+  // A privacy probe is answered from the boundary itself, not from any store.
+  privacy_boundary: 'none',
+  conversational: 'none',
+};
+
+/**
+ * The closed confidence vocabulary the semantic provider reports. Buckets
+ * rather than a raw number because a strict structured-output schema cannot
+ * carry numeric bounds (the exact keyword class that made earlier semantic
+ * calls 400 silently), and because bucketed confidence is what the evaluation
+ * calibrates (brief §21).
+ */
+export type ZacConfidenceBucket = 'high' | 'medium' | 'low';
+
+export const ZAC_CONFIDENCE_BUCKETS: readonly ZacConfidenceBucket[] = ['high', 'medium', 'low'];
+
+export function isZacConfidenceBucket(candidate: unknown): candidate is ZacConfidenceBucket {
+  return (
+    typeof candidate === 'string' &&
+    (ZAC_CONFIDENCE_BUCKETS as readonly string[]).includes(candidate)
+  );
+}
+
+/**
+ * Map a bucket onto the measured numeric confidence policy so ONE policy
+ * governs both providers:
+ *
+ *   high   0.9 — above the override bar; may overturn a deterministic shape rule
+ *   medium 0.6 — review band; needs corroboration to change the data decision
+ *   low    0.3 — below the review floor; the fallback ladder decides
+ *
+ * These are projections onto the existing, evaluated thresholds — not new
+ * thresholds. Recalibration happens against the dataset, per the brief.
+ */
+export function confidenceBucketScore(bucket: ZacConfidenceBucket): number {
+  if (bucket === 'high') return 0.9;
+  if (bucket === 'medium') return 0.6;
+  return 0.3;
+}
+
+/** The reverse projection, for telemetry on numeric (legacy-provider) verdicts. */
+export function confidenceScoreBucket(score: number): ZacConfidenceBucket {
+  if (score >= 0.7) return 'high';
+  if (score >= 0.45) return 'medium';
+  return 'low';
+}
+
+/**
  * Why the semantic classifier did not produce the answer. Distinct from
  * operational-data failures on purpose (see the failure taxonomy in
  * ZacAdvisoryFailureReason): "I could not work out what you meant" and
@@ -123,6 +259,16 @@ export interface ZacSemanticClassification {
    * below the accept threshold rather than being trusted outright.
    */
   selfConsistent: boolean;
+  /**
+   * The router's coarse analysis-intent reading. ALWAYS 'none' for
+   * non-qlooqo_data modes — normalised server-side, never trusted from the
+   * model. 'none' on a legacy verdict that never carried the field.
+   */
+  analysisIntent: ZacRouterAnalysisIntent;
+  /** Null on legacy verdicts that never carried the field. */
+  informationSource: ZacInformationSource | null;
+  /** Null on legacy numeric-confidence verdicts. */
+  confidenceBucket: ZacConfidenceBucket | null;
 }
 
 /** The routing decision for one turn. */
@@ -149,6 +295,15 @@ export interface ZacRequestClassification {
    * the semantic layer. Feeds {@link ZacPolicyService}; never an access grant.
    */
   resourceCategory?: ZacResourceCategory | null;
+  /**
+   * The router's analysis-intent HINT for the live-data pipeline. 'none'
+   * whenever the mode is not qlooqo_data (hard invariant). The tool planner
+   * stays authoritative for which tools actually run; this widens the
+   * analysis GATE and labels telemetry, nothing more.
+   */
+  analysisIntent?: ZacRouterAnalysisIntent;
+  /** Where the router read the answer as coming from, when it said. */
+  informationSource?: ZacInformationSource | null;
 }
 
 /**
