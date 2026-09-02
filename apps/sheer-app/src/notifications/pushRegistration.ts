@@ -23,11 +23,15 @@ import * as api from '../auth/api';
  * specifies, not a workaround: there is exactly one code path, and it is the one
  * that already has to work.
  *
- * NOTE FOR THE PILOT BUILD: `expo-notifications` and `expo-device` are not yet in
- * apps/sheer-app/package.json. Add them before the first EAS build with
- *   pnpm --filter @sheer/sheer-app add expo-notifications expo-device
- * and register the plugin in app.json. Until then every function here resolves to
- * the unsupported path, which is safe.
+ * BUILD STATE: `expo-notifications` (~55.0.27) and `expo-device` (~55.0.21) are
+ * now dependencies of apps/sheer-app, matched to Expo SDK 55 by `expo install`,
+ * so a native build resolves them and this module takes the supported path. The
+ * guarded require stays because the web build and the simulator still legitimately
+ * have no push — it is the mechanism for "where supported", not a stopgap.
+ *
+ * STILL PENDING: a real handset. Nothing here has been exercised against a
+ * physical device or an EAS build, so a token has never actually been minted.
+ * Treat push as CODE COMPLETE, NOT DEVICE VERIFIED until that happens.
  *
  * ---------------------------------------------------------------------------
  * WHAT IS NEVER DONE HERE

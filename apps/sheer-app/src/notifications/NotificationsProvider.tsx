@@ -13,6 +13,7 @@ import type { NotificationDto } from '@sheer/domain';
 import { useAuth } from '../auth/AuthProvider';
 import * as api from '../auth/api';
 import { configureForegroundPresentation, registerPushDevice } from './pushRegistration';
+import { usePushResponse } from './usePushResponse';
 
 /**
  * In-app notification state for the stylist app (Wrike 4507284172).
@@ -175,6 +176,11 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     });
     return () => subscription.remove();
   }, [accessToken, refreshUnreadCount]);
+
+  // Tapping an arrival push opens the alert list rather than dumping the stylist
+  // wherever the app happened to be. The badge is refreshed on the way in, so
+  // the count cannot lag behind the screen the tap just opened.
+  usePushResponse(refreshUnreadCount);
 
   const value = useMemo<NotificationsState>(
     () => ({
