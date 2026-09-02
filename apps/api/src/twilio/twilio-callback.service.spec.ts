@@ -7,6 +7,12 @@ import type { WhatsAppService } from '../communications/whatsapp.service';
 interface FakeState {
   /** Row returned by any `.maybeSingle()` select, keyed by table. */
   rows: Record<string, Record<string, unknown> | null>;
+  /**
+   * Rows returned by a LIST select (`.returns<T[]>()` then awaited), keyed by
+   * table. Inbound attribution reads a page of outbound history rather than one
+   * row, precisely so it can SEE a second tenant instead of guessing past it.
+   */
+  lists?: Record<string, Array<Record<string, unknown>>>;
   updates: Array<{ table: string; payload: Record<string, unknown> }>;
   inserts: Array<{ table: string; row: Record<string, unknown> }>;
   fallbacks: Array<{ eventId: string; failedChannel: string; reason: string }>;
@@ -34,10 +40,18 @@ function makeFakeClient(state: FakeState) {
         state.inserts.push({ table, row });
         return Promise.resolve({ error: null });
       },
+      returns: () => chain,
       maybeSingle: () => Promise.resolve({ data: state.rows[table] ?? null, error: null }),
       single: () => Promise.resolve({ data: state.rows[table] ?? null, error: null }),
       then: (onF: (v: { error: null }) => unknown, onR?: (e: unknown) => unknown) => {
         if (mode === 'update' && updatePayload) state.updates.push({ table, payload: updatePayload });
+        if (mode === 'select') {
+          // A list read. Fall back to the single-row fixture so the existing
+          // one-tenant cases keep describing themselves the same way.
+          const list =
+            state.lists?.[table] ?? (state.rows[table] ? [state.rows[table] as Record<string, unknown>] : []);
+          return Promise.resolve({ data: list, error: null }).then(onF as never, onR);
+        }
         return Promise.resolve({ error: null }).then(onF, onR);
       },
     };
@@ -69,7 +83,7 @@ function makeService(state: FakeState): TwilioCallbackService {
   return service;
 }
 
-function emptyState(rows: FakeState['rows']): FakeState {
+function emptyState(rows: FakeState["rows"] = {}): FakeState {
   return { rows, updates: [], inserts: [], fallbacks: [], optOuts: [] };
 }
 
@@ -295,6 +309,98 @@ describe('TwilioCallbackService.handleInboundMessage', () => {
     expect(state.optOuts).toEqual([
       { businessId: 'biz1', clientProfileId: 'cli1', channel: 'sms', source: 'cleared', cleared: true },
     ]);
+  });
+
+  // -------------------------------------------------------------------------
+  // TENANT ISOLATION on a shared platform sender (Wrike Week 7 stabilization)
+  // -------------------------------------------------------------------------
+
+  const logFor = (business: string, client: string, over: Record<string, unknown> = {}) => ({
+    id: `log-${business}`,
+    channel: 'whatsapp',
+    message_type: 'booking_confirmation',
+    delivery_status: 'delivered',
+    notification_event_id: null,
+    business_id: business,
+    location_id: `loc-${business}`,
+    client_profile_id: client,
+    appointment_id: null,
+    ...over,
+  });
+
+  it('refuses to attribute a STOP when two businesses share the client phone number', async () => {
+    // The same person is a client of two Qlooqo salons. Both have messaged the
+    // same number from the ONE platform Twilio sender, so the inbound `To`
+    // carries no tenant information and nothing here can say who they mean.
+    const state = emptyState();
+    state.lists = { message_logs: [logFor('biz-A', 'cli-A'), logFor('biz-B', 'cli-B')] };
+    const service = makeService(state);
+
+    await service.handleInboundMessage({
+      MessageSid: 'SM-in',
+      From: 'whatsapp:+447700900123',
+      To: 'whatsapp:+14155238886',
+      Body: 'STOP',
+    });
+
+    // No opt-out written for EITHER business — the wrong one would silence a
+    // salon the client never asked to leave, and we cannot tell which is which.
+    expect(state.optOuts).toEqual([]);
+    // And no inbound message log either: message_logs requires a business_id,
+    // so persisting one would make the same guess by another route.
+    expect(state.inserts).toEqual([]);
+  });
+
+  it('emits a structured security event when the tenant is ambiguous', async () => {
+    const state = emptyState();
+    state.lists = { message_logs: [logFor('biz-A', 'cli-A'), logFor('biz-B', 'cli-B')] };
+    const service = makeService(state);
+    const errors: string[] = [];
+    jest
+      .spyOn((service as unknown as { logger: { error: (m: string) => void } }).logger, 'error')
+      .mockImplementation((m: string) => void errors.push(m));
+
+    await service.handleInboundMessage({ MessageSid: 'SM-in', From: 'whatsapp:+447700900123', Body: 'STOP' });
+
+    const event = errors.map((e) => {
+      try {
+        return JSON.parse(e) as Record<string, unknown>;
+      } catch {
+        return null;
+      }
+    }).find((e) => e?.event === 'inbound_message_tenant_ambiguous');
+
+    expect(event).toMatchObject({
+      severity: 'security',
+      action: 'discarded',
+      candidate_business_count: 2,
+    });
+    // The number is masked even in the security event.
+    expect(String(event?.from)).not.toContain('900123');
+  });
+
+  it('still attributes normally when only ONE business has messaged the number', async () => {
+    // The unambiguous case must not regress: this is a fact, not a guess.
+    const state = emptyState();
+    state.lists = { message_logs: [logFor('biz-A', 'cli-A'), logFor('biz-A', 'cli-A', { id: 'log-older' })] };
+    const service = makeService(state);
+
+    await service.handleInboundMessage({ MessageSid: 'SM-in', From: 'whatsapp:+447700900123', Body: 'STOP' });
+
+    expect(state.optOuts).toEqual([
+      { businessId: 'biz-A', clientProfileId: 'cli-A', channel: 'whatsapp', source: 'inbound_keyword', cleared: false },
+    ]);
+  });
+
+  it('a STOP in one business context never writes an opt-out for another', async () => {
+    const state = emptyState();
+    state.lists = { message_logs: [logFor('biz-A', 'cli-A')] };
+    const service = makeService(state);
+
+    await service.handleInboundMessage({ MessageSid: 'SM-in', From: 'whatsapp:+447700900123', Body: 'STOP' });
+
+    expect(state.optOuts.every((o) => o.businessId === 'biz-A')).toBe(true);
+    expect(state.optOuts.some((o) => o.businessId === 'biz-B')).toBe(false);
   });
 
   it('does not persist an inbound reply it cannot attribute to a client', async () => {

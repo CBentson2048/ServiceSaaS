@@ -348,7 +348,7 @@ function NotificationsSection({
     <Panel title="Booking Notifications">
       <p className="mb-3 text-[13px] text-text-secondary">
         Confirmations and reminders are sent over WhatsApp first. If WhatsApp is unavailable or fails, the
-        message falls back to Email, then to SMS — using only the fallback channels you enable below, and never
+        message falls back to SMS, then to Email — using only the fallback channels you enable below, and never
         while WhatsApp is still pending. A client who has chosen Email or SMS as their preference starts on that
         channel instead. Reminder timings are calculated from the appointment time in the location timezone.
       </p>
@@ -394,17 +394,21 @@ function NotificationsSection({
           />
           <div className="text-[12px] font-medium text-text-secondary pt-1">Fallback channels (in order)</div>
           <Checkbox
-            label="1. Fall back to Email when WhatsApp is unavailable or fails"
-            checked={form.emailFallbackEnabled}
-            onChange={(value) => set('emailFallbackEnabled', value)}
-            disabled={remindersDisabled}
-          />
-          <Checkbox
-            label="2. Fall back to SMS when the channels above are unavailable or fail"
+            label="1. Fall back to SMS when WhatsApp is unavailable or fails"
             checked={form.smsFallbackEnabled}
             onChange={(value) => set('smsFallbackEnabled', value)}
             disabled={remindersDisabled}
           />
+          <Checkbox
+            label="2. Fall back to Email when the channels above are unavailable or fail"
+            checked={form.emailFallbackEnabled}
+            onChange={(value) => set('emailFallbackEnabled', value)}
+            disabled={remindersDisabled}
+          />
+          <p className="text-[12px] text-text-secondary">
+            Both are off by default. Until at least one is enabled, a message that fails on WhatsApp is not
+            retried on another channel.
+          </p>
         </div>
         <div className="flex justify-end">
           <button disabled={saving} className="h-9 rounded-pill bg-primary px-4 text-[13px] font-semibold text-text-on-primary disabled:opacity-60">

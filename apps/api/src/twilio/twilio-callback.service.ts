@@ -24,6 +24,26 @@ interface MessageLogRow {
 const LOG_COLUMNS =
   'id,channel,message_type,delivery_status,notification_event_id,business_id,location_id,client_profile_id,appointment_id';
 
+/**
+ * How much recent outbound history to read when attributing an inbound reply.
+ * Large enough that a second tenant messaging the same number is seen, small
+ * enough that this is never a scan of a client's whole correspondence.
+ */
+const INBOUND_ATTRIBUTION_SCAN = 50;
+
+/**
+ * The outcome of attributing an inbound reply to a tenant.
+ *
+ * `ambiguous` is a first-class result rather than an error: on a shared platform
+ * sender it is the honest answer, and it must be handled differently from "we
+ * have never messaged this number".
+ */
+type InboundAttribution =
+  | { status: 'resolved'; log: MessageLogRow }
+  | { status: 'ambiguous'; businessCount: number }
+  | { status: 'unknown' }
+  | { status: 'error' };
+
 /** Twilio status-callback form fields (application/x-www-form-urlencoded). */
 export interface TwilioStatusCallback {
   MessageSid?: string;
@@ -173,13 +193,35 @@ export class TwilioCallbackService {
       return;
     }
 
-    const context = await this.findInboundContext(from);
-    if (!context) {
+    const attribution = await this.findInboundContext(from);
+    if (attribution.status === 'ambiguous') {
+      // TENANT AMBIGUITY — a structured security event, not a warning to skim
+      // past. More than one business has messaged this number on the shared
+      // platform sender, so nothing here can say which of them the reply is for.
+      // We persist NO message log and record NO opt-out: writing either would
+      // attach a client's instruction to a business that may not be the one they
+      // are talking to. The carrier still honours the STOP itself.
+      this.logger.error(
+        JSON.stringify({
+          event: 'inbound_message_tenant_ambiguous',
+          severity: 'security',
+          from: maskPhone(from),
+          to: body.To ?? null,
+          candidate_business_count: attribution.businessCount,
+          action: 'discarded',
+          reason:
+            'shared platform Twilio sender carries no tenant discriminator; refusing to guess a business for an inbound reply',
+        }),
+      );
+      return;
+    }
+    if (attribution.status !== 'resolved') {
       // We can't attribute the reply to a business/location (message_logs requires both), so we
       // log it for visibility but don't persist a dangling row.
       this.logger.warn(`Inbound WhatsApp from ${maskPhone(from)} could not be matched to a client; not persisted.`);
       return;
     }
+    const context = attribution.log;
 
     const channel = /^whatsapp:/i.test(from) ? WHATSAPP_CHANNEL : SMS_CHANNEL;
     const { error } = await this.admin
@@ -238,11 +280,38 @@ export class TwilioCallbackService {
   }
 
   /** Best-effort: attribute an inbound reply via the latest outbound message to that number. */
-  private async findInboundContext(from: string): Promise<MessageLogRow | null> {
+  /**
+   * Attribute an inbound reply to the tenant that sent to this number.
+   *
+   * THE TENANCY PROBLEM THIS SOLVES. Qlooqo sends from ONE platform-level Twilio
+   * sender (TWILIO_MESSAGING_SERVICE_SID / TWILIO_SMS_FROM / the WhatsApp from —
+   * all read from the environment in SmsService and WhatsAppService, none of them
+   * per-business), so the inbound `To` carries no tenant information. This lookup
+   * previously took "the most recent outbound message to this number" as the
+   * answer, which is a GUESS: a client who uses two Qlooqo salons has one phone
+   * number in both tenants, and whichever salon messaged them last would have
+   * received their STOP — silently suppressing the wrong business's messages
+   * while the business they meant to leave kept sending.
+   *
+   * So this now resolves the DISTINCT set of businesses that have messaged the
+   * number and only attributes when the answer is unambiguous. It deliberately
+   * does NOT pick a winner, and it does not "improve" the guess by weighting
+   * recency: a confident wrong answer is worse than a refusal, because the
+   * refusal is visible and the wrong answer is not.
+   *
+   * The client is not left exposed by a refusal: carriers and WhatsApp honour
+   * STOP at their own layer whether or not we record it, so the messages stop
+   * regardless. What our record buys is not sending into a block — and it is
+   * better to keep queueing into a carrier-enforced block for one client than to
+   * silence an unrelated salon.
+   */
+  private async findInboundContext(from: string): Promise<InboundAttribution> {
     const normalized = normalizeWhatsAppAddress(from);
     const candidates = [from, normalized, normalized?.replace(/^whatsapp:/, '')].filter(
       (v): v is string => Boolean(v),
     );
+    // Bounded: enough rows to see every tenant that has ever messaged this
+    // number in recent history, without reading a client's whole correspondence.
     const { data, error } = await this.admin
       .schema('comms')
       .from('message_logs')
@@ -250,13 +319,24 @@ export class TwilioCallbackService {
       .eq('direction', 'outbound')
       .in('recipient', candidates)
       .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle<MessageLogRow>();
+      .limit(INBOUND_ATTRIBUTION_SCAN)
+      .returns<MessageLogRow[]>();
     if (error) {
       this.logger.error(`lookup inbound context for ${maskPhone(from)} failed: ${error.message}`);
-      return null;
+      return { status: 'error' };
     }
-    return data ?? null;
+
+    const rows = data ?? [];
+    if (rows.length === 0) return { status: 'unknown' };
+
+    const businesses = new Set(rows.map((row) => row.business_id).filter(Boolean));
+    if (businesses.size > 1) {
+      return { status: 'ambiguous', businessCount: businesses.size };
+    }
+    // Exactly one tenant has messaged this number: the attribution is a fact,
+    // not an inference. `rows[0]` is the most recent of that tenant's messages,
+    // which is what carries the location/client/appointment context.
+    return { status: 'resolved', log: rows[0] };
   }
 }
 

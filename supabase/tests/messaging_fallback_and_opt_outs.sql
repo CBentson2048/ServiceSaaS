@@ -36,6 +36,15 @@ insert into core.client_profiles (id,business_id,client_code,first_name,last_nam
  ('ee000000-0000-0000-0000-0000000000c1','ee000000-0000-0000-0000-000000000001','EEAAAA01','Sam','Stone','+447700900001','sam.ee@example.com'),
  ('ee000000-0000-0000-0000-0000000000c2','ee000000-0000-0000-0000-000000000001','EEAAAA02','Alex','Reed','+447700900002','alex.ee@example.com');
 
+-- An OWNER identity, so cases 13-15 can prove what a real browser session can
+-- and cannot do to a client's consent record.
+insert into auth.users (id,email) values
+ ('ee000000-0000-0000-0000-0000000000f1'::uuid,'owner@ee.example');
+insert into core.user_profiles (id,email,full_name,first_name,last_name,display_name,is_active) values
+ ('ee000000-0000-0000-0000-0000000000f1','owner@ee.example','Olive Owner','Olive','Owner','Olive',true);
+insert into core.user_memberships (business_id,location_id,user_profile_id,role,status,activated_at) values
+ ('ee000000-0000-0000-0000-000000000001',null,'ee000000-0000-0000-0000-0000000000f1','owner','active',now());
+
 -- ---------------------------------------------------------------------------
 -- How the negative cases are proved.
 --
@@ -284,6 +293,95 @@ select '12_MERGE_KEEPS_EVERY_OPT_OUT' as case,
              and exists (select 1 from comms.channel_opt_outs
                          where client_profile_id = 'ee000000-0000-0000-0000-0000000000c3' and channel = 'sms')
        then 'PASS' else 'FAIL: the merged client lost or duplicated an opt-out' end as result;
+
+-- ===========================================================================
+-- 13-15. OPT-OUT EVIDENCE IS NOT SALON-WRITABLE (0109).
+--
+-- A client's opt-out records a decision the CLIENT made. 0098 granted
+-- authenticated full CRUD, so an owner could DELETE that record straight over
+-- PostgREST — no route, no audit, nothing in the product to show it. These cases
+-- prove 0109 took the write privileges back without taking the READ away, which
+-- CRM history needs to explain a skipped message.
+-- ===========================================================================
+
+-- A consent record to attack.
+insert into comms.channel_opt_outs (business_id, client_profile_id, channel, source)
+values ('ee000000-0000-0000-0000-000000000001','ee000000-0000-0000-0000-0000000000c1','sms','inbound_keyword')
+on conflict do nothing;
+
+do $$ begin
+  perform set_config('request.jwt.claim.sub','ee000000-0000-0000-0000-0000000000f1',true);
+  set local role authenticated;
+  delete from comms.channel_opt_outs
+   where business_id='ee000000-0000-0000-0000-000000000001'
+     and client_profile_id='ee000000-0000-0000-0000-0000000000c1' and channel='sms';
+  reset role;
+  -- If we got here the DELETE was permitted; the row count decides the verdict.
+  insert into probe_results values ('13_OWNER_CANNOT_DELETE_OPT_OUT',
+    case when exists (select 1 from comms.channel_opt_outs
+                       where client_profile_id='ee000000-0000-0000-0000-0000000000c1' and channel='sms')
+         then 'PASS' else 'FAIL: an owner erased a client''s opt-out from a browser session' end);
+exception when insufficient_privilege then
+  reset role;
+  insert into probe_results values ('13_OWNER_CANNOT_DELETE_OPT_OUT','PASS');
+when others then
+  reset role;
+  insert into probe_results values ('13_OWNER_CANNOT_DELETE_OPT_OUT','FAIL: unexpected ' || sqlstate || ' ' || sqlerrm);
+end $$;
+select case_name as case, result from probe_results where case_name='13_OWNER_CANNOT_DELETE_OPT_OUT';
+
+do $$ begin
+  perform set_config('request.jwt.claim.sub','ee000000-0000-0000-0000-0000000000f1',true);
+  set local role authenticated;
+  -- Re-subscribing by UPDATE would be the same erasure by another verb.
+  update comms.channel_opt_outs set channel='email'
+   where client_profile_id='ee000000-0000-0000-0000-0000000000c1' and channel='sms';
+  reset role;
+  insert into probe_results values ('14_OWNER_CANNOT_REWRITE_OPT_OUT',
+    case when exists (select 1 from comms.channel_opt_outs
+                       where client_profile_id='ee000000-0000-0000-0000-0000000000c1' and channel='sms')
+         then 'PASS' else 'FAIL: an owner rewrote a client''s opt-out from a browser session' end);
+exception when insufficient_privilege then
+  reset role;
+  insert into probe_results values ('14_OWNER_CANNOT_REWRITE_OPT_OUT','PASS');
+when others then
+  reset role;
+  insert into probe_results values ('14_OWNER_CANNOT_REWRITE_OPT_OUT','FAIL: unexpected ' || sqlstate || ' ' || sqlerrm);
+end $$;
+select case_name as case, result from probe_results where case_name='14_OWNER_CANNOT_REWRITE_OPT_OUT';
+
+do $$
+declare visible integer;
+begin
+  perform set_config('request.jwt.claim.sub','ee000000-0000-0000-0000-0000000000f1',true);
+  set local role authenticated;
+  -- READ must survive: CRM history explains a skipped message with this.
+  select count(*) into visible from comms.channel_opt_outs
+   where business_id='ee000000-0000-0000-0000-000000000001';
+  reset role;
+  insert into probe_results values ('15_OWNER_CAN_STILL_READ_OPT_OUTS',
+    case when visible >= 1 then 'PASS' else 'FAIL: the owner lost read access to their own opt-outs' end);
+exception when others then
+  reset role;
+  insert into probe_results values ('15_OWNER_CAN_STILL_READ_OPT_OUTS','FAIL: unexpected ' || sqlstate || ' ' || sqlerrm);
+end $$;
+select case_name as case, result from probe_results where case_name='15_OWNER_CAN_STILL_READ_OPT_OUTS';
+
+-- The service role — the ONLY writer — must still be able to record and clear
+-- consent, or a START reply could never re-subscribe anyone.
+select '16_SERVICE_ROLE_STILL_WRITES' as case,
+       case when has_table_privilege('service_role','comms.channel_opt_outs','INSERT')
+             and has_table_privilege('service_role','comms.channel_opt_outs','DELETE')
+             and not has_table_privilege('authenticated','comms.channel_opt_outs','DELETE')
+             and not has_table_privilege('authenticated','comms.channel_opt_outs','INSERT')
+             and not has_table_privilege('authenticated','comms.channel_opt_outs','UPDATE')
+             and has_table_privilege('authenticated','comms.channel_opt_outs','SELECT')
+            then 'PASS' else 'FAIL: opt-out grants are not server-write / browser-read' end as result;
+
+select '17_ANON_HAS_NO_OPT_OUT_REACH' as case,
+       case when not has_table_privilege('anon','comms.channel_opt_outs','SELECT')
+             and not has_table_privilege('anon','comms.channel_opt_outs','DELETE')
+            then 'PASS' else 'FAIL: anon can reach client consent records' end as result;
 
 -- ---------------------------------------------------------------------------
 -- Teardown — nothing this suite created survives.
