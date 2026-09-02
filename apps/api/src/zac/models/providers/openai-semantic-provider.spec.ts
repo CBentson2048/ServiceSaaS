@@ -95,7 +95,8 @@ describe('OpenAiSemanticProvider', () => {
   it('identifies as the openai provider on the configured model', () => {
     const provider = new OpenAiSemanticProvider(makeConfig());
     expect(provider.name).toBe('openai');
-    expect(provider.model).toBe('gpt-5-mini');
+    // The benchmark winner (cheapest model passing every routing gate).
+    expect(provider.model).toBe('gpt-5.6-luna');
     expect(
       new OpenAiSemanticProvider(makeConfig({ ...ENV, ZAC_SEMANTIC_MODEL: 'gpt-5-nano' })).model,
     ).toBe('gpt-5-nano');
@@ -107,7 +108,9 @@ describe('OpenAiSemanticProvider', () => {
 
   it('sends the strict v2 structured-output request with the question byte-identical', async () => {
     createMock.mockResolvedValue(apiResponse());
-    const provider = new OpenAiSemanticProvider(makeConfig());
+    const provider = new OpenAiSemanticProvider(
+      makeConfig({ ...ENV, ZAC_SEMANTIC_MODEL: 'gpt-5-mini' }),
+    );
     const outcome = await provider.classify(INPUT);
 
     expect(outcome.failure).toBeNull();
@@ -131,6 +134,21 @@ describe('OpenAiSemanticProvider', () => {
     expect(params.store).toBe(false);
     // gpt-5-mini is reasoning-capable: minimal effort, off the critical path.
     expect(params.reasoning).toEqual({ effort: 'minimal' });
+  });
+
+  it('defaults to the lowest effort each family accepts', async () => {
+    createMock.mockResolvedValue(apiResponse());
+    // gpt-5.1 onward: 'none' exists and 'minimal' is rejected (measured).
+    await new OpenAiSemanticProvider(makeConfig()).classify(INPUT);
+    expect(createMock.mock.calls[0][0].reasoning).toEqual({ effort: 'none' });
+    // o-series bottoms out at 'low'.
+    await new OpenAiSemanticProvider(makeConfig({ ...ENV, ZAC_SEMANTIC_MODEL: 'o4-mini' })).classify(INPUT);
+    expect(createMock.mock.calls[1][0].reasoning).toEqual({ effort: 'low' });
+    // An explicit override always wins.
+    await new OpenAiSemanticProvider(
+      makeConfig({ ...ENV, ZAC_SEMANTIC_REASONING_EFFORT: 'low' }),
+    ).classify(INPUT);
+    expect(createMock.mock.calls[2][0].reasoning).toEqual({ effort: 'low' });
   });
 
   it('omits the reasoning parameter for models that reject it', async () => {
@@ -249,6 +267,29 @@ describe('OpenAiSemanticProvider', () => {
     const outcome = await new OpenAiSemanticProvider(makeConfig()).classify(INPUT);
     expect(outcome.failure).toBe('provider_unavailable');
     expect(outcome.failureKind).toBe('transport');
+  });
+
+  it('adopts an API-listed reasoning effort after a rejection instead of failing every call', async () => {
+    createMock
+      .mockRejectedValueOnce(
+        apiError(
+          400,
+          "400 Unsupported value: 'minimal' is not supported with the 'gpt-5.6-luna' model. Supported values are: 'none', 'low', 'medium', 'high', 'xhigh', and 'max'.",
+        ),
+      )
+      .mockResolvedValue(apiResponse());
+    // A wrong EXPLICIT override — the default would already be right.
+    const provider = new OpenAiSemanticProvider(
+      makeConfig({ ...ENV, ZAC_SEMANTIC_MODEL: 'gpt-5.6-luna', ZAC_SEMANTIC_REASONING_EFFORT: 'minimal' }),
+    );
+
+    const first = await provider.classify(INPUT);
+    expect(first.failure).toBe('provider_unavailable');
+    expect(createMock.mock.calls[0][0].reasoning).toEqual({ effort: 'minimal' });
+
+    const second = await provider.classify(INPUT);
+    expect(second.failure).toBeNull();
+    expect(createMock.mock.calls[1][0].reasoning).toEqual({ effort: 'none' });
   });
 
   it('never logs the question or the key on failure', async () => {

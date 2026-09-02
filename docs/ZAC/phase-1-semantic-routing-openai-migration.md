@@ -1,8 +1,7 @@
 # ZAC semantic routing migration — OpenAI structured semantic router (semantic-v2)
 
-**Status:** implemented, offline-verified; live benchmark and hosted acceptance PENDING (no
-`OPENAI_API_KEY` was available in the build environment — nothing in this document claims a live
-OpenAI call has been made).
+**Status:** implemented, offline-verified, **live-benchmarked against OpenAI (2026-09-02)**;
+hosted acceptance still PENDING (nothing in this document claims a hosted run).
 **Date:** 2026-09-02 · **Router version:** `semantic-v2` · **Prompt version:** `2026-09-02.1`
 
 ---
@@ -118,8 +117,8 @@ permissions.
 ZAC_ROUTING_MODE=legacy|shadow|semantic     (default legacy)
 ZAC_SEMANTIC_PROVIDER=openai                (default openai; the only implementation today)
 OPENAI_API_KEY=...                          (the switch: absent ⇒ no dedicated router, loudly)
-ZAC_SEMANTIC_MODEL=gpt-5-mini               (provisional default pending the live benchmark)
-ZAC_SEMANTIC_REASONING_EFFORT=minimal       (sent only to models that accept it)
+ZAC_SEMANTIC_MODEL=gpt-5.6-luna             (benchmark winner; see §6)
+ZAC_SEMANTIC_REASONING_EFFORT=none          (unset = lowest each family accepts; self-corrects on rejection)
 ZAC_SEMANTIC_PRICE_INPUT_USD_PER_MTOK=      (cost spine; no fallback to Anthropic rates)
 ZAC_SEMANTIC_PRICE_OUTPUT_USD_PER_MTOK=
 ZAC_SEMANTIC_PRICE_CACHE_READ_USD_PER_MTOK=
@@ -128,8 +127,8 @@ ZAC_SEMANTIC_PRICE_CACHE_READ_USD_PER_MTOK=
 The OpenAI call: `client.responses.create` with `instructions` = the byte-stable v2 prompt,
 `text.format = {type:'json_schema', name:'zac_semantic_route', schema, strict:true}`,
 `store:false` (the question must not persist server-side), `prompt_cache_key` pinned to the prompt
-version, timeout 15s, no retries (a slow call is slow, not broken; the timeout is re-derived from
-the live harness's p95 once measured — brief §17).
+version, timeout 15s, no retries (measured on the winner, serial calls: p50 2.1s, p95 3.9s, max 8.5s — the cap
+sits above the observed maximum; brief §17).
 
 ## 4. Failure taxonomy, health, degraded mode
 
@@ -164,19 +163,36 @@ Disagreement review = filter the spine for `mode_agreement:false`, categorise pe
   3** — a v2 oracle through `semantic` mode proving the v2 verdict survives validation, the veto,
   the confidence policy and the ladder, that intents pass through only on live-data turns, and
   that the mandated set stays at 100%.
-- Live (network, one command): `scripts/zac-routing-eval.ts` now runs the OpenAI pipeline
-  (`ZAC_ROUTING_MODE=semantic`), reports every §29 metric it can measure offline-labelled
-  (mode accuracy/precision/recall, live-data FP/FN, intent accuracy, business-priority recall,
-  clarification behaviour via the confusion matrix, provider failure count, p50/p95, cost per
-  routed request, per-bucket calibration), and benchmarks multiple models in one run:
+- Live (network, one command): `scripts/zac-routing-eval.ts` runs the OpenAI pipeline
+  (`ZAC_ROUTING_MODE=semantic`), reports every §29 metric the labelled set supports, and benchmarks
+  several models in one run.
 
-  ```
-  OPENAI_API_KEY=sk-… ZAC_ROUTING_MODE=semantic \
-    ZAC_EVAL_MODELS=gpt-5-mini,gpt-5-nano pnpm --filter @sheer/api zac-routing-eval
-  ```
+### Live benchmark — 2026-09-02, 350 cases, 193 semantic calls per model (157 Layer-1 short-circuits)
 
-  Model choice rule (brief §31): cheapest model whose run passes the §30 gates. The
-  `gpt-5-mini` default is PROVISIONAL until this has been executed against the account.
+| model (effort) | accuracy alt / strict | live-data FP | live-data FN | hypo→data | intent acc | BP recall | `high` correct | p50 / p95 (conc. 2) | $/routed req | verdict |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **gpt-5.6-luna (none)** | **99.1% / 94.3%** | 1/188 (0.5%) | 1/99 | 0 | **87.1%** | 10/10 | 99.0% | 4.2 s / 5.8 s | **$0.000185** | **passes — chosen** |
+| gpt-4.1-mini (n/a) | 99.1% / 94.0% | 1/188 (0.5%) | 1/99 | 0 | 76.7% | 10/10 | 97.4% | 4.1 s / 5.3 s | $0.000612 | passes, 3.3× cost |
+| gpt-5-mini (minimal) | 97.9% / 92.2% | 4/188 (2.1%) | 0/99 | **1** | 72.1% | 10/10 | 95.8% | 4.6 s / 6.8 s | $0.000280 | fails hypothetical gate |
+| gpt-5-nano (minimal) | 88.3% / 83.1% | 2/188 | **16/99 (16%)** | 0 | 57.5% | 1/1 | 86.3% | 3.9 s / 5.4 s | $0.000061 | fails |
+
+Serial (concurrency 1) latency on the winner: **p50 2.1 s, p95 3.9 s, max 8.5 s**, 0 timeouts. A first
+run at concurrency 6 produced p50 12–14 s and 9–25 timeouts per model; a raw `curl` showed 5–10 s TLS
+handshakes to `api.openai.com` from the build machine, so those figures were the network path, not the
+models, and were discarded. Explicit no-live-data cases are Layer-1 short-circuits in every run (0 by
+construction). Prompt caching was active throughout (~4.3k cached tokens per call).
+
+Remaining misroutes on the winner, 3 of 332: "Is that a lot?" (conversational → qlooqo_data, a bare
+follow-up), "quiet feb again?" (qlooqo_data → conversational), and "why cant you show me chloe's
+coaching notes" (Layer-1 privacy-probe precedence, never reaches the model). None is client-mandated.
+Intent misses (8 of 62) are almost all comparison↔diagnostic and specific_metric→comparison — label
+boundaries a human would also argue over; business_priorities, the flagship multi-tool intent, is
+10/10 on every passing model.
+
+Confidence buckets: the gpt-5.x and 4.1 tiers answer `high` on essentially every turn (192–193 of 193),
+so the medium/low review bands rarely engage and the veto + coherence rules do the safety work. Only
+gpt-5-nano spreads across buckets (and is calibrated: 86% / 64% / 33%). The bucket→score projection is
+therefore retained unchanged; there is no evidence yet to move a threshold.
 
 ## 7. Cutover plan and legacy retirement (brief §36)
 
@@ -184,7 +200,8 @@ Disagreement review = filter the spine for `mode_agreement:false`, categorise pe
 2. **shadow** (hosted, ≥1 week of real traffic): set `ZAC_ROUTING_MODE=shadow` + key + prices.
    Review `shadow_classification` disagreements; run the live benchmark; pick the model; calibrate
    bucket thresholds if the calibration table says the projections are wrong.
-3. **semantic**: set `ZAC_ROUTING_MODE=semantic` once shadow agreement and the §30 gates hold.
+3. **semantic**: set `ZAC_ROUTING_MODE=semantic` once shadow agreement holds (the §30 gates already
+   hold on the offline set, §6).
    Rollback is one env change back to `legacy` (or `ZAC_SEMANTIC_ROUTER_ENABLED=false` for the
    pre-semantic floor in an incident).
 4. **Retirement**: after semantic has held in hosted for an agreed soak (suggested: 2 weeks
@@ -229,9 +246,9 @@ acceptance pass. Do not claim client sign-off from this procedure; it is an engi
 
 ## 10. Known limits / follow-ups
 
-- The live benchmark and hosted validation have NOT run (no key in this environment); the model
-  default, the 15s timeout and the bucket projections all carry "re-derive from measurement"
-  notes at their definitions.
+- Hosted validation has NOT run. The live benchmark has (§6); the default model, timeout and
+  effort default now cite it. The bucket projections stand until shadow traffic shows a reason to
+  move them.
 - Multi-turn routing context remains the redacted turn summaries (the existing conversation
   state). Structured previous-mode state would need a `zac.messages` column — deliberately out of
   scope; the summaries already carry the mode shape and the eval's multi-turn cases pass on them.

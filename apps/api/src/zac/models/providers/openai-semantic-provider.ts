@@ -26,22 +26,30 @@ import {
 } from '../zac-model-pricing.config';
 
 /**
- * Cheapest current tier that clears the routing quality bar in offline spot
- * checks. PROVISIONAL until the live benchmark (scripts/zac-routing-eval.ts
- * with ZAC_EVAL_MODELS) has been run against the account's real models —
- * configuration, not a commitment: override with ZAC_SEMANTIC_MODEL.
+ * The cheapest model that passed every routing gate in the live benchmark
+ * (2026-09-02, 350-case dataset, scripts/zac-routing-eval.ts, four tiers):
+ * 99.1% mode accuracy with alternatives / 94.3% strict, ONE live-data false
+ * positive in 188, zero hypothetical→data, 87.1% analysis-intent accuracy,
+ * 10/10 business-priority recall, 99.0% of `high` verdicts correct, at
+ * $0.000185 per routed request — a third of gpt-4.1-mini's cost for equal
+ * mode accuracy. gpt-5-mini failed the hypothetical→data invariant;
+ * gpt-5-nano routed 16% of live-data questions away. Configuration, not a
+ * commitment: override with ZAC_SEMANTIC_MODEL and re-run the benchmark.
  */
-const DEFAULT_SEMANTIC_MODEL = 'gpt-5-mini';
+const DEFAULT_SEMANTIC_MODEL = 'gpt-5.6-luna';
 
 /**
- * Same bounded wait as the Anthropic router call, for the same reason: the
- * classification is a blocking pre-step on the user's turn, and the fallback
- * ladder treats a timeout as genuine ambiguity (a clarifying question), so a
- * cap that routinely fires is worse than a slightly longer single wait. 15s
- * was chosen from measured Anthropic p95 (~12.7s); OpenAI latencies are
- * RECORDED per call (classifierLatencyMs on the route result and the live
- * harness percentiles), so this number gets re-derived from evidence once the
- * benchmark has run rather than guessed now.
+ * A blocking pre-step on the user's turn, so it cannot wait forever — but a
+ * cap that routinely fires is worse than a slightly longer single wait: the
+ * fallback ladder treats a timeout as genuine ambiguity and asks a clarifying
+ * question, so every timeout is a bad turn.
+ *
+ * Measured basis (live benchmark, 2026-09-02, gpt-5.6-luna, serial calls):
+ * p50 2.1s, p95 3.9s, max 8.5s. 15s sits comfortably above the observed
+ * maximum while still bounding a genuine stall. The same benchmark showed
+ * that six concurrent connections on a slow-TLS path pushed p50 to 12–14s and
+ * produced timeouts — concurrency and connection reuse, not the model, so
+ * the production client keeps its default keep-alive pool.
  */
 const SEMANTIC_TIMEOUT_MS = 15_000;
 
@@ -56,11 +64,25 @@ const SEMANTIC_MAX_OUTPUT_TOKENS = 1024;
 /**
  * Models that accept the `reasoning` parameter. gpt-5-chat-* variants and the
  * gpt-4 families reject it outright (400), so it is sent only where it is
- * understood. Effort defaults to `minimal`: routing is a judgement call, not a
- * reasoning task, and it sits on the user's critical path.
+ * understood.
  */
 function supportsReasoningEffort(model: string): boolean {
   return /^(gpt-5|o\d)/i.test(model) && !/chat/i.test(model);
+}
+
+/**
+ * The lowest reasoning effort each family accepts — routing is a judgement
+ * call on the user's critical path, not a reasoning task. The gpt-5 base
+ * family (gpt-5, gpt-5-mini, gpt-5-nano) has no 'none' and takes 'minimal';
+ * gpt-5.1 onward accepts 'none' and REJECTS 'minimal' (measured: gpt-5.6-luna
+ * 400s on it); the o-series bottoms out at 'low'. Overridable with
+ * ZAC_SEMANTIC_REASONING_EFFORT, and self-correcting on a rejection — see
+ * adoptSupportedReasoningEffort().
+ */
+function defaultReasoningEffort(model: string): string {
+  if (/^gpt-5(-|$)/i.test(model)) return 'minimal';
+  if (/^o\d/i.test(model)) return 'low';
+  return 'none';
 }
 
 /**
@@ -81,7 +103,8 @@ export class OpenAiSemanticProvider implements ZacSemanticProvider {
   private readonly logger = new Logger(OpenAiSemanticProvider.name);
   private readonly client: OpenAI;
   private readonly pricing: ZacModelPricing;
-  private readonly reasoningEffort: string;
+  /** Mutable on purpose: see adoptSupportedReasoningEffort(). */
+  private reasoningEffort: string;
 
   readonly name = 'openai';
   readonly model: string;
@@ -97,7 +120,8 @@ export class OpenAiSemanticProvider implements ZacSemanticProvider {
       maxRetries: 0,
     });
     this.model = config.get<string>('ZAC_SEMANTIC_MODEL')?.trim() || DEFAULT_SEMANTIC_MODEL;
-    this.reasoningEffort = config.get<string>('ZAC_SEMANTIC_REASONING_EFFORT')?.trim() || 'minimal';
+    this.reasoningEffort =
+      config.get<string>('ZAC_SEMANTIC_REASONING_EFFORT')?.trim() || defaultReasoningEffort(this.model);
     const resolved = resolveZacSemanticPricing(config);
     this.pricing = resolved.pricing;
     if (!resolved.configured) {
@@ -195,8 +219,34 @@ export class OpenAiSemanticProvider implements ZacSemanticProvider {
       this.logger.warn(
         `zac semantic routing (openai) failed (${failure}): ${describeFailure(error)}; safe fallback applies`,
       );
+      this.adoptSupportedReasoningEffort(error);
       return { raw: null, failure, completion: null, failureKind: classifySemanticFailure(error) };
     }
+  }
+
+  /**
+   * A 400 that names an unsupported `reasoning.effort` value is a CONFIG
+   * defect, not an outage — and left alone it fails EVERY call until someone
+   * reads the logs, which is the exact silent-degradation class this
+   * migration's health work exists to stop (measured: gpt-5.6-luna rejects
+   * 'minimal' and lists none|low|medium|… instead). When the API states the
+   * values it accepts, adopt the cheapest one it names for subsequent calls
+   * and say so loudly. The current call still fails safely; nothing is
+   * retried on the user's turn.
+   */
+  private adoptSupportedReasoningEffort(error: unknown): void {
+    const message = String((error as { message?: string } | null)?.message ?? '');
+    const match = /Unsupported value: '([^']+)' is not supported with the '[^']+' model\. Supported values are: (.+)/i.exec(
+      message,
+    );
+    if (!match || match[1] !== this.reasoningEffort) return;
+    const supported = (match[2].match(/'([^']+)'/g) ?? []).map((value) => value.replace(/'/g, ''));
+    const preferred = ['none', 'minimal', 'low'].find((value) => supported.includes(value));
+    if (!preferred || preferred === this.reasoningEffort) return;
+    this.logger.warn(
+      `ZAC_SEMANTIC_REASONING_EFFORT='${this.reasoningEffort}' is not supported by ${this.model}; using '${preferred}' from now on — set ZAC_SEMANTIC_REASONING_EFFORT explicitly to silence this.`,
+    );
+    this.reasoningEffort = preferred;
   }
 
   private toCompletion(response: OpenAI.Responses.Response): ZacModelCompletion {
