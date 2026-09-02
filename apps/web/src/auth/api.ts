@@ -691,6 +691,26 @@ export async function checkInBooking(
   );
 }
 
+/**
+ * Mark a past appointment as a no-show.
+ *
+ * Deliberately separate from `cancelBooking`: a cancellation is something the
+ * salon or client decided, a no-show is something that happened. They are read
+ * differently by the no-show risk signal, and conflating them would score a
+ * client for an appointment the salon itself called off. The API refuses a
+ * future appointment and any status other than `accepted`.
+ */
+export async function markBookingNoShow(
+  accessToken: string,
+  bookingId: string,
+  reason?: string,
+): Promise<CheckInAppointmentResponse> {
+  return request<CheckInAppointmentResponse>(
+    `/lab/appointments/${encodeURIComponent(bookingId)}/no-show`,
+    { method: 'POST', accessToken, body: reason ? { reason } : {} },
+  );
+}
+
 export async function cancelBooking(
   accessToken: string,
   bookingId: string,

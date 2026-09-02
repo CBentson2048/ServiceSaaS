@@ -839,7 +839,12 @@ export class LabAppointmentsService {
    * whether a no-show forfeits a deposit is a separate product decision, and
    * making it here would smuggle a charging policy into a status change.
    */
-  async markNoShow(actor: AuthUser, id: string, reason?: string): Promise<{ appointment: StaffBookingDetail }> {
+  async markNoShow(
+    actor: AuthUser,
+    id: string,
+    reason?: string,
+    now: Date = new Date(),
+  ): Promise<{ appointment: StaffBookingDetail }> {
     this.assertOwnerOrManager(actor);
     const appointment = await this.fetchAppointmentForActor(actor, id);
 
@@ -850,6 +855,20 @@ export class LabAppointmentsService {
     }
     if (!NO_SHOW_BOOKING_STATUSES.includes(appointment.status)) {
       throw new ConflictException(`Appointment cannot be marked as a no-show from ${appointment.status}`);
+    }
+
+    // A NO-SHOW IS AN OBSERVATION, NOT A PREDICTION. An appointment that has not
+    // started yet cannot have been missed, so this refuses rather than recording
+    // a fact nobody could know. Without the guard a mis-click on tomorrow's
+    // column writes permanent attendance history for a client who has done
+    // nothing wrong — and the no-show risk signal reads exactly this column, so
+    // it would be scored against them. There is no correction path today, which
+    // makes prevention the whole of the protection.
+    const startsAt = new Date(appointment.scheduled_start_at);
+    if (Number.isFinite(startsAt.getTime()) && startsAt.getTime() > now.getTime()) {
+      throw new ConflictException(
+        'This appointment has not started yet, so it cannot be marked as a no-show.',
+      );
     }
 
     const { data, error } = await this.admin

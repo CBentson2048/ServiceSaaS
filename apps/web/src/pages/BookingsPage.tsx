@@ -24,9 +24,11 @@ import {
   ApiRequestError,
   cancelBooking,
   checkInBooking,
+  markBookingNoShow,
   completeBooking,
   confirmBookingPayment,
   createStylistRebooking,
+  getBookingUpsellSuggestions,
   getCheckoutUpsellSuggestions,
   getStaffBookingSelection,
   getWeeklyRota,
@@ -207,6 +209,48 @@ export function BookingsPage() {
         if (err instanceof ApiRequestError) setError(err.message);
         else if (err instanceof Error) setError(err.message);
         else setError('Could not check in the client');
+      } finally {
+        setActionLoadingId(null);
+      }
+    },
+    [accessToken, actionLoadingId],
+  );
+
+  /**
+   * Record that a client did not turn up.
+   *
+   * Confirmed first, like every other destructive action here, because there is
+   * no correction path: a no-show is permanent attendance history and the
+   * no-show risk signal reads exactly this. The API independently refuses a
+   * future appointment and any status other than `accepted`; this button is a
+   * convenience, never the guard.
+   */
+  const handleMarkNoShow = useCallback(
+    async (booking: StaffBookingSummary) => {
+      if (!accessToken || actionLoadingId) return;
+      const confirmed = window.confirm(
+        `Mark ${booking.clientDisplayName} as a no-show?\n\n` +
+          'This records that they did not turn up. It cannot be undone from here, and it counts ' +
+          'towards their no-show history.',
+      );
+      if (!confirmed) return;
+
+      setActionLoadingId(booking.id);
+      setCheckoutMessage(null);
+      setError(null);
+      try {
+        const result = await markBookingNoShow(accessToken, booking.id);
+        setBookings((current) =>
+          current.map((entry) => (entry.id === booking.id ? { ...entry, ...result.appointment } : entry)),
+        );
+        setCheckoutMessage(`Marked ${result.appointment.clientDisplayName} as a no-show.`);
+      } catch (err: unknown) {
+        // Surface the API's own words — "has not started yet" and "cannot be
+        // marked as a no-show from paid" are the two a user will actually hit,
+        // and both explain themselves better than a generic failure would.
+        if (err instanceof ApiRequestError) setError(err.message);
+        else if (err instanceof Error) setError(err.message);
+        else setError('Could not mark the appointment as a no-show');
       } finally {
         setActionLoadingId(null);
       }
@@ -877,6 +921,7 @@ export function BookingsPage() {
               setProfileClient({ id: booking.clientProfileId, name: booking.clientDisplayName })
             }
             onCheckIn={(booking) => void handleCheckIn(booking)}
+            onMarkNoShow={(booking) => void handleMarkNoShow(booking)}
             onCheckOut={(booking) => void handleComplete(booking)}
             onEditBooking={(booking) => setRescheduleTarget(booking)}
             // Cancelling can refund the deposit, so it's an owner/manager action (mirrors
@@ -1006,6 +1051,51 @@ function RescheduleModal({
   const [catalog, setCatalog] = useState<PublicBookingServiceSummary[] | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>(originalServiceIds);
+
+  /**
+   * Suggested add-ons for THIS saved appointment.
+   *
+   * This is the last stage where the platform actually lets staff add a service:
+   * the edit modal already owns a service editor, and saving routes through the
+   * existing reschedule endpoint's `serviceIds`. The checkout panel deliberately
+   * stays read-only, because service edits stop at `checked_in` and there is no
+   * canonical way to add one after that — surfacing an "Add" button there would
+   * be a control that could not work.
+   *
+   * Failure is silence: `UpsellSuggestions` renders nothing for an empty list,
+   * so a slow or broken suggestion service leaves the edit modal exactly as it
+   * was.
+   */
+  const [suggestions, setSuggestions] = useState<UpsellSuggestion[]>([]);
+  useEffect(() => {
+    if (!accessToken) return;
+    let cancelled = false;
+    getBookingUpsellSuggestions(accessToken, booking.id)
+      .then((response) => {
+        if (!cancelled) setSuggestions(response.suggestions ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setSuggestions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, booking.id]);
+
+  // Staff EXPLICITLY choose to add; nothing is added automatically. The add is a
+  // local selection — it is only persisted when they save the modal, so it can
+  // still be reversed by unticking the service or closing without saving.
+  const handleAddSuggestion = useCallback((suggestion: UpsellSuggestion) => {
+    setSelectedServiceIds((current) =>
+      current.includes(suggestion.serviceId) ? current : [...current, suggestion.serviceId],
+    );
+  }, []);
+
+  // Anything already on the appointment is no longer a suggestion.
+  const openSuggestions = useMemo(
+    () => suggestions.filter((s) => !selectedServiceIds.includes(s.serviceId)),
+    [suggestions, selectedServiceIds],
+  );
 
   useEffect(() => {
     if (!accessToken) return;
@@ -1187,6 +1277,14 @@ function RescheduleModal({
           </ul>
         )}
       </div>
+
+      {/* Suggested add-ons, at the one stage the platform lets staff act on them.
+          Renders nothing when there is nothing to suggest. */}
+      {catalog && openSuggestions.length > 0 ? (
+        <div className="mt-3">
+          <UpsellSuggestions suggestions={openSuggestions} onAdd={handleAddSuggestion} compact />
+        </div>
+      ) : null}
 
       <div className="mt-3 text-[12px] text-text-muted">
         {servicesChanged

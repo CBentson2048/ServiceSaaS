@@ -928,6 +928,127 @@ describe('LabAppointmentsService — cancel appointment', () => {
 });
 
 /**
+ * The no-show transition (Wrike 4507283793).
+ *
+ * `no_show` was in the enum since 0004 and read across the product, but nothing
+ * ever wrote it — so every no-show figure was structurally zero. These specs pin
+ * the lifecycle rules that make the write safe, because there is no correction
+ * path: once recorded, a no-show is permanent attendance history for a client.
+ */
+describe('LabAppointmentsService — mark no-show', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  function ownerActor(): AuthUser {
+    return {
+      ...stylistActor(),
+      roles: ['owner'],
+      primaryRole: 'owner',
+      staffProfileId: undefined,
+      locationScope: { kind: 'all', locationIds: ['location_1', 'location_2'] },
+    };
+  }
+
+  const PAST = '2026-05-13T09:00:00.000Z';
+  const AFTER_IT_STARTED = new Date('2026-05-13T11:00:00.000Z');
+  const BEFORE_IT_STARTED = new Date('2026-05-13T07:00:00.000Z');
+
+  it('marks a past accepted appointment as a no-show and audits it', async () => {
+    const client = createMockSupabaseClient([
+      { data: appointmentRow({ scheduled_start_at: PAST }), error: null },
+      { data: appointmentRow({ status: 'no_show', scheduled_start_at: PAST }), error: null },
+      { data: [clientProfileRow()], error: null },
+    ]);
+    const service = createService(client);
+
+    const result = await service.markNoShow(ownerActor(), 'appointment_1', 'Did not arrive', AFTER_IT_STARTED);
+
+    expect(result.appointment.status).toBe('no_show');
+  });
+
+  it('REFUSES a future appointment — a no-show is an observation, not a prediction', async () => {
+    const client = createMockSupabaseClient([
+      { data: appointmentRow({ scheduled_start_at: PAST }), error: null },
+    ]);
+    const service = createService(client);
+
+    // "Now" is before the appointment starts: it cannot have been missed yet.
+    await expect(
+      service.markNoShow(ownerActor(), 'appointment_1', undefined, BEFORE_IT_STARTED),
+    ).rejects.toThrow(/has not started yet/i);
+  });
+
+  it('writes nothing when it refuses a future appointment', async () => {
+    const client = createMockSupabaseClient([
+      { data: appointmentRow({ scheduled_start_at: PAST }), error: null },
+    ]);
+    const service = createService(client);
+
+    await expect(
+      service.markNoShow(ownerActor(), 'appointment_1', undefined, BEFORE_IT_STARTED),
+    ).rejects.toBeTruthy();
+
+    // The guard runs before the update, so no attendance history is created.
+    const wroteStatus = client.queries.some((query) =>
+      query.calls.some((call) => call.method === 'update'),
+    );
+    expect(wroteStatus).toBe(false);
+  });
+
+  it('is idempotent — re-marking an existing no-show is a no-op, not a conflict', async () => {
+    const client = createMockSupabaseClient([
+      { data: appointmentRow({ status: 'no_show', scheduled_start_at: PAST }), error: null },
+      { data: [clientProfileRow()], error: null },
+    ]);
+    const service = createService(client);
+
+    const result = await service.markNoShow(ownerActor(), 'appointment_1', undefined, AFTER_IT_STARTED);
+    expect(result.appointment.status).toBe('no_show');
+    expect(client.queries.some((q) => q.calls.some((c) => c.method === 'update'))).toBe(false);
+  });
+
+  it('refuses to overwrite a terminal or financial state', async () => {
+    // paid / completed / cancelled / rejected must never be silently replaced —
+    // only `accepted` may become a no-show.
+    for (const status of ['paid', 'completed', 'cancelled', 'rejected', 'checked_in']) {
+      const client = createMockSupabaseClient([
+        { data: appointmentRow({ status, scheduled_start_at: PAST }), error: null },
+      ]);
+      const service = createService(client);
+      await expect(
+        service.markNoShow(ownerActor(), 'appointment_1', undefined, AFTER_IT_STARTED),
+      ).rejects.toThrow(/cannot be marked as a no-show/i);
+    }
+  });
+
+  it('refuses a stylist — marking attendance is an owner/manager action', async () => {
+    const client = createMockSupabaseClient([]);
+    const service = createService(client);
+    await expect(
+      service.markNoShow(stylistActor(), 'appointment_1', undefined, AFTER_IT_STARTED),
+    ).rejects.toBeTruthy();
+  });
+
+  it('does not touch deposits, billing or stock', async () => {
+    const client = createMockSupabaseClient([
+      { data: appointmentRow({ scheduled_start_at: PAST }), error: null },
+      { data: appointmentRow({ status: 'no_show', scheduled_start_at: PAST }), error: null },
+      { data: [clientProfileRow()], error: null },
+    ]);
+    const service = createService(client);
+
+    await service.markNoShow(ownerActor(), 'appointment_1', undefined, AFTER_IT_STARTED);
+
+    // Whether a no-show forfeits a deposit is a product decision nobody has
+    // made; a status change must not smuggle a charging policy in with it.
+    for (const table of ['deposits', 'bills', 'stock_movements']) {
+      expect(
+        client.queries.some((q) => q.calls.some((c) => c.method === 'from' && c.args[0] === table)),
+      ).toBe(false);
+    }
+  });
+});
+
+/**
  * Check-in is the arrival alert's producer. These specs pin the two properties the
  * in-app notification ticket depends on:
  *

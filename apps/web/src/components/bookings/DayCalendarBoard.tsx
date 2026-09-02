@@ -126,6 +126,13 @@ interface DayCalendarBoardProps {
   onEditBooking?: (booking: StaffBookingSummary) => void;
   /** Tile action menu: cancel the appointment. */
   onCancelBooking?: (booking: StaffBookingSummary) => void;
+  /**
+   * Tile action menu: record that the client did not turn up.
+   *
+   * Distinct from cancelling: a cancellation is a decision, a no-show is an
+   * observation, and the no-show risk signal reads only the latter.
+   */
+  onMarkNoShow?: (booking: StaffBookingSummary) => void;
   /** When false, stylists with no appointments on this day are hidden. */
   showAllTeamMembers?: boolean;
   /** When true, a red "now" line is drawn at the current time (today only). */
@@ -288,6 +295,7 @@ export function DayCalendarBoard({
   onCheckOut,
   onEditBooking,
   onCancelBooking,
+  onMarkNoShow,
   showAllTeamMembers = true,
   showTimeline = true,
   onAddAppointment,
@@ -314,7 +322,9 @@ export function DayCalendarBoard({
   // Cancel) opens right at the tile, so no scrolling is needed to act on it.
   const [bookingMenu, setBookingMenu] = useState<BookingMenuState | null>(null);
   const createEnabled = Boolean(onAddAppointment || onAddBookout);
-  const bookingActionsEnabled = Boolean(onCheckIn || onCheckOut || onEditBooking || onCancelBooking);
+  const bookingActionsEnabled = Boolean(
+    onCheckIn || onCheckOut || onEditBooking || onCancelBooking || onMarkNoShow,
+  );
   const dragEnabled = Boolean(onMoveBooking || onResizeBooking);
 
   // Live drag state (null when idle). A ref mirrors it so the window pointer
@@ -1336,6 +1346,7 @@ export function DayCalendarBoard({
             onCheckOut={onCheckOut ? () => { onCheckOut(bookingMenu.booking); setBookingMenu(null); } : undefined}
             onEdit={onEditBooking ? () => { onEditBooking(bookingMenu.booking); setBookingMenu(null); } : undefined}
             onCancel={onCancelBooking ? () => { onCancelBooking(bookingMenu.booking); setBookingMenu(null); } : undefined}
+            onMarkNoShow={onMarkNoShow ? () => { onMarkNoShow(bookingMenu.booking); setBookingMenu(null); } : undefined}
           />
         ) : null}
 
@@ -1576,6 +1587,7 @@ function bookingActionAvailability(status: StaffBookingSummary['status']): {
   canCheckOut: boolean;
   canEdit: boolean;
   canCancel: boolean;
+  canMarkNoShow: boolean;
   checkOutLabel: string;
 } {
   return {
@@ -1583,6 +1595,10 @@ function bookingActionAvailability(status: StaffBookingSummary['status']): {
     canCheckOut: ['accepted', 'checked_in', 'awaiting_payment'].includes(status),
     canEdit: ['pending', 'accepted', 'checked_in'].includes(status),
     canCancel: ['pending', 'accepted', 'checked_in'].includes(status),
+    // Only `accepted` — the same source state the API allows. A client who
+    // checked in was plainly not a no-show, and a cancelled or paid appointment
+    // must never be silently reclassified.
+    canMarkNoShow: status === 'accepted',
     checkOutLabel: status === 'awaiting_payment' ? 'Open checkout' : 'Check out',
   };
 }
@@ -1596,6 +1612,7 @@ function BookingActionMenu({
   onCheckOut,
   onEdit,
   onCancel,
+  onMarkNoShow,
 }: {
   state: BookingMenuState;
   onClose: () => void;
@@ -1603,13 +1620,14 @@ function BookingActionMenu({
   onCheckOut?: () => void;
   onEdit?: () => void;
   onCancel?: () => void;
+  onMarkNoShow?: () => void;
 }) {
   const { booking } = state;
   const availability = bookingActionAvailability(booking.status);
   const arrived = booking.status === 'checked_in';
 
   const PANEL_WIDTH = 240;
-  const PANEL_HEIGHT = 252;
+  const PANEL_HEIGHT = 296;
   const left = Math.max(8, Math.min(state.x, state.boardWidth - PANEL_WIDTH - 8));
   const top = Math.max(8, Math.min(state.y, state.boardHeight - PANEL_HEIGHT - 8));
 
@@ -1667,6 +1685,15 @@ function BookingActionMenu({
               onClick={onEdit}
               disabled={!availability.canEdit}
               icon={<PencilIcon className="h-4 w-4" />}
+            />
+          ) : null}
+          {onMarkNoShow ? (
+            <BookingMenuButton
+              label="Mark as no-show"
+              onClick={onMarkNoShow}
+              disabled={!availability.canMarkNoShow}
+              variant="danger"
+              icon={<BanIcon className="h-4 w-4" />}
             />
           ) : null}
           {onCancel ? (
