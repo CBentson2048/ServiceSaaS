@@ -328,11 +328,25 @@ export class CampaignAudienceService {
     if (!promotionWindowIsOpen(config, todayLocalDate)) return { candidates: [], truncated: false };
 
     const settings = await this.resolveLapseSettings(campaign.business_id, campaign.location_id);
+    // READ ENOUGH VISITS TO ANSWER THE QUESTION THAT WAS ASKED.
+    //
+    // `historyVisitLimit` is a platform bound (10) chosen for cadence maths,
+    // which never needs more. But the promotion filter below counts visits
+    // against an OWNER-CONFIGURED floor, and a floor above the bound could never
+    // be reached: a client with 12 completed visits returned 10, so
+    // `minCompletedVisits: 12` silently matched nobody and the campaign looked
+    // broken rather than misconfigured.
+    //
+    // Raise the read only as far as the configured floor actually requires, so
+    // the default costs exactly what it did before and nothing loads lifetime
+    // history. `promotionMinCompletedVisits` is CHECK-bounded, so this cannot be
+    // driven arbitrarily high by configuration.
+    const maxVisits = Math.max(settings.historyVisitLimit, config.minCompletedVisits);
     const { rows, truncated } = await this.fetchServiceHistory({
       businessId: campaign.business_id,
       timezone: campaign.timezone,
       locationIds,
-      maxVisits: settings.historyVisitLimit,
+      maxVisits,
     });
     if (rows.length === 0) return { candidates: [], truncated };
 

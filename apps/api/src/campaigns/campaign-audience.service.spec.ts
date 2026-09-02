@@ -437,6 +437,32 @@ describe('promotion audience', () => {
     expect(candidates.map((c) => c.clientId)).toEqual(['regular']);
   });
 
+  it('reads far enough back to satisfy a floor above the platform history bound', async () => {
+    // THE DEFECT THIS PINS. `historyVisitLimit` is 10, chosen for cadence maths.
+    // The promotion floor is owner-configured and CHECK-bounded to 100, so a
+    // floor above 10 could never be reached: a client with 12 completed visits
+    // came back with 10 and `minCompletedVisits: 12` silently matched nobody.
+    const { service, calls } = build({
+      rpc: { 'crm.client_service_history': [] },
+    });
+    await service.resolveCandidates(promotion({ minCompletedVisits: 12 }), TODAY);
+
+    const history = calls.find((c) => c.fn === 'client_service_history');
+    expect(history?.args['p_max_visits']).toBe(12);
+  });
+
+  it('does not widen the history read when the floor is within the platform bound', async () => {
+    // The default must cost exactly what it did before: no campaign pays for
+    // lifetime history it will not look at.
+    const { service, calls } = build({
+      rpc: { 'crm.client_service_history': [] },
+    });
+    await service.resolveCandidates(promotion({ minCompletedVisits: 3 }), TODAY);
+
+    const history = calls.find((c) => c.fn === 'client_service_history');
+    expect(history?.args['p_max_visits']).toBe(10);
+  });
+
   it('can narrow to lapsed clients using the canonical status', async () => {
     const { service } = build({
       rpc: {
