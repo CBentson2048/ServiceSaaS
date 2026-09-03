@@ -237,6 +237,24 @@ With `ZAC_ROUTING_MODE=semantic`, as the pilot owner account, ask and verify:
 | "What did I tell you my goal was?" | memory |
 | "What can I access?" | permission_capability |
 
+The **routing inspector** shows this per answer without reading logs: with the presentation flag on
+(`VITE_ZAC_SHOW_ROUTING_DEBUG=true` on the web build, `EXPO_PUBLIC_ZAC_SHOW_ROUTING_DEBUG=true` on a
+mobile build; both default to visible in dev and hidden in production) every ZAC answer carries
+`Routing: QLOOQO Data · Business Priorities` with `Source: OpenAI semantic router` (or
+`Source: Fallback (Provider timeout)`) beside it, and a *Technical details* disclosure listing routing
+mode, request mode, router/planner intent, information source, classification source, semantic
+provider/model, router/prompt version, confidence bucket, fallback used/reason and — in shadow mode,
+when the shadow verdict settled before the answer was assembled — the shadow comparison. When the
+intent shown is the planner's (the router made no reading, e.g. a Layer-1 turn) the badge says
+*(planner intent)*. It renders the answer's own `technical_details` (new fields: `prompt_version`,
+`semantic_provider`, `semantic_model`, `semantic_confidence_bucket`, `fallback_used`,
+`fallback_reason`, `shadow_route`) and never classifies anything itself. A turn whose inspector says
+*Source: Fallback* or *Deterministic rules (no model)* on a semantic prompt is NOT an acceptance pass,
+however good the answer reads. The label vocabulary lives in `@sheer/domain` (`zac-routing.ts`) and is
+pinned to the server enums by `zac-routing-inspector-contract.spec.ts`. The pre-existing *Developer
+details* panel (connected sources, provider/model, trace id) stays visible as before; only its raw
+response JSON — which now includes the routing and shadow fields — follows the same flag.
+
 Then prove the classification actually came from OpenAI: each turn's `request_classified` spine
 event must show `classification_source:"semantic_model"` (or `contextual_followup`),
 `semantic_provider:"openai"`, `router_version:"semantic-v2"`, and `/zac/health` must show

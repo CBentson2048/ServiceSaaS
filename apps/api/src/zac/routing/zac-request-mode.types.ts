@@ -1,4 +1,5 @@
 import type { ZacResourceCategory } from '../policy/zac-policy.types';
+import type { ZacSemanticFailureKind } from '../models/zac-semantic-health.service';
 import { ZAC_ANALYSIS_INTENTS, type ZacAnalysisIntent } from '../analysis/zac-analysis.types';
 
 /**
@@ -271,6 +272,46 @@ export interface ZacSemanticClassification {
   confidenceBucket: ZacConfidenceBucket | null;
 }
 
+/**
+ * Wire-safe summary of one SHADOW classification for the response's
+ * technical_details: closed enums and booleans only, no question text, no
+ * provider message. Present only when the shadow verdict settled before the
+ * answer was assembled — it is never awaited.
+ */
+export interface ZacShadowRouteSummary {
+  provider: string;
+  model: string;
+  request_mode: ZacRequestMode | null;
+  analysis_intent: ZacRouterAnalysisIntent | null;
+  information_source: ZacInformationSource | null;
+  confidence_bucket: ZacConfidenceBucket | null;
+  failure: ZacClassifierFailure | null;
+  failure_kind: ZacSemanticFailureKind | null;
+  /** Shadow mode equals the authoritative mode. */
+  mode_agreement: boolean | null;
+  /** Both agree on whether live business data is needed. */
+  live_data_agreement: boolean | null;
+}
+
+/**
+ * Per-turn routing diagnostics stamped by the orchestrator AFTER the route is
+ * decided, for the answer's technical_details only: which provider/model made
+ * the classification call and, in shadow mode, the shadow verdict once it
+ * settles. Read only when technical_details is assembled — never by routing,
+ * policy, planning or permissions, so it cannot influence a decision.
+ */
+export interface ZacRoutingDiagnostics {
+  classifierProvider: string | null;
+  classifierModel: string | null;
+  promptVersion: string | null;
+  /**
+   * Mutable on purpose: the shadow classification settles after the turn has
+   * moved on, and the holder lets the response read it if (and only if) it
+   * has landed by then.
+   */
+  shadow: { route: ZacShadowRouteSummary | null } | null;
+}
+
 /** The routing decision for one turn. */
 export interface ZacRequestClassification {
   mode: ZacRequestMode;
@@ -304,6 +345,13 @@ export interface ZacRequestClassification {
   analysisIntent?: ZacRouterAnalysisIntent;
   /** Where the router read the answer as coming from, when it said. */
   informationSource?: ZacInformationSource | null;
+  /**
+   * Diagnostics for the answer's technical_details (provider/model of the
+   * classification call, settled shadow verdict). Stamped by the orchestrator
+   * after routing; optional so hand-built classifications (memory turns,
+   * tests) need not carry it. Never read by a decision.
+   */
+  diagnostics?: ZacRoutingDiagnostics;
 }
 
 /**

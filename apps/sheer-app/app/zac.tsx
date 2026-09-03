@@ -12,7 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { userHasPermission, userHasRole } from '@sheer/domain';
+import { describeZacRouting, userHasPermission, userHasRole } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
 import { StylistTabBar } from '../src/navigation/StylistTabBar';
@@ -42,6 +42,20 @@ const STYLIST_STARTERS = [
 ];
 
 /** Friendly labels for evidence sources — users should never read code names. */
+/**
+ * ZAC routing inspector visibility (UAT / developer). Shows which request mode
+ * and analysis intent the backend actually routed each answer to, and whether
+ * the semantic router or the fallback decided it. Presentation only — the
+ * metadata is already in the response, and the backend stays authoritative.
+ * EXPO_PUBLIC_ZAC_SHOW_ROUTING_DEBUG decides explicitly; unset = dev builds.
+ */
+const ZAC_ROUTING_DEBUG: boolean = (() => {
+  const flag = process.env.EXPO_PUBLIC_ZAC_SHOW_ROUTING_DEBUG;
+  if (flag === 'true') return true;
+  if (flag === 'false') return false;
+  return __DEV__;
+})();
+
 const EVIDENCE_SOURCE_LABELS: Record<string, string> = {
   'report.dashboard': 'Dashboard KPIs',
   'kpi.engine': 'KPI engine',
@@ -82,6 +96,9 @@ export default function ZacScreen() {
   const [response, setResponse] = useState<ZacAskResponse | null>(null);
   const [askedQuestion, setAskedQuestion] = useState<string | null>(null);
   const [devOpen, setDevOpen] = useState(false);
+  // The routing decision of THIS answer, straight from its own technical_details.
+  const routing =
+    ZAC_ROUTING_DEBUG && response ? describeZacRouting(response.technical_details) : null;
   // Backend conversation for this screen session (matches the web contract).
   // A ref, read inside the ask callback without re-creating it; in-memory only,
   // so it can never leak to another signed-in account.
@@ -344,6 +361,15 @@ export default function ZacScreen() {
                   </View>
 
                   <Text style={s.answerText}>{response.answer}</Text>
+                  {routing ? (
+                    <Text style={s.routingLine}>
+                      Routing: {routing.summary}
+                      {routing.intentNote ? ` (${routing.intentNote})` : ''}
+                      {routing.source.kind !== 'unknown'
+                        ? ` · Source: ${routing.source.displayLabel}`
+                        : ''}
+                    </Text>
+                  ) : null}
 
                   {response.output_id ? (
                     <View style={s.feedbackRow}>
@@ -477,9 +503,40 @@ export default function ZacScreen() {
                         {response.technical_details.model}
                       </Text>
                       <Text style={s.devLine}>Trace: {response.trace_id}</Text>
-                      <Text style={s.devJson} numberOfLines={40}>
-                        {JSON.stringify(response, null, 2)}
-                      </Text>
+                      {routing ? (
+                        <>
+                          <Text style={s.devLine}>
+                            Routing: {routing.summary}
+                            {routing.intentNote ? ` (${routing.intentNote})` : ''}
+                          </Text>
+                          <Text style={s.devLine}>Source: {routing.source.displayLabel}</Text>
+                          {routing.rows.map((row) => (
+                            <Text key={row.key} style={s.devLine}>
+                              {row.label}: {row.value}
+                              {row.raw ? ` (${row.raw})` : ''}
+                            </Text>
+                          ))}
+                          {routing.shadow ? (
+                            <Text style={s.devLine}>
+                              Shadow ({routing.shadow.providerLabel} {routing.shadow.model}):{' '}
+                              {routing.shadow.shadow ??
+                                `failed${routing.shadow.failureLabel ? ` (${routing.shadow.failureLabel})` : ''}`}
+                              {' · Agreement: '}
+                              {routing.shadow.agreement === null
+                                ? 'n/a'
+                                : routing.shadow.agreement
+                                  ? 'yes'
+                                  : 'no'}
+                            </Text>
+                          ) : null}
+                        </>
+                      ) : null}
+                      {/* The raw response carries routing/shadow fields, so the dump follows the flag. */}
+                      {ZAC_ROUTING_DEBUG ? (
+                        <Text style={s.devJson} numberOfLines={40}>
+                          {JSON.stringify(response, null, 2)}
+                        </Text>
+                      ) : null}
                     </View>
                   ) : null}
                 </View>
@@ -797,6 +854,12 @@ const s = StyleSheet.create({
   devToggleText: { color: 'rgba(255,255,255,0.55)', fontSize: 12, fontWeight: '600' },
   devBody: { gap: spacing.xs },
   devLine: { color: 'rgba(255,255,255,0.5)', fontSize: 12, lineHeight: 17 },
+  routingLine: {
+    color: 'rgba(255,255,255,0.45)',
+    fontSize: 11,
+    lineHeight: 15,
+    marginTop: spacing.xs,
+  },
   devJson: {
     color: 'rgba(255,255,255,0.45)',
     fontSize: 10,

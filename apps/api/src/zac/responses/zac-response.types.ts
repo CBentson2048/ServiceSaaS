@@ -6,8 +6,11 @@ import type {
 } from '../policy/zac-policy.types';
 import type {
   ZacClassificationSource,
+  ZacClassifierFailure,
+  ZacConfidenceBucket,
   ZacRequestMode,
   ZacRoutingReasonCode,
+  ZacShadowRouteSummary,
 } from '../routing/zac-request-mode.types';
 import type { ZacToolDispatchTrace } from '../tools/zac-tool.types';
 
@@ -100,6 +103,43 @@ export interface ZacTechnicalDetails {
   router_analysis_intent?: string;
   /** Where the router read the answer as coming from (closed enum). */
   information_source?: string;
+  /**
+   * The versioned semantic prompt that decided THIS turn. Null whenever no
+   * model classified the turn (Layer 1, memory commands, a fallback without a
+   * call) and under legacy/shadow routing, where the v1 contract decides.
+   * Unlike `/zac/health.prompt_version` (the deployment's ACTIVE prompt), this
+   * is per turn — so UAT can pin which contract produced an answer.
+   */
+  prompt_version?: string | null;
+  /**
+   * The provider/model that made THIS turn's classification call — 'openai'
+   * under semantic routing, the narration provider (e.g. 'anthropic') under
+   * legacy/shadow — or null when no model classified the turn (Layer 1, or a
+   * fallback without a call). The routing inspector's proof that a semantic
+   * verdict really came from the dedicated router. Same definition as the
+   * request_classified spine event; NOTE it differs from `/zac/health`, whose
+   * `semantic_provider`/`semantic_model` name the CONFIGURED dedicated
+   * provider whatever the routing mode.
+   */
+  semantic_provider?: string | null;
+  semantic_model?: string | null;
+  /** `semantic_confidence` under the one measured bucket policy. */
+  semantic_confidence_bucket?: ZacConfidenceBucket;
+  /**
+   * True when the fallback ladder or a clarification decided the mode rather
+   * than a deterministic rule, the semantic model or a contextual follow-up.
+   * Same definition as the request_classified spine event.
+   */
+  fallback_used?: boolean;
+  /** Why the semantic layer did not decide, when it was consulted and did not. Closed enum. */
+  fallback_reason?: ZacClassifierFailure;
+  /**
+   * Shadow-mode comparison for this turn: the dedicated router's verdict next
+   * to the one that served. Present only in shadow routing mode AND only when
+   * the shadow call settled before the answer was assembled (it is never
+   * awaited). Observation only — it can never affect the turn.
+   */
+  shadow_route?: ZacShadowRouteSummary;
   /**
    * False when this deployment is routing on deterministic rules alone (no
    * model provider). Surfaced so a reduced build can never be mistaken for
@@ -207,7 +247,11 @@ export interface ZacHealthResponse {
   narrates: boolean;
   /** Which routing pipeline is authoritative: legacy, shadow or semantic. */
   routing_mode: 'legacy' | 'shadow' | 'semantic';
-  /** The dedicated semantic provider's name (e.g. 'openai'), null when none. */
+  /**
+   * The dedicated semantic provider's name (e.g. 'openai'), null when none.
+   * Deployment configuration — unlike `technical_details.semantic_provider`,
+   * which names whichever model actually classified one turn.
+   */
   semantic_provider: string | null;
   /** The dedicated semantic provider's model, null when none is configured. */
   semantic_model: string | null;

@@ -17,6 +17,11 @@ import {
   ZacFeedbackControls,
 } from '../components/zac/zac-presentation';
 import type { ZacAskError } from '../components/zac/zac-presentation';
+import {
+  ZacRoutingBadge,
+  ZacRoutingTechnicalDetails,
+} from '../components/zac/ZacRoutingInspector';
+import { zacRoutingDebugEnabled } from '../config/zacRoutingDebug';
 
 const FIELD =
   'w-full resize-y rounded-input-lg border border-border-strong bg-surface px-3.5 py-2.5 text-[14px] leading-6 text-text-primary outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-surface-alt';
@@ -103,6 +108,9 @@ export function ZacPage() {
   }
 
   const badge = response ? zacResponseBadge(response) : undefined;
+  // UAT / developer visibility of the backend's routing decision. Presentation
+  // only — nothing here classifies; the badge reads the answer's own metadata.
+  const routingDebug = zacRoutingDebugEnabled();
   const followUp = response?.suggested_next_step
     ? extractQuotedQuestion(response.suggested_next_step)
     : null;
@@ -250,6 +258,9 @@ export function ZacPage() {
                 <p className="whitespace-pre-line text-[14px] leading-6 text-text-primary">
                   {response.answer}
                 </p>
+                {routingDebug ? (
+                  <ZacRoutingBadge details={response.technical_details} className="mt-1.5" />
+                ) : null}
                 {response.output_id && accessToken ? (
                   <ZacFeedbackControls
                     key={response.output_id}
@@ -344,22 +355,28 @@ export function ZacPage() {
                   Provider: {response.technical_details.provider} · Model:{' '}
                   {response.technical_details.model} · Trace: {response.trace_id}
                 </div>
-                <div>
-                  Routing: {response.technical_details.request_mode ?? 'n/a'} ·{' '}
-                  {response.technical_details.classification_source ?? 'n/a'}
-                  {response.technical_details.reason_code
-                    ? ` · ${response.technical_details.reason_code}`
-                    : ''}
-                  {typeof response.technical_details.semantic_confidence === 'number'
-                    ? ` · confidence ${response.technical_details.semantic_confidence.toFixed(2)}`
-                    : ''}
-                  {response.technical_details.semantic_routing_available === false
-                    ? ' · semantic routing UNAVAILABLE'
-                    : ''}
-                </div>
-                <pre className="scroll-area max-h-72 overflow-auto rounded-input border border-border bg-surface p-3 text-[11px] leading-4 text-text-secondary">
-                  {JSON.stringify(response, null, 2)}
-                </pre>
+                {routingDebug ? (
+                  <>
+                    <div>
+                      <div className="mb-1 text-[11px] font-medium uppercase tracking-[0.1em] text-text-muted">
+                        Routing
+                      </div>
+                      <ZacRoutingTechnicalDetails
+                        details={response.technical_details}
+                        collapsible={false}
+                      />
+                      {response.technical_details.reason_code ? (
+                        <div className="mt-1 text-[11.5px] text-text-muted">
+                          Reason code: {response.technical_details.reason_code}
+                        </div>
+                      ) : null}
+                    </div>
+                    {/* The raw response now carries routing/shadow fields, so the dump follows the flag. */}
+                    <pre className="scroll-area max-h-72 overflow-auto rounded-input border border-border bg-surface p-3 text-[11px] leading-4 text-text-secondary">
+                      {JSON.stringify(response, null, 2)}
+                    </pre>
+                  </>
+                ) : null}
               </div>
             </details>
           </AppCard>

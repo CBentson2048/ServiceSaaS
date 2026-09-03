@@ -47,6 +47,8 @@ import { confidenceScoreBucket } from './routing/zac-request-mode.types';
 import type {
   ZacAdvisoryRequestMode,
   ZacRequestClassification,
+  ZacRoutingDiagnostics,
+  ZacShadowRouteSummary,
 } from './routing/zac-request-mode.types';
 import {
   ZAC_MODEL_PROVIDER,
@@ -93,6 +95,34 @@ interface ZacNarration {
   liveCompletion: ZacModelCompletion | null;
   narratedAnswer: string | null;
   latencyMs: number;
+}
+
+/**
+ * The wire-safe view of one shadow verdict next to the decision that served.
+ * Agreement is judged on the two decisions that matter for cutover: the MODE,
+ * and the live-data direction (the expensive error in both directions per the
+ * acceptance history). One definition, shared by the spine event and the
+ * response's technical_details so they can never disagree.
+ */
+function summariseShadowRoute(
+  authoritative: ZacRequestClassification,
+  observation: ZacShadowObservation,
+): ZacShadowRouteSummary {
+  const semantic = observation.semantic;
+  return {
+    provider: observation.provider,
+    model: observation.model,
+    request_mode: semantic?.mode ?? null,
+    analysis_intent: semantic?.analysisIntent ?? null,
+    information_source: semantic?.informationSource ?? null,
+    confidence_bucket: semantic?.confidenceBucket ?? null,
+    failure: observation.failure,
+    failure_kind: observation.failureKind ?? null,
+    mode_agreement: semantic ? semantic.mode === authoritative.mode : null,
+    live_data_agreement: semantic
+      ? (semantic.mode === 'qlooqo_data') === (authoritative.mode === 'qlooqo_data')
+      : null,
+  };
 }
 
 @Injectable()
@@ -904,14 +934,37 @@ export class ZacService {
         ...(classification.confidence === null
           ? {}
           : { semantic_confidence: Number(classification.confidence.toFixed(2)) }),
+        ...(classification.confidence === null
+          ? {}
+          : { semantic_confidence_bucket: confidenceScoreBucket(classification.confidence) }),
         semantic_routing_available: this.semanticRouter.semanticRoutingAvailable,
         routing_mode: this.semanticRouter.routingMode,
         router_version: this.semanticRouter.routerVersion,
+        // The routing inspector's proof of WHICH model classified this turn —
+        // the same definition the request_classified spine event uses, so the
+        // UI and the telemetry can never disagree about it. Null when no model
+        // classified the turn (Layer 1, memory commands, fallback without a
+        // call) — and then no prompt "decided" it either.
+        semantic_provider: classification.diagnostics?.classifierProvider ?? null,
+        semantic_model: classification.diagnostics?.classifierModel ?? null,
+        prompt_version: classification.diagnostics?.classifierProvider
+          ? classification.diagnostics.promptVersion
+          : null,
         ...(classification.analysisIntent && classification.analysisIntent !== 'none'
           ? { router_analysis_intent: classification.analysisIntent }
           : {}),
         ...(classification.informationSource
           ? { information_source: classification.informationSource }
+          : {}),
+        fallback_used:
+          classification.source === 'fallback' || classification.source === 'clarification',
+        ...(classification.classifierFailure
+          ? { fallback_reason: classification.classifierFailure }
+          : {}),
+        // Shadow verdict only if it has ALREADY settled — never awaited, so the
+        // inspector can show it without the shadow call touching the turn.
+        ...(classification.diagnostics?.shadow?.route
+          ? { shadow_route: classification.diagnostics.shadow.route }
           : {}),
         blocking_reason: blockingReason,
         resource_category: decision?.category ?? classification.resourceCategory ?? null,
@@ -1032,17 +1085,31 @@ export class ZacService {
       classifier_estimated_cost_usd: routed.completion?.estimatedCostUsd ?? null,
     });
 
+    // Diagnostics for the answer's technical_details (the routing inspector):
+    // which provider/model actually classified this turn. Stamped after the
+    // decision and read only when the response is assembled.
+    const diagnostics: ZacRoutingDiagnostics = {
+      classifierProvider: routed.completion?.provider ?? null,
+      classifierModel: routed.completion?.model ?? null,
+      promptVersion: this.semanticRouter.promptVersion,
+      shadow: routed.shadow ? { route: null } : null,
+    };
+
     // Shadow mode: the OpenAI classification of this same turn, recorded when
     // it settles. NEVER awaited on the user's turn, and its cost rides the log
     // spine only — the per-turn DB buffer has usually flushed by the time a
-    // shadow call returns, and a racy row is worse than a log-only one.
-    if (routed.shadow) {
+    // shadow call returns, and a racy row is worse than a log-only one. The
+    // settled verdict is also parked on the diagnostics holder so the answer
+    // can SHOW the comparison if it landed in time — and only then.
+    if (routed.shadow && diagnostics.shadow) {
       const authoritative = classification;
+      const holder = diagnostics.shadow;
       void routed.shadow.then((observation) => {
+        holder.route = summariseShadowRoute(authoritative, observation);
         this.recordShadowObservation(context, conversation, traceId, authoritative, observation);
       });
     }
-    return classification;
+    return { ...classification, diagnostics };
   }
 
   /** Record one shadow route against the decision that actually served. */
@@ -1054,13 +1121,8 @@ export class ZacService {
     observation: ZacShadowObservation,
   ): void {
     const semantic = observation.semantic;
-    // Agreement is judged on the two decisions that matter for cutover: the
-    // MODE, and the live-data direction (the expensive error in both
-    // directions per the acceptance history).
-    const modeAgreement = semantic ? semantic.mode === authoritative.mode : null;
-    const liveDataAgreement = semantic
-      ? (semantic.mode === 'qlooqo_data') === (authoritative.mode === 'qlooqo_data')
-      : null;
+    const { mode_agreement: modeAgreement, live_data_agreement: liveDataAgreement } =
+      summariseShadowRoute(authoritative, observation);
     this.telemetry.recordSpineEvent('shadow_classification', {
       trace_id: traceId,
       business_id: context.businessId,

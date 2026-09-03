@@ -5,7 +5,7 @@
 > ### ℹ️ Phase 0 = planning · Phase 1 = built
 > The **`phase-0-*` documents are discovery and architecture planning**: they describe proposed designs, and some details in them were superseded during the build.
 >
-> **Phase 1 is implemented** and lives behind the `ZAC_ENABLED` kill-switch: `apps/api/src/zac/` (module, guarded `POST /zac/ask` + `GET /zac/health`, permission-aware tool registry, live model provider, **persisted conversations + scoped context memory** — see [`phase-1-conversation-memory.md`](phase-1-conversation-memory.md)), the `zac.access` permission, migrations `0076`/`0077`/`0080`/`0081`/`0089` (**authored — apply status tracked in the storage runbook**), the web console at `/zac` plus the floating assistant, and the mobile ZAC screen. Where a Phase 0 document and the code disagree, **the code is the source of truth**.
+> **Phase 1 is implemented** and lives behind the `ZAC_ENABLED` kill-switch: `apps/api/src/zac/` (module, guarded `POST /zac/ask` + `GET /zac/health`, permission-aware tool registry, live model provider, **persisted conversations + scoped context memory** — see [`phase-1-conversation-memory.md`](phase-1-conversation-memory.md)), the `zac.access` permission, migrations `0076`/`0077`/`0080`/`0081`/`0089` (**authored — apply status tracked in the storage runbook**), the web console at `/zac` plus the floating assistant, and the mobile ZAC screen (all three carry the UAT **routing inspector** — see [`phase-1-semantic-routing-openai-migration.md`](phase-1-semantic-routing-openai-migration.md) §9). Where a Phase 0 document and the code disagree, **the code is the source of truth**.
 
 ---
 

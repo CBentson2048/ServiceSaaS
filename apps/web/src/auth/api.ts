@@ -230,6 +230,7 @@ import type {
   BarcodeLookupResponse,
   RecordProductConsumptionRequest,
   RecordProductConsumptionResponse,
+  ZacRoutingDetails,
 } from '@sheer/domain';
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL ?? 'http://localhost:3001').replace(/\/$/, '');
@@ -2854,7 +2855,13 @@ export interface ZacCostMetadata {
   cache_hit: boolean;
 }
 
-export interface ZacTechnicalDetails {
+/**
+ * Debug/diagnostic block. The routing fields (request mode, analysis intent,
+ * classification source, provider/model/version, fallback, shadow comparison)
+ * are the `ZacRoutingDetails` contract the routing inspector renders — see
+ * `@sheer/domain`. Every routing field is optional on the wire.
+ */
+export interface ZacTechnicalDetails extends ZacRoutingDetails {
   foundation_mode: boolean;
   feature_flag_state: string;
   connected_tools: string[];
@@ -2862,16 +2869,8 @@ export interface ZacTechnicalDetails {
   provider: string;
   model: string;
   detected_intent?: string;
-  /** How the turn was answered (e.g. 'qlooqo_data', 'general_advice', 'hypothetical'). */
-  request_mode?: string;
-  /** Which routing layer decided: deterministic, semantic_model, contextual_followup, fallback, clarification. */
-  classification_source?: string;
   /** Closed reason code for the routing decision. */
   reason_code?: string;
-  /** The semantic classifier's confidence, when one ran. */
-  semantic_confidence?: number;
-  /** False when this deployment routes on deterministic rules alone (no model provider). */
-  semantic_routing_available?: boolean;
 }
 
 export interface ZacMemoryUpdate {

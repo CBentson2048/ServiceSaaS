@@ -1391,6 +1391,12 @@ describe('ZacService', () => {
         semantic_routing_available: false,
         routing_mode: 'legacy',
         router_version: 'semantic-v1',
+        // The routing inspector's fields: no semantic prompt under legacy, no
+        // model made the (deterministic) classification, and no fallback ran.
+        prompt_version: null,
+        semantic_provider: null,
+        semantic_model: null,
+        fallback_used: false,
         // The decision record: what was asked for, what (if anything) blocked
         // it, and which strategy answered. 'none' on a fulfilled answer.
         blocking_reason: 'none',
@@ -4939,6 +4945,17 @@ describe('ZacService', () => {
       expect(response.technical_details.information_source).toBe('live_qlooqo');
       // The discriminator for the analysis pipeline: orchestration ran.
       expect(response.technical_details.multi_tool).toBeDefined();
+      // The routing inspector's proof that OpenAI really classified this turn:
+      // the same provider/model/version fields the spine event carries.
+      expect(response.technical_details).toMatchObject({
+        prompt_version: expect.any(String),
+        semantic_provider: 'openai',
+        semantic_model: 'gpt-5-mini-2025-08-07',
+        semantic_confidence_bucket: 'high',
+        fallback_used: false,
+      });
+      expect(response.technical_details.fallback_reason).toBeUndefined();
+      expect(response.technical_details.shadow_route).toBeUndefined();
 
       const classified = telemetry.recordSpineEvent.mock.calls.find(
         ([name]) => name === 'request_classified',
@@ -4977,6 +4994,20 @@ describe('ZacService', () => {
       expect(response.technical_details.routing_mode).toBe('shadow');
       // Shadow is authoritative-legacy: the version that DECIDED is v1.
       expect(response.technical_details.router_version).toBe('semantic-v1');
+      // The shadow verdict settled before the answer was assembled, so the
+      // routing inspector can show the comparison — observation only.
+      expect(response.technical_details.shadow_route).toEqual({
+        provider: 'openai',
+        model: 'gpt-5-mini-2025-08-07',
+        request_mode: 'qlooqo_data',
+        analysis_intent: 'business_priorities',
+        information_source: 'live_qlooqo',
+        confidence_bucket: 'high',
+        failure: null,
+        failure_kind: null,
+        mode_agreement: false,
+        live_data_agreement: false,
+      });
 
       await settleShadow();
       const shadow = telemetry.recordSpineEvent.mock.calls.find(
@@ -5000,6 +5031,109 @@ describe('ZacService', () => {
       expect(shadowCost?.[0]).toMatchObject({
         task_type: 'classification',
         model: 'gpt-5-mini-2025-08-07',
+      });
+    });
+
+    it('semantic mode: a Layer-1 turn reports no classifier provider and no prompt version', async () => {
+      const semanticProvider = makeSemanticProvider();
+      const { service } = makeService(
+        { ZAC_ENABLED: 'true', ZAC_ROUTING_MODE: 'semantic' },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        semanticProvider,
+      );
+
+      const response = await service.ask(makeActor(), {
+        question: 'What did I tell you my rebooking goal was?',
+      });
+      // Deterministic short-circuit: no model call, so the inspector must not
+      // credit the OpenAI router — nor a prompt that never ran.
+      expect(semanticProvider.classify).not.toHaveBeenCalled();
+      expect(response.technical_details).toMatchObject({
+        request_mode: 'memory',
+        classification_source: 'deterministic',
+        routing_mode: 'semantic',
+        semantic_provider: null,
+        semantic_model: null,
+        prompt_version: null,
+        fallback_used: false,
+      });
+    });
+
+    it('shadow mode: a shadow verdict that has not settled is NOT awaited and NOT shown', async () => {
+      let release: (value: { raw: unknown; failure: null; completion: unknown }) => void = () => {};
+      const pending = new Promise<{ raw: unknown; failure: null; completion: unknown }>((resolve) => {
+        release = resolve;
+      });
+      const semanticProvider: ZacSemanticProvider = {
+        name: 'openai',
+        model: 'gpt-5-mini',
+        classify: jest.fn().mockReturnValue(pending),
+      };
+      const { service, telemetry } = makeService(
+        { ZAC_ENABLED: 'true', ZAC_ROUTING_MODE: 'shadow' },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        semanticProvider,
+      );
+
+      const response = await service.ask(makeActor(), {
+        question: 'What did I tell you my rebooking goal was?',
+      });
+      // The turn completed without the shadow call: nothing to show, nothing waited for.
+      expect(response.technical_details.request_mode).toBe('memory');
+      expect(response.technical_details.shadow_route).toBeUndefined();
+      expect(
+        telemetry.recordSpineEvent.mock.calls.filter(([name]) => name === 'shadow_classification'),
+      ).toHaveLength(0);
+
+      release({ raw: V2_VERDICT, failure: null, completion: OPENAI_COMPLETION });
+      await settleShadow();
+      expect(
+        telemetry.recordSpineEvent.mock.calls.filter(([name]) => name === 'shadow_classification'),
+      ).toHaveLength(1);
+    });
+
+    it('semantic mode: a classifier failure is reported as a fallback with its closed reason', async () => {
+      const semanticProvider: ZacSemanticProvider = {
+        name: 'openai',
+        model: 'gpt-5-mini',
+        classify: jest.fn().mockResolvedValue({
+          raw: null,
+          failure: 'classification_timeout',
+          failureKind: 'timeout',
+          completion: null,
+        }),
+      };
+      const { service } = makeService(
+        { ZAC_ENABLED: 'true', ZAC_ROUTING_MODE: 'semantic' },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        semanticProvider,
+      );
+
+      const response = await service.ask(makeActor(), { question: 'anything jumping out?' });
+      // Whatever the ladder decided, the inspector must show it was NOT the
+      // semantic router — a correct-looking fallback answer is not a pass.
+      expect(response.technical_details.classification_source).not.toBe('semantic_model');
+      expect(response.technical_details).toMatchObject({
+        routing_mode: 'semantic',
+        fallback_used: true,
+        fallback_reason: 'classification_timeout',
+        semantic_provider: null,
+        semantic_model: null,
       });
     });
 

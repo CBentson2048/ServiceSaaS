@@ -19,6 +19,8 @@ import {
   ZacFeedbackControls,
 } from './zac-presentation';
 import type { ZacAskError } from './zac-presentation';
+import { ZacRoutingInspector } from './ZacRoutingInspector';
+import { zacRoutingDebugEnabled } from '../../config/zacRoutingDebug';
 
 type ZacTurn =
   | { id: number; role: 'user'; text: string }
@@ -113,6 +115,8 @@ export function ZacChatWidget() {
 
   if (!userHasPermission(auth.user, 'zac.access')) return null;
   if (location.pathname === '/zac') return null;
+  // UAT / developer visibility of each answer's routing decision (presentation only).
+  const routingDebug = zacRoutingDebugEnabled();
 
   function onSubmit(event: FormEvent) {
     event.preventDefault();
@@ -221,6 +225,7 @@ export function ZacChatWidget() {
           ) : (
             <ZacAnswerBubble
               key={turn.id}
+              routingDebug={routingDebug}
               response={turn.response}
               onAsk={(q) => void ask(q)}
               onFeedback={
@@ -280,14 +285,22 @@ export function ZacChatWidget() {
   );
 }
 
-function ZacAnswerBubble({
+/**
+ * One assistant turn. Exported for tests: every bubble renders the routing
+ * metadata of ITS OWN response, so a transcript with different routes per
+ * turn shows each one correctly.
+ */
+export function ZacAnswerBubble({
   response,
   onAsk,
   onFeedback,
+  routingDebug = false,
 }: {
   response: ZacAskResponse;
   onAsk: (question: string) => void;
   onFeedback?: (outputId: string, rating: 'useful' | 'not_useful') => Promise<void>;
+  /** Show the routing inspector for this answer (presentation flag). */
+  routingDebug?: boolean;
 }) {
   const badge = zacResponseBadge(response);
   const followUp = response.suggested_next_step
@@ -309,6 +322,7 @@ function ZacAnswerBubble({
         <p className="whitespace-pre-line text-[13px] leading-5 text-text-primary">
           {response.answer}
         </p>
+        <ZacRoutingInspector details={response.technical_details} enabled={routingDebug} />
 
         {response.output_id && onFeedback ? (
           <ZacFeedbackControls
