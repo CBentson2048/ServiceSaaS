@@ -380,6 +380,13 @@ const RESCHEDULABLE_BOOKING_STATUSES: AppointmentStatus[] = ['pending', 'accepte
  * whose time has passed with nobody in the chair.
  */
 const NO_SHOW_BOOKING_STATUSES: AppointmentStatus[] = ['accepted'];
+/**
+ * States a no-show correction may restore to. Both are pre-completion and carry
+ * no money, so a correction can never have a financial side effect. `accepted`
+ * is the only state the CURRENT flow marks a no-show from; `checked_in` is here
+ * for legacy rows, whose prior state a manager may have to state explicitly.
+ */
+const NO_SHOW_RESTORABLE_STATUSES: AppointmentStatus[] = ['accepted', 'checked_in'];
 
 // What a CUSTOMER may self-cancel / self-rebook from the mobile app. Narrower than
 // the staff lists: once the client has arrived ('checked_in') the salon owns the
@@ -776,6 +783,149 @@ export class LabAppointmentsService {
       this.logger.error(`mark deposit refunded failed for ${data.id}: ${updateError.message}`);
     }
     return { refunded: true };
+  }
+
+  /**
+   * Correct an accidental no-show (Week 7, manager-only, fully audited).
+   *
+   * A no-show is permanent attendance history and the risk signal reads it, so
+   * a mis-click used to be uncorrectable — `markNoShow` says as much. This is
+   * that path, and it is deliberately narrow:
+   *
+   *   - MANAGER AUTHORITY ONLY. Same guard as marking one; a pure stylist or
+   *     receptionist cannot undo attendance history.
+   *   - THE REAL PRIOR STATE. The status is restored from the `booking.no_show`
+   *     audit entry's own `before.status`, not reset to a hardcoded 'accepted'.
+   *     When no such evidence exists (a no-show recorded before that entry was
+   *     written) the fallback is recorded as such in the correction's metadata,
+   *     so the restore is never silently guessed.
+   *   - THE ORIGINAL EVENT SURVIVES. This writes a NEW `booking.no_show_corrected`
+   *     entry; the `booking.no_show` entry it refers to is never touched, so the
+   *     history reads "marked, then corrected", which is what happened.
+   *   - NO FINANCIAL SIDE EFFECTS. Deposits, bills and visits are untouched —
+   *     a correction restores a status, and nothing else.
+   */
+  async correctNoShow(
+    actor: AuthUser,
+    id: string,
+    reason?: string,
+    restoreToStatus?: AppointmentStatus,
+  ): Promise<{ appointment: StaffBookingDetail }> {
+    this.assertOwnerOrManager(actor);
+    const appointment = await this.fetchAppointmentForActor(actor, id);
+
+    // Idempotent: correcting an appointment that is not a no-show is a no-op.
+    // A double-click, or two managers reaching for it at once, changes nothing.
+    if (appointment.status !== 'no_show') {
+      const clients = await this.fetchClientProfiles(actor.businessId, [appointment.client_profile_id]);
+      return { appointment: toBookingDetail(appointment, clients.get(appointment.client_profile_id)) };
+    }
+
+    const prior = await this.fetchStatusBeforeNoShow(appointment);
+
+    // THE HISTORICAL STATE IS NEVER INVENTED. With audit evidence the record
+    // decides and a manager cannot override it. Without evidence — a no-show
+    // recorded before that entry was written — the only safe answers are to
+    // refuse, or to let a manager state the prior status on the record. So:
+    if (prior.status === null && !restoreToStatus) {
+      throw new ConflictException(
+        'There is no record of what this appointment was before it was marked a no-show, ' +
+          'so it cannot be restored automatically. Re-send the correction specifying the status ' +
+          'to restore it to (accepted or checked in).',
+      );
+    }
+    if (restoreToStatus && !NO_SHOW_RESTORABLE_STATUSES.includes(restoreToStatus)) {
+      throw new ConflictException('A no-show can only be corrected back to accepted or checked in');
+    }
+    const restoredStatus = prior.status ?? (restoreToStatus as AppointmentStatus);
+    const restoreSource: 'audit' | 'manager_selected' = prior.status ? 'audit' : 'manager_selected';
+
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('appointments')
+      .update({ status: restoredStatus, cancellation_reason: null })
+      .eq('id', appointment.id)
+      .eq('business_id', appointment.business_id)
+      // Concurrency: only the request that still sees a no-show may correct it.
+      .eq('status', 'no_show')
+      .select(DETAIL_COLUMNS)
+      .maybeSingle<AppointmentRow>();
+
+    if (error) {
+      this.logger.error(`correctNoShow failed for ${id}: ${error.message}`);
+      throw new InternalServerErrorException('Unable to correct the no-show');
+    }
+    if (!data) {
+      // Someone else corrected it first. Re-read and return their result rather
+      // than failing a request whose intent has already been satisfied.
+      const current = await this.fetchAppointmentById(appointment.id, appointment.business_id);
+      const clients = await this.fetchClientProfiles(actor.businessId, [current.client_profile_id]);
+      return { appointment: toBookingDetail(current, clients.get(current.client_profile_id)) };
+    }
+
+    await this.audit.record(actor, {
+      action: 'booking.no_show_corrected',
+      entityType: 'booking',
+      entityId: appointment.id,
+      locationId: appointment.location_id,
+      before: { status: 'no_show' },
+      after: { status: restoredStatus },
+      metadata: {
+        clientProfileId: appointment.client_profile_id,
+        reason: reason?.trim() || null,
+        // How the restored status was determined — never a silent guess.
+        // `audit` = taken from the no-show entry's own before.status;
+        // `manager_selected` = no evidence survived and a manager stated it.
+        priorStatusSource: restoreSource,
+        correctedNoShowAuditId: prior.auditId,
+      },
+    });
+
+    return {
+      appointment: toBookingDetail(
+        data,
+        (await this.fetchClientProfiles(actor.businessId, [data.client_profile_id])).get(
+          data.client_profile_id,
+        ),
+      ),
+    };
+  }
+
+  /**
+   * The status this appointment held before it was marked a no-show, taken from
+   * the audit entry that recorded the change.
+   *
+   * NULL means no usable evidence survives. It deliberately does NOT guess: the
+   * caller refuses the correction unless a manager states the prior status, so
+   * attendance history is never rewritten to a status nobody recorded.
+   */
+  private async fetchStatusBeforeNoShow(
+    appointment: AppointmentRow,
+  ): Promise<{ status: AppointmentStatus | null; auditId: string | null }> {
+    const { data, error } = await this.admin
+      .schema('audit')
+      .from('activity_log')
+      .select('id,before')
+      .eq('business_id', appointment.business_id)
+      .eq('entity_type', 'booking')
+      .eq('entity_id', appointment.id)
+      .eq('action', 'booking.no_show')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle<{ id: string; before: Record<string, unknown> | null }>();
+
+    if (error) {
+      // A failed audit read is NOT evidence of anything. Treating it as "no
+      // prior state" makes the correction ask for one, which is the safe answer.
+      this.logger.warn(`no-show prior status lookup failed for ${appointment.id}: ${error.message}`);
+      return { status: null, auditId: null };
+    }
+
+    const recorded = data?.before?.['status'];
+    if (typeof recorded === 'string' && NO_SHOW_RESTORABLE_STATUSES.includes(recorded as AppointmentStatus)) {
+      return { status: recorded as AppointmentStatus, auditId: data?.id ?? null };
+    }
+    return { status: null, auditId: data?.id ?? null };
   }
 
   private assertOwnerOrManager(actor: AuthUser): void {

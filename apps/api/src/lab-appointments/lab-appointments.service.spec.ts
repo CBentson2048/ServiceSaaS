@@ -1147,6 +1147,225 @@ describe('LabAppointmentsService — check-in arrival notification', () => {
   });
 });
 
+/**
+ * Correcting an accidental no-show (Week 7, manager-only).
+ *
+ * The point of these is that a correction is not a reset: it restores the state
+ * the appointment actually held, it leaves the original no-show entry alone, and
+ * it is not something a stylist or the front desk can do.
+ */
+describe('LabAppointmentsService — correct no-show', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  function managerActor(): AuthUser {
+    return {
+      ...stylistActor(),
+      roles: ['manager'],
+      primaryRole: 'manager',
+      staffProfileId: undefined,
+      locationScope: { kind: 'all', locationIds: ['location_1', 'location_2'] },
+    };
+  }
+
+  const NO_SHOW = { status: 'no_show', scheduled_start_at: '2026-05-13T09:00:00.000Z' } as const;
+  const auditRow = (before: unknown) => ({ data: { id: 'audit_1', before }, error: null });
+
+  it('restores the status the appointment actually held, and audits the correction', async () => {
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const client = createMockSupabaseClient([
+      { data: appointmentRow(NO_SHOW), error: null },
+      auditRow({ status: 'accepted' }),
+      { data: appointmentRow({ status: 'accepted' }), error: null },
+      { data: [clientProfileRow()], error: null },
+    ]);
+    const service = createService(client, undefined, undefined, undefined, audit);
+
+    const result = await service.correctNoShow(managerActor(), 'appointment_1', 'Marked by mistake');
+
+    expect(result.appointment.status).toBe('accepted');
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'booking.no_show_corrected',
+        before: { status: 'no_show' },
+        after: { status: 'accepted' },
+        metadata: expect.objectContaining({
+          reason: 'Marked by mistake',
+          priorStatusSource: 'audit',
+          correctedNoShowAuditId: 'audit_1',
+        }),
+      }),
+    );
+  });
+
+  it('never rewrites the original no-show entry — it appends a new one', async () => {
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const client = createMockSupabaseClient([
+      { data: appointmentRow(NO_SHOW), error: null },
+      auditRow({ status: 'accepted' }),
+      { data: appointmentRow({ status: 'accepted' }), error: null },
+      { data: [clientProfileRow()], error: null },
+    ]);
+    const service = createService(client, undefined, undefined, undefined, audit);
+
+    await service.correctNoShow(managerActor(), 'appointment_1');
+
+    // The audit trail is only ever appended to...
+    expect(audit.record).toHaveBeenCalledTimes(1);
+    expect(audit.record.mock.calls[0][1]).toMatchObject({ action: 'booking.no_show_corrected' });
+    // ...and nothing writes to the activity log table directly.
+    const wroteAudit = client.queries.some((query) =>
+      query.calls.some((call) => call.method === 'from' && call.args[0] === 'activity_log') &&
+      query.calls.some((call) => call.method === 'update' || call.method === 'delete'),
+    );
+    expect(wroteAudit).toBe(false);
+  });
+
+  it('REFUSES to guess when no audit evidence of the prior state survives', async () => {
+    // A legacy no-show, recorded before the audit entry existed. Restoring it to
+    // an assumed status would rewrite attendance history to something nobody
+    // recorded, so the correction asks instead.
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const client = createMockSupabaseClient([
+      { data: appointmentRow(NO_SHOW), error: null },
+      { data: null, error: null }, // no booking.no_show entry
+    ]);
+    const service = createService(client, undefined, undefined, undefined, audit);
+
+    await expect(service.correctNoShow(managerActor(), 'appointment_1')).rejects.toThrow(
+      /no record of what this appointment was/i,
+    );
+    // Nothing was written, and no audit entry was invented.
+    const wroteStatus = client.queries.some((query) =>
+      query.calls.some((call) => call.method === 'update'),
+    );
+    expect(wroteStatus).toBe(false);
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it('restores a legacy no-show to the status the MANAGER states, and records that', async () => {
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const client = createMockSupabaseClient([
+      { data: appointmentRow(NO_SHOW), error: null },
+      { data: null, error: null }, // still no evidence
+      { data: appointmentRow({ status: 'checked_in' }), error: null },
+      { data: [clientProfileRow()], error: null },
+    ]);
+    const service = createService(client, undefined, undefined, undefined, audit);
+
+    const result = await service.correctNoShow(
+      managerActor(),
+      'appointment_1',
+      'Client did attend',
+      'checked_in',
+    );
+
+    expect(result.appointment.status).toBe('checked_in');
+    expect(audit.record.mock.calls[0][1]).toMatchObject({
+      before: { status: 'no_show' },
+      after: { status: 'checked_in' },
+      metadata: expect.objectContaining({
+        priorStatusSource: 'manager_selected',
+        reason: 'Client did attend',
+      }),
+    });
+  });
+
+  it('lets the RECORD win over a manager who states something else', async () => {
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const client = createMockSupabaseClient([
+      { data: appointmentRow(NO_SHOW), error: null },
+      auditRow({ status: 'accepted' }),
+      { data: appointmentRow({ status: 'accepted' }), error: null },
+      { data: [clientProfileRow()], error: null },
+    ]);
+    const service = createService(client, undefined, undefined, undefined, audit);
+
+    const result = await service.correctNoShow(managerActor(), 'appointment_1', undefined, 'checked_in');
+
+    expect(result.appointment.status).toBe('accepted');
+    expect(audit.record.mock.calls[0][1]).toMatchObject({
+      metadata: expect.objectContaining({ priorStatusSource: 'audit' }),
+    });
+  });
+
+  it('refuses a restore target that could carry financial meaning', async () => {
+    const client = createMockSupabaseClient([
+      { data: appointmentRow(NO_SHOW), error: null },
+      { data: null, error: null },
+    ]);
+    const service = createService(client);
+
+    await expect(
+      service.correctNoShow(managerActor(), 'appointment_1', undefined, 'paid' as never),
+    ).rejects.toThrow(/accepted or checked in/i);
+  });
+
+  it('is idempotent — correcting an appointment that is not a no-show changes nothing', async () => {
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const client = createMockSupabaseClient([
+      { data: appointmentRow({ status: 'accepted' }), error: null },
+      { data: [clientProfileRow()], error: null },
+    ]);
+    const service = createService(client, undefined, undefined, undefined, audit);
+
+    const result = await service.correctNoShow(managerActor(), 'appointment_1');
+
+    expect(result.appointment.status).toBe('accepted');
+    const wroteStatus = client.queries.some((query) =>
+      query.calls.some((call) => call.method === 'update'),
+    );
+    expect(wroteStatus).toBe(false);
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it('refuses a pure stylist and the front desk, before any read', async () => {
+    const client = createMockSupabaseClient([]);
+    const service = createService(client);
+
+    await expect(service.correctNoShow(stylistActor(), 'appointment_1')).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(client.schema).not.toHaveBeenCalled();
+  });
+
+  it('refuses another business\'s appointment', async () => {
+    // fetchAppointmentForActor filters on business_id, so a cross-tenant id
+    // simply is not found.
+    const client = createMockSupabaseClient([{ data: null, error: null }]);
+    const service = createService(client);
+
+    await expect(service.correctNoShow(managerActor(), 'appointment_1')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+
+  it('has no financial side effects', async () => {
+    const client = createMockSupabaseClient([
+      { data: appointmentRow(NO_SHOW), error: null },
+      auditRow({ status: 'accepted' }),
+      { data: appointmentRow({ status: 'accepted' }), error: null },
+      { data: [clientProfileRow()], error: null },
+    ]);
+    const stripe = { refundPaymentIntent: jest.fn() };
+    const service = createService(client, undefined, stripe);
+
+    await service.correctNoShow(managerActor(), 'appointment_1');
+
+    expect(stripe.refundPaymentIntent).not.toHaveBeenCalled();
+    const touchedMoney = client.queries.some((query) =>
+      query.calls.some(
+        (call) =>
+          call.method === 'from' &&
+          ['bills', 'visit_line_items', 'deposits', 'visits', 'salon_payments'].includes(
+            String(call.args[0]),
+          ),
+      ),
+    );
+    expect(touchedMoney).toBe(false);
+  });
+});
+
 function createService(
   client: MockSupabaseClient,
   taxSettings: Record<string, unknown> = {
@@ -1163,6 +1382,7 @@ function createService(
   arrivalNotifications: { notifyClientArrivedSafe: jest.Mock } = {
     notifyClientArrivedSafe: jest.fn().mockResolvedValue(undefined),
   },
+  audit: { record: jest.Mock } = { record: jest.fn().mockResolvedValue(undefined) },
 ): LabAppointmentsService {
   mockedCreateClient.mockReturnValue(client as never);
   return new LabAppointmentsService(
@@ -1182,9 +1402,7 @@ function createService(
       scheduleForCompletedAppointmentSafe: jest.fn().mockResolvedValue(undefined),
     } as never,
     stripe as never,
-    {
-      record: jest.fn().mockResolvedValue(undefined),
-    } as never,
+    audit as never,
     arrivalNotifications as never,
   );
 }

@@ -2,6 +2,7 @@ import {
   ArrayMaxSize,
   IsArray,
   IsBoolean,
+  IsIn,
   IsISO8601,
   IsInt,
   IsOptional,
@@ -55,6 +56,24 @@ export class MarkNoShowDto {
   @IsString()
   @MaxLength(500)
   reason?: string;
+}
+
+/** Reason a no-show is being corrected. Recorded on the correction's audit entry. */
+export class CorrectNoShowDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
+
+  /**
+   * The status to restore, for a legacy no-show whose original transition was
+   * never recorded. Ignored when the audit trail knows the answer — evidence
+   * always wins over a manager's recollection. Without evidence AND without
+   * this, the correction is refused rather than guessed.
+   */
+  @IsOptional()
+  @IsIn(['accepted', 'checked_in'])
+  restoreToStatus?: 'accepted' | 'checked_in';
 }
 
 export class CancelAppointmentDto {

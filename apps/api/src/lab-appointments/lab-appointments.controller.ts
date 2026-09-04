@@ -24,6 +24,7 @@ import { LabSessionService } from '../lab-session/lab-session.service';
 import {
   AddAppointmentServiceDto,
   CancelAppointmentDto,
+  CorrectNoShowDto,
   MarkNoShowDto,
   CreateStylistRebookingDto,
   LinkStylistRebookingDto,
@@ -105,6 +106,20 @@ export class LabAppointmentsController {
     @Body() body: MarkNoShowDto,
   ): Promise<{ appointment: StaffBookingDetail }> {
     return this.labAppointmentsService.markNoShow(actor, id, body.reason);
+  }
+
+  /**
+   * Undo an accidental no-show (Week 7). Manager authority, fully audited, and
+   * it restores the status the appointment actually held rather than assuming
+   * one. The original `booking.no_show` audit entry is left exactly as written.
+   */
+  @Post(':id/no-show/correct')
+  correctNoShow(
+    @CurrentUser() actor: AuthUser,
+    @Param('id') id: string,
+    @Body() body: CorrectNoShowDto,
+  ): Promise<{ appointment: StaffBookingDetail }> {
+    return this.labAppointmentsService.correctNoShow(actor, id, body.reason, body.restoreToStatus);
   }
 
   @Post(':id/cancel')
