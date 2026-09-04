@@ -791,6 +791,9 @@ supabase/tests/zac_intelligence_signals.sql
 docs/ZAC/phase-2-intelligence-signal-framework.md
 ```
 
+**Commit:** `d6173238c87904e635629523ede98a56646c5768` on
+`feature/zac-phase2-intelligence-signals`.
+
 **Changed** (additive only)
 
 ```
