@@ -300,6 +300,8 @@ export class FormulaChangeService {
       .from('appointment_services')
       .select('appointment_id,service_id')
       .in('appointment_id', appointmentIds)
+      // 0110: a service removed after check-in is not colour work that happened.
+      .neq('status', 'cancelled')
       .returns<Array<{ appointment_id: string; service_id: string }>>();
     if (linkError) throw new Error(`load appointment services failed: ${linkError.message}`);
 

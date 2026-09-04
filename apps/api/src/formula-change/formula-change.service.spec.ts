@@ -94,6 +94,11 @@ function build(fixture: Fixture = {}) {
         rows = rows.filter((row) => values.includes(row[column]));
         return chain;
       },
+      // 0110: the service reads performed lines only (`.neq('status','cancelled')`).
+      neq: (column: string, value: unknown) => {
+        rows = rows.filter((row) => row[column] !== value);
+        return chain;
+      },
       upsert: (body: Row) => {
         verb = 'upsert';
         payload = body;

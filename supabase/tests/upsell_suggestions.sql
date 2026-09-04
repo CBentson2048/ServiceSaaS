@@ -543,6 +543,16 @@ select '23_NO_SELF_COOCCURRENCE' as case,
                   where suggested_service_id='fb000000-0000-0000-0000-0000000000b1') = 0
        then 'PASS' else 'FAIL: a service co-occurred with itself' end as result;
 
+-- ---------------------------------------------------------------------------
+-- Cases 24-25 rewrite the service lines of a PAID appointment, which migration
+-- 0110 froze: after payment a line may not be updated or deleted by anyone, so
+-- the bill can never disagree with what the record says was performed. Both
+-- cases still need a paid appointment (service_cooccurrence only counts paid
+-- visits), so the fixture manipulation runs with that one trigger off and the
+-- assertions run against a genuinely paid appointment. Re-enabled after 25.
+-- ---------------------------------------------------------------------------
+alter table booking.appointment_services disable trigger booking_appointment_services_paid_immutable;
+
 -- ===========================================================================
 -- 24. A SERVICE BOOKED TWICE ON ONE APPOINTMENT IS ONE PIECE OF EVIDENCE.
 --     Without the DISTINCT, a two-line duplicate would inflate the pair count
@@ -598,6 +608,8 @@ begin
 end $$;
 select case_name as case, result from probe_results where case_name='25_CANCELLED_LINE_EXCLUDED';
 
+alter table booking.appointment_services enable trigger booking_appointment_services_paid_immutable;
+
 -- ===========================================================================
 -- 26. THE LOOKBACK WINDOW BOUNDS THE SCAN. p_since = 5 days ago leaves only the
 --     5 most recent Colour appointments, so Toner's pair count falls to 5.
@@ -639,7 +651,8 @@ begin
   insert into probe_results values ('27_FUTURE_COMPLETION_EXCLUDED',
     case when base = 20 then 'PASS' else 'FAIL: a future completed_at counted as history' end);
 
-  delete from booking.appointment_services where appointment_id='fb000000-0000-0000-0000-00000000ff01';
+  -- 0110 refuses a direct delete of a PAID appointment's line; deleting the
+  -- appointment itself still cascades to them, which is what this cleanup wants.
   delete from booking.appointments where id='fb000000-0000-0000-0000-00000000ff01';
 end $$;
 select case_name as case, result from probe_results where case_name='27_FUTURE_COMPLETION_EXCLUDED';

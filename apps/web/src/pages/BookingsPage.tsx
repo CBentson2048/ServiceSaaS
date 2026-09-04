@@ -15,6 +15,7 @@ import type {
   StaffBookingServiceLine,
   StaffBookingSummary,
   UpsellSuggestion,
+  AmendAppointmentServicesResponse,
   WeeklyRotaResponse,
 } from '@sheer/domain';
 import { userHasAnyRole } from '@sheer/domain';
@@ -59,10 +60,16 @@ import { ClientProfileModal } from '../components/bookings/ClientProfileModal';
 import type { CalendarToolbarKey, CalendarToolbarState } from '../components/bookings/CalendarToolbar';
 import { BillPayments, ItemisedBill, formatMoney, formatPaymentMethod } from '../components/bookings/ItemisedBill';
 import { UpsellSuggestions } from '../components/bookings/UpsellSuggestions';
+import { VisitServicesPanel } from '../components/bookings/VisitServicesPanel';
 import { isSameLocalDay, snapToMonday, toIsoDate } from '../components/rota/dateUtils';
 
 export function BookingsPage() {
   const auth = useAuth();
+  // Post-check-in service changes (0110) are their own permission on top of
+  // bookings.manage; without it the visit panel is read-only.
+  const canAmendServices = Boolean(
+    auth.user?.permissions?.includes('bookings.services.modify_after_checkin'),
+  );
   const navigate = useNavigate();
   const accessToken = auth.session?.accessToken;
   // The active location is owned by the sidebar's location picker (shared scope).
@@ -101,6 +108,15 @@ export function BookingsPage() {
   // are selected straight from the board.
   const [day, setDay] = useState<Date>(() => new Date());
   const [rota, setRota] = useState<WeeklyRotaResponse | null>(null);
+  // Attribution labels for the visit panel ("Toner · Sarah"): the rota's staff
+  // list is the one source of display names the book already loads.
+  const staffNamesById = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const member of rota?.staff ?? []) {
+      names.set(member.staffProfileId, member.displayName || member.fullName || 'Stylist');
+    }
+    return names;
+  }, [rota]);
   const [rotaLoading, setRotaLoading] = useState(false);
   const [rotaError, setRotaError] = useState<string | null>(null);
   // Bumped to re-fetch the rota (e.g. after creating a bookout) so the board updates.
@@ -161,6 +177,28 @@ export function BookingsPage() {
   useEffect(() => {
     void loadDiarySignals();
   }, [loadDiarySignals]);
+
+  // A service was added/removed/replaced on a checked-in visit. Adopt the
+  // server's appointment everywhere it is shown, and the recomputed bill when
+  // the checkout is open — the till must never display a stale total.
+  const handleServicesChanged = useCallback((response: AmendAppointmentServicesResponse) => {
+    const { appointment, billing } = response;
+    setBookings((current) =>
+      current.map((entry) => (entry.id === appointment.id ? { ...entry, ...appointment } : entry)),
+    );
+    setRescheduleTarget((current) =>
+      current && current.id === appointment.id ? { ...current, ...appointment } : current,
+    );
+    setCheckoutSummary((current) =>
+      current && current.appointment.id === appointment.id
+        ? {
+            ...current,
+            appointment: { ...current.appointment, ...appointment },
+            billing: billing ?? current.billing,
+          }
+        : current,
+    );
+  }, []);
 
   const handleComplete = useCallback(
     async (booking: StaffBookingSummary) => {
@@ -806,6 +844,10 @@ export function BookingsPage() {
         <ModalScrim onClose={handleCloseCheckout} label="Checkout">
           <CheckoutPanel
             summary={checkoutSummary}
+            accessToken={accessToken ?? ''}
+            staffNames={staffNamesById}
+            canAmendServices={canAmendServices}
+            onServicesChanged={handleServicesChanged}
             paymentLoading={paymentLoadingId === checkoutSummary.appointment.id}
             onConfirmPayment={(payments) => void handleConfirmPayment(checkoutSummary, payments)}
             rebookingLoading={rebookingLoading}
@@ -824,7 +866,10 @@ export function BookingsPage() {
           <RescheduleModal
             booking={rescheduleTarget}
             staff={rota?.staff ?? []}
+            staffNames={staffNamesById}
             accessToken={accessToken ?? ''}
+            canAmendServices={canAmendServices}
+            onServicesChanged={handleServicesChanged}
             loading={rescheduleLoading}
             onSubmit={(scheduledStartAt, staffProfileId, serviceIds) =>
               void handleReschedule(rescheduleTarget, scheduledStartAt, staffProfileId, serviceIds)
@@ -1029,18 +1074,29 @@ function ModalScrim({ onClose, label, children }: { onClose?: () => void; label:
 function RescheduleModal({
   booking,
   staff,
+  staffNames,
   accessToken,
+  canAmendServices,
+  onServicesChanged,
   loading,
   onSubmit,
   onClose,
 }: {
   booking: StaffBookingSummary;
   staff: RotaStaffSummary[];
+  staffNames: Map<string, string>;
   accessToken: string;
+  canAmendServices: boolean;
+  onServicesChanged: (response: AmendAppointmentServicesResponse) => void;
   loading: boolean;
   onSubmit: (scheduledStartAt: string, staffProfileId?: string, serviceIds?: string[]) => void;
   onClose: () => void;
 }) {
+  // Once the client has arrived the service list is no longer a replaceable
+  // array (0110): changes are line-level, keep history and drive the bill. The
+  // tick-list below is the PRE-check-in editor; after check-in the visit panel
+  // takes its place and this modal only moves the time or stylist.
+  const arrived = booking.status === 'checked_in';
   const [startAt, setStartAt] = useState(() => toDatetimeLocalValue(new Date(booking.startsAt)));
   const [staffProfileId, setStaffProfileId] = useState(booking.assignedStaffProfileId ?? '');
 
@@ -1172,7 +1228,7 @@ function RescheduleModal({
   function submit() {
     const iso = toIsoFromLocalInput(startAt);
     if (!iso) return;
-    onSubmit(iso, staffProfileId || undefined, servicesChanged ? selectedServiceIds : undefined);
+    onSubmit(iso, staffProfileId || undefined, servicesChanged && !arrived ? selectedServiceIds : undefined);
   }
 
   // Block saving an empty service list — an appointment must keep at least one
@@ -1225,7 +1281,20 @@ function RescheduleModal({
         </label>
       </div>
 
-      <div className="mt-4">
+      {arrived ? (
+        <div className="mt-4">
+          <VisitServicesPanel
+            booking={booking}
+            accessToken={accessToken}
+            staffNames={staffNames}
+            suggestions={suggestions}
+            canAmend={canAmendServices}
+            onChanged={onServicesChanged}
+          />
+        </div>
+      ) : null}
+
+      <div className={arrived ? 'hidden' : 'mt-4'}>
         <div className="flex items-baseline justify-between gap-3">
           <div className="text-[12px] font-medium text-text-secondary">Services</div>
           {catalog ? (
@@ -1280,14 +1349,16 @@ function RescheduleModal({
 
       {/* Suggested add-ons, at the one stage the platform lets staff act on them.
           Renders nothing when there is nothing to suggest. */}
-      {catalog && openSuggestions.length > 0 ? (
+      {!arrived && catalog && openSuggestions.length > 0 ? (
         <div className="mt-3">
           <UpsellSuggestions suggestions={openSuggestions} onAdd={handleAddSuggestion} compact />
         </div>
       ) : null}
 
       <div className="mt-3 text-[12px] text-text-muted">
-        {servicesChanged
+        {arrived
+          ? 'The client has arrived: service changes above apply straight to the visit and its bill. Saving here only moves the time or stylist.'
+          : servicesChanged
           ? 'Services changed — the price and duration update to match, and the stylist must be able to perform every selected service.'
           : 'Adjust the time, stylist, or services. Changing the services re-prices the appointment.'}
       </div>
@@ -1465,6 +1536,10 @@ function useCheckoutUpsellSuggestions(appointmentId: string): UpsellSuggestion[]
 
 function CheckoutPanel({
   summary,
+  accessToken,
+  staffNames,
+  canAmendServices,
+  onServicesChanged,
   paymentLoading,
   rebookingLoading,
   rebookingSkipped,
@@ -1474,6 +1549,10 @@ function CheckoutPanel({
   onClose,
 }: {
   summary: AppointmentCompletionResponse;
+  accessToken: string;
+  staffNames: Map<string, string>;
+  canAmendServices: boolean;
+  onServicesChanged: (response: AmendAppointmentServicesResponse) => void;
   paymentLoading: boolean;
   rebookingLoading: boolean;
   rebookingSkipped: boolean;
@@ -1570,19 +1649,25 @@ function CheckoutPanel({
         </div>
       </div>
 
-      <ItemisedBill billing={summary.billing} />
+      {/* Before payment the performed set is still open (0110): a last-minute
+          treatment is added HERE, through the same canonical line mutation the
+          consultation uses, and the bill below re-foots from the server's
+          answer. Once paid, the bill is frozen and the panel disappears. */}
+      {!isPaid ? (
+        <div className="mt-4">
+          <VisitServicesPanel
+            booking={summary.appointment}
+            accessToken={accessToken}
+            staffNames={staffNames}
+            suggestions={suggestions}
+            canAmend={canAmendServices}
+            onChanged={onServicesChanged}
+            compact
+          />
+        </div>
+      ) : null}
 
-      {/* Suggested add-ons, READ-ONLY at checkout. There is deliberately no Add
-          button here: service edits stop at 'checked_in'
-          (RESCHEDULABLE_BOOKING_STATUSES), so by the time this panel is open the
-          platform has no canonical way to add a service to the visit, and
-          inventing a bill-mutation path is exactly the duplicated billing logic
-          this must not create. What staff get is the prompt — to offer it now
-          through Edit Appointment before checking out, or on the rebooking
-          below. Nothing here changes the bill. */}
-      <div className="mt-4">
-        <UpsellSuggestions suggestions={suggestions} compact />
-      </div>
+      <ItemisedBill billing={summary.billing} />
 
       <RebookingPanel
         summary={summary}

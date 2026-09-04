@@ -96,3 +96,61 @@ export class RescheduleAppointmentDto {
   @Max(720)
   durationMinutes?: number;
 }
+
+// ---------------------------------------------------------------------------
+// Post-check-in service lifecycle (0110)
+// ---------------------------------------------------------------------------
+//
+// Line-level operations, never a replacement array: two staff amending the same
+// visit at once must both succeed, and a stale screen must not be able to erase
+// a colleague's addition. The actor is always the authenticated user — nothing
+// here accepts an actor id from the body.
+
+export class AddAppointmentServiceDto {
+  @IsUUID()
+  serviceId!: string;
+
+  @IsOptional()
+  @IsUUID()
+  staffProfileId?: string;
+
+  // When present, the named performed line is removed and this service is
+  // performed instead — one atomic replacement with one history record.
+  @IsOptional()
+  @IsUUID()
+  replacesAppointmentServiceId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
+
+  // Client-generated; a retried request with the same key returns the original
+  // change instead of adding the service twice.
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  idempotencyKey?: string;
+}
+
+export class RemoveAppointmentServiceDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  idempotencyKey?: string;
+}
+
+export class ReassignAppointmentServiceDto {
+  @IsUUID()
+  staffProfileId!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  idempotencyKey?: string;
+}

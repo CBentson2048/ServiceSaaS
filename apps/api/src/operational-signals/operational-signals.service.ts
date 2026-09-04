@@ -619,6 +619,8 @@ export class OperationalSignalsService {
       .from('appointment_services')
       .select('appointment_id,service_name_snapshot')
       .in('appointment_id', appointmentIds)
+      // 0110: performed lines only.
+      .neq('status', 'cancelled')
       .returns<Array<{ appointment_id: string; service_name_snapshot: string }>>();
     if (error) throw new Error(`load service names failed: ${error.message}`);
     for (const row of data ?? []) {
@@ -650,6 +652,8 @@ export class OperationalSignalsService {
       .from('appointment_services')
       .select('appointment_id,service_id')
       .in('appointment_id', appointmentIds)
+      // 0110: performed lines only — a removed colour service is not colour work.
+      .neq('status', 'cancelled')
       .returns<Array<{ appointment_id: string; service_id: string }>>();
     if (linkError) throw new Error(`load appointment services failed: ${linkError.message}`);
 

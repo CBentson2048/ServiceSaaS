@@ -381,6 +381,8 @@ export class ColourPrepService {
       .from('appointment_services')
       .select('appointment_id,service_id,service_name_snapshot')
       .in('appointment_id', appointmentIds)
+      // 0110: colour prep follows what is actually being performed.
+      .neq('status', 'cancelled')
       .returns<AppointmentServiceRow[]>();
 
     if (linkError) {

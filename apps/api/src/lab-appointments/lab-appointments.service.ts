@@ -9,6 +9,16 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type {
+  AddAppointmentServiceRequest,
+  AmendAppointmentServicesResponse,
+  AppointmentServiceChange,
+  AppointmentServiceChangeSnapshot,
+  AppointmentServiceChangesResponse,
+  AppointmentServiceLineSummary,
+  AppointmentServiceOrigin,
+  OriginalBookedService,
+  ReassignAppointmentServiceRequest,
+  RemoveAppointmentServiceRequest,
   AcceptBookingResponse,
   AppointmentCompletionLineItem,
   AppointmentCompletionResponse,
@@ -75,6 +85,44 @@ interface AppointmentServiceRow {
   scheduled_end_at?: string | null;
   // Per-service segment snapshot [{name,durationMinutes,isStylistFree}] (jsonb).
   segments?: BookingSegmentSummary[] | null;
+  // 0110 — booked vs performed. `status = 'cancelled'` means NOT performed (the
+  // row is kept for history); `origin` says whether the line was booked or added
+  // during the visit. Older projections may omit these, so they are optional and
+  // read through performedServices()/lineOrigin().
+  status?: 'scheduled' | 'in_progress' | 'completed' | 'cancelled' | null;
+  origin?: AppointmentServiceOrigin | null;
+  assigned_staff_profile_id?: string | null;
+  added_at?: string | null;
+  added_by_user_profile_id?: string | null;
+  removed_at?: string | null;
+  removed_by_user_profile_id?: string | null;
+  removal_reason?: string | null;
+  replaces_appointment_service_id?: string | null;
+}
+
+/** T0 (0110): one entry of booking.appointments.original_services_snapshot. */
+interface OriginalServiceSnapshotRow {
+  serviceId?: string | null;
+  serviceName?: string | null;
+  priceAmount?: number | string | null;
+  durationMinutes?: number | string | null;
+  staffProfileId?: string | null;
+  sequenceNo?: number | string | null;
+}
+
+interface AppointmentServiceChangeRow {
+  id: string;
+  appointment_id: string;
+  appointment_service_id: string | null;
+  replaced_appointment_service_id: string | null;
+  action: 'added' | 'removed' | 'replaced' | 'reassigned';
+  appointment_status_at_change: AppointmentStatus;
+  actor_user_profile_id: string | null;
+  actor_staff_profile_id: string | null;
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+  reason: string | null;
+  created_at: string;
 }
 
 interface DepositRow {
@@ -145,6 +193,13 @@ interface AppointmentRow {
   completed_by_staff_profile_id?: string | null;
   appointment_services: AppointmentServiceRow[] | AppointmentServiceRow | null;
   deposits?: DepositRow[] | DepositRow | null;
+  /**
+   * T0 (0110): the service selection this appointment was FIRST created with,
+   * written once by a database trigger. Null on every appointment created before
+   * 0110 — the original booking is then unknown, never assumed. Only the DETAIL
+   * projection selects it.
+   */
+  original_services_snapshot?: OriginalServiceSnapshotRow[] | null;
 }
 
 interface VisitRow {
@@ -297,6 +352,10 @@ const ACTIVE_BOOKING_STATUSES: AppointmentStatus[] = [
   'paid',
 ];
 const COMPLETABLE_BOOKING_STATUSES: AppointmentStatus[] = ['accepted', 'checked_in'];
+// Statuses whose service lines may be amended line-by-line (0110): the client has
+// arrived and the bill is not yet frozen. Mirrors the guard inside
+// booking.amend_appointment_services.
+const AMENDABLE_BOOKING_STATUSES: AppointmentStatus[] = ['checked_in', 'awaiting_payment'];
 const PAYABLE_BOOKING_STATUSES: AppointmentStatus[] = ['awaiting_payment'];
 // An accepted booking checks in to 'checked_in'. These statuses mean the client
 // has already arrived (or moved past arrival), so a check-in is a no-op.
@@ -334,15 +393,18 @@ const CLIENT_RESCHEDULABLE_STATUSES: AppointmentStatus[] = ['pending', 'accepted
 const DEFAULT_CANCELLATION_NOTICE_HOURS = 24;
 
 const LIST_COLUMNS =
-  'id,business_id,location_id,client_profile_id,assigned_staff_profile_id,requested_staff_profile_id,status,scheduled_start_at,scheduled_end_at,check_in_at,client_note,completed_at,completed_by_user_profile_id,completed_by_staff_profile_id,appointment_services(service_id,service_name_snapshot,duration_minutes,deposit_required_amount,price_amount,sequence_no,scheduled_start_at,scheduled_end_at,segments),deposits(status,amount,currency_code)';
+  'id,business_id,location_id,client_profile_id,assigned_staff_profile_id,requested_staff_profile_id,status,scheduled_start_at,scheduled_end_at,check_in_at,client_note,completed_at,completed_by_user_profile_id,completed_by_staff_profile_id,appointment_services(id,service_id,service_name_snapshot,duration_minutes,deposit_required_amount,price_amount,sequence_no,scheduled_start_at,scheduled_end_at,segments,status,origin,assigned_staff_profile_id,added_at,added_by_user_profile_id,removed_at,removed_by_user_profile_id,removal_reason,replaces_appointment_service_id),deposits(status,amount,currency_code)';
 
 const DETAIL_COLUMNS =
-  'id,business_id,location_id,client_profile_id,assigned_staff_profile_id,requested_staff_profile_id,status,scheduled_start_at,scheduled_end_at,check_in_at,communication_preference,client_note,internal_note,completed_at,completed_by_user_profile_id,completed_by_staff_profile_id,appointment_services(id,service_id,service_name_snapshot,duration_minutes,deposit_required_amount,price_amount,sequence_no,scheduled_start_at,scheduled_end_at,segments),deposits(status,amount,currency_code)';
+  'id,business_id,location_id,client_profile_id,assigned_staff_profile_id,requested_staff_profile_id,status,scheduled_start_at,scheduled_end_at,check_in_at,communication_preference,client_note,internal_note,completed_at,completed_by_user_profile_id,completed_by_staff_profile_id,original_services_snapshot,appointment_services(id,service_id,service_name_snapshot,duration_minutes,deposit_required_amount,price_amount,sequence_no,scheduled_start_at,scheduled_end_at,segments,status,origin,assigned_staff_profile_id,added_at,added_by_user_profile_id,removed_at,removed_by_user_profile_id,removal_reason,replaces_appointment_service_id),deposits(status,amount,currency_code)';
 const VISIT_COLUMNS =
   'id,business_id,location_id,appointment_id,client_profile_id,primary_staff_profile_id,status,checked_in_at,started_at,completed_at,completed_by_user_profile_id,completed_by_staff_profile_id,checkout_status,checkout_ready_at,paid_at,paid_by_user_profile_id,paid_by_staff_profile_id,service_summary,client_visible_summary,created_at';
 const REBOOKING_VISIT_COLUMNS = `${VISIT_COLUMNS},rebooking_outcomes(id,rebooked_appointment_id,rebook_source,rebooked_at)`;
 const SALON_PAYMENT_COLUMNS =
   'id,appointment_id,visit_id,payment_method,amount_cents,currency_code,paid_at,confirmed_by_user_profile_id,confirmed_by_staff_profile_id,notes';
+
+const SERVICE_CHANGE_COLUMNS =
+  'id,appointment_id,appointment_service_id,replaced_appointment_service_id,action,appointment_status_at_change,actor_user_profile_id,actor_staff_profile_id,before,after,reason,created_at';
 
 const BILL_COLUMNS =
   'id,business_id,location_id,visit_id,appointment_id,client_profile_id,staff_profile_id,bill_number,status,net_cents,tax_cents,gross_cents,discount_cents,deposit_applied_cents,balance_collected_cents,currency_code,tax_label,tax_rate_percent,occurred_at,created_at';
@@ -1208,7 +1270,10 @@ export class LabAppointmentsService {
     // Edit Appointment is a day-of tool, so (unlike rebooking) it allows moving to
     // an earlier slot today — only the date itself must be valid, not in the future.
     const newStart = parseValidDate(input.scheduledStartAt);
-    const currentServices = arrayOf(appointment.appointment_services);
+    // Only the BOOKED lines carry a diary window. Lines added after check-in have
+    // no schedule of their own (the client is already in the chair), so they play
+    // no part in moving, resizing or the double-booking guard (0110).
+    const currentServices = scheduledServices(appointment);
 
     // Compare the requested services to the current set so a no-op resubmit (same
     // services) skips the catalogue lookup + row replacement and behaves exactly
@@ -1221,6 +1286,15 @@ export class LabAppointmentsService {
       : undefined;
     const servicesChanged =
       requestedServiceIds !== undefined && !sameStringSet(requestedServiceIds, currentServiceIds);
+    // After check-in the service list is NOT a replaceable array any more: a
+    // delete-and-reinsert would erase the booked baseline and silently drop a
+    // colleague's concurrent addition. Post-check-in changes go through the
+    // line-level amend path (addService / removeService), which keeps history.
+    if (servicesChanged && appointment.status === 'checked_in') {
+      throw new ConflictException(
+        'Services cannot be replaced after check-in — add or remove services on the visit instead',
+      );
+    }
 
     // Resolve the assigned stylist first — both the eligibility check and the new
     // service rows hang off it.
@@ -1408,6 +1482,8 @@ export class LabAppointmentsService {
       .select('id,duration_minutes,sequence_no')
       .eq('appointment_id', appointment.id)
       .eq('business_id', appointment.business_id)
+      // Post-check-in lines have no diary window and must never be given one.
+      .eq('origin', 'booked')
       .order('sequence_no', { ascending: true })
       .returns<Array<{ id: string; duration_minutes: number | null; sequence_no: number | null }>>();
     if (error) {
@@ -1615,6 +1691,317 @@ export class LabAppointmentsService {
       }
       throw new InternalServerErrorException('Unable to update appointment services');
     }
+  }
+
+
+  // ---------------------------------------------------------------------------
+  // Post-check-in service lifecycle (0110) — booked vs performed
+  // ---------------------------------------------------------------------------
+  //
+  // One canonical mutation path for every way a service joins or leaves a visit
+  // after the client has arrived: a consultation decision, a manual search, an
+  // upsell suggestion the stylist accepts. All of them are line-level operations
+  // on booking.appointment_services executed by booking.amend_appointment_services
+  // under an appointment row lock, so concurrent staff both succeed and nothing
+  // is ever overwritten. The booked baseline stays on the rows (origin/status);
+  // the change history is written atomically with the line.
+
+  /** Add a service to a checked-in / awaiting-payment appointment (or replace one). */
+  async addService(
+    actor: AuthUser,
+    id: string,
+    input: AddAppointmentServiceRequest,
+  ): Promise<AmendAppointmentServicesResponse> {
+    const appointment = await this.fetchAppointmentForActor(actor, id);
+    this.assertServicesAmendable(appointment);
+
+    // Same catalogue rules as booking: active, this business, salon-wide or this
+    // location. The function re-checks tenancy; this gives the desk a clear 404.
+    const [service] = await this.fetchCatalogServices(actor.businessId, appointment.location_id, [
+      input.serviceId,
+    ]);
+
+    // Attribution: the caller's choice, else the appointment's stylist. A pure
+    // stylist may only attribute to themselves; anyone chosen must be bookable and
+    // eligible for the service — the same hard block the booking flow applies.
+    const staffProfileId = input.staffProfileId ?? appointment.assigned_staff_profile_id ?? undefined;
+    if (staffProfileId) {
+      if (staffProfileId !== appointment.assigned_staff_profile_id) {
+        this.assertCanAssignRebookingStaff(actor, staffProfileId, appointment.location_id);
+        await this.assertStaffBookable(actor.businessId, appointment.location_id, staffProfileId);
+      }
+      await this.assertStaffEligibleForServices(actor.businessId, staffProfileId, [service.id]);
+    }
+
+    const action = input.replacesAppointmentServiceId ? 'replace' : 'add';
+    return this.amendServices(actor, appointment, {
+      action,
+      serviceId: service.id,
+      lineId: input.replacesAppointmentServiceId,
+      staffProfileId,
+      reason: input.reason,
+      idempotencyKey: input.idempotencyKey,
+    });
+  }
+
+  /** Take a performed line off the visit. The row is kept, marked removed. */
+  async removeService(
+    actor: AuthUser,
+    id: string,
+    lineId: string,
+    input: RemoveAppointmentServiceRequest,
+  ): Promise<AmendAppointmentServicesResponse> {
+    const appointment = await this.fetchAppointmentForActor(actor, id);
+    this.assertServicesAmendable(appointment);
+    return this.amendServices(actor, appointment, {
+      action: 'remove',
+      lineId,
+      reason: input.reason,
+      idempotencyKey: input.idempotencyKey,
+    });
+  }
+
+  /** Re-attribute a performed line to another stylist. */
+  async reassignService(
+    actor: AuthUser,
+    id: string,
+    lineId: string,
+    input: ReassignAppointmentServiceRequest,
+  ): Promise<AmendAppointmentServicesResponse> {
+    const appointment = await this.fetchAppointmentForActor(actor, id);
+    this.assertServicesAmendable(appointment);
+    const line = arrayOf(appointment.appointment_services).find((entry) => entry.id === lineId);
+    if (!line) throw new NotFoundException('That service is not on this visit');
+    this.assertCanAssignRebookingStaff(actor, input.staffProfileId, appointment.location_id);
+    await this.assertStaffBookable(actor.businessId, appointment.location_id, input.staffProfileId);
+    if (line.service_id) {
+      await this.assertStaffEligibleForServices(actor.businessId, input.staffProfileId, [line.service_id]);
+    }
+    return this.amendServices(actor, appointment, {
+      action: 'reassign',
+      lineId,
+      staffProfileId: input.staffProfileId,
+      idempotencyKey: input.idempotencyKey,
+    });
+  }
+
+  /** Booked vs performed, plus every recorded change — readable after payment. */
+  async serviceChanges(actor: AuthUser, id: string): Promise<AppointmentServiceChangesResponse> {
+    const appointment = await this.fetchAppointmentForActor(actor, id);
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('appointment_service_changes')
+      .select(SERVICE_CHANGE_COLUMNS)
+      .eq('appointment_id', appointment.id)
+      .eq('business_id', appointment.business_id)
+      .order('created_at', { ascending: true })
+      .order('change_no', { ascending: true })
+      .returns<AppointmentServiceChangeRow[]>();
+    if (error) {
+      this.logger.error(`serviceChanges failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load service history');
+    }
+    const rows = data ?? [];
+    const names = await this.fetchChangeActorNames(appointment.business_id, rows, appointment);
+    const lines = toServiceLineSummaries(appointment);
+    // T0 / T1 / T2 side by side. The snapshot is absent on every appointment
+    // created before 0110 — reported as unavailable, never faked from the
+    // current set (which may already be a pre-check-in edit).
+    const original = toOriginalBookedServices(appointment.original_services_snapshot);
+    return {
+      appointmentId: appointment.id,
+      originalBookedServices: original ?? [],
+      originalBookingAvailable: original !== null,
+      bookedServices: lines.filter((line) => line.origin === 'booked'),
+      performedServices: lines.filter((line) => line.performed),
+      changes: rows.map((row) => toServiceChange(row, names)),
+    };
+  }
+
+  /**
+   * Only between arrival and payment. Before check-in the booking editor owns
+   * the (replaceable) service list; after payment the bill is frozen (0085) and
+   * corrections take the refund/adjustment path.
+   */
+  private assertServicesAmendable(appointment: AppointmentRow): void {
+    if (AMENDABLE_BOOKING_STATUSES.includes(appointment.status)) return;
+    if (appointment.status === 'paid') {
+      throw new ConflictException(
+        'This appointment is paid, so its services are final. Correct the bill with a refund or adjustment instead.',
+      );
+    }
+    if (appointment.status === 'pending' || appointment.status === 'accepted') {
+      throw new ConflictException('Check the client in first — before arrival, change services through Edit appointment');
+    }
+    throw new ConflictException(`Services cannot be changed on a ${appointment.status.replace('_', ' ')} appointment`);
+  }
+
+  private async amendServices(
+    actor: AuthUser,
+    appointment: AppointmentRow,
+    input: {
+      action: 'add' | 'remove' | 'replace' | 'reassign';
+      serviceId?: string;
+      lineId?: string;
+      staffProfileId?: string;
+      reason?: string;
+      idempotencyKey?: string;
+    },
+  ): Promise<AmendAppointmentServicesResponse> {
+    const { data, error } = await this.admin.schema('booking').rpc('amend_appointment_services', {
+      p_payload: {
+        appointmentId: appointment.id,
+        businessId: appointment.business_id,
+        action: input.action,
+        serviceId: input.serviceId ?? null,
+        lineId: input.lineId ?? null,
+        staffProfileId: input.staffProfileId ?? null,
+        reason: input.reason?.trim() || null,
+        idempotencyKey: input.idempotencyKey?.trim() || null,
+        // The actor is the authenticated identity — never anything a client sent.
+        actorUserProfileId: actor.id,
+        actorStaffProfileId: actor.staffProfileId ?? null,
+        actorRole: actor.primaryRole,
+      },
+    });
+    if (error) {
+      const mapped = amendErrorToHttp(error.message ?? '');
+      if (mapped instanceof InternalServerErrorException) {
+        this.logger.error(`amend_appointment_services failed: ${error.message}`);
+      }
+      throw mapped;
+    }
+    const result = (data ?? {}) as {
+      changeId?: string | null;
+      lineId?: string | null;
+      replayed?: boolean;
+      alreadyApplied?: boolean;
+    };
+    const replayed = Boolean(result.replayed);
+    const alreadyApplied = Boolean(result.alreadyApplied);
+
+    // Re-read: the projection loaded before the lock is stale by definition.
+    const amended = await this.fetchAppointmentById(appointment.id, appointment.business_id);
+
+    // Once the visit exists the bill is live: re-reconcile the rolled-up service
+    // line and the visit's summary so checkout, KPIs and the payroll cross-check
+    // all see the performed set. Any failure here is surfaced — a service change
+    // the bill does not reflect is exactly the silent loss this must not allow.
+    let billing: AmendAppointmentServicesResponse['billing'];
+    const visit = await this.fetchVisitForAppointment(amended.id);
+    if (visit && amended.status === 'awaiting_payment') {
+      await this.reconcileServiceLineItem(amended, visit.id);
+      await this.refreshVisitServiceSummary(visit, amended);
+      const [lineItems, taxSettings] = await Promise.all([
+        this.fetchVisitLineItems(visit.id),
+        this.taxSettings.resolveLocationTaxSettings(amended.business_id, amended.location_id),
+      ]);
+      billing = buildBillingSummary(amended, lineItems, taxSettings);
+    }
+
+    let change: AppointmentServiceChange | undefined;
+    if (result.changeId) {
+      const { data: changeRow } = await this.admin
+        .schema('booking')
+        .from('appointment_service_changes')
+        .select(SERVICE_CHANGE_COLUMNS)
+        .eq('id', result.changeId)
+        .maybeSingle<AppointmentServiceChangeRow>();
+      if (changeRow) {
+        const names = await this.fetchChangeActorNames(amended.business_id, [changeRow], amended);
+        change = toServiceChange(changeRow, names);
+      }
+    }
+
+    if (!replayed && !alreadyApplied && change) {
+      // The platform audit trail (fail-soft, for the audit page). The structured
+      // history row above is the one the bill relies on.
+      await this.audit.record(actor, {
+        action: `booking.service.${change.action}`,
+        entityType: 'booking',
+        entityId: amended.id,
+        locationId: amended.location_id,
+        before: change.before ? { ...change.before } : null,
+        after: change.after ? { ...change.after } : null,
+        metadata: {
+          appointmentId: amended.id,
+          changeId: change.id,
+          lineId: result.lineId ?? null,
+          appointmentStatus: change.appointmentStatusAtChange,
+          reason: change.reason ?? null,
+          idempotencyKey: input.idempotencyKey ?? null,
+        },
+      });
+    }
+
+    const clientsById = await this.fetchClientProfiles(actor.businessId, [amended.client_profile_id]);
+    return {
+      appointment: toBookingDetail(amended, clientsById.get(amended.client_profile_id)),
+      change,
+      replayed,
+      alreadyApplied,
+      billing,
+    };
+  }
+
+  // The visit's human summary follows the performed set; it is a label, not money.
+  private async refreshVisitServiceSummary(visit: VisitRow, appointment: AppointmentRow): Promise<void> {
+    const summary = summarizeServices(appointment.appointment_services);
+    if (!summary) return;
+    const { error } = await this.admin
+      .schema('booking')
+      .from('visits')
+      .update({ service_summary: summary, client_visible_summary: summary })
+      .eq('id', visit.id)
+      .eq('business_id', appointment.business_id);
+    if (error) this.logger.warn(`refreshVisitServiceSummary failed: ${error.message}`);
+  }
+
+  /** Display names for the actors and stylists a set of change rows mention. */
+  private async fetchChangeActorNames(
+    businessId: string,
+    rows: AppointmentServiceChangeRow[],
+    appointment: AppointmentRow,
+  ): Promise<Map<string, string>> {
+    const names = new Map<string, string>();
+    const staffIds = new Set<string>();
+    const userIds = new Set<string>();
+    for (const row of rows) {
+      if (row.actor_staff_profile_id) staffIds.add(row.actor_staff_profile_id);
+      if (row.actor_user_profile_id) userIds.add(row.actor_user_profile_id);
+      for (const snapshot of [row.before, row.after]) {
+        const staff = snapshot?.staffProfileId;
+        if (typeof staff === 'string') staffIds.add(staff);
+      }
+    }
+    for (const line of arrayOf(appointment.appointment_services)) {
+      if (line.assigned_staff_profile_id) staffIds.add(line.assigned_staff_profile_id);
+    }
+    if (staffIds.size > 0) {
+      const { data } = await this.admin
+        .schema('core')
+        .from('staff_profiles')
+        .select('id,display_name')
+        .eq('business_id', businessId)
+        .in('id', Array.from(staffIds))
+        .returns<StaffProfileRow[]>();
+      for (const row of data ?? []) {
+        if (row.display_name) names.set(`staff:${row.id}`, row.display_name);
+      }
+    }
+    if (userIds.size > 0) {
+      const { data } = await this.admin
+        .schema('core')
+        .from('user_profiles')
+        .select('id,full_name,display_name')
+        .in('id', Array.from(userIds))
+        .returns<Array<{ id: string; full_name: string | null; display_name: string | null }>>();
+      for (const row of data ?? []) {
+        const name = row.display_name?.trim() || row.full_name?.trim();
+        if (name) names.set(`user:${row.id}`, name);
+      }
+    }
+    return names;
   }
 
   async complete(actor: AuthUser, id: string): Promise<AppointmentCompletionResponse> {
@@ -1891,12 +2278,20 @@ export class LabAppointmentsService {
           sequence_no: index + 1,
           line_type: item.lineType,
           description: item.description,
-          staff_profile_id: appointment.assigned_staff_profile_id ?? null,
+          // Line-level attribution when the itemised service line carries one
+          // (0110: a treatment performed by a second stylist is THEIR revenue);
+          // the appointment's stylist otherwise, exactly as before.
+          staff_profile_id: item.staffProfileId ?? appointment.assigned_staff_profile_id ?? null,
           net_cents: breakdown.netCents,
           tax_cents: breakdown.taxCents,
           gross_cents: item.amountCents,
           tax_rate_percent: rate,
-          source_ref: { appointment_id: appointment.id },
+          source_ref: {
+            appointment_id: appointment.id,
+            ...(item.appointmentServiceId
+              ? { appointment_service_id: item.appointmentServiceId, origin: item.origin ?? 'booked' }
+              : {}),
+          },
         };
       });
       const depositAppliedCents = Math.min(billing.depositPaidCents, billing.totalCents);
@@ -2148,7 +2543,9 @@ export class LabAppointmentsService {
     }
 
     const selectedStart = parseFutureDate(input.selectedStartAt);
-    const services = arrayOf(appointment.appointment_services);
+    // Rebook what was actually PERFORMED (0110): a toner added mid-visit comes
+    // along, a booked service the client did not have does not.
+    const services = performedServices(appointment);
     if (services.length === 0 || services.some((service) => !service.service_id)) {
       throw new ConflictException('Source appointment services are required before rebooking');
     }
@@ -2294,8 +2691,15 @@ export class LabAppointmentsService {
     if (!actor.allowedLocationIds.includes(locationId)) {
       throw new ForbiddenException('Rebooking location is outside your scope');
     }
-    if (userHasRole(actor, 'stylist') && actor.staffProfileId !== staffProfileId) {
-      throw new ForbiddenException('Stylists can only rebook to themselves');
+    // The own-only limit is for a PURE stylist. An owner or manager who also
+    // styles is not capped to their own column — the same rule
+    // assertCanCompleteAppointment applies. Without the second test, a manager
+    // who happens to hold a stylist membership could not attribute a service to
+    // a colleague, and was told "stylists can only rebook to themselves".
+    if (userHasRole(actor, 'stylist') && !userHasAnyRole(actor, ['owner', 'manager'])) {
+      if (actor.staffProfileId !== staffProfileId) {
+        throw new ForbiddenException('Stylists can only assign services and rebookings to themselves');
+      }
     }
   }
 
@@ -2601,7 +3005,11 @@ export class LabAppointmentsService {
   }
 
   private async reconcileServiceLineItem(appointment: AppointmentRow, visitId: string): Promise<void> {
-    const services = arrayOf(appointment.appointment_services);
+    // The bill is what was PERFORMED (0110): every line except the ones removed
+    // after check-in. Re-run after every post-check-in change so the rolled-up
+    // service line, and everything reading it (KPIs, payroll cross-check), never
+    // carries a stale total.
+    const services = performedServices(appointment);
     const amountCents = services.reduce((sum, service) => sum + toCents(service.price_amount), 0);
     const { error } = await this.admin.schema('billing').from('visit_line_items').upsert(
       {
@@ -3137,7 +3545,8 @@ function occupiedRangesLiteralForResolved(services: ResolvedCatalogService[], st
 
 /** Per-service breakdown with each service's window + segments for the calendar tile split. */
 function toServiceLines(row: AppointmentRow): StaffBookingServiceLine[] {
-  const rows = sortServiceRows(arrayOf(row.appointment_services));
+  // The calendar sub-bands describe the DIARY: only booked lines have a window.
+  const rows = sortServiceRows(scheduledServices(row));
   let cursorMs = new Date(row.scheduled_start_at).getTime();
   return rows.map((service) => {
     const durationMinutes = Number(service.duration_minutes ?? 0);
@@ -3172,16 +3581,19 @@ function toBookingSummary(
   client?: ClientProfileRow,
   patchTest?: StaffBookingPatchTestSummary,
 ): StaffBookingSummary {
-  const services = arrayOf(row.appointment_services);
+  // What the book, the till and QLAB call "the services" is what is PERFORMED
+  // (0110). Removed lines stay on `serviceLines` with their provenance.
+  const services = performedServices(row);
   const deposits = arrayOf(row.deposits);
   const depositRequiredAmount = services.reduce(
     (sum, service) => sum + Number(service.deposit_required_amount ?? 0),
     0,
   );
-  const durationMinutes = services.reduce(
-    (sum, service) => sum + Number(service.duration_minutes ?? 0),
-    0,
-  );
+  // The scheduled duration is the diary window, which post-check-in changes
+  // never move; the booked lines still sum to it for older rows.
+  const durationMinutes =
+    minutesBetween(row.scheduled_start_at, row.scheduled_end_at) ||
+    scheduledServices(row).reduce((sum, service) => sum + Number(service.duration_minutes ?? 0), 0);
 
   return {
     id: row.id,
@@ -3199,7 +3611,8 @@ function toBookingSummary(
       .map((service) => service.service_id)
       .filter((id): id is string => Boolean(id)),
     services: toServiceLines(row),
-    durationMinutes: durationMinutes || minutesBetween(row.scheduled_start_at, row.scheduled_end_at),
+    serviceLines: toServiceLineSummaries(row),
+    durationMinutes,
     depositRequiredAmount: depositRequiredAmount || undefined,
     depositStatus: deposits[0]?.status,
     clientNote: row.client_note ?? undefined,
@@ -3339,7 +3752,7 @@ function expandServiceLineItems(
   appointment: AppointmentRow,
   lineItems: BillingLineItem[],
 ): BillingLineItem[] {
-  const services = arrayOf(appointment.appointment_services);
+  const services = performedServices(appointment);
   const serviceLines = lineItems.filter((item) => item.lineType === 'service');
   if (services.length === 0 || serviceLines.length === 0) return lineItems;
 
@@ -3349,6 +3762,9 @@ function expandServiceLineItems(
     description: service.service_name_snapshot || 'Service',
     amountCents: toCents(service.price_amount),
     currencyCode,
+    appointmentServiceId: service.id,
+    origin: lineOrigin(service),
+    staffProfileId: service.assigned_staff_profile_id ?? appointment.assigned_staff_profile_id ?? undefined,
   }));
 
   const persistedTotal = serviceLines.reduce((sum, item) => sum + item.amountCents, 0);
@@ -3395,12 +3811,17 @@ function expandProductUsageLineItems(lineItems: BillingLineItem[]): AppointmentC
 // Drop the internal productBreakdown so only the public line-item shape leaves the
 // billing summary.
 function stripBreakdown(items: BillingLineItem[]): AppointmentCompletionLineItem[] {
-  return items.map(({ lineType, description, amountCents, currencyCode }) => ({
-    lineType,
-    description,
-    amountCents,
-    currencyCode,
-  }));
+  return items.map(
+    ({ lineType, description, amountCents, currencyCode, appointmentServiceId, origin, staffProfileId }) => ({
+      lineType,
+      description,
+      amountCents,
+      currencyCode,
+      ...(appointmentServiceId ? { appointmentServiceId } : {}),
+      ...(origin ? { origin } : {}),
+      ...(staffProfileId ? { staffProfileId } : {}),
+    }),
+  );
 }
 
 // Aggregate raw formula_items costs into one entry per product, summed across every
@@ -3522,6 +3943,7 @@ function buildBillingSummary(
 
 function summarizeServices(services: AppointmentRow['appointment_services'] | AppointmentServiceRow[]): string | null {
   const names = arrayOf(services)
+    .filter((service) => service.status !== 'cancelled')
     .map((service) => service.service_name_snapshot)
     .filter(Boolean);
   return names.length > 0 ? names.join(', ') : null;
@@ -3539,6 +3961,133 @@ function toPatchTestSummary(row: PatchTestRow): StaffBookingPatchTestSummary {
     performedAt: row.performed_at,
     expiresAt: row.expires_at ?? undefined,
   };
+}
+
+/** Lines that count: everything not removed after check-in (0110). */
+function performedServices(row: Pick<AppointmentRow, 'appointment_services'>): AppointmentServiceRow[] {
+  return arrayOf(row.appointment_services).filter((service) => service.status !== 'cancelled');
+}
+
+/**
+ * Lines that own a diary window: the booked ones, whatever happened to them
+ * later. A removed booked line still occupies the time it was booked for.
+ */
+function scheduledServices(row: Pick<AppointmentRow, 'appointment_services'>): AppointmentServiceRow[] {
+  return arrayOf(row.appointment_services).filter((service) => lineOrigin(service) === 'booked');
+}
+
+function lineOrigin(service: AppointmentServiceRow): AppointmentServiceOrigin {
+  return service.origin ?? 'booked';
+}
+
+function toServiceLineSummaries(row: AppointmentRow): AppointmentServiceLineSummary[] {
+  return sortServiceRows(arrayOf(row.appointment_services))
+    .filter((service): service is AppointmentServiceRow & { id: string } => Boolean(service.id))
+    .map((service) => ({
+      id: service.id,
+      serviceId: service.service_id ?? undefined,
+      name: service.service_name_snapshot,
+      sequenceNo: Number(service.sequence_no ?? 0),
+      priceAmount: Number(service.price_amount ?? 0),
+      durationMinutes: Number(service.duration_minutes ?? 0),
+      status: service.status ?? 'scheduled',
+      performed: service.status !== 'cancelled',
+      origin: lineOrigin(service),
+      assignedStaffProfileId: service.assigned_staff_profile_id ?? undefined,
+      addedAt: service.added_at ?? undefined,
+      addedByUserProfileId: service.added_by_user_profile_id ?? undefined,
+      removedAt: service.removed_at ?? undefined,
+      removedByUserProfileId: service.removed_by_user_profile_id ?? undefined,
+      removalReason: service.removal_reason ?? undefined,
+      replacesAppointmentServiceId: service.replaces_appointment_service_id ?? undefined,
+    }));
+}
+
+/**
+ * T0 (0110). `null` — not `[]` — when the appointment predates the snapshot, so
+ * the caller can tell "originally booked nothing" (impossible) from "we do not
+ * know what was originally booked" (every pre-0110 appointment).
+ */
+function toOriginalBookedServices(
+  snapshot: OriginalServiceSnapshotRow[] | null | undefined,
+): OriginalBookedService[] | null {
+  if (!Array.isArray(snapshot)) return null;
+  return snapshot
+    .map((entry) => ({
+      serviceId: entry.serviceId ?? undefined,
+      serviceName: entry.serviceName ?? 'Service',
+      priceAmount: entry.priceAmount == null ? undefined : Number(entry.priceAmount),
+      durationMinutes: entry.durationMinutes == null ? undefined : Number(entry.durationMinutes),
+      staffProfileId: entry.staffProfileId ?? undefined,
+      sequenceNo: entry.sequenceNo == null ? undefined : Number(entry.sequenceNo),
+    }))
+    .sort((a, b) => (a.sequenceNo ?? 0) - (b.sequenceNo ?? 0));
+}
+
+function toServiceChange(
+  row: AppointmentServiceChangeRow,
+  names: Map<string, string>,
+): AppointmentServiceChange {
+  const snapshot = (value: Record<string, unknown> | null): AppointmentServiceChangeSnapshot | undefined => {
+    if (!value) return undefined;
+    const staffProfileId = typeof value.staffProfileId === 'string' ? value.staffProfileId : undefined;
+    return {
+      lineId: typeof value.lineId === 'string' ? value.lineId : undefined,
+      serviceId: typeof value.serviceId === 'string' ? value.serviceId : undefined,
+      serviceName: typeof value.serviceName === 'string' ? value.serviceName : undefined,
+      priceAmount: value.priceAmount == null ? undefined : Number(value.priceAmount),
+      staffProfileId,
+      staffDisplayName: staffProfileId ? names.get(`staff:${staffProfileId}`) : undefined,
+      status: (value.status as AppointmentServiceChangeSnapshot['status']) ?? undefined,
+      origin: (value.origin as AppointmentServiceOrigin | undefined) ?? undefined,
+    };
+  };
+  return {
+    id: row.id,
+    appointmentId: row.appointment_id,
+    appointmentServiceId: row.appointment_service_id ?? undefined,
+    replacedAppointmentServiceId: row.replaced_appointment_service_id ?? undefined,
+    action: row.action,
+    appointmentStatusAtChange: row.appointment_status_at_change,
+    actorUserProfileId: row.actor_user_profile_id ?? undefined,
+    actorStaffProfileId: row.actor_staff_profile_id ?? undefined,
+    actorDisplayName:
+      (row.actor_staff_profile_id ? names.get(`staff:${row.actor_staff_profile_id}`) : undefined) ??
+      (row.actor_user_profile_id ? names.get(`user:${row.actor_user_profile_id}`) : undefined),
+    before: snapshot(row.before),
+    after: snapshot(row.after),
+    reason: row.reason ?? undefined,
+    createdAt: row.created_at,
+  };
+}
+
+/**
+ * Map the amend function's stable error prefixes onto HTTP semantics. Anything
+ * unrecognised is a genuine failure and surfaces as a 500.
+ */
+function amendErrorToHttp(message: string): Error {
+  if (message.includes('APPOINTMENT_NOT_FOUND')) return new NotFoundException('Booking not found');
+  if (message.includes('LINE_NOT_FOUND')) return new NotFoundException('That service is not on this visit');
+  if (message.includes('APPOINTMENT_NOT_AMENDABLE:paid') || message.includes('APPOINTMENT_PAID_IMMUTABLE')) {
+    return new ConflictException(
+      'This appointment is paid, so its services are final. Correct the bill with a refund or adjustment instead.',
+    );
+  }
+  if (message.includes('APPOINTMENT_NOT_AMENDABLE:')) {
+    const status = message.split('APPOINTMENT_NOT_AMENDABLE:')[1]?.split(/[^a-z_]/)[0] ?? 'this status';
+    return new ConflictException(`Services cannot be changed while the appointment is ${status}`);
+  }
+  if (message.includes('SERVICE_NOT_AVAILABLE')) {
+    return new ConflictException('That service is not available at this location');
+  }
+  if (message.includes('LAST_PERFORMED_SERVICE')) {
+    return new ConflictException('A visit must keep at least one service — replace it instead of removing it');
+  }
+  if (message.includes('STAFF_NOT_IN_BUSINESS')) {
+    return new ConflictException('That stylist is not part of this business');
+  }
+  if (message.includes('INVALID_ACTION')) return new ConflictException('Invalid service change');
+  return new InternalServerErrorException('Unable to change the services on this appointment');
 }
 
 function arrayOf<T>(value: T[] | T | null | undefined): T[] {

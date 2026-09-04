@@ -108,6 +108,8 @@ export class RebookingNudgeService {
       .from('appointment_services')
       .select('service_id')
       .eq('appointment_id', appointmentId)
+      // 0110: the nudge interval follows what was PERFORMED, not what was booked.
+      .neq('status', 'cancelled')
       .returns<AppointmentServiceRow[]>();
     if (apptErr) throw new Error(`load appointment services failed: ${apptErr.message}`);
 

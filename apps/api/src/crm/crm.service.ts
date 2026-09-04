@@ -96,10 +96,15 @@ interface AppointmentVisitRow {
   scheduled_end_at: string;
   status: string;
   assigned_staff_profile_id: string | null;
-  appointment_services:
-    | Array<{ service_name_snapshot: string; price_amount: number | string }>
-    | { service_name_snapshot: string; price_amount: number | string }
-    | null;
+  appointment_services: AppointmentServiceLineRow[] | AppointmentServiceLineRow | null;
+}
+
+/** 0110: status 'cancelled' = removed after check-in; origin says how it got there. */
+interface AppointmentServiceLineRow {
+  service_name_snapshot: string;
+  price_amount: number | string;
+  status?: string | null;
+  origin?: string | null;
 }
 
 interface VisitRow {
@@ -137,10 +142,7 @@ interface AppointmentHistoryRow {
   scheduled_start_at: string;
   scheduled_end_at: string;
   completed_at: string | null;
-  appointment_services:
-    | Array<{ service_name_snapshot: string; price_amount: number | string }>
-    | { service_name_snapshot: string; price_amount: number | string }
-    | null;
+  appointment_services: AppointmentServiceLineRow[] | AppointmentServiceLineRow | null;
 }
 
 interface StaffNameRow {
@@ -1072,7 +1074,7 @@ export class CrmService {
         .schema('booking')
         .from('visits')
         .select(
-          'id,business_id,location_id,appointment_id,client_profile_id,primary_staff_profile_id,status,checked_in_at,started_at,completed_at,service_summary,client_visible_summary,created_at,appointments(id,scheduled_start_at,scheduled_end_at,status,assigned_staff_profile_id,appointment_services(service_name_snapshot,price_amount)),rebooking_outcomes(id,rebooked_appointment_id,rebook_source,rebooked_at)',
+          'id,business_id,location_id,appointment_id,client_profile_id,primary_staff_profile_id,status,checked_in_at,started_at,completed_at,service_summary,client_visible_summary,created_at,appointments(id,scheduled_start_at,scheduled_end_at,status,assigned_staff_profile_id,appointment_services(service_name_snapshot,price_amount,status,origin)),rebooking_outcomes(id,rebooked_appointment_id,rebook_source,rebooked_at)',
         )
         .eq('business_id', businessId)
         .eq('client_profile_id', clientId)
@@ -1083,7 +1085,7 @@ export class CrmService {
         .schema('booking')
         .from('appointments')
         .select(
-          'id,business_id,location_id,client_profile_id,assigned_staff_profile_id,status,scheduled_start_at,scheduled_end_at,completed_at,appointment_services(service_name_snapshot,price_amount)',
+          'id,business_id,location_id,client_profile_id,assigned_staff_profile_id,status,scheduled_start_at,scheduled_end_at,completed_at,appointment_services(service_name_snapshot,price_amount,status,origin)',
         )
         .eq('business_id', businessId)
         .eq('client_profile_id', clientId)
@@ -1667,9 +1669,26 @@ function toClientProfile(
   };
 }
 
+/**
+ * Performed lines (not removed after check-in) plus, when the visit changed after
+ * check-in, a one-line summary of what was originally booked (0110).
+ */
+function splitServiceLines(lines: AppointmentServiceLineRow[]): {
+  performed: AppointmentServiceLineRow[];
+  bookedSummary?: string;
+} {
+  const performed = lines.filter((line) => line.status !== 'cancelled');
+  const booked = lines.filter((line) => (line.origin ?? 'booked') === 'booked');
+  const changed = performed.length !== booked.length || performed.some((line) => (line.origin ?? 'booked') !== 'booked');
+  const bookedSummary = changed ? booked.map((line) => line.service_name_snapshot).filter(Boolean).join(', ') : '';
+  return { performed, bookedSummary: bookedSummary || undefined };
+}
+
 function toVisitSummary(row: VisitRow, staffNames: Map<string, string> = new Map()): CrmVisitSummary {
   const appointment = first(row.appointments);
-  const services = arrayOf(appointment?.appointment_services);
+  // Client history is what was PERFORMED (0110); the booked set rides along only
+  // when it differs, so a service the client never had is never shown as had.
+  const { performed: services, bookedSummary } = splitServiceLines(arrayOf(appointment?.appointment_services));
   const priceAmount = services.reduce((sum, service) => sum + Number(service.price_amount ?? 0), 0);
   const serviceNames = services.map((service) => service.service_name_snapshot).filter(Boolean);
   const staffProfileId = row.primary_staff_profile_id ?? appointment?.assigned_staff_profile_id ?? undefined;
@@ -1685,9 +1704,10 @@ function toVisitSummary(row: VisitRow, staffNames: Map<string, string> = new Map
     status: row.status,
     occurredAt:
       row.completed_at ?? row.started_at ?? row.checked_in_at ?? appointment?.scheduled_start_at ?? row.created_at,
-    serviceSummary: (row.service_summary ?? serviceNames.join(', ')) || undefined,
+    serviceSummary: (serviceNames.join(', ') || row.service_summary) || undefined,
+    bookedServiceSummary: bookedSummary,
     clientVisibleSummary:
-      (row.client_visible_summary ?? row.service_summary ?? serviceNames.join(', ')) || undefined,
+      (serviceNames.join(', ') || row.client_visible_summary || row.service_summary) || undefined,
     priceAmount: priceAmount > 0 ? priceAmount : undefined,
     currencyCode: 'GBP',
     rebooked: Boolean(rebooking),
@@ -1701,7 +1721,7 @@ function toAppointmentVisitSummary(
   row: AppointmentHistoryRow,
   staffNames: Map<string, string> = new Map(),
 ): CrmVisitSummary {
-  const services = arrayOf(row.appointment_services);
+  const { performed: services, bookedSummary } = splitServiceLines(arrayOf(row.appointment_services));
   const priceAmount = services.reduce((sum, service) => sum + Number(service.price_amount ?? 0), 0);
   const serviceNames = services.map((service) => service.service_name_snapshot).filter(Boolean);
   const serviceSummary = serviceNames.join(', ');
@@ -1718,6 +1738,7 @@ function toAppointmentVisitSummary(
     status: row.status,
     occurredAt: row.completed_at ?? row.scheduled_start_at,
     serviceSummary: serviceSummary || undefined,
+    bookedServiceSummary: bookedSummary,
     clientVisibleSummary: serviceSummary || undefined,
     priceAmount: priceAmount > 0 ? priceAmount : undefined,
     currencyCode: 'GBP',

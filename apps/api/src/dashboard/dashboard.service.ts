@@ -36,6 +36,8 @@ type AppointmentStatus =
 interface AppointmentServiceRow {
   service_name_snapshot: string | null;
   price_amount: number | string | null;
+  /** 0110: 'cancelled' = removed after check-in, not performed. */
+  status?: string | null;
 }
 
 interface VisitLineItemRow {
@@ -153,7 +155,7 @@ interface KpiAccumulator extends DashboardKpiSummary {
 // fetchSalonPayments / fetchVisitLineItems); the visit `id` is selected so line items
 // can be matched to their visit.
 const APPOINTMENT_COLUMNS =
-  'id,business_id,location_id,client_profile_id,assigned_staff_profile_id,status,scheduled_start_at,appointment_services(service_name_snapshot,price_amount),deposits(status,amount),visits(id,rebooking_outcomes(id,rebooked_appointment_id,rebook_source,source_staff_profile_id))';
+  'id,business_id,location_id,client_profile_id,assigned_staff_profile_id,status,scheduled_start_at,appointment_services(service_name_snapshot,price_amount,status),deposits(status,amount),visits(id,rebooking_outcomes(id,rebooked_appointment_id,rebook_source,source_staff_profile_id))';
 const LOCATION_COLUMNS = 'id,name,code,address_line_1,city';
 const STAFF_COLUMNS = 'id,display_name,hourly_rate,contracted_hours,average_bill_benchmark,user_profiles(full_name)';
 const STOCK_COLUMNS =
@@ -664,6 +666,9 @@ function buildTopServices(appointments: AppointmentRow[]): DashboardTopService[]
   const services = new Map<string, DashboardTopService>();
   for (const appointment of appointments) {
     for (const service of arrayOf(appointment.appointment_services)) {
+      // 0110: service mix is what was PERFORMED — a line removed after
+      // check-in was neither delivered nor charged.
+      if (service.status === 'cancelled') continue;
       const name = service.service_name_snapshot?.trim() || 'Unspecified service';
       const current = services.get(name) ?? {
         serviceName: name,

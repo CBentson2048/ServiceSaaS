@@ -1,4 +1,9 @@
 import type {
+  AddAppointmentServiceRequest,
+  AmendAppointmentServicesResponse,
+  AppointmentServiceChangesResponse,
+  ReassignAppointmentServiceRequest,
+  RemoveAppointmentServiceRequest,
   MessageUsageResponse,
   OperationalSignalReport,
   OperationalSignalThresholds,
@@ -746,6 +751,62 @@ export async function confirmBookingPayment(
       accessToken,
       body: payload,
     },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Post-check-in service lifecycle (0110)
+// ---------------------------------------------------------------------------
+//
+// Line-level operations on a checked-in / awaiting-payment appointment. These
+// are THE way a service joins or leaves a visit after arrival — a consultation
+// change, a manual search and an accepted upsell suggestion all go through
+// addAppointmentService. Pass an `idempotencyKey` so a retried request cannot
+// add the same service twice.
+
+export async function addAppointmentService(
+  accessToken: string,
+  bookingId: string,
+  payload: AddAppointmentServiceRequest,
+): Promise<AmendAppointmentServicesResponse> {
+  return request<AmendAppointmentServicesResponse>(
+    `/lab/appointments/${encodeURIComponent(bookingId)}/services`,
+    { method: 'POST', accessToken, body: payload },
+  );
+}
+
+export async function removeAppointmentService(
+  accessToken: string,
+  bookingId: string,
+  lineId: string,
+  payload: RemoveAppointmentServiceRequest = {},
+): Promise<AmendAppointmentServicesResponse> {
+  return request<AmendAppointmentServicesResponse>(
+    `/lab/appointments/${encodeURIComponent(bookingId)}/services/${encodeURIComponent(lineId)}/remove`,
+    { method: 'POST', accessToken, body: payload },
+  );
+}
+
+export async function reassignAppointmentService(
+  accessToken: string,
+  bookingId: string,
+  lineId: string,
+  payload: ReassignAppointmentServiceRequest,
+): Promise<AmendAppointmentServicesResponse> {
+  return request<AmendAppointmentServicesResponse>(
+    `/lab/appointments/${encodeURIComponent(bookingId)}/services/${encodeURIComponent(lineId)}`,
+    { method: 'PATCH', accessToken, body: payload },
+  );
+}
+
+/** Booked vs performed plus the recorded change history; readable after payment. */
+export async function getAppointmentServiceChanges(
+  accessToken: string,
+  bookingId: string,
+): Promise<AppointmentServiceChangesResponse> {
+  return request<AppointmentServiceChangesResponse>(
+    `/lab/appointments/${encodeURIComponent(bookingId)}/services/changes`,
+    { accessToken },
   );
 }
 

@@ -48,7 +48,13 @@ interface AppointmentFormulaContextRow {
   location_id: string;
   client_profile_id: string;
   assigned_staff_profile_id: string | null;
-  appointment_services?: { service_name_snapshot: string }[] | { service_name_snapshot: string } | null;
+  appointment_services?: AppointmentServiceLabelRow[] | AppointmentServiceLabelRow | null;
+}
+
+/** 0110: a line removed after check-in (status 'cancelled') is not part of the visit's label. */
+interface AppointmentServiceLabelRow {
+  service_name_snapshot: string;
+  status?: string | null;
 }
 
 interface VisitFormulaContextRow {
@@ -182,7 +188,7 @@ interface VisitStylistRow {
 interface AppointmentStylistRow {
   id: string;
   assigned_staff_profile_id: string | null;
-  appointment_services?: { service_name_snapshot: string }[] | { service_name_snapshot: string } | null;
+  appointment_services?: AppointmentServiceLabelRow[] | AppointmentServiceLabelRow | null;
 }
 
 interface StaffDisplayNameRow {
@@ -731,7 +737,7 @@ export class LabFormulaService {
     const { data, error } = await this.admin
       .schema('booking')
       .from('appointments')
-      .select('id,assigned_staff_profile_id,appointment_services(service_name_snapshot)')
+      .select('id,assigned_staff_profile_id,appointment_services(service_name_snapshot,status)')
       .eq('business_id', businessId)
       .in('id', appointmentIds)
       .returns<AppointmentStylistRow[]>();
@@ -880,7 +886,7 @@ export class LabFormulaService {
     const { data, error } = await this.admin
       .schema('booking')
       .from('appointments')
-      .select('id,business_id,location_id,client_profile_id,assigned_staff_profile_id,appointment_services(service_name_snapshot)')
+      .select('id,business_id,location_id,client_profile_id,assigned_staff_profile_id,appointment_services(service_name_snapshot,status)')
       .eq('id', appointmentId)
       .eq('business_id', actor.businessId)
       .maybeSingle<AppointmentFormulaContextRow>();
@@ -1273,7 +1279,11 @@ function summarizeAppointmentServices(
   services: AppointmentFormulaContextRow['appointment_services'],
 ): string | null {
   const rows = Array.isArray(services) ? services : services ? [services] : [];
-  const summary = rows.map((service) => service.service_name_snapshot).filter(Boolean).join(' + ');
+  const summary = rows
+    .filter((service) => service.status !== 'cancelled')
+    .map((service) => service.service_name_snapshot)
+    .filter(Boolean)
+    .join(' + ');
   return summary || null;
 }
 

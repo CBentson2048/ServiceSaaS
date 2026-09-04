@@ -913,8 +913,11 @@ export class PayrollInputsService {
     const { data, error } = await this.admin
       .schema('booking')
       .from('appointment_services')
-      .select('id,appointment_id,service_name_snapshot,price_amount,assigned_staff_profile_id')
+      .select('id,appointment_id,service_name_snapshot,price_amount,assigned_staff_profile_id,status')
       .in('appointment_id', appointmentIds)
+      // 0110: revenue is what was PERFORMED. A booked line removed after
+      // check-in stays on the row (for history) but earns nobody anything.
+      .neq('status', 'cancelled')
       .returns<AppointmentServiceRow[]>();
     if (error) {
       this.logger.error(`fetchAppointmentServices failed: ${error.message}`);

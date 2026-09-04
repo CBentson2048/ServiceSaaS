@@ -292,6 +292,7 @@ export type Permission =
   | 'report.lab_analytics.view'
   // Operational features
   | 'bookings.manage'
+  | 'bookings.services.modify_after_checkin'
   | 'crm.view'
   | 'crm.manage'
   | 'inventory.manage'
@@ -362,6 +363,7 @@ export const PERMISSION_CATALOG: readonly PermissionDefinition[] = [
   { key: 'services.view', label: 'View services', description: 'View the service catalogue without changing it.', kind: 'feature', group: 'Operations' },
   { key: 'rota.view', label: 'View rota', description: 'View working hours and rota coverage without changing shifts.', kind: 'feature', group: 'Operations' },
   { key: 'bookings.manage', label: 'Manage bookings', description: 'Create and manage appointments (needs read access to clients, services and rota).', kind: 'feature', group: 'Front of house', requires: ['crm.view', 'services.view', 'rota.view'] },
+  { key: 'bookings.services.modify_after_checkin', label: 'Amend services during a visit', description: 'Add, remove or replace services on an appointment after the client has checked in, up to payment. Every change is recorded with who made it.', kind: 'feature', group: 'Front of house', requires: ['bookings.manage'] },
   { key: 'retail.record', label: 'Record retail sales', description: 'Take retail sales at the till.', kind: 'feature', group: 'Front of house' },
   // Seeded into core.security_levels by migration 0086 — this catalog entry is the
   // mandatory other half (auth.service / owner-security-levels strip keys missing
@@ -487,6 +489,10 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'report.financials.view',
     'report.lab_analytics.view',
     'bookings.manage',
+    // Post-check-in service changes (0110): a consultation-driven toner or
+    // treatment is added by whoever is with the client. Scoped by the API to
+    // appointments the actor can already see.
+    'bookings.services.modify_after_checkin',
     'crm.view',
     'crm.manage',
     'retail.record',
@@ -517,6 +523,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   // Contrast the manager entry above, which must never carry `payroll.view`.
   stylist: [
     'bookings.manage',
+    'bookings.services.modify_after_checkin',
     'crm.view',
     'retail.record',
     'services.view',
@@ -588,6 +595,8 @@ export const SYSTEM_SECURITY_LEVELS: readonly SystemSecurityLevelDefinition[] = 
     baseRole: 'manager',
     permissions: [
       'bookings.manage',
+      // The desk adds a last-minute treatment before checkout (0110).
+      'bookings.services.modify_after_checkin',
       'crm.view',
       'crm.manage',
       'retail.record',
@@ -2058,6 +2067,14 @@ export interface StaffBookingSummary {
    * calendar falls back to a single block from startsAt/endsAt.
    */
   services?: StaffBookingServiceLine[];
+  /**
+   * Every service line on the appointment — booked, added during the visit and
+   * removed — with provenance and attribution (0110). `serviceNames` /
+   * `serviceIds` above list only the PERFORMED lines; this is the full picture
+   * the in-visit service panel and the audit view need. Optional — only the
+   * staff booking builders populate it.
+   */
+  serviceLines?: AppointmentServiceLineSummary[];
   durationMinutes?: number;
   depositRequiredAmount?: number;
   depositStatus?: string;
@@ -2091,6 +2108,12 @@ export interface AppointmentCompletionLineItem {
   description: string;
   amountCents: number;
   currencyCode: string;
+  /** For itemised service lines: the booking.appointment_services row behind it (0110). */
+  appointmentServiceId?: string;
+  /** For itemised service lines: booked, or added/replaced during the visit (0110). */
+  origin?: AppointmentServiceOrigin;
+  /** For itemised service lines: who the revenue is attributed to (0110). */
+  staffProfileId?: string;
 }
 
 export interface AppointmentCompletionCheckout {
@@ -2408,6 +2431,146 @@ export interface CancelAppointmentResponse {
    * keep the deposit when cancelling from the book (deposit forfeited).
    */
   depositForfeited?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Post-check-in service lifecycle (0110) — booked vs performed
+// ---------------------------------------------------------------------------
+//
+// An appointment's service lines are ONE table with provenance. What was booked
+// is `origin = 'booked'` (whatever its status now); what was performed is every
+// line whose status is not `cancelled`. Lines are never deleted after check-in,
+// so both questions stay answerable from structured data after payment.
+
+export type AppointmentServiceOrigin = 'booked' | 'post_checkin_add' | 'post_checkin_replace';
+
+export type AppointmentServiceLineStatus = 'scheduled' | 'in_progress' | 'completed' | 'cancelled';
+
+/** One service line of an appointment, with provenance and attribution. */
+export interface AppointmentServiceLineSummary {
+  id: string;
+  serviceId?: string;
+  name: string;
+  sequenceNo: number;
+  /** Major units, as snapshotted from the catalogue when the line was created. */
+  priceAmount: number;
+  durationMinutes: number;
+  status: AppointmentServiceLineStatus;
+  /** True when this line counts towards the bill (status is not `cancelled`). */
+  performed: boolean;
+  origin: AppointmentServiceOrigin;
+  assignedStaffProfileId?: string;
+  addedAt?: string;
+  addedByUserProfileId?: string;
+  removedAt?: string;
+  removedByUserProfileId?: string;
+  removalReason?: string;
+  /** For a `post_checkin_replace` line: the booked line it was performed instead of. */
+  replacesAppointmentServiceId?: string;
+}
+
+export type AppointmentServiceChangeAction = 'added' | 'removed' | 'replaced' | 'reassigned';
+
+/** Structured before/after state of a line inside a change record. */
+export interface AppointmentServiceChangeSnapshot {
+  lineId?: string;
+  serviceId?: string;
+  serviceName?: string;
+  priceAmount?: number;
+  staffProfileId?: string;
+  staffDisplayName?: string;
+  status?: AppointmentServiceLineStatus;
+  origin?: AppointmentServiceOrigin;
+}
+
+/** One post-check-in mutation, exactly as recorded with the line change. */
+export interface AppointmentServiceChange {
+  id: string;
+  appointmentId: string;
+  appointmentServiceId?: string;
+  replacedAppointmentServiceId?: string;
+  action: AppointmentServiceChangeAction;
+  appointmentStatusAtChange: AppointmentStatus;
+  actorUserProfileId?: string;
+  actorStaffProfileId?: string;
+  actorDisplayName?: string;
+  before?: AppointmentServiceChangeSnapshot;
+  after?: AppointmentServiceChangeSnapshot;
+  reason?: string;
+  createdAt: string;
+}
+
+export interface AddAppointmentServiceRequest {
+  /** Catalogue service to perform. Must be active and available at the appointment's location. */
+  serviceId: string;
+  /** Who performs it. Defaults to the appointment's assigned stylist. */
+  staffProfileId?: string;
+  /** When set, the named performed line is taken off the visit and this service performed instead. */
+  replacesAppointmentServiceId?: string;
+  reason?: string;
+  /** Client-generated key. A retried request with the same key returns the original change. */
+  idempotencyKey?: string;
+}
+
+export interface RemoveAppointmentServiceRequest {
+  reason?: string;
+  idempotencyKey?: string;
+}
+
+export interface ReassignAppointmentServiceRequest {
+  staffProfileId: string;
+  idempotencyKey?: string;
+}
+
+export interface AmendAppointmentServicesResponse {
+  appointment: StaffBookingDetail;
+  /** The recorded change; absent only when a remove/reassign was already applied. */
+  change?: AppointmentServiceChange;
+  /** True when the request replayed an earlier change with the same idempotency key. */
+  replayed: boolean;
+  /** True when the requested state already held (e.g. removing an already-removed line). */
+  alreadyApplied: boolean;
+  /** Present once the visit exists (awaiting payment): the recomputed bill. */
+  billing?: AppointmentCompletionResponse['billing'];
+}
+
+/**
+ * One service as it stood in the ORIGINAL booking (T0). Read from the immutable
+ * `original_services_snapshot`, so it is not a line id and cannot be acted on —
+ * it is evidence of what the client first asked for.
+ */
+export interface OriginalBookedService {
+  serviceId?: string;
+  serviceName: string;
+  /** Major units, as snapshotted from the catalogue when the appointment was created. */
+  priceAmount?: number;
+  durationMinutes?: number;
+  staffProfileId?: string;
+  sequenceNo?: number;
+}
+
+export interface AppointmentServiceChangesResponse {
+  appointmentId: string;
+  /**
+   * T0 — what the client ORIGINALLY booked, captured once when the appointment
+   * was created and immutable thereafter, so a pre-check-in edit cannot erase
+   * it. Empty when `originalBookingAvailable` is false.
+   */
+  originalBookedServices: OriginalBookedService[];
+  /**
+   * False for every appointment created before the snapshot existed. The
+   * original booking is then genuinely unknown — never substitute the current
+   * set, which may already be the result of a pre-check-in edit.
+   */
+  originalBookingAvailable: boolean;
+  /**
+   * T1 — lines with origin `booked`: the booking as it stood when the client
+   * arrived, regardless of what happened later.
+   */
+  bookedServices: AppointmentServiceLineSummary[];
+  /** T2 — lines not `cancelled`: what was (or is being) performed. */
+  performedServices: AppointmentServiceLineSummary[];
+  changes: AppointmentServiceChange[];
 }
 
 export interface RescheduleAppointmentRequest {
@@ -4414,6 +4577,11 @@ export interface CrmVisitSummary {
   status: string;
   occurredAt: string;
   serviceSummary?: string;
+  /**
+   * What the client originally booked, when it differs from what was performed
+   * (0110). Absent when nothing changed after check-in.
+   */
+  bookedServiceSummary?: string;
   clientVisibleSummary?: string;
   /**
    * Amount associated with the visit in major currency units. Its meaning

@@ -29,6 +29,8 @@ interface AppointmentServiceRow {
   service_name_snapshot: string;
   duration_minutes: number;
   deposit_required_amount: number | string;
+  /** 0110: 'cancelled' = removed after check-in, not performed. */
+  status?: string | null;
 }
 
 interface DepositRow {
@@ -147,7 +149,7 @@ interface StockRow {
 }
 
 const APPOINTMENT_COLUMNS =
-  'id,business_id,location_id,client_profile_id,assigned_staff_profile_id,requested_staff_profile_id,status,scheduled_start_at,scheduled_end_at,client_note,appointment_services(service_id,service_name_snapshot,duration_minutes,deposit_required_amount),deposits(status,amount)';
+  'id,business_id,location_id,client_profile_id,assigned_staff_profile_id,requested_staff_profile_id,status,scheduled_start_at,scheduled_end_at,client_note,appointment_services(service_id,service_name_snapshot,duration_minutes,deposit_required_amount,status),deposits(status,amount)';
 const CLIENT_COLUMNS = 'id,first_name,last_name,communication_preference';
 const VISIT_COLUMNS =
   'id,business_id,location_id,appointment_id,client_profile_id,primary_staff_profile_id,status,checked_in_at,started_at,completed_at,service_summary,client_visible_summary,created_at';
@@ -472,6 +474,8 @@ export class MobileDashboardService {
       .from('appointment_services')
       .select('service_name_snapshot,price_amount,duration_minutes,sequence_no')
       .eq('appointment_id', appointmentId)
+      // 0110: the client sees what was performed.
+      .neq('status', 'cancelled')
       .order('sequence_no', { ascending: true })
       .returns<AppointmentServiceDetailRow[]>();
     if (error) this.throwQueryError('fetchAppointmentServices', error.message);
@@ -699,9 +703,10 @@ function toBookingSummary(
   client?: ClientProfileRow,
   cancellationWindowHours?: number,
 ): StaffBookingSummary {
-  const services = arrayOf(row.appointment_services);
+  // Performed lines only (0110); the diary window is the header's own.
+  const services = arrayOf(row.appointment_services).filter((service) => service.status !== 'cancelled');
   const deposits = arrayOf(row.deposits);
-  const durationMinutes = services.reduce((sum, service) => sum + Number(service.duration_minutes ?? 0), 0);
+  const durationMinutes = minutesBetween(row.scheduled_start_at, row.scheduled_end_at);
   const depositRequiredAmount = services.reduce(
     (sum, service) => sum + Number(service.deposit_required_amount ?? 0),
     0,

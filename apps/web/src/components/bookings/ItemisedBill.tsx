@@ -110,6 +110,13 @@ function BillGroup({
               key={`${line.lineType}-${index}`}
               label={line.description}
               value={formatMoney(line.amountCents, currencyCode)}
+              // 0110: a service that joined the visit after check-in is marked, so
+              // the till shows booked vs performed without a second screen.
+              hint={
+                line.origin === 'post_checkin_add' || line.origin === 'post_checkin_replace'
+                  ? 'added during visit'
+                  : undefined
+              }
             />
           ))
         ) : (

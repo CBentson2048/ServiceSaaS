@@ -1,6 +1,8 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import type {
   AcceptBookingResponse,
+  AmendAppointmentServicesResponse,
+  AppointmentServiceChangesResponse,
   AppointmentCompletionResponse,
   AppointmentPaymentConfirmationRequest,
   AppointmentPaymentConfirmationResponse,
@@ -20,11 +22,14 @@ import { RequireRoles, RolesGuard } from '../auth/roles.guard';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { LabSessionService } from '../lab-session/lab-session.service';
 import {
+  AddAppointmentServiceDto,
   CancelAppointmentDto,
   MarkNoShowDto,
   CreateStylistRebookingDto,
   LinkStylistRebookingDto,
+  ReassignAppointmentServiceDto,
   RejectBookingDto,
+  RemoveAppointmentServiceDto,
   RescheduleAppointmentDto,
 } from './dto';
 import { LabAppointmentsService } from './lab-appointments.service';
@@ -118,6 +123,54 @@ export class LabAppointmentsController {
     @Body() body: RescheduleAppointmentDto,
   ): Promise<RescheduleAppointmentResponse> {
     return this.labAppointmentsService.reschedule(actor, id, body);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Post-check-in service lifecycle (0110). Line-level, never a replacement
+  // array. Gated on its own permission on top of the controller's
+  // bookings.manage — the method-level metadata overrides the class's, so both
+  // keys are listed here. The service scopes stylists to their own column.
+  // ---------------------------------------------------------------------------
+
+  @Post(':id/services')
+  @RequirePermissions('bookings.manage', 'bookings.services.modify_after_checkin')
+  addService(
+    @CurrentUser() actor: AuthUser,
+    @Param('id') id: string,
+    @Body() body: AddAppointmentServiceDto,
+  ): Promise<AmendAppointmentServicesResponse> {
+    return this.labAppointmentsService.addService(actor, id, body);
+  }
+
+  @Post(':id/services/:lineId/remove')
+  @RequirePermissions('bookings.manage', 'bookings.services.modify_after_checkin')
+  removeService(
+    @CurrentUser() actor: AuthUser,
+    @Param('id') id: string,
+    @Param('lineId') lineId: string,
+    @Body() body: RemoveAppointmentServiceDto,
+  ): Promise<AmendAppointmentServicesResponse> {
+    return this.labAppointmentsService.removeService(actor, id, lineId, body);
+  }
+
+  @Patch(':id/services/:lineId')
+  @RequirePermissions('bookings.manage', 'bookings.services.modify_after_checkin')
+  reassignService(
+    @CurrentUser() actor: AuthUser,
+    @Param('id') id: string,
+    @Param('lineId') lineId: string,
+    @Body() body: ReassignAppointmentServiceDto,
+  ): Promise<AmendAppointmentServicesResponse> {
+    return this.labAppointmentsService.reassignService(actor, id, lineId, body);
+  }
+
+  /** Booked vs performed and the full change history — readable after payment. */
+  @Get(':id/services/changes')
+  serviceChanges(
+    @CurrentUser() actor: AuthUser,
+    @Param('id') id: string,
+  ): Promise<AppointmentServiceChangesResponse> {
+    return this.labAppointmentsService.serviceChanges(actor, id);
   }
 
   @Post(':id/complete')

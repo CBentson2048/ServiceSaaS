@@ -56,6 +56,8 @@ interface AppointmentRelation {
 
 interface AppointmentServiceRelation {
   service_name_snapshot: string | null;
+  /** 0110: 'cancelled' = removed after check-in. */
+  status?: string | null;
 }
 
 interface StaffProfileRow {
@@ -87,7 +89,7 @@ const FORMULA_COLUMNS =
   'id,business_id,location_id,appointment_id,visit_id,actual_cost_cents,waste_cost_cents,billable_charge_cents,currency_code,saved_at,metadata';
 const FORMULA_ITEM_COLUMNS = 'formula_id,product_id,product_name,brand,captured_grams,cost_cents';
 const VISIT_COLUMNS =
-  'id,primary_staff_profile_id,service_summary,appointments(assigned_staff_profile_id,appointment_services(service_name_snapshot))';
+  'id,primary_staff_profile_id,service_summary,appointments(assigned_staff_profile_id,appointment_services(service_name_snapshot,status))';
 const STAFF_COLUMNS = 'id,display_name,hourly_rate,contracted_hours,average_bill_benchmark,user_profiles(full_name)';
 const LOW_STOCK_COLUMNS =
   'id,location_id,product_id,remaining_quantity_grams,threshold_quantity_grams,status,last_triggered_at';
@@ -519,7 +521,11 @@ function resolveServiceType(visit: VisitRow | undefined, formula: FormulaAnalyti
   if (metadataVisit?.serviceType) return metadataVisit.serviceType;
   if (visit?.service_summary) return visit.service_summary;
 
-  return firstRelation(firstRelation(visit?.appointments)?.appointment_services)?.service_name_snapshot ?? undefined;
+  const lines = firstRelation(visit?.appointments)?.appointment_services;
+  const performed = (Array.isArray(lines) ? lines : lines ? [lines] : []).filter(
+    (line) => line.status !== 'cancelled',
+  );
+  return performed[0]?.service_name_snapshot ?? undefined;
 }
 
 function staffDisplayName(staff: StaffProfileRow): string {
