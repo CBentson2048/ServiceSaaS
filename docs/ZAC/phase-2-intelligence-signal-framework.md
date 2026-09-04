@@ -1,20 +1,73 @@
 # ZAC — Phase 2 Workstream 1: Intelligence & Signal Framework (implemented)
 
-> **Status: implemented.** The framework, its two reference evaluators, the
-> persisted signal lifecycle (migration `0112`) and the adapter into the
-> **existing** Phase 1 priority engine are built and tested. **This is the
-> foundation, not the intelligence itself**: two metrics are registered, no
-> domain beyond rebooking and utilisation is evaluated, nothing is scheduled,
-> and nothing is surfaced proactively.
+> **Status: ENGINEERING COMPLETE — hosted verification recorded separately (§23).**
+> Workstream 1 of the approved Phase 2 plan is delivered: the canonical metric
+> registry, the proactive signal lifecycle, the opportunity/risk/watch-point
+> contracts, deterministic materiality/severity rules, deduplication, and the
+> Phase 2 evaluation harness. **This is the reusable intelligence/signal
+> substrate, not the intelligence itself** — see §0 for what Workstream 1 is
+> and, just as importantly, what it is not.
 
-> **Naming note.** The approved Phase 2 plan (`ZAC_Phase_2_Client_Review_Plan.pdf`)
-> has no workstream called "Intelligence & Signal Framework". Its Workstream 1
-> is *Expanded Intelligence*; this build is the **Week 1 "Foundation &
-> contracts — signal schema, canonical metric registry, permissions,
-> evaluation set"** row plus the foundation half of Workstream 3 (*Proactive
-> Intelligence*). The PDF states no per-workstream acceptance criteria, so the
-> acceptance fixtures below are **authored, not quoted**, and Phase 2 itself is
-> still marked *Proposed for review and approval*.
+> **Authoritative plan.** The commercial/scope reference for Phase 2 is
+> [`ZAC_Phase_2_Incremental_Plan_UPDATED.pdf`](ZAC_Phase_2_Incremental_Plan_UPDATED.pdf)
+> (Client Review Edition, August 2026, 280h baseline + 40h central reserve).
+> It defines **Workstream 1 — Intelligence & signal framework (24h)** as:
+> *"Canonical metric registry; proactive signal lifecycle;
+> opportunity/risk/watch-point contracts; materiality/severity rules;
+> deduplication; Phase 2 evaluation harness."* An earlier draft of this
+> document judged the build against the superseded
+> `ZAC_Phase_2_Client_Review_Plan.pdf`, whose "Workstream 1" was *Expanded
+> Intelligence* — a different, larger scope that the updated plan numbers as
+> Workstream 2. That note was wrong and has been removed.
+
+---
+
+## 0. Workstream 1 — contract and definition of done
+
+**Workstream 1 builds the reusable intelligence/signal substrate.** It exists
+so that Workstreams 2, 3 and 5 can register metrics and evaluators and ship
+proactive delivery without redesigning how a signal is observed, scored,
+deduplicated, persisted, authorised or evaluated.
+
+| Deliverable (plan, 24h) | Where | Status |
+|---|---|---|
+| Canonical metric registry | `zac-metric-registry.ts` — two admitted metrics, four-criterion bar (§4) | ✅ |
+| Proactive signal lifecycle | `zac-signal-reconciler.ts`, migration `0112` — active/resolved/suppressed/expired (§9–§11) | ✅ |
+| Opportunity/risk/watch-point contracts | `zac-signal.types.ts` — closed model (+ `progress`) (§6) | ✅ |
+| Materiality/severity rules | `zac-signal-scoring.ts` — deterministic, no LLM (§7) | ✅ |
+| Deduplication | `buildSignalKey` + partial unique index (§8) | ✅ |
+| Phase 2 evaluation harness | `intelligence/eval/` + `pnpm --filter @sheer/api zac-signal-eval` (§15b) | ✅ |
+
+**Workstream 1 does NOT require the full population of** financial, client/
+retention, appointment, services/retail or profitability intelligence. Those are
+**Workstream 2 — Expanded QLOOQO 10 & cross-domain intelligence (40h)**. Two
+proven metrics is a correct Workstream 1 registry: the registry is the
+deliverable, not its population.
+
+**Workstream 1 does NOT include** scheduled evaluation, a proactive priority
+feed, the weekly/Sunday review or proactive notifications. Those are
+**Workstream 5 — Proactive intelligence & weekly business review (38h)**. The
+framework is invoked on demand by design, and nothing here is wired into a
+scheduler or the live `/zac/ask` turn (§17).
+
+**Workstream 1 does NOT include** QLAB intelligence, stock intelligence, Value
+Created, RAG or autonomous actions (Workstreams 3, 4, 7 and the Phase 2 product
+boundary respectively).
+
+**Definition of done for Workstream 1**, all asserted by test:
+
+1. The registry admits only metrics with a canonical implementation, an
+   exposed denominator, a stateable sample floor and a target with provenance.
+2. Every signal carries a closed kind, a severity in the Phase 1 vocabulary, and
+   materiality/confidence computed deterministically from domain rules alone.
+3. Repeated evaluation of one logical issue refreshes one live row; the
+   database refuses a second.
+4. A missing, failed, insufficient or zero-denominator observation **never**
+   resolves a signal; resolution requires positive evidence.
+5. Persisted visibility narrows retrieval and never grants it; current
+   permissions and business/location scope are re-checked on every read.
+6. The Phase 2 evaluation harness runs the real pipeline over a versioned
+   labelled dataset and passes every case and every hard invariant.
 
 ---
 
@@ -114,10 +167,19 @@ deliberately only two.** A metric is registered only when **all four** hold:
   skeletons returning `not_connected`, and the Phase 1 feasibility report
   records that no supplier / purchase-order / lead-time / expiry entity exists
   and that `inventory.waste_events` is written but never read.
-- **Profitability** — `billing.location_fixed_costs` is applied but empty, so a
-  margin would be computed against nothing.
+- **Profitability** — a margin needs cost inputs. `billing.location_fixed_costs`
+  now has a full CRUD path (`owner-location-settings.service.ts`), so this is
+  closer than the Phase 1 feasibility report recorded; what is still missing is
+  a **canonical profitability computation** that ZAC could read rather than
+  recreate (criterion 1), which is Workstream 2 work. *(An earlier draft here
+  said the table was "applied but empty" — stale; corrected.)*
 - **Retention** — only a proxy over rebooking exists; lapsed-client detection
-  (`0097`) answers a different question and produces no rate.
+  (`0097`) answers a different question and produces no rate. Workstream 2.
+- **Services/retail** — `billing.retail_sales` has a live `RetailSalesModule`
+  (`record`, `list`, `listSellable`) and the payroll engine reads it, so a retail
+  reading is **proven**. It fails criterion 4 today: no retail target with
+  provenance exists. Workstream 2. *(An earlier draft said retail was "applied
+  but empty with no UI writer" — stale; corrected.)*
 - **Revenue and cancellations** — proven readings, but neither has a target
   with provenance. They fail criterion **4**, not criterion 1: every signal
   would be a watch point forever.
@@ -514,11 +576,13 @@ available, so good news never displaces a problem and needs no special case.
 | Suite | Command | Result |
 |---|---|---|
 | Framework acceptance fixtures A–L | `npx jest src/zac/intelligence/zac-signal-framework.spec.ts` | **70 passed** |
+| **Phase 2 evaluation harness gate** | `npx jest src/zac/intelligence/eval/signal-eval.spec.ts` | **4 passed** (80/80 cases, 7/7 invariants) |
 | Service: persistence, scope attribution, visibility, isolation | `npx jest src/zac/intelligence/zac-intelligence-signal.service.spec.ts` | **33 passed** |
 | **Full API suite** | `pnpm --filter @sheer/api test` | **2458 passed, 226 todo, 2684 total; 116 suites, 0 failed** |
 | Typecheck | `pnpm --filter @sheer/api typecheck` | clean |
 | Lint | `pnpm --filter @sheer/api lint` | clean |
 | SQL behavioural suite | `supabase/tests/zac_intelligence_signals.sql` | **28 of 28 PASS** |
+| All 19 SQL behavioural suites | PGlite, all 112 migrations | see §23 |
 
 The SQL suite was run for real: all **112 migrations** (through `0112`) applied
 into a fresh PGlite Postgres, then the suite executed inside one rolled-back
@@ -544,6 +608,83 @@ PostgREST-shaped sessions (`set local role authenticated` +
 | **J** | Two locations | Separate keys and separate rows; resolving one leaves the other refreshed. Location scope carried into `manager_team_theme` |
 | **K** | Permission removed after creation | Visible with the permission, invisible without it — from `listVisible`, from `priorityCandidates`, and from `suppress`. Also covers `zac.access` revocation, manager location scope, team fail-closed, stylist-private, and stylist-vs-business |
 | **L** | Conversion to a priority candidate | Valid `ZacEvidenceSignal` with a real tool name → `cand_rebooking`, domain `rebooking`, title `Rebooking`, materiality `0.32`. Merges with a live reading of the same issue into **one** candidate. Remembered goal raises Phase 1 `relevance` |
+
+---
+
+## 15b. The Phase 2 evaluation harness
+
+```
+pnpm --filter @sheer/api zac-signal-eval
+```
+
+The last Workstream 1 deliverable, and the one the A–L unit fixtures could not
+stand in for. It runs a **versioned labelled dataset** (`zac-signal-eval-v1`,
+80 cases / 120 steps) through the **real** pipeline — the real observation
+service, evaluator registry, reconciler and `ZacIntelligenceSignalService`
+(scope fan-out, visibility matrix, permission re-check, plan application) —
+over an in-memory repository that enforces the same live-uniqueness rule as the
+database. Only inputs are faked: canned Phase 1 tool results in the exact shape
+the tools emit, and the clock.
+
+**It calls no model and imports no provider SDK.** Signal intelligence is
+deterministic business logic; `ZAC_AI_PROVIDER` is irrelevant to it, and the
+harness spec pins that.
+
+**Label contract** — every expected value is one of the framework's own closed
+types (`ZacSignalType`, `ZacSignalSeverity`, `ZacSignalDirection`,
+`ZacSignalActionKind`, `ZacSignalResolutionReason`, `ZacWithheldSignal['reason']`),
+so a vocabulary change is a compile error in the dataset, not a stale label. The
+two band labels are projections of framework numbers onto framework thresholds
+(materiality onto the metric's own bands; confidence onto the existing
+`confidenceScoreBucket`).
+
+**A case is a sequence** of `evaluate` and `suppress` steps against one store,
+because the properties Workstream 1 exists for — refresh-not-duplicate,
+never-resolve-on-missing, expire-is-not-resolve — are only observable across
+runs.
+
+**Coverage** (`zac-signal-eval-dataset.v1.json`): rebooking (24 cases — material,
+slight and severe shortfall, valid 0%, denominator 0, missing denominator,
+insufficient sample, sample at/below floor, canonical vs memory-goal vs
+non-goal-memory target, above target, at target, inside noise floor, missing/
+denied/empty/corrupt observations, caveat and multi-location limitations);
+utilisation (19 — including threshold 0, no threshold, no rota vs read failure,
+improving/declining/steady/above-but-declining, data-quality notes);
+lifecycle (20 — create, refresh on same/changed value, retain on missing/denied/
+zero-denominator/insufficient/vanished-target, recovery, recovery inside the
+floor, recurrence as a new episode, progress superseded, suppression preserved
+and bounded, expiry on persistent failure, expired-then-recurs, expiry when no
+longer evaluated, confirmation resetting expiry); scoping (10 — tenants,
+locations, manager scope, permission removal for each metric, revoked actor,
+partial-scope manager, single-location focus); dedupe (7).
+
+**Scorecard** — every metric is computed from individual checks and every failed
+check is printed with expected vs actual; an aggregate never hides a failure.
+The three invariant counters that matter most are derived from what the
+pipeline **actually did**, not from labels: a resolve on a non-positive
+observation, an insert the unique index would reject, a refresh across tenants.
+
+**Result at close-out** (commit recorded in §23): 80/80 cases, 100% on every
+asserted category, 0/30 false-positive negative signals, 0/53 false negatives,
+0 duplicate active signals, 0 false resolutions on missing data, 0 tenant
+isolation failures, 0 permission failures, all seven hard invariants PASS.
+
+**What the harness found while being built** — the reason it exists:
+- Seven authored confidence labels were wrong: the canonical rebooking tool
+  always reports two caveats, so rebooking confidence peaks at `medium`
+  (0.9 × 0.95 × 0.8 = 0.684) and sits at `low` (0.41) at the 20-visit floor.
+  The labels assumed no caveats. **Calibration observation, not a defect**:
+  confidence never gates raising; it is recorded for the Workstream 2/5
+  calibration pass, since static product caveats and genuine data-quality notes
+  currently weigh the same.
+- The reconciler's `expire` action carried no `resolutionReason` (the persisted
+  row did). Fixed: the plan now states `expired_unconfirmed` itself.
+
+**Extensibility** — Workstreams 2, 3 and 5 add cases (and a `domain`) for new
+metrics; the runner, scorer, actor presets and invariant gates are unchanged.
+The dataset is versioned so later regressions are measurable against this
+baseline; `frameworkVersion` is bumped only when a framework change alters what
+an existing label means.
 
 ---
 
@@ -644,7 +785,7 @@ foundation decision, and it belongs to the workstream that ships the feed.
 | RAG / vector retrieval | No embedding, no vector store, no retrieval layer. |
 | Value Created | No financial value, no attribution upgrade. `zac.outcome_events` untouched. |
 | Autonomous actions | The framework returns values and writes only to its own table. Suppression is the only state change a person can cause, and only explicitly. |
-| Workstream 2 | Not started. |
+| Workstream 2 (Expanded QLOOQO 10 & cross-domain intelligence) | Not started — no domain beyond the two reference metrics is registered. |
 | QLAB / stock / profitability / retention | Not registered, not evaluated — §4. Asserted by test. |
 
 ---
@@ -732,14 +873,15 @@ with its own blast radius.
 
 | Deferred | Where it belongs |
 |---|---|
-| QLAB, stock, profitability, retention metrics + evaluators | Workstream 2 (probe-gated) and later; a registry entry plus an evaluator, **no redesign** |
+| Financial, client/retention, appointment, services/retail, profitability metrics + evaluators | **Workstream 2** — a registry entry plus an evaluator each, **no redesign** |
+| QLAB and stock metrics + evaluators | **Workstream 3** (probe-gated on V1.1 stability) |
 | Per-stylist / personal-scope evaluators | Blocked on defect (1) |
 | Per-location rebooking | Blocked on defect (2) |
-| Scheduled evaluation, proactive feed, notifications | Workstream 3 / Week 5 — needs scheduler infrastructure that does not exist |
+| Scheduled evaluation, proactive priority feed, weekly/Sunday review, proactive notifications | **Workstream 5** — depends on notification/scheduler infrastructure that does not yet exist |
 | Wiring persisted signals into the live `/zac/ask` priority path | §17 |
 | Value Created / outcome attribution | Workstream 4 |
-| Knowledge / RAG | Workstream 6 |
-| Coaching journeys | Workstream 5 |
+| Knowledge / RAG, model routing, cost controls | Workstream 7 |
+| Coaching journeys | Workstream 6 |
 | An HTTP surface for signals (list / suppress) | Deliberately none — no route means no proactive surface |
 | Ending a suppression EARLY | No unsuppress path ships; suppression is bounded instead (§11), so every window closes by itself. An explicit unsuppress is a new surface and belongs with the feed |
 | `occurrence_count` under concurrency | The refresh is read-then-write, so two simultaneous evaluations of one business would lose an increment. Harmless while evaluation is on demand and single-flight per actor; a scheduled evaluator would need an atomic increment |
@@ -801,3 +943,112 @@ apps/api/src/zac/analysis/zac-evidence.service.ts   exported scoreEvidenceSignal
 apps/api/src/zac/measurement/zac-cost-telemetry.service.ts   +2 spine event names
 apps/api/src/zac/zac.module.ts                      providers + exports
 ```
+
+---
+
+## 23. Hosted verification (dev-test, 2026-09-04)
+
+**Target.** Supabase branch `dev-test` (`iqgryrczkvjkcbrgfsdl`) — the project
+`apps/api/.env` `SUPABASE_URL` points at, and the only hosted project with the
+`zac` schema applied and exposed. Production (`cdjtsqcrcgywjdwvbxyf`),
+`develop` and `staging` were **not** touched: production is not the current
+deployment target for this work, and the other two branches carry no `zac`
+schema at all (the 0077–0112 ZAC stack has never been applied there — a
+pre-existing deployment gap, outside Workstream 1).
+
+**Before.** `GET /rest/v1/intelligence_signals?select=id&limit=1` with
+`Accept-Profile: zac` and the service-role key → **PGRST205** ("Could not
+find the table 'zac.intelligence_signals' in the schema cache"). The `zac`
+schema itself was already on the Exposed Schemas list (the 0080 prerequisite),
+so this was the table's absence, not the schema's.
+
+**Apply.** `0112_zac_intelligence_signals.sql` applied verbatim through the
+Supabase management API at 2026-09-04 21:12:45 UTC. Ledger:
+`20260904211245 0112_zac_intelligence_signals`. (0111 remains unapplied on
+this branch — pre-existing and independent; 0112 depends on nothing in it.)
+
+| Schema evidence (`information_schema` / `pg_catalog`) | Value |
+|---|---|
+| `zac.intelligence_signals` | present, 38 columns |
+| CHECK constraints (as reported by `information_schema`, NOT NULL included) | 36 |
+| Indexes | `intelligence_signals_pkey`, `idx_zac_intelligence_signals_live_key` (partial unique), `_business_live`, `_location`, `_subject` |
+| RLS | enabled **and forced** |
+| Policies | `zac_intelligence_signals_owner_select`, `zac_intelligence_signals_subject_select` — both `authenticated` |
+| Grants | `authenticated`: SELECT only; `service_role`: SELECT/INSERT/UPDATE/DELETE |
+| Trigger | `set_zac_intelligence_signals_updated_at` |
+
+**After.** Same PostgREST request → **200 `[]`**; the same request with no
+key → **401**.
+
+### 23.1 Lifecycle smoke test (brief T1–T5), real store, real service
+
+Run from the API workspace with the **production `ZacIntelligenceSignalStore`**
+(service-role client, per-query `.schema('zac')`, `.eq('business_id')`) driven
+by the **real `ZacIntelligenceSignalService`**; only the tool result, the
+memory list and the clock were canned. Fixture business: *Sheer Demo Salon*
+(`10000000-…-0001`, no real members; locations Pinner/Thame/Abingdon). The
+brief's 60% target was supplied the one way Workstream 1 admits — a remembered
+`business_goal` ("Increase rebooking to 60% this quarter.") attributed as
+`user_stated_goal` — because the configured KPI threshold does not reach the
+signal today (Phase 1 defect triage, close-out report §21 #5). Sample 240.
+
+| Step | Input | Reconciler | Row evidence (as read back through the store) |
+|---|---|---|---|
+| T1 | rebooking 49 | `open` | 1 row `ac677488…`: active · opportunity · attention · materiality **0.1833** · confidence 0.648 · observed 49 · target 60 (`user_stated_goal`) · sample 240 · occurrence 1 · first_evaluated **T1** · last_confirmed **T1** |
+| T2 | rebooking 51 | `refresh` | **same id**, still 1 row: observed 51 · materiality 0.15 · occurrence **2** · first_evaluated **unchanged (T1)** · last_confirmed **T2** — no duplicate active row |
+| T3 | read `unavailable` (rowCount null → `missing`) | `retain` | row **untouched**: active · observed 51 · occurrence 2 · last_confirmed still T2 · resolution_reason null — **not resolved** |
+| T4 | rebooking 62 | `resolve:recovered` + `open` | `ac677488…` → **resolved / recovered / resolved_at T4**; a `progress` row `3dce755c…` opened (62 ≥ 60) |
+| T5 | rebooking 45 | `open` + `resolve:superseded` | **new** opportunity `96101231…` (active, observed 45, occurrence 1, first_evaluated T5) under the **same signal_key**; `ac677488…` still resolved/recovered (history preserved); the progress row resolved `superseded` |
+
+Every field above is what the brief's expected outcomes describe, including
+the documented recurrence semantics (historical resolved occurrence preserved
++ new occurrence). `numeric(6,4)` rounding is visible (0.18333… → 0.1833) and
+is immaterial: reconciliation is key-based, never value-based.
+
+### 23.2 Permission / tenant smoke test (brief §16)
+
+Service-side (`listVisible`, current permissions and acting context re-checked
+on every read), after adding a Pinner-manager row (M1, 40%), a Thame-manager
+row (M2, 41%), a business row for *TESTBUSINESS-1* evaluated by its **real
+owner membership** (B1, 30%), and a `user_private` probe row for that owner
+written through the store's normal insert path (B2):
+
+| Actor (current context) | Saw | Property |
+|---|---|---|
+| Demo owner, all locations, full permissions | business + Pinner + Thame | baseline |
+| Demo owner with `report.dashboard.view` **removed after creation** | **nothing** | removing a permission hides existing rows; persisted `business_owner` visibility granted nothing |
+| Pinner manager | business + **Pinner only** | a manager with Location A scope cannot retrieve the Location B signal |
+| Thame manager | business + **Thame only** | same, mirrored |
+| Demo stylist (`zac.access` only) | nothing | no report permission → no signals |
+| TESTBUSINESS-1 owner | its own business row (+ the personal row it is the subject of) — **no demo-salon row** | Business A's signals are not readable from Business B |
+
+Managers seeing the business-scope row is the designed matrix (`canSee`
+mirrors `ZacMemoryService.canSee`: `business_owner` rows are readable by
+owners and managers; `manager_team_theme` rows only by owners and the row's
+own-location managers) and is what harness case `scope-04` asserts. Two
+expectations in the smoke script were mine and wrong, not the framework's: it
+expected managers to see no business row, and it "narrowed" an owner's context
+while leaving the actor's `locationScope.kind = 'all'` — an owner's scope is
+all locations by definition.
+
+Database-side, through RLS as **real authenticated users** (`set local role
+authenticated` + `request.jwt.claim.sub`; no bypass):
+
+| User | Result |
+|---|---|
+| TESTBUSINESS-1 owner `9b1c0bf6…` | exactly 2 rows: its `business_owner` row (owner policy) and the `user_private` row it is the subject of (subject policy); **0** demo-salon rows |
+| Owner of a different business (`bf09e3e5…`, 1 active owner membership elsewhere) | **0** rows |
+| Stylist (`62ae54ca…`) | **0** rows |
+| TESTBUSINESS-1 owner, `UPDATE zac.intelligence_signals` | **42501 permission denied** (authenticated has SELECT only) |
+| No key, PostgREST | **401** |
+
+**Cleanup.** The 7 rows created by the smoke test were deleted by id (both
+fixture businesses back to 0; table total 0). Nothing else on dev-test was
+written.
+
+**Runbook for staging / production** (when either becomes the deployment
+target): (1) confirm the `zac` schema is on Exposed Schemas — a 200 from
+`GET /rest/v1/memory_items?limit=1` with `Accept-Profile: zac` proves it;
+(2) apply `0112` verbatim; (3) expect PGRST205 to become `200 []`; (4) run the
+§23.1 sequence against a test business and delete the rows. No production
+apply is authorised by this close-out.

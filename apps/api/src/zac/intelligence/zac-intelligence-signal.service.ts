@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { AuthUser } from '@sheer/domain';
 import { userHasAllPermissions, userHasPermission } from '@sheer/domain';
 import type { ZacConsolidationResult } from '../analysis/zac-priority.types';
@@ -6,7 +6,7 @@ import { ZacPriorityService } from '../analysis/zac-priority.service';
 import type { ZacActingContext } from '../context/zac-context.types';
 import { ZacCostTelemetryService } from '../measurement/zac-cost-telemetry.service';
 import type { ZacModelMemoryItem } from '../models/zac-model-provider.interface';
-import { ZacIntelligenceSignalStore } from '../persistence/zac-intelligence-signal.store';
+import { ZacIntelligenceSignalStore, type ZacSignalRepository } from '../persistence/zac-intelligence-signal.store';
 import type { ZacMemoryScope } from '../responses/zac-response.types';
 import { ZacToolRegistryService } from '../tools/zac-tool-registry.service';
 import { ZacMetricObservationService } from './zac-metric-observation.service';
@@ -78,7 +78,7 @@ export class ZacIntelligenceSignalService {
     private readonly observations: ZacMetricObservationService,
     private readonly evaluators: ZacSignalEvaluatorRegistry,
     private readonly reconciler: ZacSignalReconciler,
-    private readonly store: ZacIntelligenceSignalStore,
+    @Inject(ZacIntelligenceSignalStore) private readonly store: ZacSignalRepository,
     private readonly priorities: ZacPriorityService,
     private readonly adapter: ZacSignalPriorityAdapter,
     private readonly telemetry: ZacCostTelemetryService,
@@ -433,7 +433,7 @@ export class ZacIntelligenceSignalService {
           id: action.existing.id,
           businessId: context.businessId,
           status: 'expired',
-          reason: 'expired_unconfirmed',
+          reason: action.resolutionReason ?? 'expired_unconfirmed',
           at: evaluatedAt,
         });
         return;

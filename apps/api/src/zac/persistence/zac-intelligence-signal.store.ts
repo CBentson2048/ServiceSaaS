@@ -86,6 +86,25 @@ export interface ZacSignalRetire {
 }
 
 /**
+ * THE REPOSITORY PORT.
+ *
+ * Everything the signal service needs from persistence, as an interface. The
+ * Supabase store below is the production implementation; the Phase 2 signal
+ * evaluation harness supplies an in-memory one so the REAL service — scope
+ * fan-out, visibility matrix, permission re-check, plan application — is what
+ * gets evaluated, not a re-implementation of it. A harness that exercised a
+ * copy of the service would certify the copy.
+ */
+export interface ZacSignalRepository {
+  listLive(businessId: string, limit?: number): Promise<ZacPersistedSignal[]>;
+  listAll(businessId: string, limit?: number): Promise<ZacPersistedSignal[]>;
+  insert(signal: ZacSignalInsert): Promise<void>;
+  refresh(signal: ZacSignalRefresh): Promise<void>;
+  retire(signal: ZacSignalRetire): Promise<void>;
+  suppress(businessId: string, signalId: string, until: string, at: string): Promise<void>;
+}
+
+/**
  * Server-owned persistence for zac.intelligence_signals.
  *
  * Platform convention throughout: a private service-role client, per-query
@@ -99,7 +118,7 @@ export interface ZacSignalRetire {
  * re-checks live permissions rather than trusting the stored scope.
  */
 @Injectable()
-export class ZacIntelligenceSignalStore {
+export class ZacIntelligenceSignalStore implements ZacSignalRepository {
   private readonly logger = new Logger(ZacIntelligenceSignalStore.name);
   private readonly admin: SupabaseClient;
 

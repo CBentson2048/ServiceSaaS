@@ -61,7 +61,7 @@ export interface ZacSignalAction {
   /** For `retain` / `resolve`: the observation status that produced the decision. */
   observationStatus?: ZacMetricObservationStatus;
   /** For `resolve`: whether a gap closed, or a progress run was superseded. */
-  resolutionReason?: 'recovered' | 'superseded';
+  resolutionReason?: 'recovered' | 'superseded' | 'expired_unconfirmed';
   /** For `refresh` / `open`: when this signal stops being credible without re-confirmation. */
   expiresAt?: string;
 }
@@ -213,7 +213,7 @@ export class ZacSignalReconciler {
       if (!covered) {
         actions.push(
           this.hasExpired(signal, evaluatedAtMs)
-            ? { kind: 'expire', signalKey: signal.signalKey, existing: signal, candidate: null }
+            ? { kind: 'expire', signalKey: signal.signalKey, existing: signal, candidate: null, resolutionReason: 'expired_unconfirmed' }
             : {
                 kind: 'retain',
                 signalKey: signal.signalKey,
@@ -235,6 +235,7 @@ export class ZacSignalReconciler {
           expired
             ? {
                 kind: 'expire',
+                resolutionReason: 'expired_unconfirmed',
                 signalKey: signal.signalKey,
                 existing: signal,
                 candidate: null,
