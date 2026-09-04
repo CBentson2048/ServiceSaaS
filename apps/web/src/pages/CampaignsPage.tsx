@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type {
   CampaignAudiencePreview,
   CampaignChannel,
@@ -8,11 +8,15 @@ import type {
   UpsertCampaignRequest,
 } from '@sheer/domain';
 import {
+  CAMPAIGN_BOUNDS,
+  CAMPAIGN_PREVIEW_VALUES,
   CAMPAIGN_TEMPLATE_VARIABLES,
   defaultCampaignConfig,
+  renderCampaignTemplate,
   validateCampaignTemplate,
 } from '@sheer/domain';
-import { AppButton, AppCard, StatusBadge } from '../design';
+import { cn } from '@sheer/utils';
+import { AppButton, Drawer, Pill, StatusBadge } from '../design';
 import {
   ApiRequestError,
   createCampaign,
@@ -27,49 +31,65 @@ import { useAuth } from '../auth/AuthProvider';
 /**
  * Owner configuration for automated marketing campaigns.
  *
- * Written for a salon owner, not a marketer. Every campaign renders as a card
- * that answers four questions in plain words — who it reaches, when it goes,
- * how it is delivered, and whether it is on — and the editor shows ONLY the
- * settings that apply to the chosen type. The audience preview is deliberately
- * prominent: seeing "23 clients would receive this, 4 are suppressed and here
- * is why" before switching a campaign on is the single most useful safety
- * feature on the screen.
+ * Written for a salon owner, not a marketer. The page follows the house
+ * management pattern (§9, as in the inventory catalogue): a summary strip, one
+ * filterable table that is the single source of truth, and right-side drawers
+ * for reading a record and for editing it — so the list never disappears
+ * underneath the person working on it.
+ *
+ * Every campaign still answers four questions in plain words — who it reaches,
+ * when it goes, how it is delivered, and whether it is on — and the editor
+ * shows ONLY the settings that apply to the chosen type. The audience preview
+ * is deliberately prominent: seeing "23 clients would receive this, 4 are
+ * suppressed and here is why" before switching a campaign on is the single most
+ * useful safety feature on the screen.
  *
  * Nothing here can send a message. Saving creates a draft; sending requires
  * enabling the campaign, and even then the server decides the audience.
  */
+
+type LoadState = 'loading' | 'ready' | 'failed';
+/** `all` deliberately means "everything still in use" — archived has its own tab. */
+type StatusFilter = 'all' | CampaignStatus;
+type EditorState = { mode: 'create' } | { mode: 'edit'; campaign: CampaignDetail };
+
 export function CampaignsPage() {
   const auth = useAuth();
   const accessToken = auth.session?.accessToken;
   const user = auth.user;
 
   const [campaigns, setCampaigns] = useState<CampaignDetail[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const [loadState, setLoadState] = useState<LoadState>('loading');
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
-  const [editorOpen, setEditorOpen] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState<FormState>(() => emptyForm('rebooking'));
-  const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState('');
+  const [typeFilter, setTypeFilter] = useState<CampaignType | 'all'>('all');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+
+  const [editor, setEditor] = useState<EditorState | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const [preview, setPreview] = useState<CampaignAudiencePreview | null>(null);
   const [previewFor, setPreviewFor] = useState<string | null>(null);
+  const [previewing, setPreviewing] = useState(false);
 
   const locations = useMemo(() => user?.locations ?? [], [user]);
 
+  // Archived campaigns are fetched with the rest and filtered in the browser:
+  // there are only ever a handful, and it keeps the tab counts honest without a
+  // second round trip every time the filter changes.
   const load = useCallback(async () => {
     if (!accessToken) return;
-    setLoading(true);
     try {
-      const result = await listCampaigns(accessToken);
+      const result = await listCampaigns(accessToken, { includeArchived: true });
       setCampaigns(result.campaigns);
+      setLoadState('ready');
       setError(null);
     } catch (err) {
       setError(toMessage(err, 'Could not load campaigns'));
-    } finally {
-      setLoading(false);
+      setLoadState('failed');
     }
   }, [accessToken]);
 
@@ -77,79 +97,75 @@ export function CampaignsPage() {
     void load();
   }, [load]);
 
-  function startNew(type: CampaignType) {
-    setEditingId(null);
-    setForm(emptyForm(type));
-    setPreview(null);
-    setPreviewFor(null);
-    setEditorOpen(true);
-    setMessage(null);
-    setError(null);
-  }
+  const selected = useMemo(
+    () => campaigns.find((campaign) => campaign.id === selectedId) ?? null,
+    [campaigns, selectedId],
+  );
 
-  function startEdit(campaign: CampaignDetail) {
-    setEditingId(campaign.id);
-    setForm(formFromCampaign(campaign));
-    setPreview(null);
-    setPreviewFor(null);
-    setEditorOpen(true);
-    setMessage(null);
-    setError(null);
-  }
-
-  async function handleSave(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!accessToken) return;
-
-    // Validated here as well as on the server, so a typo in a placeholder is a
-    // sentence in the form rather than a round trip.
-    const templateCheck = validateCampaignTemplate(form.messageTemplate);
-    if (!templateCheck.valid) {
-      setError(templateCheck.errors.join(' '));
-      return;
+  const counts = useMemo(() => {
+    const tally = { all: 0, draft: 0, active: 0, paused: 0, archived: 0 };
+    for (const campaign of campaigns) {
+      tally[campaign.status] += 1;
+      if (campaign.status !== 'archived') tally.all += 1;
     }
+    return tally;
+  }, [campaigns]);
 
-    setSaving(true);
-    setError(null);
-    setMessage(null);
-    try {
-      const payload: UpsertCampaignRequest = {
-        campaignType: form.campaignType,
-        name: form.name.trim(),
-        locationId: form.locationId || null,
-        channel: form.channel,
-        messageTemplate: form.messageTemplate.trim(),
-        messageSubject: form.messageSubject.trim() || null,
-        sendAtLocalHour: Number(form.sendAtLocalHour),
-        config: configFromForm(form),
-      };
+  const totals = useMemo(
+    () =>
+      campaigns.reduce(
+        (sum, campaign) => ({
+          runs: sum.runs + campaign.totals.runCount,
+          queued: sum.queued + campaign.totals.queuedCount,
+          suppressed: sum.suppressed + campaign.totals.suppressedCount,
+        }),
+        { runs: 0, queued: 0, suppressed: 0 },
+      ),
+    [campaigns],
+  );
 
-      if (editingId) {
-        const { campaignType: _ignored, ...patch } = payload;
-        await updateCampaign(accessToken, editingId, patch);
-        setMessage('Campaign updated.');
-      } else {
-        await createCampaign(accessToken, payload);
-        setMessage('Campaign saved as a draft. Preview the audience, then switch it on when you are happy.');
+  const visible = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    return campaigns.filter((campaign) => {
+      if (statusFilter === 'all' ? campaign.status === 'archived' : campaign.status !== statusFilter) {
+        return false;
       }
-      setEditorOpen(false);
-      setEditingId(null);
-      await load();
-    } catch (err) {
-      setError(toMessage(err, 'Could not save the campaign'));
-    } finally {
-      setSaving(false);
-    }
+      if (typeFilter !== 'all' && campaign.campaignType !== typeFilter) return false;
+      if (!needle) return true;
+      return [
+        campaign.name,
+        campaign.messageTemplate,
+        campaign.locationName ?? 'All locations',
+        CAMPAIGN_TYPE_META.find((meta) => meta.type === campaign.campaignType)?.label ?? '',
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(needle);
+    });
+  }, [campaigns, search, statusFilter, typeFilter]);
+
+  const filtersActive = search.trim() !== '' || typeFilter !== 'all' || statusFilter !== 'all';
+
+  function openDetail(campaign: CampaignDetail) {
+    setSelectedId(campaign.id);
+    setPreview(null);
+    setPreviewFor(null);
   }
 
   async function handleStatus(campaign: CampaignDetail, status: CampaignStatus) {
     if (!accessToken) return;
-    setBusyId(campaign.id);
+    if (
+      status === 'archived' &&
+      !window.confirm(`Archive “${campaign.name}”? It stops sending and moves out of your active list.`)
+    ) {
+      return;
+    }
+    setBusy(true);
     setError(null);
-    setMessage(null);
+    setNotice(null);
     try {
       await setCampaignStatus(accessToken, campaign.id, status);
-      setMessage(
+      setNotice(
         status === 'active'
           ? `${campaign.name} is now on. It will run at ${formatHour(campaign.sendAtLocalHour)} each day.`
           : status === 'archived'
@@ -160,15 +176,14 @@ export function CampaignsPage() {
     } catch (err) {
       setError(toMessage(err, 'Could not change the campaign'));
     } finally {
-      setBusyId(null);
+      setBusy(false);
     }
   }
 
   async function handlePreview(campaign: CampaignDetail) {
     if (!accessToken) return;
-    setBusyId(campaign.id);
+    setPreviewing(true);
     setError(null);
-    setMessage(null);
     try {
       const result = await previewCampaignAudience(accessToken, campaign.id);
       setPreview(result);
@@ -176,188 +191,441 @@ export function CampaignsPage() {
     } catch (err) {
       setError(toMessage(err, 'Could not preview the audience'));
     } finally {
-      setBusyId(null);
+      setPreviewing(false);
     }
   }
 
   async function handleRunNow(campaign: CampaignDetail) {
     if (!accessToken) return;
-    setBusyId(campaign.id);
+    setBusy(true);
     setError(null);
-    setMessage(null);
+    setNotice(null);
     try {
       const result = await runCampaignNow(accessToken, campaign.id);
-      setMessage(result.message);
+      setNotice(result.message);
       await load();
     } catch (err) {
       setError(toMessage(err, 'Could not run the campaign'));
     } finally {
-      setBusyId(null);
+      setBusy(false);
     }
   }
 
   return (
-    <div className="space-y-6 p-6">
-      <header className="space-y-1">
-        <h1 className="text-2xl font-semibold text-text-primary">Campaigns</h1>
-        <p className="max-w-3xl text-sm text-text-secondary">
-          Automatic messages to your clients — win-backs, birthdays, promotions and loyalty
-          milestones. Every message goes out on WhatsApp first, falling back to text and email
-          exactly like your booking reminders, and only ever to clients who have agreed to
-          marketing.
-        </p>
+    <div className="mx-auto w-full max-w-7xl px-4 py-6 lg:px-8">
+      <header className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="text-[22px] font-semibold leading-7 text-text-primary">Campaigns</h1>
+          <p className="mt-1 max-w-3xl text-[13px] text-text-secondary">
+            Automatic messages to your clients — win-backs, birthdays, promotions and loyalty
+            milestones. Every message goes out on WhatsApp first, falling back to text and email
+            exactly like your booking reminders, and only ever to clients who have agreed to
+            marketing.
+          </p>
+        </div>
+        <AppButton onClick={() => setEditor({ mode: 'create' })}>+ New campaign</AppButton>
       </header>
 
-      {error && (
-        <div className="rounded-lg bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">
+      {notice ? (
+        <div className="mb-4 flex items-start justify-between gap-3 rounded-input-lg border border-success-border bg-success-soft px-4 py-3 text-[13px] text-success">
+          <span role="status">{notice}</span>
+          <button
+            type="button"
+            onClick={() => setNotice(null)}
+            aria-label="Dismiss"
+            className="opacity-70 hover:opacity-100"
+          >
+            ✕
+          </button>
+        </div>
+      ) : null}
+      {error ? (
+        <div
+          role="alert"
+          className="mb-4 rounded-input-lg border border-danger-border bg-danger-soft px-4 py-3 text-[13px] text-danger"
+        >
           {error}
         </div>
-      )}
-      {message && (
-        <div className="rounded-lg bg-success-soft px-4 py-3 text-sm text-success" role="status">
-          {message}
-        </div>
-      )}
+      ) : null}
 
-      <div className="flex flex-wrap gap-2">
-        {CAMPAIGN_TYPE_META.map((meta) => (
-          <AppButton key={meta.type} variant="secondary" onClick={() => startNew(meta.type)}>
-            New {meta.label.toLowerCase()} campaign
-          </AppButton>
-        ))}
-      </div>
-
-      {editorOpen && (
-        <CampaignEditor
-          form={form}
-          setForm={setForm}
-          locations={locations}
-          saving={saving}
-          isEdit={Boolean(editingId)}
-          onCancel={() => {
-            setEditorOpen(false);
-            setEditingId(null);
-          }}
-          onSubmit={handleSave}
+      {/* ------------------------------------------------------------------ */}
+      {/* 1. Overview                                                         */}
+      {/* ------------------------------------------------------------------ */}
+      <section className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="Campaign overview">
+        <SummaryTile
+          label="Switched on"
+          value={formatCount(counts.active)}
+          hint={counts.active === 0 ? 'nothing is sending right now' : 'sending automatically'}
+          icon={<BoltIcon className="h-4 w-4 text-success" />}
+          badge={counts.active > 0 ? { label: 'Live', tone: 'success' } : undefined}
         />
-      )}
+        <SummaryTile
+          label="Not sending"
+          value={formatCount(counts.draft + counts.paused)}
+          hint={`${formatCount(counts.draft)} draft, ${formatCount(counts.paused)} switched off`}
+          icon={<PauseIcon className="h-4 w-4 text-text-secondary" />}
+        />
+        <SummaryTile
+          label="Messages sent"
+          value={formatCount(totals.queued)}
+          hint={totals.runs === 0 ? 'no campaign has run yet' : `across ${formatCount(totals.runs)} run${totals.runs === 1 ? '' : 's'}`}
+          icon={<SendIcon className="h-4 w-4 text-primary" />}
+        />
+        <SummaryTile
+          label="Held back"
+          value={formatCount(totals.suppressed)}
+          hint="opted out, no contact details, or already messaged"
+          icon={<ShieldIcon className="h-4 w-4 text-warning" />}
+        />
+      </section>
 
-      {loading ? (
-        <p className="text-sm text-text-secondary">Loading campaigns…</p>
-      ) : campaigns.length === 0 ? (
-        <AppCard>
-          <p className="text-sm text-text-secondary">
-            No campaigns yet. Pick a type above to create your first one — it starts switched off,
-            so nothing is sent until you say so.
-          </p>
-        </AppCard>
-      ) : (
-        <div className="space-y-4">
-          {campaigns.map((campaign) => (
-            <CampaignRow
-              key={campaign.id}
-              campaign={campaign}
-              busy={busyId === campaign.id}
-              preview={previewFor === campaign.id ? preview : null}
-              onEdit={() => startEdit(campaign)}
-              onPreview={() => handlePreview(campaign)}
-              onRunNow={() => handleRunNow(campaign)}
-              onStatus={(status) => handleStatus(campaign, status)}
-            />
-          ))}
+      {/* ------------------------------------------------------------------ */}
+      {/* 2. The campaign list — the primary surface                          */}
+      {/* ------------------------------------------------------------------ */}
+      <section aria-label="Campaigns" className="rounded-card-lg border border-border bg-surface shadow-card">
+        <div className="flex flex-col gap-3 border-b border-border px-5 py-4 xl:flex-row xl:items-center xl:justify-between">
+          <div>
+            <h2 className="text-[15px] font-semibold text-text-primary">All campaigns</h2>
+            <p className="mt-0.5 text-[13px] text-text-secondary">
+              Open a campaign to preview who it reaches before switching it on.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2" role="tablist" aria-label="Filter by status">
+            {STATUS_TABS.map((tab) => (
+              <Pill
+                key={tab.value}
+                tone="ink"
+                label={`${tab.label} ${counts[tab.value === 'all' ? 'all' : tab.value]}`}
+                active={statusFilter === tab.value}
+                onClick={() => setStatusFilter(tab.value)}
+              />
+            ))}
+          </div>
         </div>
-      )}
+
+        <div className="flex flex-col gap-2 border-b border-border px-5 py-3 lg:flex-row lg:items-center">
+          <div className="relative flex-1 lg:max-w-xs">
+            <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search name, message or location…"
+              aria-label="Search campaigns"
+              className="h-9 w-full rounded-input-lg border border-border-strong bg-surface pl-9 pr-3 text-[13px] outline-none focus:border-primary"
+            />
+          </div>
+          <select
+            value={typeFilter}
+            onChange={(event) => setTypeFilter(event.target.value as CampaignType | 'all')}
+            aria-label="Filter by campaign type"
+            className="h-9 rounded-input-lg border border-border-strong bg-surface px-3 text-[13px] text-text-primary outline-none focus:border-primary"
+          >
+            <option value="all">All types</option>
+            {CAMPAIGN_TYPE_META.map((meta) => (
+              <option key={meta.type} value={meta.type}>
+                {meta.label}
+              </option>
+            ))}
+          </select>
+          {filtersActive ? (
+            <AppButton
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setSearch('');
+                setTypeFilter('all');
+                setStatusFilter('all');
+              }}
+            >
+              Clear filters
+            </AppButton>
+          ) : null}
+        </div>
+
+        {loadState === 'failed' ? (
+          <RetryState title="Unable to load campaigns." onRetry={() => void load()} />
+        ) : loadState === 'loading' ? (
+          <EmptyState title="Loading campaigns…" body="Reading your campaign configuration." />
+        ) : campaigns.length === 0 ? (
+          <EmptyState
+            title="No campaigns yet"
+            body="Create your first one — it starts switched off, so nothing is sent until you preview the audience and say so."
+            action={<AppButton size="sm" onClick={() => setEditor({ mode: 'create' })}>+ New campaign</AppButton>}
+          />
+        ) : visible.length === 0 ? (
+          <EmptyState
+            title="No campaigns match these filters"
+            body="Try a different status tab, another type, or clear the search."
+          />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[1040px] text-left text-[13px]">
+              <thead className="border-b border-border bg-surface-alt text-[11px] uppercase tracking-[0.08em] text-text-secondary">
+                <tr>
+                  <th scope="col" className="px-5 py-2.5 font-medium">Campaign</th>
+                  <th scope="col" className="px-4 py-2.5 font-medium">Type</th>
+                  <th scope="col" className="px-4 py-2.5 font-medium">Where</th>
+                  <th scope="col" className="px-4 py-2.5 font-medium">Schedule</th>
+                  <th scope="col" className="px-4 py-2.5 text-right font-medium">Sent</th>
+                  <th scope="col" className="px-4 py-2.5 font-medium">Last run</th>
+                  <th scope="col" className="px-4 py-2.5 font-medium">Status</th>
+                  <th scope="col" className="px-4 py-2.5 text-right font-medium">
+                    <span className="sr-only">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {visible.map((campaign) => {
+                  const meta = CAMPAIGN_TYPE_META.find((entry) => entry.type === campaign.campaignType);
+                  return (
+                    <tr key={campaign.id} className="align-top transition hover:bg-surface-alt">
+                      <td className="px-5 py-3">
+                        <button
+                          type="button"
+                          onClick={() => openDetail(campaign)}
+                          className="text-left font-medium text-text-primary underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                        >
+                          {campaign.name}
+                        </button>
+                        {/* One sentence, no jargon: who, when, how. */}
+                        <div className="mt-0.5 max-w-md text-[12px] text-text-muted">
+                          {describeCampaign(campaign)}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <StatusBadge label={meta?.label ?? campaign.campaignType} tone="neutral" />
+                      </td>
+                      <td className="px-4 py-3 text-text-secondary">
+                        {campaign.locationName ?? 'All locations'}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="tabular-nums text-text-primary">
+                          {formatHour(campaign.sendAtLocalHour)}
+                        </div>
+                        <div className="text-[11px] text-text-muted">{CHANNEL_SHORT[campaign.channel]}</div>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="font-semibold tabular-nums text-text-primary">
+                          {formatCount(campaign.totals.queuedCount)}
+                        </div>
+                        {campaign.totals.suppressedCount > 0 ? (
+                          <div className="text-[11px] text-text-muted">
+                            {formatCount(campaign.totals.suppressedCount)} held back
+                          </div>
+                        ) : null}
+                      </td>
+                      <td className="px-4 py-3 text-text-secondary">
+                        {campaign.lastEvaluatedAt ? formatDateTime(campaign.lastEvaluatedAt) : 'Never'}
+                      </td>
+                      <td className="px-4 py-3">
+                        <StatusBadge
+                          label={STATUS_LABEL[campaign.status]}
+                          tone={STATUS_TONE[campaign.status]}
+                        />
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <AppButton size="sm" variant="secondary" onClick={() => openDetail(campaign)}>
+                          Manage
+                        </AppButton>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* ------------------------------------------------------------------ */}
+      {/* Drawers                                                             */}
+      {/* ------------------------------------------------------------------ */}
+      <CampaignDetailDrawer
+        campaign={selected}
+        busy={busy}
+        previewing={previewing}
+        preview={selected && previewFor === selected.id ? preview : null}
+        onClose={() => setSelectedId(null)}
+        // One drawer at a time: the editor replaces the detail view rather than
+        // stacking on top of it, so Escape cannot dismiss both at once.
+        onEdit={(campaign) => {
+          setSelectedId(null);
+          setEditor({ mode: 'edit', campaign });
+        }}
+        onPreview={handlePreview}
+        onRunNow={handleRunNow}
+        onStatus={handleStatus}
+      />
+
+      <CampaignEditorDrawer
+        state={editor}
+        accessToken={accessToken}
+        locations={locations}
+        onClose={() => setEditor(null)}
+        onSaved={(campaign, mode) => {
+          setEditor(null);
+          setError(null);
+          setNotice(
+            mode === 'updated'
+              ? `${campaign.name} updated.`
+              : `${campaign.name} saved as a draft. Preview the audience, then switch it on when you are happy.`,
+          );
+          // Land on the saved campaign so the next step — previewing the
+          // audience — is one click away. Any earlier preview is discarded:
+          // the settings behind it have just changed.
+          setPreview(null);
+          setPreviewFor(null);
+          setSelectedId(campaign.id);
+          void load();
+        }}
+      />
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// One campaign
+// Detail drawer — read the campaign, then act on it
 // ---------------------------------------------------------------------------
 
-function CampaignRow({
+function CampaignDetailDrawer({
   campaign,
   busy,
+  previewing,
   preview,
+  onClose,
   onEdit,
   onPreview,
   onRunNow,
   onStatus,
 }: {
-  campaign: CampaignDetail;
+  campaign: CampaignDetail | null;
   busy: boolean;
+  previewing: boolean;
   preview: CampaignAudiencePreview | null;
-  onEdit: () => void;
-  onPreview: () => void;
-  onRunNow: () => void;
-  onStatus: (status: CampaignStatus) => void;
+  onClose: () => void;
+  onEdit: (campaign: CampaignDetail) => void;
+  onPreview: (campaign: CampaignDetail) => void;
+  onRunNow: (campaign: CampaignDetail) => void;
+  onStatus: (campaign: CampaignDetail, status: CampaignStatus) => void;
 }) {
-  const meta = CAMPAIGN_TYPE_META.find((m) => m.type === campaign.campaignType);
+  if (!campaign) return null;
+
+  const meta = CAMPAIGN_TYPE_META.find((entry) => entry.type === campaign.campaignType);
+  const archived = campaign.status === 'archived';
 
   return (
-    <AppCard>
-      <div className="space-y-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="space-y-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-lg font-semibold text-text-primary">{campaign.name}</h2>
-              <StatusBadge label={meta?.label ?? campaign.campaignType} tone="neutral" />
-              <StatusBadge label={STATUS_LABEL[campaign.status]} tone={STATUS_TONE[campaign.status]} />
-            </div>
-            {/* One sentence, no jargon: who, when, how. */}
-            <p className="text-sm text-text-secondary">{describeCampaign(campaign)}</p>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <AppButton variant="secondary" onClick={onPreview} disabled={busy}>
-              Preview audience
+    <Drawer
+      open
+      onClose={onClose}
+      title={campaign.name}
+      description={meta?.label}
+      widthClassName="sm:max-w-2xl"
+      footer={
+        <>
+          {!archived ? (
+            <AppButton
+              size="sm"
+              variant="ghost"
+              onClick={() => onStatus(campaign, 'archived')}
+              disabled={busy}
+            >
+              Archive
             </AppButton>
-            <AppButton variant="secondary" onClick={onEdit} disabled={busy}>
-              Edit
-            </AppButton>
-            {campaign.status === 'active' ? (
-              <>
-                <AppButton variant="secondary" onClick={onRunNow} disabled={busy}>
-                  Run now
-                </AppButton>
-                <AppButton variant="secondary" onClick={() => onStatus('paused')} disabled={busy}>
-                  Switch off
-                </AppButton>
-              </>
-            ) : campaign.status !== 'archived' ? (
-              <AppButton onClick={() => onStatus('active')} disabled={busy}>
-                Switch on
+          ) : null}
+          <AppButton size="sm" variant="secondary" onClick={() => onEdit(campaign)} disabled={busy || archived}>
+            Edit
+          </AppButton>
+          {campaign.status === 'active' ? (
+            <>
+              <AppButton size="sm" variant="secondary" onClick={() => onRunNow(campaign)} loading={busy}>
+                Run now
               </AppButton>
-            ) : null}
+              <AppButton size="sm" variant="secondary" onClick={() => onStatus(campaign, 'paused')} disabled={busy}>
+                Switch off
+              </AppButton>
+            </>
+          ) : !archived ? (
+            <AppButton size="sm" onClick={() => onStatus(campaign, 'active')} loading={busy}>
+              Switch on
+            </AppButton>
+          ) : (
+            <AppButton size="sm" variant="secondary" onClick={() => onStatus(campaign, 'paused')} disabled={busy}>
+              Restore
+            </AppButton>
+          )}
+        </>
+      }
+    >
+      <div className="space-y-6">
+        <section>
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusBadge label={STATUS_LABEL[campaign.status]} tone={STATUS_TONE[campaign.status]} />
+            {campaign.status === 'active' ? (
+              <span className="text-[12px] text-text-secondary">
+                Runs every day at {formatHour(campaign.sendAtLocalHour)} salon time.
+              </span>
+            ) : (
+              <span className="text-[12px] text-text-secondary">Not evaluated — no messages are created.</span>
+            )}
           </div>
-        </div>
+          <p className="mt-2 text-[13px] text-text-secondary">{describeCampaign(campaign)}</p>
+        </section>
 
-        <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm md:grid-cols-4">
-          <Fact label="Where" value={campaign.locationName ?? 'All locations'} />
-          <Fact label="When" value={`${formatHour(campaign.sendAtLocalHour)} (${campaign.timezone})`} />
-          <Fact label="Delivered by" value={CHANNEL_LABEL[campaign.channel]} />
-          <Fact
-            label="Last run"
-            value={campaign.lastEvaluatedAt ? new Date(campaign.lastEvaluatedAt).toLocaleString() : 'Never'}
-          />
-        </dl>
+        <Section title="At a glance">
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-3">
+            <Fact label="Where" value={campaign.locationName ?? 'All locations'} />
+            <Fact label="When" value={`${formatHour(campaign.sendAtLocalHour)} · ${campaign.timezone}`} />
+            <Fact label="Delivered by" value={CHANNEL_LABEL[campaign.channel]} />
+            <Fact
+              label="Last run"
+              value={campaign.lastEvaluatedAt ? formatDateTime(campaign.lastEvaluatedAt) : 'Never'}
+            />
+          </dl>
+        </Section>
 
-        <div className="rounded-lg bg-surface-alt px-4 py-3">
-          <p className="text-xs font-medium uppercase tracking-wide text-text-secondary">Message</p>
-          <p className="mt-1 whitespace-pre-wrap text-sm text-text-primary">{campaign.messageTemplate}</p>
-        </div>
-
-        {campaign.totals.runCount > 0 && (
-          <p className="text-xs text-text-secondary">
-            {campaign.totals.queuedCount} message{campaign.totals.queuedCount === 1 ? '' : 's'} sent,{' '}
-            {campaign.totals.suppressedCount} held back across {campaign.totals.runCount} run
-            {campaign.totals.runCount === 1 ? '' : 's'}.
+        <Section title="Message" subtitle={campaign.messageSubject ? `Email subject: ${campaign.messageSubject}` : undefined}>
+          <p className="whitespace-pre-wrap rounded-input-lg border border-border bg-surface-alt px-4 py-3 text-[13px] text-text-primary">
+            {campaign.messageTemplate}
           </p>
-        )}
+        </Section>
 
-        {preview && <AudiencePreview preview={preview} />}
+        <Section title="Delivery so far">
+          {campaign.totals.runCount === 0 ? (
+            <p className="text-[13px] text-text-secondary">
+              This campaign has not run yet, so nothing has been sent.
+            </p>
+          ) : (
+            <div className="grid grid-cols-3 gap-3">
+              <Metric label="Sent" value={formatCount(campaign.totals.queuedCount)} />
+              <Metric label="Held back" value={formatCount(campaign.totals.suppressedCount)} />
+              <Metric
+                label="Failed"
+                value={formatCount(campaign.totals.failedCount)}
+                tone={campaign.totals.failedCount > 0 ? 'danger' : undefined}
+              />
+            </div>
+          )}
+        </Section>
+
+        <Section
+          title="Audience"
+          subtitle="A dry run against today's clients. Counts are exact; the list is a sample with masked contact details."
+        >
+          {preview ? (
+            <AudiencePreview preview={preview} />
+          ) : (
+            <p className="text-[13px] text-text-secondary">
+              Check who would receive this before switching it on.
+            </p>
+          )}
+          <div className="mt-3">
+            <AppButton size="sm" variant="secondary" onClick={() => onPreview(campaign)} loading={previewing}>
+              {preview ? 'Refresh preview' : 'Preview audience'}
+            </AppButton>
+          </div>
+        </Section>
       </div>
-    </AppCard>
+    </Drawer>
   );
 }
 
@@ -370,60 +638,62 @@ function AudiencePreview({ preview }: { preview: CampaignAudiencePreview }) {
   const suppressions = Object.entries(preview.suppressionBreakdown);
 
   return (
-    <div className="space-y-3 rounded-lg border border-border bg-surface px-4 py-3">
-      <div className="flex flex-wrap items-center gap-3">
-        <p className="text-sm font-medium text-text-primary">
+    <div className="space-y-3 rounded-input-lg border border-border bg-surface-alt px-4 py-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-[13px] font-medium text-text-primary">
           {preview.eligibleCount} client{preview.eligibleCount === 1 ? '' : 's'} would receive this today
         </p>
-        {preview.suppressedCount > 0 && (
+        {preview.suppressedCount > 0 ? (
           <StatusBadge label={`${preview.suppressedCount} held back`} tone="warning" />
-        )}
+        ) : null}
       </div>
 
-      {preview.wouldNotRunToday && preview.wouldNotRunReason && (
-        <p className="text-sm text-warning">{preview.wouldNotRunReason}</p>
-      )}
+      {preview.wouldNotRunToday && preview.wouldNotRunReason ? (
+        <p className="rounded-input border border-warning-border bg-warning-soft px-3 py-2 text-[12px] text-warning">
+          {preview.wouldNotRunReason}
+        </p>
+      ) : null}
 
-      <div className="rounded-lg bg-surface-alt px-3 py-2">
-        <p className="text-xs font-medium uppercase tracking-wide text-text-secondary">
+      <div className="rounded-input border border-border bg-surface px-3 py-2">
+        <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-text-secondary">
           What they will see
         </p>
-        <p className="mt-1 whitespace-pre-wrap text-sm text-text-primary">{preview.renderedPreview}</p>
+        <p className="mt-1 whitespace-pre-wrap text-[13px] text-text-primary">{preview.renderedPreview}</p>
       </div>
 
-      {suppressions.length > 0 && (
+      {suppressions.length > 0 ? (
         <div>
-          <p className="text-xs font-medium uppercase tracking-wide text-text-secondary">
+          <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-text-secondary">
             Why some clients are held back
           </p>
-          <ul className="mt-1 space-y-0.5 text-sm text-text-secondary">
+          <ul className="mt-1 space-y-0.5 text-[12px] text-text-secondary">
             {suppressions.map(([reason, count]) => (
               <li key={reason}>
-                {count} — {reason}
+                <span className="font-medium tabular-nums text-text-primary">{count}</span> — {reason}
               </li>
             ))}
           </ul>
         </div>
-      )}
+      ) : null}
 
-      {preview.sample.length > 0 && (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[32rem] text-left text-sm">
-            <thead>
-              <tr className="text-xs uppercase tracking-wide text-text-secondary">
-                <th className="py-1 pr-4 font-medium">Client</th>
-                <th className="py-1 pr-4 font-medium">Contact</th>
-                <th className="py-1 pr-4 font-medium">Why</th>
-                <th className="py-1 font-medium">Status</th>
+      {preview.sample.length > 0 ? (
+        <div className="overflow-x-auto rounded-input border border-border bg-surface">
+          <table className="w-full min-w-[30rem] text-left text-[12px]">
+            <thead className="border-b border-border bg-surface-alt text-[10px] uppercase tracking-[0.08em] text-text-secondary">
+              <tr>
+                <th scope="col" className="px-3 py-2 font-medium">Client</th>
+                <th scope="col" className="px-3 py-2 font-medium">Contact</th>
+                <th scope="col" className="px-3 py-2 font-medium">Why</th>
+                <th scope="col" className="px-3 py-2 font-medium">Status</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="divide-y divide-border">
               {preview.sample.map((row) => (
-                <tr key={row.clientId} className="border-t border-border">
-                  <td className="py-1.5 pr-4 text-text-primary">{row.displayName}</td>
-                  <td className="py-1.5 pr-4 text-text-secondary">{row.maskedContact ?? '—'}</td>
-                  <td className="py-1.5 pr-4 text-text-secondary">{row.reason}</td>
-                  <td className="py-1.5">
+                <tr key={row.clientId}>
+                  <td className="px-3 py-2 text-text-primary">{row.displayName}</td>
+                  <td className="px-3 py-2 text-text-secondary">{row.maskedContact ?? '—'}</td>
+                  <td className="px-3 py-2 text-text-secondary">{row.reason}</td>
+                  <td className="px-3 py-2">
                     <StatusBadge
                       label={row.eligible ? 'Will receive' : row.suppressionReason ?? 'Held back'}
                       tone={row.eligible ? 'success' : 'warning'}
@@ -433,13 +703,477 @@ function AudiencePreview({ preview }: { preview: CampaignAudiencePreview }) {
               ))}
             </tbody>
           </table>
-          {preview.sampleTruncated && (
-            <p className="mt-2 text-xs text-text-secondary">
-              Showing the first {preview.sample.length} of {preview.candidateCount}.
-            </p>
-          )}
         </div>
-      )}
+      ) : null}
+
+      {preview.sampleTruncated ? (
+        <p className="text-[11px] text-text-muted">
+          Showing the first {preview.sample.length} of {preview.candidateCount}.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Editor drawer — the fields change with the campaign type (Wrike section 47)
+// ---------------------------------------------------------------------------
+
+function CampaignEditorDrawer({
+  state,
+  accessToken,
+  locations,
+  onClose,
+  onSaved,
+}: {
+  state: EditorState | null;
+  accessToken: string | undefined;
+  locations: Array<{ id: string; name: string }>;
+  onClose: () => void;
+  onSaved: (campaign: CampaignDetail, mode: 'created' | 'updated') => void;
+}) {
+  const isEdit = state?.mode === 'edit';
+  const editingCampaign = state?.mode === 'edit' ? state.campaign : undefined;
+
+  const [form, setForm] = useState<FormState>(() => emptyForm('rebooking'));
+  const [pristine, setPristine] = useState<FormState>(() => emptyForm('rebooking'));
+  const [saving, setSaving] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const templateRef = useRef<HTMLTextAreaElement>(null);
+
+  // Reset whenever the drawer opens for a different record.
+  const recordKey = editingCampaign ? `${editingCampaign.id}:${editingCampaign.updatedAt}` : 'new';
+  const open = state !== null;
+  useEffect(() => {
+    if (!open) return;
+    const initial = editingCampaign ? formFromCampaign(editingCampaign) : emptyForm('rebooking');
+    setForm(initial);
+    setPristine(initial);
+    setSubmitError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, recordKey]);
+
+  if (!state) return null;
+
+  const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
+    setForm((current) => ({ ...current, [key]: value }));
+
+  const meta = CAMPAIGN_TYPE_META.find((entry) => entry.type === form.campaignType);
+  const templateCheck = validateCampaignTemplate(form.messageTemplate);
+  const templateTouched = form.messageTemplate.trim().length > 0;
+  const isDirty = JSON.stringify(form) !== JSON.stringify(pristine);
+
+  function requestClose() {
+    if (saving) return;
+    if (isDirty && !window.confirm('Discard your unsaved changes to this campaign?')) return;
+    onClose();
+  }
+
+  /** Type is immutable once saved, so switching it only ever happens on a new campaign. */
+  function chooseType(type: CampaignType) {
+    setForm((current) => ({ ...emptyForm(type), name: current.name }));
+  }
+
+  function insertVariable(variable: string) {
+    const token = `{{${variable}}}`;
+    const element = templateRef.current;
+    if (!element) {
+      set('messageTemplate', `${form.messageTemplate}${token}`);
+      return;
+    }
+    const start = element.selectionStart ?? element.value.length;
+    const end = element.selectionEnd ?? start;
+    set('messageTemplate', `${element.value.slice(0, start)}${token}${element.value.slice(end)}`);
+    // The value lands on the next render; move the caret past the inserted token then.
+    window.requestAnimationFrame(() => {
+      element.focus();
+      element.setSelectionRange(start + token.length, start + token.length);
+    });
+  }
+
+  async function handleSave() {
+    if (!accessToken) return;
+
+    if (!form.name.trim()) {
+      setSubmitError('Give the campaign a name so you can recognise it later.');
+      return;
+    }
+    // Validated here as well as on the server, so a typo in a placeholder is a
+    // sentence in the form rather than a round trip.
+    if (!templateCheck.valid) {
+      setSubmitError(templateCheck.errors.join(' '));
+      return;
+    }
+    if (form.campaignType === 'promotion' && form.endDate < form.startDate) {
+      setSubmitError('The promotion must end on or after the day it starts.');
+      return;
+    }
+
+    setSaving(true);
+    setSubmitError(null);
+    try {
+      const payload: UpsertCampaignRequest = {
+        campaignType: form.campaignType,
+        name: form.name.trim(),
+        locationId: form.locationId || null,
+        channel: form.channel,
+        messageTemplate: form.messageTemplate.trim(),
+        messageSubject: form.messageSubject.trim() || null,
+        sendAtLocalHour: Number(form.sendAtLocalHour),
+        config: configFromForm(form),
+      };
+
+      if (editingCampaign) {
+        const { campaignType: _ignored, ...patch } = payload;
+        const updated = await updateCampaign(accessToken, editingCampaign.id, patch);
+        onSaved(updated, 'updated');
+      } else {
+        const created = await createCampaign(accessToken, payload);
+        onSaved(created, 'created');
+      }
+    } catch (err) {
+      setSubmitError(toMessage(err, 'Could not save the campaign'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Drawer
+      open
+      onClose={requestClose}
+      title={isEdit ? 'Edit campaign' : 'New campaign'}
+      description={
+        isEdit
+          ? 'Changes apply to the next run. The campaign type cannot be changed.'
+          : 'Saved switched off — nothing is sent until you preview the audience and switch it on.'
+      }
+      widthClassName="sm:max-w-2xl"
+      footer={
+        <>
+          <AppButton size="sm" variant="ghost" onClick={requestClose} disabled={saving}>
+            Cancel
+          </AppButton>
+          <AppButton size="sm" onClick={() => void handleSave()} loading={saving}>
+            {isEdit ? 'Save changes' : 'Save as draft'}
+          </AppButton>
+        </>
+      }
+    >
+      {submitError ? (
+        <div
+          role="alert"
+          className="mb-4 rounded-input-lg border border-danger-border bg-danger-soft px-3 py-2.5 text-[13px] text-danger"
+        >
+          {submitError}
+        </div>
+      ) : null}
+
+      <div className="space-y-6">
+        <Section
+          title="Campaign type"
+          subtitle={isEdit ? undefined : 'Each type has its own audience rule. Pick the one that matches the message.'}
+        >
+          {isEdit ? (
+            <div className="rounded-input-lg border border-border bg-surface-alt px-4 py-3">
+              <div className="text-[13px] font-medium text-text-primary">{meta?.label}</div>
+              <p className="mt-0.5 text-[12px] text-text-secondary">{meta?.description}</p>
+            </div>
+          ) : (
+            <div className="grid gap-2 sm:grid-cols-2">
+              {CAMPAIGN_TYPE_META.map((entry) => (
+                <button
+                  key={entry.type}
+                  type="button"
+                  aria-pressed={form.campaignType === entry.type}
+                  onClick={() => chooseType(entry.type)}
+                  className={cn(
+                    'rounded-input-lg border px-4 py-3 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
+                    form.campaignType === entry.type
+                      ? 'border-primary bg-primary-soft'
+                      : 'border-border hover:border-border-strong hover:bg-surface-alt',
+                  )}
+                >
+                  <span className="block text-[13px] font-semibold text-text-primary">{entry.label}</span>
+                  <span className="mt-0.5 block text-[12px] text-text-secondary">{entry.short}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </Section>
+
+        <Section title="Basics">
+          <Grid>
+            <Field label="Name" required>
+              <input
+                className={INPUT}
+                value={form.name}
+                onChange={(event) => set('name', event.target.value)}
+                maxLength={CAMPAIGN_BOUNDS.nameLength.max}
+                placeholder={`e.g. ${meta?.label} nudge`}
+              />
+            </Field>
+            <Field label="Applies to">
+              <select
+                className={INPUT}
+                value={form.locationId}
+                onChange={(event) => set('locationId', event.target.value)}
+              >
+                <option value="">All locations</option>
+                {locations.map((location) => (
+                  <option key={location.id} value={location.id}>
+                    {location.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </Grid>
+        </Section>
+
+        {/* Type-specific settings. Nothing irrelevant is ever shown. */}
+        <Section title="Who it reaches" subtitle={meta?.description}>
+          {form.campaignType === 'rebooking' ? (
+            <Grid>
+              <Field label="Reach clients who are">
+                <select
+                  className={INPUT}
+                  value={form.rebookingTarget}
+                  onChange={(event) =>
+                    set('rebookingTarget', event.target.value as FormState['rebookingTarget'])
+                  }
+                >
+                  <option value="lapsed">Overdue for their next visit</option>
+                  <option value="at_risk">Just about due, or overdue</option>
+                </select>
+              </Field>
+              <Field label="Wait this many extra days first" hint="0 sends as soon as they are overdue.">
+                <input
+                  className={INPUT}
+                  type="number"
+                  min={CAMPAIGN_BOUNDS.rebookingMinOverdueDays.min}
+                  max={CAMPAIGN_BOUNDS.rebookingMinOverdueDays.max}
+                  value={form.minOverdueDays}
+                  onChange={(event) => set('minOverdueDays', event.target.value)}
+                />
+              </Field>
+            </Grid>
+          ) : null}
+
+          {form.campaignType === 'birthday' ? (
+            <Field label="Send in advance" hint="0 sends on the day itself.">
+              <div className="flex items-center gap-2">
+                <input
+                  className={`${INPUT} w-24`}
+                  type="number"
+                  min={CAMPAIGN_BOUNDS.birthdayDaysBefore.min}
+                  max={CAMPAIGN_BOUNDS.birthdayDaysBefore.max}
+                  value={form.daysBefore}
+                  onChange={(event) => set('daysBefore', event.target.value)}
+                />
+                <span className="text-[13px] text-text-secondary">days before their birthday</span>
+              </div>
+            </Field>
+          ) : null}
+
+          {form.campaignType === 'promotion' ? (
+            <div className="grid gap-3 sm:grid-cols-3">
+              <Field label="Runs from" required>
+                <input
+                  className={INPUT}
+                  type="date"
+                  value={form.startDate}
+                  onChange={(event) => set('startDate', event.target.value)}
+                />
+              </Field>
+              <Field label="Until" required>
+                <input
+                  className={INPUT}
+                  type="date"
+                  value={form.endDate}
+                  onChange={(event) => set('endDate', event.target.value)}
+                />
+              </Field>
+              <Field label="Minimum past visits" hint="0 includes every client.">
+                <input
+                  className={INPUT}
+                  type="number"
+                  min={CAMPAIGN_BOUNDS.promotionMinCompletedVisits.min}
+                  max={CAMPAIGN_BOUNDS.promotionMinCompletedVisits.max}
+                  value={form.minCompletedVisits}
+                  onChange={(event) => set('minCompletedVisits', event.target.value)}
+                />
+              </Field>
+            </div>
+          ) : null}
+
+          {form.campaignType === 'loyalty_milestone' ? (
+            <Grid>
+              <Field label="Milestone">
+                <select
+                  className={INPUT}
+                  value={form.loyaltyMetric}
+                  onChange={(event) => set('loyaltyMetric', event.target.value as FormState['loyaltyMetric'])}
+                >
+                  <option value="completed_visits">Number of visits</option>
+                  <option value="total_spend">Total spent</option>
+                </select>
+              </Field>
+              <Field
+                label={form.loyaltyMetric === 'completed_visits' ? 'Number of visits' : 'Amount spent (£)'}
+                hint="Each client is congratulated once for each milestone."
+              >
+                <input
+                  className={INPUT}
+                  type="number"
+                  min={1}
+                  step={form.loyaltyMetric === 'completed_visits' ? 1 : 0.01}
+                  value={form.loyaltyThreshold}
+                  onChange={(event) => set('loyaltyThreshold', event.target.value)}
+                />
+              </Field>
+            </Grid>
+          ) : null}
+        </Section>
+
+        <Section title="Delivery">
+          <Grid>
+            <Field label="Send at" hint="In the salon's own local time.">
+              <select
+                className={INPUT}
+                value={form.sendAtLocalHour}
+                onChange={(event) => set('sendAtLocalHour', event.target.value)}
+              >
+                {SEND_HOURS.map((hour) => (
+                  <option key={hour} value={hour}>
+                    {formatHour(hour)}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field
+              label="Send by"
+              hint="Automatic uses WhatsApp first, then text, then email — the same as your booking reminders."
+            >
+              <select
+                className={INPUT}
+                value={form.channel}
+                onChange={(event) => set('channel', event.target.value as CampaignChannel)}
+              >
+                <option value="auto">Automatic (recommended)</option>
+                <option value="whatsapp">WhatsApp</option>
+                <option value="sms">Text message</option>
+                <option value="email">Email</option>
+              </select>
+            </Field>
+          </Grid>
+        </Section>
+
+        <Section title="Message">
+          <Field
+            label="What the client receives"
+            required
+            error={templateTouched && !templateCheck.valid ? templateCheck.errors.join(' ') : undefined}
+          >
+            <textarea
+              ref={templateRef}
+              className={`${INPUT} min-h-[7rem] py-2`}
+              value={form.messageTemplate}
+              onChange={(event) => set('messageTemplate', event.target.value)}
+              maxLength={CAMPAIGN_BOUNDS.templateLength.max}
+            />
+          </Field>
+
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] text-text-muted">Insert:</span>
+            {CAMPAIGN_TEMPLATE_VARIABLES.map((variable) => (
+              <button
+                key={variable}
+                type="button"
+                onClick={() => insertVariable(variable)}
+                className="rounded-pill border border-border px-2.5 py-0.5 text-[11px] font-medium text-text-secondary transition hover:border-border-strong hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+              >
+                {`{{${variable}}}`}
+              </button>
+            ))}
+            <span className="ml-auto text-[11px] tabular-nums text-text-muted">
+              {form.messageTemplate.length}/{CAMPAIGN_BOUNDS.templateLength.max}
+            </span>
+          </div>
+
+          {form.channel === 'email' ? (
+            <div className="mt-3">
+              <Field label="Email subject">
+                <input
+                  className={INPUT}
+                  value={form.messageSubject}
+                  onChange={(event) => set('messageSubject', event.target.value)}
+                  maxLength={CAMPAIGN_BOUNDS.subjectLength.max}
+                />
+              </Field>
+            </div>
+          ) : null}
+
+          {/* Rendered with representative values — never a real client's data. */}
+          {form.messageTemplate.trim() ? (
+            <div className="mt-3 rounded-input-lg border border-border bg-surface-alt px-4 py-3">
+              <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-text-secondary">
+                Preview
+              </p>
+              <p className="mt-1 whitespace-pre-wrap text-[13px] text-text-primary">
+                {renderCampaignTemplate(form.messageTemplate, CAMPAIGN_PREVIEW_VALUES)}
+              </p>
+            </div>
+          ) : null}
+        </Section>
+      </div>
+    </Drawer>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Small presentational pieces
+// ---------------------------------------------------------------------------
+
+function SummaryTile({
+  label,
+  value,
+  hint,
+  icon,
+  badge,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  icon: ReactNode;
+  badge?: { label: string; tone: 'success' | 'warning' | 'danger' };
+}) {
+  return (
+    <div className="rounded-card-lg border border-border bg-surface p-4 shadow-card">
+      <div className="flex items-start justify-between">
+        <span className="text-[12px] font-medium text-text-secondary">{label}</span>
+        <span className="flex h-8 w-8 items-center justify-center rounded-input bg-surface-alt">{icon}</span>
+      </div>
+      <div className="mt-2 text-[26px] font-semibold leading-none tabular-nums text-text-primary">{value}</div>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        {badge ? <StatusBadge label={badge.label} tone={badge.tone} /> : null}
+        {hint ? <span className="text-[11px] text-text-muted">{hint}</span> : null}
+      </div>
+    </div>
+  );
+}
+
+function Metric({ label, value, tone }: { label: string; value: string; tone?: 'danger' }) {
+  return (
+    <div className="rounded-input-lg border border-border bg-surface-alt px-3 py-2">
+      <div className="text-[11px] uppercase tracking-[0.08em] text-text-secondary">{label}</div>
+      <div
+        className={cn(
+          'mt-0.5 text-[18px] font-semibold tabular-nums',
+          tone === 'danger' ? 'text-danger' : 'text-text-primary',
+        )}
+      >
+        {value}
+      </div>
     </div>
   );
 }
@@ -447,261 +1181,132 @@ function AudiencePreview({ preview }: { preview: CampaignAudiencePreview }) {
 function Fact({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <dt className="text-xs uppercase tracking-wide text-text-secondary">{label}</dt>
-      <dd className="text-text-primary">{value}</dd>
+      <dt className="text-[11px] uppercase tracking-[0.08em] text-text-secondary">{label}</dt>
+      <dd className="mt-0.5 text-[13px] text-text-primary">{value}</dd>
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Editor — the fields change with the campaign type (Wrike section 47)
-// ---------------------------------------------------------------------------
-
-function CampaignEditor({
-  form,
-  setForm,
-  locations,
-  saving,
-  isEdit,
-  onCancel,
-  onSubmit,
-}: {
-  form: FormState;
-  setForm: (updater: (previous: FormState) => FormState) => void;
-  locations: Array<{ id: string; name: string }>;
-  saving: boolean;
-  isEdit: boolean;
-  onCancel: () => void;
-  onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
-}) {
-  const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
-    setForm((previous) => ({ ...previous, [key]: value }));
-
-  const meta = CAMPAIGN_TYPE_META.find((m) => m.type === form.campaignType);
-
+function Section({ title, subtitle, children }: { title: string; subtitle?: string; children: ReactNode }) {
   return (
-    <AppCard>
-      <form className="space-y-5" onSubmit={onSubmit}>
-        <div>
-          <h2 className="text-lg font-semibold text-text-primary">
-            {isEdit ? 'Edit campaign' : `New ${meta?.label.toLowerCase()} campaign`}
-          </h2>
-          <p className="text-sm text-text-secondary">{meta?.description}</p>
-        </div>
-
-        <div className="grid gap-4 md:grid-cols-2">
-          <Field label="Name">
-            <input
-              className={INPUT}
-              value={form.name}
-              onChange={(e) => set('name', e.target.value)}
-              maxLength={120}
-              required
-            />
-          </Field>
-
-          <Field label="Applies to">
-            <select className={INPUT} value={form.locationId} onChange={(e) => set('locationId', e.target.value)}>
-              <option value="">All locations</option>
-              {locations.map((location) => (
-                <option key={location.id} value={location.id}>
-                  {location.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-        </div>
-
-        {/* Type-specific settings. Nothing irrelevant is ever shown. */}
-        {form.campaignType === 'rebooking' && (
-          <div className="grid gap-4 md:grid-cols-2">
-            <Field label="Reach clients who are">
-              <select
-                className={INPUT}
-                value={form.rebookingTarget}
-                onChange={(e) => set('rebookingTarget', e.target.value as FormState['rebookingTarget'])}
-              >
-                <option value="lapsed">Overdue for their next visit</option>
-                <option value="at_risk">Just about due, or overdue</option>
-              </select>
-            </Field>
-            <Field label="Wait this many extra days first" hint="0 sends as soon as they are overdue.">
-              <input
-                className={INPUT}
-                type="number"
-                min={0}
-                max={365}
-                value={form.minOverdueDays}
-                onChange={(e) => set('minOverdueDays', e.target.value)}
-              />
-            </Field>
-          </div>
-        )}
-
-        {form.campaignType === 'birthday' && (
-          <Field label="Send" hint="0 sends on the day itself.">
-            <div className="flex items-center gap-2">
-              <input
-                className={`${INPUT} w-24`}
-                type="number"
-                min={0}
-                max={30}
-                value={form.daysBefore}
-                onChange={(e) => set('daysBefore', e.target.value)}
-              />
-              <span className="text-sm text-text-secondary">days before their birthday</span>
-            </div>
-          </Field>
-        )}
-
-        {form.campaignType === 'promotion' && (
-          <div className="grid gap-4 md:grid-cols-3">
-            <Field label="Runs from">
-              <input
-                className={INPUT}
-                type="date"
-                value={form.startDate}
-                onChange={(e) => set('startDate', e.target.value)}
-                required
-              />
-            </Field>
-            <Field label="Until">
-              <input
-                className={INPUT}
-                type="date"
-                value={form.endDate}
-                onChange={(e) => set('endDate', e.target.value)}
-                required
-              />
-            </Field>
-            <Field label="Minimum past visits" hint="0 includes every client.">
-              <input
-                className={INPUT}
-                type="number"
-                min={0}
-                max={100}
-                value={form.minCompletedVisits}
-                onChange={(e) => set('minCompletedVisits', e.target.value)}
-              />
-            </Field>
-          </div>
-        )}
-
-        {form.campaignType === 'loyalty_milestone' && (
-          <div className="grid gap-4 md:grid-cols-2">
-            <Field label="Milestone">
-              <select
-                className={INPUT}
-                value={form.loyaltyMetric}
-                onChange={(e) => set('loyaltyMetric', e.target.value as FormState['loyaltyMetric'])}
-              >
-                <option value="completed_visits">Number of visits</option>
-                <option value="total_spend">Total spent</option>
-              </select>
-            </Field>
-            <Field
-              label={form.loyaltyMetric === 'completed_visits' ? 'Number of visits' : 'Amount spent (£)'}
-              hint="Each client is congratulated once for each milestone."
-            >
-              <input
-                className={INPUT}
-                type="number"
-                min={1}
-                step={form.loyaltyMetric === 'completed_visits' ? 1 : 0.01}
-                value={form.loyaltyThreshold}
-                onChange={(e) => set('loyaltyThreshold', e.target.value)}
-              />
-            </Field>
-          </div>
-        )}
-
-        <div className="grid gap-4 md:grid-cols-2">
-          <Field label="Send at" hint="In the salon's own local time.">
-            <select
-              className={INPUT}
-              value={form.sendAtLocalHour}
-              onChange={(e) => set('sendAtLocalHour', e.target.value)}
-            >
-              {Array.from({ length: 13 }, (_, i) => i + 8).map((hour) => (
-                <option key={hour} value={hour}>
-                  {formatHour(hour)}
-                </option>
-              ))}
-            </select>
-          </Field>
-
-          <Field
-            label="Send by"
-            hint="Automatic uses WhatsApp first, then text, then email — the same as your booking reminders."
-          >
-            <select
-              className={INPUT}
-              value={form.channel}
-              onChange={(e) => set('channel', e.target.value as CampaignChannel)}
-            >
-              <option value="auto">Automatic (recommended)</option>
-              <option value="whatsapp">WhatsApp</option>
-              <option value="sms">Text message</option>
-              <option value="email">Email</option>
-            </select>
-          </Field>
-        </div>
-
-        <Field
-          label="Message"
-          hint={`You can use ${CAMPAIGN_TEMPLATE_VARIABLES.map((v) => `{{${v}}}`).join(', ')}.`}
-        >
-          <textarea
-            className={`${INPUT} min-h-[7rem]`}
-            value={form.messageTemplate}
-            onChange={(e) => set('messageTemplate', e.target.value)}
-            maxLength={1000}
-            required
-          />
-        </Field>
-
-        {form.channel === 'email' && (
-          <Field label="Email subject">
-            <input
-              className={INPUT}
-              value={form.messageSubject}
-              onChange={(e) => set('messageSubject', e.target.value)}
-              maxLength={200}
-            />
-          </Field>
-        )}
-
-        <div className="flex flex-wrap gap-2">
-          <AppButton type="submit" disabled={saving}>
-            {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Save as draft'}
-          </AppButton>
-          <AppButton type="button" variant="secondary" onClick={onCancel} disabled={saving}>
-            Cancel
-          </AppButton>
-        </div>
-        {!isEdit && (
-          <p className="text-xs text-text-secondary">
-            New campaigns are saved switched off. Nothing is sent until you preview the audience and
-            switch it on.
-          </p>
-        )}
-      </form>
-    </AppCard>
+    <section>
+      <h3 className="text-[13px] font-semibold uppercase tracking-[0.06em] text-text-secondary">{title}</h3>
+      {subtitle ? <p className="mt-0.5 text-[12px] text-text-muted">{subtitle}</p> : null}
+      <div className="mt-3">{children}</div>
+    </section>
   );
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+function Grid({ children }: { children: ReactNode }) {
+  return <div className="grid gap-3 sm:grid-cols-2">{children}</div>;
+}
+
+/**
+ * A labelled field. The hint and error sit OUTSIDE the <label> so they never
+ * become part of the control's accessible name.
+ */
+function Field({
+  label,
+  children,
+  hint,
+  error,
+  required,
+}: {
+  label: string;
+  children: ReactNode;
+  hint?: string;
+  error?: string;
+  required?: boolean;
+}) {
   return (
-    <label className="block space-y-1">
-      <span className="text-sm font-medium text-text-primary">{label}</span>
-      {children}
-      {hint && <span className="block text-xs text-text-secondary">{hint}</span>}
-    </label>
+    <div className="block">
+      <label className="mb-1 block text-[12px] font-medium text-text-secondary">
+        <span>
+          {label}
+          {required ? <span className="text-danger"> *</span> : null}
+        </span>
+        {children}
+      </label>
+      {error ? (
+        <span role="alert" className="mt-1 block text-[11px] text-danger">
+          {error}
+        </span>
+      ) : hint ? (
+        <span className="mt-1 block text-[11px] text-text-muted">{hint}</span>
+      ) : null}
+    </div>
+  );
+}
+
+function EmptyState({ title, body, action }: { title: string; body: string; action?: ReactNode }) {
+  return (
+    <div className="px-5 py-12 text-center">
+      <div className="text-[14px] font-medium text-text-primary">{title}</div>
+      <p className="mx-auto mt-1 max-w-sm text-[13px] text-text-secondary">{body}</p>
+      {action ? <div className="mt-3 flex justify-center">{action}</div> : null}
+    </div>
+  );
+}
+
+function RetryState({ title, onRetry }: { title: string; onRetry: () => void }) {
+  return (
+    <div className="px-5 py-10 text-center" role="alert">
+      <div className="text-[14px] font-medium text-text-primary">{title}</div>
+      <p className="mx-auto mt-1 max-w-sm text-[13px] text-text-secondary">
+        The data could not be fetched. Check your connection and try again.
+      </p>
+      <div className="mt-3 flex justify-center">
+        <AppButton size="sm" variant="secondary" onClick={onRetry}>
+          Retry
+        </AppButton>
+      </div>
+    </div>
   );
 }
 
 const INPUT =
-  'w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary outline-none focus:border-primary';
+  'h-10 w-full rounded-input-lg border border-border-strong bg-surface px-3 text-[13px] text-text-primary outline-none focus:border-primary focus:ring-2 focus:ring-primary/20';
+
+function SearchIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-3.2-3.2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function BoltIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+      <path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function PauseIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+      <path d="M9 5v14M15 5v14" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function SendIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+      <path d="M21 3 10.5 13.5M21 3l-7 18-3.5-7.5L3 10l18-7Z" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function ShieldIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+      <path d="M12 3l7 3v5.5c0 4.2-2.9 7.9-7 9.5-4.1-1.6-7-5.3-7-9.5V6l7-3Z" strokeLinejoin="round" />
+    </svg>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Form state
@@ -820,29 +1425,53 @@ function configFromForm(form: FormState): Record<string, unknown> {
 // Presentation
 // ---------------------------------------------------------------------------
 
-const CAMPAIGN_TYPE_META: Array<{ type: CampaignType; label: string; description: string }> = [
+const CAMPAIGN_TYPE_META: Array<{
+  type: CampaignType;
+  label: string;
+  /** One line for the type picker. */
+  short: string;
+  description: string;
+}> = [
   {
     type: 'rebooking',
     label: 'Rebooking',
+    short: 'Win back clients who are overdue a visit.',
     description:
       'Reaches clients who are overdue for their next visit and have nothing in the diary. Anyone already booked in is skipped automatically.',
   },
   {
     type: 'birthday',
     label: 'Birthday',
+    short: 'A message on, or just before, their birthday.',
     description: 'A birthday message, on the day or a few days before.',
   },
   {
     type: 'promotion',
     label: 'Promotion',
-    description: 'A one-off offer to a chosen group of clients, between two dates. Each client hears about it once.',
+    short: 'A one-off offer between two dates.',
+    description:
+      'A one-off offer to a chosen group of clients, between two dates. Each client hears about it once.',
   },
   {
     type: 'loyalty_milestone',
     label: 'Loyalty milestone',
+    short: 'Thank a client at a number of visits or spend.',
     description: 'Congratulates a client the first time they reach a number of visits or an amount spent.',
   },
 ];
+
+const STATUS_TABS: Array<{ value: StatusFilter; label: string }> = [
+  { value: 'all', label: 'All' },
+  { value: 'active', label: 'On' },
+  { value: 'draft', label: 'Drafts' },
+  { value: 'paused', label: 'Off' },
+  { value: 'archived', label: 'Archived' },
+];
+
+const SEND_HOURS = Array.from(
+  { length: CAMPAIGN_BOUNDS.sendAtLocalHour.max - CAMPAIGN_BOUNDS.sendAtLocalHour.min + 1 },
+  (_, index) => CAMPAIGN_BOUNDS.sendAtLocalHour.min + index,
+);
 
 const SUGGESTED_TEMPLATE: Record<CampaignType, string> = {
   rebooking:
@@ -869,6 +1498,14 @@ const STATUS_TONE: Record<CampaignStatus, 'success' | 'warning' | 'neutral'> = {
 
 const CHANNEL_LABEL: Record<CampaignChannel, string> = {
   auto: 'WhatsApp, then text, then email',
+  whatsapp: 'WhatsApp',
+  sms: 'Text message',
+  email: 'Email',
+};
+
+/** The same idea, short enough for a table cell. */
+const CHANNEL_SHORT: Record<CampaignChannel, string> = {
+  auto: 'WhatsApp → text → email',
   whatsapp: 'WhatsApp',
   sms: 'Text message',
   email: 'Email',
@@ -905,6 +1542,19 @@ function describeCampaign(campaign: CampaignDetail): string {
 
 function formatHour(hour: number): string {
   return `${String(hour).padStart(2, '0')}:00`;
+}
+
+function formatCount(value: number): string {
+  return value.toLocaleString('en-GB');
+}
+
+function formatDateTime(iso: string): string {
+  return new Date(iso).toLocaleString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 function toMessage(error: unknown, fallback: string): string {
