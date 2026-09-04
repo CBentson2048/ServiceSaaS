@@ -131,6 +131,102 @@ export const ZAC_ANALYSIS_PLANNER_SCHEMA = {
   required: ['analysis_intent', 'reason_code', 'confidence', 'synthesis_strategy', 'tools'],
 } as const;
 
+/** The Structured Outputs format name for the planner. */
+export const ZAC_ANALYSIS_PLANNER_FORMAT_NAME = 'zac_analysis_plan';
+
+/**
+ * The SAME plan, expressed in the strict Structured Outputs subset.
+ *
+ * Two schemas rather than one converter, following the precedent
+ * `ZAC_SEMANTIC_ROUTER_OPENAI_SCHEMA` set: the strict subset is narrow enough
+ * (allowlisted keywords, every object closed, every property required, no
+ * numeric types) that a generic converter would have to make lossy choices
+ * silently. Written out, both schemas are checked at boot by
+ * `findStrictSchemaViolations` and pinned against the closed server enums by a
+ * contract test — which is how the last silent 400 was caught.
+ *
+ * The one genuine difference: `confidence` is a BUCKET here, not a number,
+ * because strict mode rejects numeric types outright. The adapter maps the
+ * bucket back through `confidenceBucketScore`, exactly as the semantic router
+ * already does — so the planner's server-side confidence policy is unchanged.
+ */
+export const ZAC_ANALYSIS_PLANNER_OPENAI_SCHEMA = {
+  type: 'object' as const,
+  additionalProperties: false,
+  properties: {
+    analysis_intent: {
+      type: 'string' as const,
+      enum: [
+        'specific_metric',
+        'business_health',
+        'business_priorities',
+        'team_priorities',
+        'diagnostic',
+        'comparison',
+        'explanation',
+      ],
+      description: 'The kind of analysis the user is asking for.',
+    },
+    reason_code: {
+      type: 'string' as const,
+      enum: [
+        'direct_metric_request',
+        'business_overview_request',
+        'business_priority_request',
+        'team_priority_request',
+        'diagnostic_request',
+        'comparison_request',
+        'followup_explanation',
+      ],
+      description: 'The closed reason code matching the intent.',
+    },
+    confidence: {
+      type: 'string' as const,
+      enum: ['high', 'medium', 'low'],
+      description:
+        'Genuine confidence in the chosen intent. high = unambiguous; medium = likely; low = a guess.',
+    },
+    synthesis_strategy: {
+      type: 'string' as const,
+      enum: [
+        'single_metric',
+        'business_health',
+        'rank_business_priorities',
+        'rank_team_priorities',
+        'diagnostic',
+        'comparison',
+        'explanation',
+      ],
+      description: 'How the gathered evidence should be turned into an answer.',
+    },
+    tools: {
+      type: 'array' as const,
+      description:
+        'The smallest set of AVAILABLE SOURCES that answers the question — at most 5. Names must come from the supplied list.',
+      items: {
+        type: 'object' as const,
+        additionalProperties: false,
+        properties: {
+          tool_name: { type: 'string' as const, description: 'Exact name from AVAILABLE SOURCES.' },
+          purpose: {
+            type: 'string' as const,
+            enum: [
+              'baseline',
+              'priority_signal',
+              'diagnostic',
+              'comparison',
+              'supporting_evidence',
+            ],
+            description: 'Why this source is in the plan.',
+          },
+        },
+        required: ['tool_name', 'purpose'],
+      },
+    },
+  },
+  required: ['analysis_intent', 'reason_code', 'confidence', 'synthesis_strategy', 'tools'],
+} as const;
+
 /**
  * The per-request block. Deliberately minimal: the question, the role LENS, the
  * permitted source list and — as KINDS only — what sort of memory exists. Never

@@ -26,7 +26,8 @@
     "notifications-acceptance": "ts-node --transpile-only scripts/notifications-acceptance.ts",
     "zac-routing-eval": "ts-node --transpile-only scripts/zac-routing-eval.ts",
     "zac-hosted-acceptance": "ts-node --transpile-only scripts/zac-hosted-acceptance.ts",
-    "zac-production-eval": "ts-node --transpile-only scripts/zac-production-eval.ts"
+    "zac-production-eval": "ts-node --transpile-only scripts/zac-production-eval.ts",
+    "zac-provider-benchmark": "ts-node --transpile-only scripts/zac-provider-benchmark.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",

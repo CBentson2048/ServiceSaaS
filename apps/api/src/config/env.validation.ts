@@ -396,6 +396,52 @@ export class EnvConfig {
   @IsOptional()
   @IsString()
   ZAC_PRICE_CACHE_WRITE_USD_PER_MTOK?: string;
+
+  // ---------------------------------------------------------------------
+  // PROVIDER PROFILE.
+  //
+  // Deliberately validated as plain strings here and rejected properly at ZAC
+  // boot by resolveZacAiProfile, which throws with the supported values. A
+  // class-validator @IsIn would reject the same typo with a less useful
+  // message and duplicate the closed list in a second place.
+  // ---------------------------------------------------------------------
+
+  /** openai | anthropic | hybrid. Unset = hybrid (the shipped production design). */
+  @IsOptional()
+  @IsString()
+  ZAC_AI_PROVIDER?: string;
+
+  /** Per-capability providers. Honoured under `hybrid` only; ignored (and reported) otherwise. */
+  @IsOptional()
+  @IsString()
+  ZAC_REASONING_PROVIDER?: string;
+
+  @IsOptional()
+  @IsString()
+  ZAC_SYNTHESIS_PROVIDER?: string;
+
+  /**
+   * Per-provider, per-capability models. Model selection is independent of
+   * provider selection so a benchmark can pin one without moving the other.
+   * Existing deployed variables remain the honoured compatibility aliases:
+   * ZAC_MODEL_ID (Anthropic synthesis), ZAC_ROUTER_MODEL_ID (Anthropic
+   * routing) and ZAC_SEMANTIC_MODEL (OpenAI routing).
+   */
+  @IsOptional()
+  @IsString()
+  ZAC_OPENAI_REASONING_MODEL?: string;
+
+  @IsOptional()
+  @IsString()
+  ZAC_OPENAI_SYNTHESIS_MODEL?: string;
+
+  @IsOptional()
+  @IsString()
+  ZAC_OPENAI_REASONING_EFFORT?: string;
+
+  @IsOptional()
+  @IsString()
+  ZAC_OPENAI_SYNTHESIS_MAX_TOKENS?: string;
 }
 
 /**

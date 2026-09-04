@@ -143,6 +143,17 @@ export const ZAC_SEMANTIC_FAILURE_KIND_LABELS: Readonly<Record<ZacSemanticFailur
 };
 
 /** Display names for the providers that can classify a turn. */
+/**
+ * The deployment's AI profile, as an operator reads it. `Hybrid` is not a
+ * hedge: it is the shipped design, where a dedicated router runs on one vendor
+ * in front of another vendor's reasoning and narration.
+ */
+export const ZAC_AI_PROFILE_LABELS: Readonly<Record<string, string>> = {
+  openai: 'OpenAI',
+  anthropic: 'Anthropic',
+  hybrid: 'Hybrid',
+};
+
 export const ZAC_PROVIDER_LABELS: Readonly<Record<string, string>> = {
   openai: 'OpenAI',
   anthropic: 'Anthropic',
@@ -182,6 +193,18 @@ export interface ZacRoutingDetails {
   information_source?: string;
   routing_mode?: string;
   router_version?: string;
+  /**
+   * The active AI provider profile and the vendor/model behind each capability.
+   *
+   * Debug/UAT metadata: an operator comparing two providers has to be able to
+   * tell, from the answer in front of them, which one produced it. Safe
+   * configuration identities only — never a key, never anything a model said.
+   */
+  ai_provider_profile?: string;
+  reasoning_provider?: string | null;
+  reasoning_model?: string | null;
+  synthesis_provider?: string | null;
+  synthesis_model?: string | null;
   prompt_version?: string | null;
   /** The provider/model that made THIS turn's classification call; null when none was made. */
   semantic_provider?: string | null;
@@ -438,12 +461,34 @@ export function describeZacRouting(
       : undefined,
   );
   push(
+    'ai_provider_profile',
+    'AI profile',
+    details.ai_provider_profile,
+    details.ai_provider_profile
+      ? zacRoutingLabel(ZAC_AI_PROFILE_LABELS, details.ai_provider_profile)
+      : undefined,
+  );
+  push(
     'semantic_provider',
     'Semantic provider',
     details.semantic_provider,
     zacProviderLabel(details.semantic_provider) ?? undefined,
   );
   push('semantic_model', 'Semantic model', details.semantic_model);
+  push(
+    'reasoning_provider',
+    'Reasoning provider',
+    details.reasoning_provider,
+    zacProviderLabel(details.reasoning_provider) ?? undefined,
+  );
+  push('reasoning_model', 'Reasoning model', details.reasoning_model);
+  push(
+    'synthesis_provider',
+    'Synthesis provider',
+    details.synthesis_provider,
+    zacProviderLabel(details.synthesis_provider) ?? undefined,
+  );
+  push('synthesis_model', 'Synthesis model', details.synthesis_model);
   push('router_version', 'Router version', details.router_version);
   push('prompt_version', 'Prompt version', details.prompt_version);
   if (details.semantic_confidence_bucket || typeof details.semantic_confidence === 'number') {

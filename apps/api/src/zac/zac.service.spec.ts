@@ -44,6 +44,7 @@ import { ZacSemanticRouterService } from './routing/zac-semantic-router.service'
 import { ZacRoleProfileService } from './roles/zac-role-profile.service';
 import { ZacToolRegistryService } from './tools/zac-tool-registry.service';
 import { ZacRolloutService } from './zac-rollout.service';
+import { ZacAiProviderResolver } from './ai/zac-ai-provider.resolver';
 import { ZacService } from './zac.service';
 
 // The ZAC stores follow the platform convention (private service-role client
@@ -311,6 +312,10 @@ function makeService(
     new ZacSemanticRouterService(requestModes, provider, config, semanticHealth, semanticProvider),
     new ZacMeasurementService(new ZacMeasurementStore(config), telemetryService),
     provider,
+    // The real resolver over the test config: with no API keys it resolves the
+    // default hybrid profile and degrades to the deterministic stub, which is
+    // exactly the shape these tests already exercise.
+    new ZacAiProviderResolver(config),
   );
 
   return { service, telemetry, state };
@@ -494,6 +499,20 @@ describe('ZacService', () => {
       // Never attempted is not ready: configuration is not evidence.
       degraded_reason: 'never_attempted',
       uat_ready: false,
+      // The AI profile, reported from configuration alone. With no keys the
+      // default hybrid profile still resolves: reasoning cannot bind (no
+      // Anthropic key) and synthesis falls to the deterministic stub — a
+      // degradation ZAC states rather than papering over by switching vendor.
+      ai_provider_profile: 'hybrid',
+      reasoning_provider: null,
+      reasoning_model: null,
+      synthesis_provider: 'anthropic',
+      synthesis_model: 'zac-stub-1',
+      ai_degradations: [
+        'semantic_routing is assigned to openai but OPENAI_API_KEY is not set',
+        'structured_reasoning is assigned to anthropic but ANTHROPIC_API_KEY is not set',
+        'answer_synthesis is assigned to anthropic but ANTHROPIC_API_KEY is not set',
+      ],
     });
   });
 
@@ -1410,6 +1429,14 @@ describe('ZacService', () => {
         analysis_intent: 'business_health',
         planner_source: 'fallback_plan',
         executable_tool_count: expect.any(Number),
+        // Debug/UAT metadata: which AI profile served this turn, and which
+        // vendor/model sat behind each capability. Configuration identities
+        // only — never a key, never anything a model said.
+        ai_provider_profile: 'hybrid',
+        reasoning_provider: null,
+        reasoning_model: null,
+        synthesis_provider: 'anthropic',
+        synthesis_model: 'zac-stub-1',
       });
       expect(response.answer).not.toContain('zac-stub-1');
     });

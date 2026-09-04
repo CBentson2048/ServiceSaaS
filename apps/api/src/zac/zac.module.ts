@@ -1,4 +1,4 @@
-import { Logger, Module } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AuthModule } from '../auth/auth.module';
 import { DashboardModule } from '../dashboard/dashboard.module';
@@ -21,9 +21,9 @@ import { ZacMeasurementStore } from './persistence/zac-measurement.store';
 import { ZacMemoryStore } from './persistence/zac-memory.store';
 import { ZacRequestModeClassifierService } from './routing/zac-request-mode-classifier.service';
 import { ZacSemanticRouterService } from './routing/zac-semantic-router.service';
-import { AnthropicZacModelProvider } from './models/providers/anthropic-zac-provider';
-import { OpenAiSemanticProvider } from './models/providers/openai-semantic-provider';
-import { StubZacModelProvider } from './models/providers/stub-zac-provider';
+import { ZacAiProviderResolver } from './ai/zac-ai-provider.resolver';
+import { ZacCompositeModelProvider } from './ai/zac-composite-model.provider';
+import { ZAC_REASONING_PROVIDER, ZAC_SYNTHESIS_PROVIDER } from './ai/zac-ai-ports';
 import { ZAC_MODEL_PROVIDER } from './models/zac-model-provider.interface';
 import type { ZacModelProvider } from './models/zac-model-provider.interface';
 import { ZAC_SEMANTIC_PROVIDER } from './models/zac-semantic-provider.interface';
@@ -89,50 +89,56 @@ import { ZacService } from './zac.service';
     ZacRequestModeClassifierService,
     ZacSemanticRouterService,
     ZacMeasurementService,
+    // ---------------------------------------------------------------------
+    // AI PROVIDER WIRING.
+    //
+    // One resolver decides which vendor performs which capability, from
+    // ZAC_AI_PROVIDER (+ the per-capability variables under `hybrid`). It is
+    // the ONLY place a vendor adapter is constructed, so no other file needs to
+    // know which provider is running — which is what makes a like-for-like
+    // benchmark possible and keeps `if (provider === 'openai')` out of ZAC.
+    //
+    // It throws at boot on an unsupported profile. A silent fallback would let
+    // a typo quietly measure the other vendor and report it as this one.
+    // ---------------------------------------------------------------------
+    {
+      provide: ZacAiProviderResolver,
+      inject: [ConfigService],
+      useFactory: (config: ConfigService): ZacAiProviderResolver =>
+        new ZacAiProviderResolver(config),
+    },
     {
       provide: ZAC_MODEL_PROVIDER,
-      inject: [ConfigService],
-      // The API key is the provider switch; ZAC_ENABLED stays the dark switch.
-      // No key = the deterministic stub — local dev, CI and dark builds need
-      // neither a secret nor network access.
-      useFactory: (config: ConfigService): ZacModelProvider => {
-        if (config.get<string>('ANTHROPIC_API_KEY')) {
-          return new AnthropicZacModelProvider(config);
-        }
-        new Logger('ZacModule').warn(
-          'ANTHROPIC_API_KEY not set — ZAC answers stay deterministic (stub provider).',
-        );
-        return new StubZacModelProvider();
-      },
+      inject: [ZacAiProviderResolver],
+      // The shape ZAC orchestration has always injected, now composed from the
+      // resolved capability ports rather than welded to one vendor.
+      useFactory: (resolver: ZacAiProviderResolver): ZacModelProvider =>
+        new ZacCompositeModelProvider(resolver),
     },
     {
       provide: ZAC_SEMANTIC_PROVIDER,
-      inject: [ConfigService],
-      // The DEDICATED semantic-routing provider (OpenAI). Constructed only
-      // when a non-legacy routing mode asks for it AND the key exists; null
-      // otherwise, which the router treats as "no dedicated router" — shadow
-      // observes nothing, semantic mode degrades through the safe fallback
-      // ladder exactly like a keyless legacy build.
-      useFactory: (config: ConfigService): ZacSemanticProvider | null => {
+      inject: [ConfigService, ZacAiProviderResolver],
+      // The DEDICATED semantic router. Still gated on the routing mode exactly
+      // as before: `legacy` deployments get null and keep their pre-migration
+      // behaviour, so this refactor does not switch anyone's router on.
+      useFactory: (
+        config: ConfigService,
+        resolver: ZacAiProviderResolver,
+      ): ZacSemanticProvider | null => {
         const routingMode = parseZacRoutingMode(config.get<string>('ZAC_ROUTING_MODE'));
         if (routingMode === 'legacy') return null;
-        const providerName = (config.get<string>('ZAC_SEMANTIC_PROVIDER') ?? 'openai')
-          .trim()
-          .toLowerCase();
-        if (providerName !== 'openai') {
-          new Logger('ZacModule').warn(
-            `ZAC_SEMANTIC_PROVIDER='${providerName}' is not a known semantic provider — ${routingMode} routing runs without one.`,
-          );
-          return null;
-        }
-        if (!config.get<string>('OPENAI_API_KEY')) {
-          new Logger('ZacModule').warn(
-            `ZAC_ROUTING_MODE=${routingMode} but OPENAI_API_KEY is not set — ${routingMode} routing runs without a dedicated semantic provider.`,
-          );
-          return null;
-        }
-        return new OpenAiSemanticProvider(config);
+        return resolver.semantic();
       },
+    },
+    {
+      provide: ZAC_REASONING_PROVIDER,
+      inject: [ZacAiProviderResolver],
+      useFactory: (resolver: ZacAiProviderResolver) => resolver.reasoning(),
+    },
+    {
+      provide: ZAC_SYNTHESIS_PROVIDER,
+      inject: [ZacAiProviderResolver],
+      useFactory: (resolver: ZacAiProviderResolver) => resolver.synthesis(),
     },
     ZacService,
   ],

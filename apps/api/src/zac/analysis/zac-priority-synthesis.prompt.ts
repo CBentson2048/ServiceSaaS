@@ -68,6 +68,54 @@ export const ZAC_PRIORITY_SYNTHESIS_SCHEMA = {
   required: ['priorities'],
 } as const;
 
+/** The Structured Outputs format name for priority synthesis. */
+export const ZAC_PRIORITY_SYNTHESIS_FORMAT_NAME = 'zac_priorities';
+
+/**
+ * The same priorities in the strict Structured Outputs subset.
+ *
+ * `preamble` is REQUIRED here where the tool schema leaves it optional: strict
+ * mode admits no optional properties, so optionality moves to the instruction
+ * ("empty string when there is nothing to add") and to the server, which
+ * already treats an empty preamble as absent and grounds it like any other
+ * prose. Expressing optionality in the wire schema was never available.
+ */
+export const ZAC_PRIORITY_SYNTHESIS_OPENAI_SCHEMA = {
+  type: 'object' as const,
+  additionalProperties: false,
+  properties: {
+    preamble: {
+      type: 'string' as const,
+      description:
+        'One short sentence introducing the priorities, with no figures. Empty string if none is needed.',
+    },
+    priorities: {
+      type: 'array' as const,
+      description: 'The chosen priorities, most important first — at most 5.',
+      items: {
+        type: 'object' as const,
+        additionalProperties: false,
+        properties: {
+          candidate_id: {
+            type: 'string' as const,
+            description: 'Exact id from the supplied candidate list.',
+          },
+          explanation: {
+            type: 'string' as const,
+            description: 'Why it matters, quoting only figures from that candidate.',
+          },
+          action: {
+            type: 'string' as const,
+            description: 'One concrete thing the user should do next.',
+          },
+        },
+        required: ['candidate_id', 'explanation', 'action'],
+      },
+    },
+  },
+  required: ['preamble', 'priorities'],
+} as const;
+
 /** The per-request block: candidates, the cap, and the honest gaps. */
 export function buildPrioritySynthesisUserMessage(input: ZacPrioritySynthesisInput): string {
   const parts: string[] = [`Role lens: ${input.roleContext}`];

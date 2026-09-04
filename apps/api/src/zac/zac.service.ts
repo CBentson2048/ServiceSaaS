@@ -57,6 +57,7 @@ import {
 } from './models/zac-model-provider.interface';
 import type { ZacModelEvidencePack } from './models/zac-model-provider.interface';
 import type { ZacModelProvider } from './models/zac-model-provider.interface';
+import { ZacAiProviderResolver } from './ai/zac-ai-provider.resolver';
 import { ZacResponseBuilderService } from './responses/zac-response-builder.service';
 import type {
   ZacFeedbackResponse,
@@ -144,6 +145,7 @@ export class ZacService {
     private readonly semanticRouter: ZacSemanticRouterService,
     private readonly measurement: ZacMeasurementService,
     @Inject(ZAC_MODEL_PROVIDER) private readonly modelProvider: ZacModelProvider,
+    private readonly aiProviders: ZacAiProviderResolver,
   ) {}
 
   /**
@@ -939,6 +941,15 @@ export class ZacService {
           : { semantic_confidence_bucket: confidenceScoreBucket(classification.confidence) }),
         semantic_routing_available: this.semanticRouter.semanticRoutingAvailable,
         routing_mode: this.semanticRouter.routingMode,
+        // Which AI profile served this turn, and the vendor/model behind each
+        // capability. Safe configuration identities only — the routing
+        // inspector needs them to tell two benchmark runs apart, and a
+        // provider comparison is unreadable without them.
+        ai_provider_profile: this.aiProviders.profile,
+        reasoning_provider: this.aiProviders.reasoning()?.providerId ?? null,
+        reasoning_model: this.aiProviders.reasoning()?.model ?? null,
+        synthesis_provider: this.aiProviders.synthesis().providerId,
+        synthesis_model: this.aiProviders.synthesis().model,
         router_version: this.semanticRouter.routerVersion,
         // The routing inspector's proof of WHICH model classified this turn —
         // the same definition the request_classified spine event uses, so the
@@ -1037,6 +1048,8 @@ export class ZacService {
         provider: routed.completion.provider,
         model: routed.completion.model,
         task_type: 'classification',
+      provider_profile: this.aiProviders.profile,
+      capability: 'semantic_routing',
         input_tokens: routed.completion.inputTokens,
         output_tokens: routed.completion.outputTokens,
         reasoning_tokens: routed.completion.reasoningTokens,
@@ -1163,6 +1176,8 @@ export class ZacService {
         provider: observation.completion.provider,
         model: observation.completion.model,
         task_type: 'classification',
+      provider_profile: this.aiProviders.profile,
+      capability: 'semantic_routing',
         input_tokens: observation.completion.inputTokens,
         output_tokens: observation.completion.outputTokens,
         reasoning_tokens: observation.completion.reasoningTokens,
@@ -1367,6 +1382,8 @@ export class ZacService {
       provider: completion.provider,
       model: completion.model,
       task_type: 'qa',
+      provider_profile: this.aiProviders.profile,
+      capability: 'answer_synthesis',
       input_tokens: completion.inputTokens,
       output_tokens: completion.outputTokens,
       reasoning_tokens: completion.reasoningTokens,
@@ -1929,6 +1946,8 @@ export class ZacService {
       provider: completion.provider,
       model: completion.model,
       task_type: 'classification',
+      provider_profile: this.aiProviders.profile,
+      capability: 'semantic_routing',
       input_tokens: completion.inputTokens,
       output_tokens: completion.outputTokens,
       reasoning_tokens: completion.reasoningTokens,
@@ -2339,6 +2358,9 @@ export class ZacService {
     const ready = narrates && configured && enabled && semanticHealth.schemaValid && operational;
 
     const semanticProvider = this.semanticRouter.semanticProviderInfo;
+    const bindings = this.aiProviders.bindings();
+    const reasoningBinding = bindings.find((b) => b.capability === 'tool_planning');
+    const synthesisBinding = bindings.find((b) => b.capability === 'answer_synthesis');
 
     return {
       enabled: true,
@@ -2362,6 +2384,15 @@ export class ZacService {
       semantic_operational: operational,
       degraded_reason: ready ? null : (semanticHealth.degradedReason('router') ?? 'provider_cannot_narrate'),
       uat_ready: ready,
+      // Provider profile, read from the resolver's CONFIGURATION. No provider
+      // is called to answer a health request: a health check that bills and can
+      // fail is not a health check.
+      ai_provider_profile: this.aiProviders.profile,
+      reasoning_provider: reasoningBinding?.provider ?? null,
+      reasoning_model: reasoningBinding?.model ?? null,
+      synthesis_provider: synthesisBinding?.provider ?? null,
+      synthesis_model: synthesisBinding?.model ?? null,
+      ai_degradations: [...this.aiProviders.degradations],
     };
   }
 

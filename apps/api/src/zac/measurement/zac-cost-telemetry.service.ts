@@ -16,6 +16,20 @@ export interface ZacCostEvent {
   provider: string;
   model: string;
   task_type: 'qa' | 'classification';
+  /**
+   * The deployment's AI profile and the CAPABILITY this call served.
+   *
+   * Without both, a hybrid run's cost events are unattributable: two calls to
+   * two vendors in one turn look like two unrelated rows, and "cost per routed
+   * request" cannot be separated from "cost per answer". They are also what
+   * makes a provider benchmark comparable across runs — a row that does not say
+   * which profile produced it cannot be pooled with anything.
+   *
+   * Optional so a caller that predates the provider refactor still compiles and
+   * still records; absent means "not attributed", never "hybrid".
+   */
+  provider_profile?: 'openai' | 'anthropic' | 'hybrid';
+  capability?: 'semantic_routing' | 'tool_planning' | 'structured_reasoning' | 'answer_synthesis';
   input_tokens: number;
   output_tokens: number;
   reasoning_tokens: number;

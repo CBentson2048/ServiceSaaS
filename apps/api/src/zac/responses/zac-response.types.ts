@@ -92,6 +92,21 @@ export interface ZacTechnicalDetails {
   semantic_confidence?: number;
   /** Which routing pipeline is authoritative in this deployment. */
   routing_mode?: 'legacy' | 'shadow' | 'semantic';
+  /**
+   * WHICH AI PROFILE served this turn — 'openai', 'anthropic' or 'hybrid'.
+   *
+   * Debug/UAT metadata, never product copy: an operator comparing two providers
+   * has to be able to tell, from the answer itself, which one produced it.
+   * These are configuration identities (vendor + model names), never keys and
+   * never anything a model said.
+   */
+  ai_provider_profile?: 'openai' | 'anthropic' | 'hybrid';
+  /** The vendor and model bound to tool planning / structured reasoning. */
+  reasoning_provider?: string | null;
+  reasoning_model?: string | null;
+  /** The vendor and model bound to answer synthesis. */
+  synthesis_provider?: string | null;
+  synthesis_model?: string | null;
   /** The router contract version that decided this turn (e.g. 'semantic-v2'). */
   router_version?: string;
   /**
@@ -247,6 +262,25 @@ export interface ZacHealthResponse {
   narrates: boolean;
   /** Which routing pipeline is authoritative: legacy, shadow or semantic. */
   routing_mode: 'legacy' | 'shadow' | 'semantic';
+  /**
+   * The active AI provider profile and its resolved per-capability bindings.
+   *
+   * Reported from CONFIGURATION only — asking for health never calls a
+   * provider, because a health check that bills and can fail is not a health
+   * check. `*_provider` is null for a capability that could not be bound (no
+   * key), which is a different state from one that is bound and failing.
+   */
+  ai_provider_profile: 'openai' | 'anthropic' | 'hybrid';
+  reasoning_provider: string | null;
+  reasoning_model: string | null;
+  synthesis_provider: string | null;
+  synthesis_model: string | null;
+  /**
+   * Capabilities whose configured provider could not be constructed, with the
+   * missing prerequisite. Empty when everything the profile asked for is bound.
+   * ZAC never silently switches vendor to fill one of these.
+   */
+  ai_degradations: string[];
   /**
    * The dedicated semantic provider's name (e.g. 'openai'), null when none.
    * Deployment configuration — unlike `technical_details.semantic_provider`,
