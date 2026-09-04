@@ -124,7 +124,9 @@ function makeService(state: State, set = settings(), optedOut: string[] = []) {
   const optOuts = {
     channelsFor: jest.fn().mockResolvedValue({ channels: optedOut, degraded: false }),
   } as unknown as OptOutService;
-  const messaging = new MessagingService(config, subjects, settingsService, optOuts);
+  const messaging = new MessagingService(config, subjects, settingsService, optOuts,
+      { contentSidFor: () => 'HX-CAMPAIGN' } as never,
+    );
   (messaging as unknown as { admin: unknown }).admin = admin;
 
   return new NotificationEscalationService(subjects, messaging);

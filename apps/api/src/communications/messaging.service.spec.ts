@@ -92,7 +92,17 @@ function baseState(over: Partial<State> = {}): State {
   };
 }
 
-function makeService(state: State, set = settings(), optedOut: string[] = [], degraded = false) {
+function makeService(
+  state: State,
+  set = settings(),
+  optedOut: string[] = [],
+  degraded = false,
+  /**
+   * Approved WhatsApp Content SID for the event, or undefined for "no template
+   * configured". Proactive marketing may only use WhatsApp when one exists.
+   */
+  whatsappTemplateSid: string | null = 'HX-CAMPAIGN',
+) {
   const config = { getOrThrow: () => 'https://example.supabase.co', get: () => undefined } as unknown as ConfigService;
   const templates = { contentSidFor: () => 'HX1', statusCallbackUrl: undefined } as unknown as WhatsAppTemplateConfig;
   const admin = makeFakeClient(state);
@@ -108,7 +118,9 @@ function makeService(state: State, set = settings(), optedOut: string[] = [], de
     channelsFor: jest.fn().mockResolvedValue({ channels: optedOut, degraded }),
   } as unknown as OptOutService;
 
-  const service = new MessagingService(config, subjects, settingsService, optOuts);
+  const service = new MessagingService(config, subjects, settingsService, optOuts,
+      { contentSidFor: () => whatsappTemplateSid ?? undefined } as never,
+    );
   (service as unknown as { admin: unknown }).admin = admin;
   return service;
 }
@@ -138,6 +150,48 @@ describe('MessagingService.send — the single send API', () => {
     const payload = row.payload_json as Record<string, Record<string, unknown>>;
     expect(payload.content.body).toContain('We miss you');
     expect(payload.message_class).toBe('marketing');
+  });
+
+  // Week 7: proactive WhatsApp marketing needs an approved template, and the
+  // requirement is expressed as a CHANNEL CAPABILITY in the messaging layer —
+  // no provider policy leaks into the campaign strategy.
+  describe('proactive WhatsApp marketing needs an approved template', () => {
+    it('uses WhatsApp when an approved template is configured', async () => {
+      const state = baseState({ appointment: null });
+      const result = await makeService(state, settings(), [], false, 'HX-APPROVED').send(campaign);
+
+      expect(result).toEqual({ status: 'queued', eventId: 'evt-1', channel: 'whatsapp' });
+    });
+
+    it('falls back to the next permitted channel when no template is configured', async () => {
+      const state = baseState({ appointment: null });
+      const result = await makeService(state, settings(), [], false, null).send(campaign);
+
+      // Never attempted free-form on WhatsApp — it took the canonical next hop.
+      expect(result).toEqual({ status: 'queued', eventId: 'evt-1', channel: 'sms' });
+      expect(state.inserts[0].channel).toBe('sms');
+    });
+
+    it('skips with a clear reason when no permitted channel can carry it', async () => {
+      // No template for WhatsApp, and the location allows no fallback at all.
+      const state = baseState({ appointment: null });
+      const noFallback = settings({ smsFallbackEnabled: false, emailFallbackEnabled: false });
+      const result = await makeService(state, noFallback, [], false, null).send(campaign);
+
+      expect(result.status).toBe('skipped');
+      expect(result.status === 'skipped' && result.reason).toMatch(/whatsapp/i);
+      expect(state.inserts).toHaveLength(0);
+    });
+
+    it('leaves TRANSACTIONAL WhatsApp untouched when no marketing template exists', async () => {
+      // A reminder must not stop going out because a marketing template is
+      // missing — the rule is scoped to proactive marketing only.
+      const state = baseState({ appointment: null });
+      const transactional = { ...campaign, messageClass: 'transactional' as const };
+      const result = await makeService(state, settings(), [], false, null).send(transactional);
+
+      expect(result).toMatchObject({ status: 'queued', channel: 'whatsapp' });
+    });
   });
 
   it('starts at SMS when the client has opted out of WhatsApp', async () => {

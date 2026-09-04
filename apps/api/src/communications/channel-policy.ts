@@ -12,6 +12,21 @@ export interface ContactEligibility {
   phoneValid: boolean;
   emailValid: boolean;
   /**
+   * Channels that cannot carry THIS PARTICULAR message, even though the location
+   * enables them and the client is reachable on them.
+   *
+   * A provider capability, not a preference and not a consent rule: the message
+   * needs something on that channel it does not have. The case this exists for
+   * is proactive WhatsApp marketing, which providers only accept against an
+   * approved template — with none configured for the event, WhatsApp cannot
+   * carry it and the canonical chain must fall through to SMS/email rather than
+   * attempting a send that would be rejected.
+   *
+   * Deliberately expressed as a capability here rather than as provider policy
+   * in the campaign layer, so every sender inherits the same behaviour.
+   */
+  unsupportedChannels?: readonly DeliveryChannel[];
+  /**
    * Channels this client has opted out of (`comms.channel_opt_outs`): an inbound STOP keyword, a
    * provider opt-out error code, or a staff action. An opted-out channel is removed from the chain
    * entirely — it is never the primary and never a fallback — so the next channel takes over exactly
@@ -67,20 +82,39 @@ export function resolveChannelPlan(
   const prefersSms = CANONICAL_ORDER[startIndex] === 'sms';
   const prefersEmail = CANONICAL_ORDER[startIndex] === 'email';
   const optedOut = new Set<DeliveryChannel>(contact.optedOutChannels ?? []);
+  const unsupported = new Set<DeliveryChannel>(contact.unsupportedChannels ?? []);
 
   const available: Record<DeliveryChannel, boolean> = {
-    whatsapp: settings.enabledChannels.includes('whatsapp') && contact.phoneValid && !optedOut.has('whatsapp'),
+    whatsapp:
+      settings.enabledChannels.includes('whatsapp') &&
+      contact.phoneValid &&
+      !optedOut.has('whatsapp') &&
+      !unsupported.has('whatsapp'),
     // SMS is usable as the client's PRIMARY when they explicitly prefer it (no toggle needed);
     // `smsFallbackEnabled` additionally allows SMS as a downstream fallback after WhatsApp.
-    sms: contact.phoneValid && !optedOut.has('sms') && (prefersSms || settings.smsFallbackEnabled === true),
+    sms:
+      contact.phoneValid &&
+      !optedOut.has('sms') &&
+      !unsupported.has('sms') &&
+      (prefersSms || settings.smsFallbackEnabled === true),
     // Email mirrors SMS: usable as the client's PRIMARY when they explicitly prefer it (no toggle
     // needed); `emailFallbackEnabled` additionally allows email as the final fallback.
-    email: contact.emailValid && !optedOut.has('email') && (prefersEmail || settings.emailFallbackEnabled === true),
+    email:
+      contact.emailValid &&
+      !optedOut.has('email') &&
+      !unsupported.has('email') &&
+      (prefersEmail || settings.emailFallbackEnabled === true),
   };
 
   const chain = CANONICAL_ORDER.slice(startIndex).filter((c) => available[c]);
 
   if (chain.length === 0) {
+    if (unsupported.size > 0) {
+      return {
+        deliverable: false,
+        skipReason: explainNoChannel(preference, contact, available, optedOut, unsupported),
+      };
+    }
     return { deliverable: false, skipReason: explainNoChannel(preference, contact, available, optedOut) };
   }
   return { deliverable: true, primary: chain[0], fallbacks: chain.slice(1) };
@@ -97,7 +131,13 @@ function explainNoChannel(
   contact: ContactEligibility,
   available: Record<DeliveryChannel, boolean>,
   optedOut: Set<DeliveryChannel>,
+  unsupported: Set<DeliveryChannel> = new Set(),
 ): string {
+  // Say the capability out loud: "no approved template and nowhere else to go"
+  // is a configuration answer, not a consent or contact-details one.
+  if (unsupported.size > 0 && CANONICAL_ORDER.every((c) => unsupported.has(c) || !available[c])) {
+    return `no channel can carry this message (${[...unsupported].join(', ')} unavailable for it)`;
+  }
   if (!contact.phoneValid && !contact.emailValid) return 'client has no valid phone or email address';
   if (preference === 'email' && !contact.emailValid) return 'client prefers email but has no valid email address';
   if (preference === 'sms' && !contact.phoneValid) return 'client prefers SMS but has no valid phone number';

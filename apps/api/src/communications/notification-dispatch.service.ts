@@ -211,7 +211,7 @@ export class NotificationDispatchService implements OnModuleInit, OnModuleDestro
       return;
     }
 
-    const plan = await this.messaging.resolvePlan(subject);
+    const plan = await this.messaging.resolvePlan(subject, event.event_key);
     await this.attempt(event, subject, channel, plan);
   }
 

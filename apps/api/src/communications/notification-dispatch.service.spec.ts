@@ -212,7 +212,9 @@ function makeDispatcher(
   (clientResolver as unknown as { admin: unknown }).admin = admin;
   const subjects = new NotificationSubjectRegistry(appointmentResolver, clientResolver);
 
-  const messaging = new MessagingService(config, subjects, settingsService, optOuts);
+  const messaging = new MessagingService(config, subjects, settingsService, optOuts,
+      { contentSidFor: () => 'HX-CAMPAIGN' } as never,
+    );
   (messaging as unknown as { admin: unknown }).admin = admin;
   const escalation = new NotificationEscalationService(subjects, messaging);
 

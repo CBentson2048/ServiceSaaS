@@ -12,7 +12,7 @@ import { NotificationEventKey } from './notification.types';
 @Injectable()
 export class WhatsAppTemplateConfig {
   private readonly logger = new Logger(WhatsAppTemplateConfig.name);
-  private readonly contentSids: Partial<Record<NotificationEventKey, string>>;
+  private readonly contentSids: Partial<Record<NotificationEventKey | string, string>>;
   /**
    * Public delivery-status callback URL passed on every send. Only set when the configured URL is
    * publicly reachable — Twilio rejects the WHOLE message (error 21609) if `StatusCallback` points at
@@ -58,7 +58,16 @@ export class WhatsAppTemplateConfig {
         'TWILIO_WHATSAPP_REBOOKING_NUDGE_CONTENT_SID',
         'TWILIO_TEMPLATE_REBOOKING_NUDGE_SID',
       ),
-    };
+      // Proactive campaign templates. Business-initiated WhatsApp marketing is
+      // only accepted against an approved template, so WITHOUT one configured
+      // the messaging layer treats WhatsApp as unable to carry that campaign and
+      // the canonical chain falls through to SMS/email. These keys are the
+      // campaign event keys from @sheer/domain (`campaignEventKey`).
+      campaign_rebooking: sid('TWILIO_WHATSAPP_CAMPAIGN_REBOOKING_CONTENT_SID'),
+      campaign_birthday: sid('TWILIO_WHATSAPP_CAMPAIGN_BIRTHDAY_CONTENT_SID'),
+      campaign_promotion: sid('TWILIO_WHATSAPP_CAMPAIGN_PROMOTION_CONTENT_SID'),
+      campaign_loyalty_milestone: sid('TWILIO_WHATSAPP_CAMPAIGN_LOYALTY_MILESTONE_CONTENT_SID'),
+    } as Partial<Record<NotificationEventKey | string, string>>;
     const configuredCallback = config.get<string>('TWILIO_STATUS_CALLBACK_URL')?.trim() || undefined;
     this.statusCallbackUrl = publicUrlOrUndefined(configuredCallback);
     if (configuredCallback && !this.statusCallbackUrl) {

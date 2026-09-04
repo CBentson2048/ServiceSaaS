@@ -4,6 +4,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { CommunicationPreference } from '@sheer/domain';
 import { CommunicationSettingsService } from './communication-settings.service';
 import { resolveChannelPlan, type ChannelPlan, type DeliveryChannel } from './channel-policy';
+import { WhatsAppTemplateConfig } from './whatsapp-template.config';
 import {
   NOTIFICATION_EVENT_COLUMNS,
   type MessageClass,
@@ -109,6 +110,7 @@ export class MessagingService {
     private readonly subjects: NotificationSubjectRegistry,
     private readonly settingsService: CommunicationSettingsService,
     private readonly optOuts: OptOutService,
+    private readonly whatsappTemplates: WhatsAppTemplateConfig,
   ) {
     const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
@@ -141,7 +143,7 @@ export class MessagingService {
     const blocked = await subject.precheck(now, 'enqueue');
     if (blocked) return { status: 'skipped', reason: blocked.reason };
 
-    const plan = await this.resolvePlan(subject);
+    const plan = await this.resolvePlan(subject, request.eventKey);
     if (!plan.deliverable) return { status: 'skipped', reason: plan.skipReason };
 
     const outcome = await this.enqueueOnChannel({
@@ -201,7 +203,7 @@ export class MessagingService {
    * the client's recorded opt-outs removed. The one place opt-out enters channel selection, so
    * reminders, nudges, campaigns and fallbacks all honour it identically.
    */
-  async resolvePlan(subject: NotificationSubject): Promise<ChannelPlan> {
+  async resolvePlan(subject: NotificationSubject, eventKey?: string): Promise<ChannelPlan> {
     const settings = await this.settingsService.getForLocation(subject.businessId, subject.locationId);
     const optOuts = await this.optOuts.channelsFor(subject.businessId, subject.clientProfileId);
 
@@ -214,7 +216,32 @@ export class MessagingService {
     return resolveChannelPlan(settings, subject.preference, {
       ...subject.contact(),
       optedOutChannels: optOuts.channels,
+      unsupportedChannels: this.unsupportedChannelsFor(subject, eventKey),
     });
+  }
+
+  /**
+   * Channels that cannot carry THIS message as a matter of provider capability.
+   *
+   * PROACTIVE WHATSAPP MARKETING NEEDS AN APPROVED TEMPLATE. A business-initiated
+   * WhatsApp message outside an open conversation window is only accepted
+   * against one, so sending free-form would be rejected by the provider — and
+   * deliberately attempting it is not something to do on purpose. With no
+   * approved template configured for the event, WhatsApp is simply not a
+   * capable channel for it, and the canonical WhatsApp → SMS → Email chain
+   * falls through to the next permitted one on its own.
+   *
+   * Transactional messages are untouched: they render from the approved booking
+   * templates already, and a reminder must not stop going out because a
+   * marketing template is missing.
+   */
+  private unsupportedChannelsFor(
+    subject: NotificationSubject,
+    eventKey?: string,
+  ): DeliveryChannel[] {
+    if (subject.messageClass !== 'marketing') return [];
+    if (!eventKey) return ['whatsapp'];
+    return this.whatsappTemplates.contentSidFor(eventKey) ? [] : ['whatsapp'];
   }
 
   /**

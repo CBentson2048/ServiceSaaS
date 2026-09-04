@@ -64,7 +64,7 @@ export class NotificationEscalationService {
     const blocked = await subject.precheck(now, 'dispatch');
     if (blocked) return null;
 
-    const plan = await this.messaging.resolvePlan(subject);
+    const plan = await this.messaging.resolvePlan(subject, row.event_key);
     return this.escalateWithSubject(row, subject, plan, failedChannel, reason, now);
   }
 
