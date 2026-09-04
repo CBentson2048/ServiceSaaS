@@ -413,21 +413,27 @@ export function promotionDedupeKey(campaignId: string, clientId: string): string
 }
 
 /**
- * Rebooking: one message per client per REBOOKING OPPORTUNITY.
+ * Rebooking: one message per client per REBOOKING CYCLE.
  *
- * The opportunity is identified by the client's canonical expected-return date
- * (`ClientLapseResult.expectedNextVisitAt`, derived from their own cadence and
- * their last visit on the basis). While a client stays overdue, that date does
- * not move, so a daily evaluator sends once and then never again for that cycle.
- * When they finally come in, their next expected return is a new date and a new
- * opportunity — which is exactly the cycle boundary Wrike section 10 asks for.
+ * THE CYCLE IS THE CLIENT'S LAST COMPLETED VISIT (salon-local date). That is
+ * genuine lifecycle state: it moves when, and only when, the client actually
+ * comes in — which is precisely the boundary Wrike section 10 asks for, "a new
+ * completed visit starts a new rebooking cycle".
+ *
+ * IT IS DELIBERATELY NOT THE EXPECTED-RETURN DATE. That date is
+ * `lastVisit + usualIntervalDays`, and `usualIntervalDays` can come from the
+ * salon-configured per-service rebooking interval (0062) or shift as the
+ * client's median cadence is recomputed. Keying on it meant an owner editing a
+ * retention setting silently minted a NEW identity for a client who had already
+ * been nudged this cycle, and messaged them again — the defect this fixes.
+ * Settings changes now move who QUALIFIES, never who has already been contacted.
  */
 export function rebookingDedupeKey(
   campaignId: string,
   clientId: string,
-  expectedReturnDate: string,
+  lastCompletedVisitDate: string,
 ): string {
-  return `${KEY_PREFIX}:${campaignId}:rebooking:${clientId}:${expectedReturnDate}`;
+  return `${KEY_PREFIX}:${campaignId}:rebooking:${clientId}:${lastCompletedVisitDate}`;
 }
 
 /** The `event_key` written to `comms.notification_events` / `message_logs.message_type`. */
@@ -508,16 +514,100 @@ export function birthdaySendMatch(
  * durable `comms.campaign_runs` ledger, not from memory, so a restart or a
  * second API instance cannot re-run a completed day.
  */
+/**
+ * The approved proactive-marketing send window, in SALON-LOCAL hours
+ * (Week 7, approved by Luke): 09:00 up to but not including 19:00.
+ *
+ * MARKETING ONLY. Confirmations, reminders and operational alerts are
+ * transactional and are deliberately outside this rule — a client with an 08:00
+ * appointment still gets their reminder, and a no-show alert still reaches the
+ * desk at 20:00. Nothing in this module is consulted on those paths.
+ */
+export const CAMPAIGN_MARKETING_WINDOW = { startHour: 9, endHour: 19 } as const;
+
+/** True when a salon-local hour may carry a proactive marketing message. */
+export function isWithinMarketingWindow(localHour: number): boolean {
+  return (
+    localHour >= CAMPAIGN_MARKETING_WINDOW.startHour && localHour < CAMPAIGN_MARKETING_WINDOW.endHour
+  );
+}
+
+/**
+ * The hour a campaign actually sends at, once the window is applied.
+ *
+ * The configured hour is a preference; the window is the rule. A campaign set
+ * earlier than the window waits for it to open. One set at or after it closes
+ * cannot send that evening, so it takes the first slot of a window instead —
+ * never "never", which is what an unclamped comparison would produce for a
+ * campaign configured at 20:00.
+ */
+export function effectiveCampaignSendHour(sendAtLocalHour: number): number {
+  if (sendAtLocalHour < CAMPAIGN_MARKETING_WINDOW.startHour) return CAMPAIGN_MARKETING_WINDOW.startHour;
+  if (sendAtLocalHour >= CAMPAIGN_MARKETING_WINDOW.endHour) return CAMPAIGN_MARKETING_WINDOW.startHour;
+  return sendAtLocalHour;
+}
+
+/**
+ * The next salon-local moment proactive marketing may go out. Inside the window
+ * that is now; before it, today's opening; after it, tomorrow's.
+ *
+ * Salon-local by construction — the caller resolves "now" in the salon's own
+ * timezone, so DST is already handled by that conversion and never by arithmetic
+ * on hours here.
+ */
+export function nextMarketingWindowOpening(
+  todayLocalDate: string,
+  localHour: number,
+): { localDate: string; localHour: number } {
+  if (isWithinMarketingWindow(localHour)) return { localDate: todayLocalDate, localHour };
+  if (localHour < CAMPAIGN_MARKETING_WINDOW.startHour) {
+    return { localDate: todayLocalDate, localHour: CAMPAIGN_MARKETING_WINDOW.startHour };
+  }
+  return { localDate: addLocalDays(todayLocalDate, 1), localHour: CAMPAIGN_MARKETING_WINDOW.startHour };
+}
+
 export function shouldEvaluateToday(input: {
   status: CampaignStatus;
   todayLocalDate: string;
   localHour: number;
   sendAtLocalHour: number;
   lastRunLocalDate: string | null;
+  /**
+   * False when an execution stopped on the per-run recipient bound with
+   * candidates still waiting (0111). That run is resumed on the next tick inside
+   * the window — including the next DAY's window, on its own original
+   * salon-local date, so one logical execution survives the boundary.
+   * Undefined/null when there is no unfinished run.
+   */
+  lastRunAudienceExhausted?: boolean | null;
+  /**
+   * Salon-local date an owner's "Run now" is queued for (0111). When it is
+   * today and the window is open, the campaign runs regardless of its
+   * configured hour.
+   */
+  runNowRequestedLocalDate?: string | null;
 }): boolean {
   if (!EVALUATABLE_CAMPAIGN_STATUSES.includes(input.status)) return false;
-  if (input.lastRunLocalDate === input.todayLocalDate) return false;
-  return input.localHour >= input.sendAtLocalHour;
+
+  // The window is the outer rule: nothing proactive leaves the building outside
+  // it, not a scheduled run, not a continuation, not a queued "Run now".
+  if (!isWithinMarketingWindow(input.localHour)) return false;
+
+  // AN UNFINISHED EXECUTION IS FINISHED FIRST, whatever salon-local date it
+  // belongs to. The window PAUSES a run; it must not abandon it. Resuming the
+  // original run (rather than letting the next day's fresh evaluation stand in
+  // for it) is what keeps a promotion whose date window closed overnight, or a
+  // manual Run now, from silently dropping the recipients it had left.
+  if (input.lastRunAudienceExhausted === false) return true;
+
+  if (input.lastRunLocalDate === input.todayLocalDate) {
+    // Today's run finished its audience. Nothing more until tomorrow.
+    return false;
+  }
+
+  if (input.runNowRequestedLocalDate === input.todayLocalDate) return true;
+
+  return input.localHour >= effectiveCampaignSendHour(input.sendAtLocalHour);
 }
 
 /**

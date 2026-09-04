@@ -73,15 +73,27 @@ describe('send identity', () => {
     expect(promotionDedupeKey(CAMPAIGN, CLIENT)).toBe(promotionDedupeKey(CAMPAIGN, CLIENT));
   });
 
-  it('keys a rebooking nudge on the rebooking OPPORTUNITY, not the day', () => {
-    // While a client stays overdue their expected return does not move, so a
-    // daily evaluator computes the same key every day and sends once.
-    const day1 = rebookingDedupeKey(CAMPAIGN, CLIENT, '2026-08-01');
-    const day2 = rebookingDedupeKey(CAMPAIGN, CLIENT, '2026-08-01');
-    expect(day2).toBe(day1);
+  it('keys a rebooking nudge on the CYCLE — the last completed visit', () => {
+    // While a client stays away their last visit does not move, so a daily
+    // evaluator computes the same key every day and sends once.
+    const cycle = rebookingDedupeKey(CAMPAIGN, CLIENT, '2026-08-01');
+    expect(rebookingDedupeKey(CAMPAIGN, CLIENT, '2026-08-01')).toBe(cycle);
 
-    // Once they come in, their next expected return is a NEW opportunity.
-    expect(rebookingDedupeKey(CAMPAIGN, CLIENT, '2026-09-12')).not.toBe(day1);
+    // Once they come in, that visit is a NEW cycle and they may be nudged again.
+    expect(rebookingDedupeKey(CAMPAIGN, CLIENT, '2026-09-12')).not.toBe(cycle);
+  });
+
+  it('does not re-arm a contacted client when a retention setting changes', () => {
+    // The defect: the identity used to be `lastVisit + usualIntervalDays`, and
+    // `usualIntervalDays` can come from the salon-configured per-service
+    // rebooking interval. Editing that setting minted a new identity for a
+    // client already nudged this cycle. The cycle anchor is settings-free, so
+    // every interval below yields the SAME key.
+    const anchor = '2026-08-01';
+    const keys = new Set(
+      [28, 42, 56, 90].map(() => rebookingDedupeKey(CAMPAIGN, CLIENT, anchor)),
+    );
+    expect(keys.size).toBe(1);
   });
 
   it('never includes the message text, so editing the wording re-targets nobody', () => {
@@ -221,7 +233,50 @@ describe('shouldEvaluateToday', () => {
 
   it('runs once the salon-local send hour has arrived', () => {
     expect(shouldEvaluateToday(base)).toBe(true);
-    expect(shouldEvaluateToday({ ...base, localHour: 23 })).toBe(true);
+    expect(shouldEvaluateToday({ ...base, localHour: 18 })).toBe(true);
+  });
+
+  // Week 7 (0111): 09:00-19:00 salon-local, proactive marketing only.
+  it('never sends outside the salon-local marketing window', () => {
+    for (const localHour of [0, 6, 8, 19, 20, 23]) {
+      expect(shouldEvaluateToday({ ...base, localHour, sendAtLocalHour: 9 })).toBe(false);
+    }
+    for (const localHour of [9, 12, 18]) {
+      expect(shouldEvaluateToday({ ...base, localHour, sendAtLocalHour: 9 })).toBe(true);
+    }
+  });
+
+  it('brings a campaign configured outside the window to the first slot inside it', () => {
+    // Configured 08:00 — waits for the window to open, then runs.
+    expect(shouldEvaluateToday({ ...base, sendAtLocalHour: 8, localHour: 8 })).toBe(false);
+    expect(shouldEvaluateToday({ ...base, sendAtLocalHour: 8, localHour: 9 })).toBe(true);
+    // Configured 20:00 — cannot send that evening, so it takes 09:00 rather
+    // than never running at all.
+    expect(shouldEvaluateToday({ ...base, sendAtLocalHour: 20, localHour: 20 })).toBe(false);
+    expect(shouldEvaluateToday({ ...base, sendAtLocalHour: 20, localHour: 9 })).toBe(true);
+  });
+
+  it('continues the same day when the previous run stopped on the batch bound', () => {
+    const ranToday = { ...base, lastRunLocalDate: '2026-09-01' };
+    // Finished its audience: nothing more today.
+    expect(shouldEvaluateToday({ ...ranToday, lastRunAudienceExhausted: true })).toBe(false);
+    // Stopped on the bound: continue on this tick.
+    expect(shouldEvaluateToday({ ...ranToday, lastRunAudienceExhausted: false })).toBe(true);
+    // ...but never outside the window — it resumes when the window reopens.
+    expect(
+      shouldEvaluateToday({ ...ranToday, lastRunAudienceExhausted: false, localHour: 19 }),
+    ).toBe(false);
+  });
+
+  it('honours a queued Run now regardless of the configured hour, inside the window', () => {
+    const queued = { ...base, sendAtLocalHour: 17, runNowRequestedLocalDate: '2026-09-01' };
+    expect(shouldEvaluateToday({ ...queued, localHour: 9 })).toBe(true);
+    // Still never outside the window.
+    expect(shouldEvaluateToday({ ...queued, localHour: 8 })).toBe(false);
+    // A request queued for another date does not fire today.
+    expect(
+      shouldEvaluateToday({ ...queued, localHour: 9, runNowRequestedLocalDate: '2026-09-02' }),
+    ).toBe(false);
   });
 
   it('waits until the send hour', () => {

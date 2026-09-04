@@ -88,6 +88,7 @@ function campaign(overrides: Partial<CampaignRow> = {}): CampaignRow {
     last_evaluated_at: null,
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
+    run_now_requested_local_date: null,
     timezone: 'Europe/London',
     ...overrides,
   };
@@ -163,6 +164,52 @@ describe('rebooking audience', () => {
     expect(candidates).toHaveLength(1);
     expect(candidates[0].clientId).toBe('jane');
     expect(candidates[0].matchReason).toContain('overdue');
+  });
+
+  // Wrike section 10 / Week 7: the cycle is the client's last completed visit,
+  // so a settings change moves who QUALIFIES but never re-arms someone already
+  // contacted this cycle.
+  it('keys the nudge on the last completed visit, not on a mutable interval', async () => {
+    const keyFor = async (intervalDays: number | null) => {
+      const row = historyRow({ clientId: 'jane', daysAgo: 70, today: TODAY });
+      (row as Record<string, unknown>)['service_rebooking_interval_days'] = intervalDays;
+      const { service } = build({
+        rpc: { 'crm.client_service_history': [row], 'crm.client_next_bookings': [] },
+      });
+      const { candidates } = await service.resolveCandidates(campaign(), TODAY);
+      return candidates[0]?.dedupeKey;
+    };
+
+    // The salon edits the per-service rebooking interval. Same client, same
+    // visit history, same cycle — so the same send identity, and no second
+    // message.
+    const before = await keyFor(42);
+    const after = await keyFor(21);
+    expect(before).toBeDefined();
+    expect(after).toBe(before);
+    // And the identity names the visit that opened the cycle.
+    expect(before).toContain(addDays(TODAY, -70));
+  });
+
+  it('starts a NEW cycle once the client actually comes in', async () => {
+    const keyFor = async (daysAgo: number) => {
+      const { service } = build({
+        rpc: {
+          'crm.client_service_history': [historyRow({ clientId: 'jane', daysAgo, today: TODAY })],
+          'crm.client_next_bookings': [],
+        },
+      });
+      const { candidates } = await service.resolveCandidates(campaign(), TODAY);
+      return candidates[0]?.dedupeKey;
+    };
+
+    const firstCycle = await keyFor(70);
+    // They visit, and later fall overdue again: a different last visit, so a
+    // different cycle and a message they may legitimately receive.
+    const secondCycle = await keyFor(120);
+    expect(firstCycle).toBeDefined();
+    expect(secondCycle).toBeDefined();
+    expect(secondCycle).not.toBe(firstCycle);
   });
 
   it('EXCLUDES a client who has already rebooked', async () => {

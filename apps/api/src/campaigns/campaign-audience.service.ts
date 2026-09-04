@@ -224,10 +224,15 @@ export class CampaignAudienceService {
       if (!targets.has(result.status as 'lapsed' | 'at_risk')) continue;
       if (result.overdueDays < config.minOverdueDays) continue;
       if (config.serviceCategoryId && result.serviceCategoryId !== config.serviceCategoryId) continue;
-      // No expected return means no opportunity to key on. Skipping is the only
-      // honest option — a fabricated key would let the same client be messaged
-      // again tomorrow under a different one.
+      // No expected return means no opportunity to act on. Skipping is the only
+      // honest option — a fabricated one would let the same client be messaged
+      // again tomorrow.
       if (!result.expectedNextVisitAt) continue;
+      // ...and no completed visit means no CYCLE to key on. The cycle identity
+      // is the last completed visit, never the expected-return date, so an owner
+      // editing a retention or rebooking-interval setting cannot re-arm someone
+      // who has already been nudged this cycle.
+      if (!result.lastCompletedVisitDate) continue;
 
       candidates.push({
         clientId: row.client_profile_id,
@@ -237,7 +242,7 @@ export class CampaignAudienceService {
         phone: row.phone,
         marketingOptIn: row.marketing_opt_in === true,
         primaryLocationId: row.primary_location_id,
-        dedupeKey: rebookingDedupeKey(campaign.id, row.client_profile_id, result.expectedNextVisitAt),
+        dedupeKey: rebookingDedupeKey(campaign.id, row.client_profile_id, result.lastCompletedVisitDate),
         matchReason:
           result.status === 'lapsed'
             ? `${result.overdueDays} days overdue (usually returns every ${result.usualIntervalDays} days)`

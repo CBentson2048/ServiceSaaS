@@ -20,7 +20,10 @@ import type {
   CampaignType,
 } from '@sheer/domain';
 import {
+  CAMPAIGN_MARKETING_WINDOW,
   DEFAULT_CAMPAIGN_SEND_HOUR,
+  isWithinMarketingWindow,
+  nextMarketingWindowOpening,
   userHasPermission,
   userHasRole,
   validateCampaignConfig,
@@ -407,7 +410,40 @@ export class CampaignsService {
       throw new BadRequestException('Only an active campaign can be run — enable it first');
     }
 
-    const { localDate } = salonNow(campaign.timezone);
+    const { localDate, localHour } = salonNow(campaign.timezone);
+
+    // THE MARKETING WINDOW (0111). The audience is evaluated immediately either
+    // way, so the owner sees who this would reach right now — but proactive
+    // marketing only LEAVES inside 09:00-19:00 salon-local. Outside it the
+    // request is queued against the salon-local date whose window opens next,
+    // and the first tick in that window runs it regardless of the configured
+    // send hour. Pressing Run now twice queues once: the stored value is a date.
+    if (!isWithinMarketingWindow(localHour)) {
+      const opening = nextMarketingWindowOpening(localDate, localHour);
+      const preview = await this.evaluator.preview(campaign);
+      await this.queueRunNow(campaign.id, opening.localDate);
+      await this.audit.record(actor, {
+        action: 'campaign.run_queued',
+        entityType: 'campaign',
+        entityId: campaignId,
+        locationId: campaign.location_id,
+        metadata: {
+          queued_for_local_date: opening.localDate,
+          queued_for_local_hour: opening.localHour,
+          timezone: campaign.timezone,
+          eligible_at_request: preview.eligibleCount,
+        },
+      });
+      return {
+        run: null,
+        message:
+          `Outside the ${String(CAMPAIGN_MARKETING_WINDOW.startHour).padStart(2, '0')}:00-` +
+          `${String(CAMPAIGN_MARKETING_WINDOW.endHour).padStart(2, '0')}:00 marketing window, so nothing has been sent. ` +
+          `${preview.eligibleCount} client${preview.eligibleCount === 1 ? '' : 's'} would receive this; ` +
+          `it will go out at ${String(opening.localHour).padStart(2, '0')}:00 on ${opening.localDate} (${campaign.timezone}).`,
+      };
+    }
+
     try {
       const outcome = await this.evaluator.runCampaign(campaign, localDate);
       if (!outcome) {
@@ -432,6 +468,19 @@ export class CampaignsService {
     } catch (err) {
       this.logger.error(`run campaign ${campaignId} failed: ${(err as Error).message}`);
       throw new InternalServerErrorException('The campaign run could not be completed');
+    }
+  }
+
+  /** Durable record of an owner's out-of-window Run now. Idempotent on the date. */
+  private async queueRunNow(campaignId: string, localDate: string): Promise<void> {
+    const { error } = await this.admin
+      .schema('comms')
+      .from('campaigns')
+      .update({ run_now_requested_local_date: localDate })
+      .eq('id', campaignId);
+    if (error) {
+      this.logger.error(`queue run-now for ${campaignId} failed: ${error.message}`);
+      throw new InternalServerErrorException('The campaign run could not be queued');
     }
   }
 

@@ -125,11 +125,19 @@ function makeBackend() {
         return { data: { id: 'x', ...payload }, error: null };
       }
       if (verb === 'update') {
+        // PostgREST returns the UPDATED rows when the caller adds `.select()`,
+        // and an update whose filters match nothing returns none — which is how
+        // the continuation claim (0111) tells "I own this run" from "someone
+        // else already re-opened it".
+        const updated: Array<Record<string, unknown>> = [];
         for (const match of rows) {
           const live = tableRows(table).find((r) => r['id'] === match['id']);
-          if (live) Object.assign(live, payload);
+          if (live) {
+            Object.assign(live, payload);
+            updated.push({ ...live });
+          }
         }
-        return { data: null, error: null };
+        return { data: updated[0] ?? null, error: null };
       }
       return { data: null, error: null };
     };
@@ -219,6 +227,7 @@ function campaign(overrides: Partial<CampaignRow> = {}): CampaignRow {
     last_evaluated_at: null,
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
+    run_now_requested_local_date: null,
     timezone: 'Europe/London',
     ...overrides,
   };
@@ -243,6 +252,7 @@ function build(input: {
   candidates?: CampaignCandidate[];
   sendResult?: SendMessageResult | ((n: number) => SendMessageResult);
   resolveThrows?: Error;
+  maxRecipientsPerRun?: number;
 } = {}) {
   const backend = makeBackend();
   const sends: Array<Record<string, unknown>> = [];
@@ -266,7 +276,13 @@ function build(input: {
 
   const config = {
     getOrThrow: () => 'x',
-    get: (key: string) => (key === 'CORS_ORIGINS' ? 'https://app.example' : undefined),
+    get: (key: string) => {
+      if (key === 'CORS_ORIGINS') return 'https://app.example';
+      // Lets a test shrink the per-run recipient bound so continuation can be
+      // exercised without seeding 500 candidates.
+      if (key === 'CAMPAIGNS_MAX_RECIPIENTS_PER_RUN') return input.maxRecipientsPerRun;
+      return undefined;
+    },
   } as unknown as ConfigService;
 
   return {
@@ -708,5 +724,137 @@ describe('batching', () => {
     await service.runCampaign(campaign(), '2026-09-02');
     expect(sends).toHaveLength(4);
     expect(backend.recipients.filter((r) => r['status'] === 'queued')).toHaveLength(4);
+  });
+
+  // 0111: the remainder must not wait for tomorrow.
+  it('continues the SAME salon-local day until the audience is finished', async () => {
+    const many = Array.from({ length: 5 }, (_, i) =>
+      candidate({ clientId: `c${i}`, dedupeKey: `k-${i}` }),
+    );
+    const { service, backend, sends } = build({ candidates: many, maxRecipientsPerRun: 2 });
+
+    const first = await service.runCampaign(campaign(), TODAY);
+    expect(sends).toHaveLength(2);
+    // The run says plainly that it did not finish.
+    expect(first?.audienceExhausted).toBe(false);
+    expect(backend.runs).toHaveLength(1);
+    expect(backend.runs[0]['audience_exhausted']).toBe(false);
+    expect(backend.runs[0]['status']).toBe('partial');
+
+    // A later tick on the SAME date re-opens that run rather than being told
+    // the day is already owned.
+    const second = await service.runCampaign(campaign(), TODAY);
+    expect(second).not.toBeNull();
+    expect(sends).toHaveLength(4);
+    expect(backend.runs).toHaveLength(1); // still one run for the day
+
+    const third = await service.runCampaign(campaign(), TODAY);
+    expect(sends).toHaveLength(5);
+    expect(third?.audienceExhausted).not.toBe(false);
+    expect(backend.runs[0]['audience_exhausted']).toBe(true);
+    expect(backend.runs[0]['status']).toBe('completed');
+
+    // Nobody was offered twice, across all three passes.
+    const keys = sends.map((s) => (s as { dedupeKey?: string }).dedupeKey);
+    expect(new Set(keys).size).toBe(5);
+    expect(backend.recipients.filter((r) => r['status'] === 'queued')).toHaveLength(5);
+  });
+
+  it('carries an audience past the default 500 bound without resending anyone', async () => {
+    const many = Array.from({ length: 600 }, (_, i) =>
+      candidate({ clientId: `c${i}`, dedupeKey: `k-${i}` }),
+    );
+    const { service, sends } = build({ candidates: many });
+
+    const first = await service.runCampaign(campaign(), TODAY);
+    expect(sends).toHaveLength(500); // the configured bound
+    expect(first?.audienceExhausted).toBe(false);
+
+    const second = await service.runCampaign(campaign(), TODAY);
+    expect(sends).toHaveLength(600);
+    expect(second?.audienceExhausted).not.toBe(false);
+
+    const keys = sends.map((s) => (s as { dedupeKey?: string }).dedupeKey);
+    expect(new Set(keys).size).toBe(600);
+  });
+
+  // Week 7 edge: the window closing must PAUSE an execution, not abandon it.
+  // Driven through evaluateIfDue (the scheduler's own decision path) with a
+  // pinned clock, because the whole question is what the next window does.
+  it('pauses at window close and resumes the SAME execution at the next opening', async () => {
+    const many = Array.from({ length: 700 }, (_, i) =>
+      candidate({ clientId: `c${i}`, dedupeKey: `k-${i}` }),
+    );
+    // The audience is only resolvable for the run's OWN date: a promotion whose
+    // date window closed overnight finds nobody on 2 September. If continuation
+    // silently became a fresh next-day evaluation, the last 200 would vanish.
+    // One of the recipients still owed a message withdraws consent overnight.
+    // The resume re-resolves the audience, so the fresh read carries that.
+    const afterOptOut = many.map((c, i) =>
+      i === 600 ? { ...c, marketingOptIn: false } : c,
+    );
+    let resolveCount = 0;
+    const { service, backend, sends, audience } = build({
+      candidates: [],
+      maxRecipientsPerRun: 500,
+    });
+    (audience.resolveCandidates as jest.Mock).mockImplementation(
+      async (_campaign: unknown, localDate: string) => {
+        resolveCount += 1;
+        if (localDate !== '2026-09-01') return { candidates: [], truncated: false };
+        return { candidates: resolveCount === 1 ? many : afterOptOut, truncated: false };
+      },
+    );
+    const due = (c: CampaignRow) =>
+      (service as unknown as { evaluateIfDue: (c: CampaignRow) => Promise<void> }).evaluateIfDue(c);
+
+    try {
+      // 18:00 Europe/London, 1 Sept — inside the window.
+      jest.useFakeTimers().setSystemTime(new Date('2026-09-01T17:00:00.000Z'));
+      await due(campaign());
+      expect(sends).toHaveLength(500);
+      expect(backend.runs).toHaveLength(1);
+      expect(backend.runs[0]['audience_exhausted']).toBe(false);
+
+      // 19:30 the same evening — the window has closed. Nothing moves.
+      jest.useFakeTimers().setSystemTime(new Date('2026-09-01T18:30:00.000Z'));
+      await due(campaign());
+      expect(sends).toHaveLength(500);
+      expect(backend.runs).toHaveLength(1);
+
+      // 09:00, 2 Sept — the next permitted window resumes the SAME run.
+      jest.useFakeTimers().setSystemTime(new Date('2026-09-02T08:00:00.000Z'));
+      await due(campaign());
+
+      // One logical execution, finished: still one run row, no second one.
+      expect(backend.runs).toHaveLength(1);
+      expect(backend.runs[0]['run_local_date']).toBe('2026-09-01');
+      expect(backend.runs[0]['audience_exhausted']).toBe(true);
+      // Re-resolved for its OWN date, never for 2 September.
+      const dates = (audience.resolveCandidates as jest.Mock).mock.calls.map((c) => c[1]);
+      expect(new Set(dates)).toEqual(new Set(['2026-09-01']));
+      // The remainder went out, exactly once each — MINUS the client who
+      // withdrew consent overnight, who is suppressed rather than sent.
+      expect(sends).toHaveLength(699);
+      expect(new Set(sends.map((x) => (x as { dedupeKey?: string }).dedupeKey)).size).toBe(699);
+      expect(sends.some((x) => (x as { dedupeKey?: string }).dedupeKey === 'k-600')).toBe(false);
+      expect(backend.recipients.filter((r) => r['status'] === 'queued')).toHaveLength(699);
+      // ...and the run's own metrics describe the whole execution, not the last pass.
+      expect(backend.runs[0]['candidate_count']).toBe(700);
+      expect(backend.runs[0]['queued_count']).toBe(699);
+      expect(backend.runs[0]['suppressed_count']).toBe(1);
+      expect(backend.runs[0]['status']).toBe('completed');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('does not re-open a run that finished its audience', async () => {
+    const { service, backend } = build({ candidates: [candidate()] });
+    await service.runCampaign(campaign(), TODAY);
+    expect(backend.runs[0]['audience_exhausted']).toBe(true);
+
+    // A second pass on a finished day is refused — the day is owned and done.
+    expect(await service.runCampaign(campaign(), TODAY)).toBeNull();
   });
 });

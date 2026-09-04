@@ -76,6 +76,20 @@ insert into core.client_profiles
  ('ca000000-0000-0000-0000-0000000000d3','ca000000-0000-0000-0000-000000000001','ca000000-0000-0000-0000-0000000000a2','Mia','Nodob','mia@ca.example','+447700900103',false,null),
  ('ca000000-0000-0000-0000-0000000000d4','ca000000-0000-0000-0000-000000000002','ca000000-0000-0000-0000-0000000000a3','Rhona','Rival','rhona@ca.example','+447700900104',true,'1990-07-14');
 
+-- Deterministic salon-local day anchor for the fixtures below: `p_days_ago`
+-- days before today's Europe/London date, at local hour `p_hour`. Built as a
+-- local wall-clock timestamp and converted through the zone, so it is immune to
+-- the time of day the suite runs and to BST/GMT transitions.
+create or replace function pg_temp.salon_local_day_at(p_days_ago integer, p_hour integer)
+returns timestamptz
+language sql
+stable
+as $$
+  select ((date_trunc('day', now() at time zone 'Europe/London')
+           - (p_days_ago || ' days')::interval
+           + (p_hour || ' hours')::interval) at time zone 'Europe/London')
+$$;
+
 create temporary table probe_results (case_name text primary key, result text) on commit drop;
 
 -- ---------------------------------------------------------------------------
@@ -94,6 +108,14 @@ declare
   vid uuid;
 begin
   -- Jane: 6 attended visits on 6 distinct dates.
+  --
+  -- ANCHORED TO THE SALON-LOCAL DAY, not to `now()`. Seeding at `now() - N days`
+  -- and then adding hours for the second same-day visit made the fixture depend
+  -- on the time of day the suite happened to run: after 21:00 London the
+  -- "+3 hours" row crossed local midnight, became a SEVENTH distinct visit date
+  -- and case 28 failed. Every timestamp below is built as a LOCAL wall-clock
+  -- time and converted through Europe/London, so it lands on the intended local
+  -- date at every hour of the day and on both sides of a BST/GMT change.
   for i in 1..6 loop
     vid := ('ca000000-0000-0000-0000-00000000' || lpad(to_hex(8192 + i), 4, '0'))::uuid;
     insert into booking.visits
@@ -101,21 +123,22 @@ begin
     values
       (vid,'ca000000-0000-0000-0000-000000000001','ca000000-0000-0000-0000-0000000000a1',
        'ca000000-0000-0000-0000-0000000000d1','paid',
-       now() - (i * 42 || ' days')::interval,
-       now() - (i * 42 || ' days')::interval,
-       now() - (i * 42 || ' days')::interval);
+       pg_temp.salon_local_day_at(i * 42, 11),
+       pg_temp.salon_local_day_at(i * 42, 11),
+       pg_temp.salon_local_day_at(i * 42, 11));
   end loop;
 
   -- A SECOND visit on the same salon-local date as the most recent one. Colour
-  -- and a cut on one Tuesday is ONE visit, not two.
+  -- and a cut on one Tuesday is ONE visit, not two. 11:00 and 15:00 are the same
+  -- local day at every hour the suite might run.
   insert into booking.visits
     (id,business_id,location_id,client_profile_id,status,checked_in_at,started_at,completed_at)
   values
     ('ca000000-0000-0000-0000-000000009001','ca000000-0000-0000-0000-000000000001','ca000000-0000-0000-0000-0000000000a1',
      'ca000000-0000-0000-0000-0000000000d1','paid',
-     now() - interval '42 days' + interval '3 hours',
-     now() - interval '42 days' + interval '3 hours',
-     now() - interval '42 days' + interval '3 hours');
+     pg_temp.salon_local_day_at(42, 15),
+     pg_temp.salon_local_day_at(42, 15),
+     pg_temp.salon_local_day_at(42, 15));
 
   -- A cancelled visit. Must not count towards any milestone.
   insert into booking.visits
@@ -495,6 +518,37 @@ select '28_VISIT_COUNT_CANONICAL' as case,
                             'ca000000-0000-0000-0000-000000000001','Europe/London')
                            where client_profile_id='ca000000-0000-0000-0000-0000000000d1'),'null')
                  || ', expected 6' end as result;
+
+-- ===========================================================================
+-- 28b. THE ANCHOR ITSELF IS TIME-OF-DAY AND DST INDEPENDENT.
+--
+--     Case 28 used to fail only when the suite ran at or after 21:00 London,
+--     because the fixture's "same day" second visit was `now() + 3 hours` and
+--     crossed local midnight. This proves the replacement cannot do that: for
+--     EVERY hour of the day, and across both UK clock changes, the 11:00 and
+--     15:00 anchors land on the same salon-local date.
+-- ===========================================================================
+select '28b_DAY_ANCHOR_IS_CLOCK_INDEPENDENT' as case,
+       case when not exists (
+         select 1
+         from generate_series(0, 23) h,
+              (values (timestamptz '2026-03-29 12:00:00+00'),   -- BST starts
+                      (timestamptz '2026-10-25 12:00:00+00'),   -- GMT returns
+                      (timestamptz '2026-09-03 12:00:00+00'))   -- an ordinary day
+                as d(base),
+              lateral (
+                select (date_trunc('day', (d.base + (h || ' hours')::interval) at time zone 'Europe/London')
+                        - interval '42 days') as local_midnight
+              ) anchored
+         where ((anchored.local_midnight + interval '11 hours') at time zone 'Europe/London')
+                 at time zone 'Europe/London' >= (anchored.local_midnight + interval '1 day')
+            or ((anchored.local_midnight + interval '15 hours') at time zone 'Europe/London')
+                 at time zone 'Europe/London' >= (anchored.local_midnight + interval '1 day')
+            or date_trunc('day', ((anchored.local_midnight + interval '11 hours') at time zone 'Europe/London')
+                 at time zone 'Europe/London')
+               <> date_trunc('day', ((anchored.local_midnight + interval '15 hours') at time zone 'Europe/London')
+                 at time zone 'Europe/London')
+       ) then 'PASS' else 'FAIL: an anchored pair split across two local dates' end as result;
 
 -- ===========================================================================
 -- 29. VOIDED BILLS ARE NOT SPEND. Three settled £100 bills and one voided

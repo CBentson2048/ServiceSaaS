@@ -220,6 +220,13 @@ export interface ClientLapseResult {
 
   /** The client's most recent completed visit of ANY service. */
   lastCompletedVisitAt: string | null;
+  /**
+   * Salon-local DATE of that visit. The stable identity of the client's current
+   * rebooking cycle: unlike the expected-return date it depends on nothing an
+   * owner can edit, so changing a retention or interval setting cannot re-arm a
+   * client who has already been contacted this cycle.
+   */
+  lastCompletedVisitDate: string | null;
   /** Null when no interval could be derived. */
   expectedNextVisitAt: string | null;
 
@@ -534,6 +541,7 @@ export function evaluateClientLapse(input: ClientLapseInput): ClientLapseResult 
     historySampleSize: basisVisits.length,
 
     lastCompletedVisitAt: lastVisit?.visitAt ?? null,
+    lastCompletedVisitDate: lastVisit?.visitDate ?? null,
     expectedNextVisitAt: expectedNextVisitDate,
 
     overdueDays,

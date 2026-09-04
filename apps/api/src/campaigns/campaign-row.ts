@@ -25,13 +25,19 @@ export interface CampaignRow {
   last_evaluated_at: string | null;
   created_at: string;
   updated_at: string;
+  /**
+   * Salon-local date an owner's "Run now" is waiting on, when it was pressed
+   * outside the marketing window (0111). Null when there is no pending request.
+   */
+  run_now_requested_local_date: string | null;
   /** Resolved by the caller. Location's own, else the business's. Never UTC. */
   timezone: string;
 }
 
 export const CAMPAIGN_COLUMNS =
   'id,business_id,location_id,campaign_type,name,status,channel,message_template,message_subject,' +
-  'send_at_local_hour,config,created_by_user_profile_id,last_evaluated_at,created_at,updated_at';
+  'send_at_local_hour,config,created_by_user_profile_id,last_evaluated_at,created_at,updated_at,' +
+  'run_now_requested_local_date';
 
 /**
  * The stored config, re-validated against the row's declared type on every read.

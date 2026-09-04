@@ -14,6 +14,8 @@ import {
   campaignPreviewLine,
   narrowCampaignChannel,
   renderCampaignTemplate,
+  CAMPAIGN_MARKETING_WINDOW,
+  isWithinMarketingWindow,
   shouldEvaluateToday,
   type CampaignTemplateValues,
 } from '@sheer/domain';
@@ -146,7 +148,7 @@ export class CampaignEvaluatorService implements OnModuleInit, OnModuleDestroy {
   /** Run one campaign now if its local send hour has arrived and today is unrun. */
   private async evaluateIfDue(campaign: CampaignRow): Promise<void> {
     const { localDate, localHour } = salonNow(campaign.timezone);
-    const lastRun = await this.fetchLastRunDate(campaign.id);
+    const runState = await this.fetchRunState(campaign.id);
 
     if (
       !shouldEvaluateToday({
@@ -154,13 +156,21 @@ export class CampaignEvaluatorService implements OnModuleInit, OnModuleDestroy {
         todayLocalDate: localDate,
         localHour,
         sendAtLocalHour: campaign.send_at_local_hour,
-        lastRunLocalDate: lastRun,
+        lastRunLocalDate: runState.latestRunLocalDate,
+        // 0111: a run that stopped on the batch bound is resumed — on this tick
+        // if the window is still open, otherwise at the next window opening.
+        lastRunAudienceExhausted: runState.unfinishedRunLocalDate === null ? null : false,
+        runNowRequestedLocalDate: campaign.run_now_requested_local_date,
       })
     ) {
       return;
     }
 
-    await this.runCampaign(campaign, localDate);
+    // AN UNFINISHED EXECUTION IS RESUMED ON ITS OWN DATE, not today's. That is
+    // what makes the pause a pause: the audience is re-resolved for the date the
+    // run belongs to, so a promotion whose window has since closed still reaches
+    // the recipients it had left, and everything already claimed is skipped.
+    await this.runCampaign(campaign, runState.unfinishedRunLocalDate ?? localDate);
   }
 
   // -------------------------------------------------------------------------
@@ -177,24 +187,28 @@ export class CampaignEvaluatorService implements OnModuleInit, OnModuleDestroy {
    * Returns null when another worker already owns the day.
    */
   async runCampaign(campaign: CampaignRow, localDate: string): Promise<CampaignRunOutcome | null> {
-    const runId = await this.claimRun(campaign, localDate);
-    if (!runId) {
+    const claimed = await this.claimRun(campaign, localDate);
+    if (!claimed) {
       this.logger.debug(`campaign ${campaign.id} run for ${localDate} is already owned elsewhere`);
       return null;
     }
 
     const outcome: CampaignRunOutcome = {
-      runId,
+      runId: claimed.runId,
       candidateCount: 0,
       eligibleCount: 0,
-      queuedCount: 0,
-      suppressedCount: 0,
-      failedCount: 0,
-      suppressionBreakdown: {},
+      // Cumulative across every pass of THIS execution — a resumed run reports
+      // everything it has queued, not just what the last pass added.
+      queuedCount: claimed.resumed?.queuedCount ?? 0,
+      suppressedCount: claimed.resumed?.suppressedCount ?? 0,
+      failedCount: claimed.resumed?.failedCount ?? 0,
+      suppressionBreakdown: claimed.resumed?.suppressionBreakdown ?? {},
     };
 
     try {
       const { candidates } = await this.audience.resolveCandidates(campaign, localDate);
+      // The audience is the same set on every pass, so this is the execution's
+      // size, not a running total.
       outcome.candidateCount = candidates.length;
 
       const values = await this.templateValuesFor(campaign);
@@ -202,9 +216,12 @@ export class CampaignEvaluatorService implements OnModuleInit, OnModuleDestroy {
 
       for (const candidate of candidates) {
         if (worked >= this.maxRecipientsPerRun) {
+          // 0111: the remainder resumes on the NEXT TICK while the salon-local
+          // marketing window is still open, not tomorrow.
+          outcome.audienceExhausted = false;
           this.logger.log(
             `campaign ${campaign.id} reached the ${this.maxRecipientsPerRun}-recipient batch bound; ` +
-              'the remainder resumes on the next run',
+              'the remainder continues on the next tick inside the marketing window',
           );
           break;
         }
@@ -213,7 +230,7 @@ export class CampaignEvaluatorService implements OnModuleInit, OnModuleDestroy {
           // identity was already settled costs nothing and must not consume
           // budget — otherwise a campaign whose first N recipients are already
           // messaged would re-scan them every run and never reach anybody new.
-          if (await this.processCandidate(campaign, runId, candidate, values, outcome)) worked += 1;
+          if (await this.processCandidate(campaign, claimed.runId, candidate, values, outcome)) worked += 1;
         } catch (err) {
           // A single recipient's failure never aborts the run. The claim row is
           // settled as failed, so the identity stays re-offerable next time.
@@ -226,6 +243,10 @@ export class CampaignEvaluatorService implements OnModuleInit, OnModuleDestroy {
       }
 
       await this.completeRun(campaign, outcome, null);
+      // An owner's queued "Run now" is satisfied by the run it triggered.
+      if (campaign.run_now_requested_local_date === localDate) {
+        await this.clearRunNowRequest(campaign.id, localDate);
+      }
       this.logger.log(
         `campaign ${campaign.id} (${campaign.campaign_type}) ${localDate}: ` +
           `${outcome.candidateCount} candidates, ${outcome.queuedCount} queued, ` +
@@ -435,9 +456,21 @@ export class CampaignEvaluatorService implements OnModuleInit, OnModuleDestroy {
   }
 
   private explainWhyItWouldNotRunToday(campaign: CampaignRow, localHour: number): string | null {
+    // Status first: a draft campaign is not sending for a reason that has
+    // nothing to do with the clock, and saying "outside the marketing window"
+    // to an owner who simply has not switched it on would be misleading.
     if (campaign.status === 'draft') return 'This campaign is still a draft, so it does not send.';
     if (campaign.status === 'paused') return 'This campaign is paused.';
     if (campaign.status === 'archived') return 'This campaign is archived.';
+    // Then the window (0111), which outranks the configured hour: a campaign set
+    // for 20:00 is inside its own schedule and still may not send.
+    if (!isWithinMarketingWindow(localHour)) {
+      return (
+        `Marketing goes out between ${String(CAMPAIGN_MARKETING_WINDOW.startHour).padStart(2, '0')}:00 and ` +
+        `${String(CAMPAIGN_MARKETING_WINDOW.endHour).padStart(2, '0')}:00 ${campaign.timezone}; ` +
+        `it is ${String(localHour).padStart(2, '0')}:00 there now.`
+      );
+    }
     if (localHour < campaign.send_at_local_hour) {
       return `Scheduled for ${String(campaign.send_at_local_hour).padStart(2, '0')}:00 ${campaign.timezone}; it is ${String(localHour).padStart(2, '0')}:00 there now.`;
     }
@@ -449,7 +482,7 @@ export class CampaignEvaluatorService implements OnModuleInit, OnModuleDestroy {
   // -------------------------------------------------------------------------
 
   /** Insert the run row. A unique violation means another worker owns the day. */
-  private async claimRun(campaign: CampaignRow, localDate: string): Promise<string | null> {
+  private async claimRun(campaign: CampaignRow, localDate: string): Promise<ClaimedRun | null> {
     const { data, error } = await this.admin
       .schema('comms')
       .from('campaign_runs')
@@ -463,10 +496,54 @@ export class CampaignEvaluatorService implements OnModuleInit, OnModuleDestroy {
       .maybeSingle<{ id: string }>();
 
     if (error) {
-      if (isUniqueViolation(error)) return null;
+      // A run already exists for this salon-local date. That is either another
+      // worker holding it (return null), or THIS campaign's own unfinished run
+      // waiting to be resumed (0111).
+      if (isUniqueViolation(error)) return this.claimUnfinishedRun(campaign, localDate);
       throw new Error(`claim campaign run failed: ${error.message}`);
     }
-    return data?.id ?? null;
+    return data ? { runId: data.id, resumed: null } : null;
+  }
+
+  /**
+   * Re-open today's run when it stopped on the recipient bound.
+   *
+   * The status flip IS the mutual exclusion: `status <> 'running'` in the WHERE
+   * clause means exactly one worker's UPDATE matches, and a second concurrent
+   * tick gets no row back. Nothing is re-sent either way — recipient identity is
+   * claimed per client in `comms.campaign_recipients`, so a continued run simply
+   * finds the already-settled ones and moves past them.
+   */
+  private async claimUnfinishedRun(campaign: CampaignRow, localDate: string): Promise<ClaimedRun | null> {
+    const { data, error } = await this.admin
+      .schema('comms')
+      .from('campaign_runs')
+      .update({ status: 'running', completed_at: null })
+      .eq('campaign_id', campaign.id)
+      .eq('run_local_date', localDate)
+      .eq('audience_exhausted', false)
+      .neq('status', 'running')
+      .select('id,queued_count,suppressed_count,failed_count,suppression_breakdown')
+      .maybeSingle<{
+        id: string;
+        queued_count: number | null;
+        suppressed_count: number | null;
+        failed_count: number | null;
+        suppression_breakdown: Record<string, number> | null;
+      }>();
+    if (error) throw new Error(`continue campaign run failed: ${error.message}`);
+    if (!data) return null;
+    // Carry what this execution has ALREADY done forward, so the row keeps
+    // describing the whole execution rather than only its final pass.
+    return {
+      runId: data.id,
+      resumed: {
+        queuedCount: data.queued_count ?? 0,
+        suppressedCount: data.suppressed_count ?? 0,
+        failedCount: data.failed_count ?? 0,
+        suppressionBreakdown: { ...(data.suppression_breakdown ?? {}) },
+      },
+    };
   }
 
   private async completeRun(
@@ -474,7 +551,14 @@ export class CampaignEvaluatorService implements OnModuleInit, OnModuleDestroy {
     outcome: CampaignRunOutcome,
     errorMessage: string | null,
   ): Promise<void> {
-    const status = errorMessage ? 'failed' : outcome.failedCount > 0 ? 'partial' : 'completed';
+    // A run that stopped on the bound is 'partial' by construction: the day's
+    // audience has not been worked to the end, and `audience_exhausted` is what
+    // the next tick reads to decide whether to continue it.
+    const status = errorMessage
+      ? 'failed'
+      : outcome.failedCount > 0 || outcome.audienceExhausted === false
+        ? 'partial'
+        : 'completed';
     const { error } = await this.admin
       .schema('comms')
       .from('campaign_runs')
@@ -487,6 +571,7 @@ export class CampaignEvaluatorService implements OnModuleInit, OnModuleDestroy {
         suppressed_count: outcome.suppressedCount,
         failed_count: outcome.failedCount,
         suppression_breakdown: outcome.suppressionBreakdown,
+        audience_exhausted: outcome.audienceExhausted !== false,
         error_message: errorMessage?.slice(0, 500) ?? null,
       })
       .eq('id', outcome.runId);
@@ -498,6 +583,16 @@ export class CampaignEvaluatorService implements OnModuleInit, OnModuleDestroy {
       .update({ last_evaluated_at: new Date().toISOString() })
       .eq('id', campaign.id);
     if (stampError) this.logger.error(`stamp campaign ${campaign.id} failed: ${stampError.message}`);
+  }
+
+  private async clearRunNowRequest(campaignId: string, localDate: string): Promise<void> {
+    const { error } = await this.admin
+      .schema('comms')
+      .from('campaigns')
+      .update({ run_now_requested_local_date: null })
+      .eq('id', campaignId)
+      .eq('run_now_requested_local_date', localDate);
+    if (error) this.logger.error(`clear run-now request for ${campaignId} failed: ${error.message}`);
   }
 
   /** Atomic claim. Null means this identity has already had its message. */
@@ -594,17 +689,44 @@ export class CampaignEvaluatorService implements OnModuleInit, OnModuleDestroy {
     return found;
   }
 
-  private async fetchLastRunDate(campaignId: string): Promise<string | null> {
-    const { data, error } = await this.admin
-      .schema('comms')
-      .from('campaign_runs')
-      .select('run_local_date')
-      .eq('campaign_id', campaignId)
-      .order('run_local_date', { ascending: false })
-      .limit(1)
-      .maybeSingle<{ run_local_date: string }>();
-    if (error) throw new Error(`load last campaign run failed: ${error.message}`);
-    return data?.run_local_date ?? null;
+  /**
+   * What this campaign's run history says about what to do next (0111).
+   *
+   * Two separate facts, deliberately:
+   *   latestRunLocalDate     — has it already run for TODAY?
+   *   unfinishedRunLocalDate — is there an execution still owed recipients? It
+   *                            is resumed on ITS OWN date, however many window
+   *                            closures ago it started. Oldest first, so a
+   *                            backlog drains in order.
+   */
+  private async fetchRunState(
+    campaignId: string,
+  ): Promise<{ latestRunLocalDate: string | null; unfinishedRunLocalDate: string | null }> {
+    const [latest, unfinished] = await Promise.all([
+      this.admin
+        .schema('comms')
+        .from('campaign_runs')
+        .select('run_local_date')
+        .eq('campaign_id', campaignId)
+        .order('run_local_date', { ascending: false })
+        .limit(1)
+        .maybeSingle<{ run_local_date: string }>(),
+      this.admin
+        .schema('comms')
+        .from('campaign_runs')
+        .select('run_local_date')
+        .eq('campaign_id', campaignId)
+        .eq('audience_exhausted', false)
+        .order('run_local_date', { ascending: true })
+        .limit(1)
+        .maybeSingle<{ run_local_date: string }>(),
+    ]);
+    if (latest.error) throw new Error(`load last campaign run failed: ${latest.error.message}`);
+    if (unfinished.error) throw new Error(`load unfinished campaign run failed: ${unfinished.error.message}`);
+    return {
+      latestRunLocalDate: latest.data?.run_local_date ?? null,
+      unfinishedRunLocalDate: unfinished.data?.run_local_date ?? null,
+    };
   }
 
   /**
@@ -713,6 +835,17 @@ export class CampaignEvaluatorService implements OnModuleInit, OnModuleDestroy {
   }
 }
 
+/** What a claim yielded: the run to write to, plus what it had already done. */
+interface ClaimedRun {
+  runId: string;
+  resumed: {
+    queuedCount: number;
+    suppressedCount: number;
+    failedCount: number;
+    suppressionBreakdown: Record<string, number>;
+  } | null;
+}
+
 export interface CampaignRunOutcome {
   runId: string;
   candidateCount: number;
@@ -721,6 +854,12 @@ export interface CampaignRunOutcome {
   suppressedCount: number;
   failedCount: number;
   suppressionBreakdown: Record<string, number>;
+  /**
+   * False when the run stopped on the per-run recipient bound with candidates
+   * still waiting (0111). Undefined/true means the day's audience was worked to
+   * the end. Read by the next tick to decide whether to continue.
+   */
+  audienceExhausted?: boolean;
 }
 
 // ---------------------------------------------------------------------------

@@ -439,7 +439,17 @@ describe('manual run', () => {
     expect(evaluator.runCampaign).not.toHaveBeenCalled();
   });
 
+  // The marketing window (0111) makes runNow clock-sensitive, so these pin the
+  // clock rather than inheriting whatever hour CI happens to run at.
+  const INSIDE_WINDOW = new Date('2026-09-01T11:00:00.000Z'); // 12:00 Europe/London
+  const OUTSIDE_WINDOW = new Date('2026-09-01T21:30:00.000Z'); // 22:30 Europe/London
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it('goes through the SAME run path the scheduler uses', async () => {
+    jest.useFakeTimers().setSystemTime(INSIDE_WINDOW);
     const { service, evaluator } = build({
       tables: { campaigns: [campaignRow({ status: 'active' })], campaign_runs: [] },
     });
@@ -449,7 +459,45 @@ describe('manual run', () => {
     expect(result.message).toContain('2 messages queued');
   });
 
+  it('queues a Run now pressed outside the marketing window instead of sending', async () => {
+    jest.useFakeTimers().setSystemTime(OUTSIDE_WINDOW);
+    const { service, evaluator, captured } = build({
+      tables: { campaigns: [campaignRow({ status: 'active' })], campaign_runs: [] },
+    });
+
+    const result = await service.runNow(actor(), CAMPAIGN);
+
+    // Nothing sent...
+    expect(evaluator.runCampaign).not.toHaveBeenCalled();
+    expect(result.run).toBeNull();
+    // ...but the audience WAS evaluated, so the owner sees who it would reach,
+    // and the message names the exact salon-local time it will go.
+    expect(evaluator.preview).toHaveBeenCalledTimes(1);
+    expect(result.message).toContain('09:00 on 2026-09-02');
+    expect(result.message).toContain('marketing window');
+    // Durably queued for the next window opening.
+    const queued = captured.filter((c) => c.table === 'campaigns' && c.verb === 'update');
+    expect(queued).toHaveLength(1);
+    expect(queued[0].payload).toMatchObject({ run_now_requested_local_date: '2026-09-02' });
+  });
+
+  it('queues the SAME date when Run now is pressed twice outside the window', async () => {
+    jest.useFakeTimers().setSystemTime(OUTSIDE_WINDOW);
+    const { service, captured } = build({
+      tables: { campaigns: [campaignRow({ status: 'active' })], campaign_runs: [] },
+    });
+
+    await service.runNow(actor(), CAMPAIGN);
+    await service.runNow(actor(), CAMPAIGN);
+    const queued = captured.filter((c) => c.table === 'campaigns' && c.verb === 'update');
+    expect(queued).toHaveLength(2);
+    for (const write of queued) {
+      expect(write.payload).toMatchObject({ run_now_requested_local_date: '2026-09-02' });
+    }
+  });
+
   it('reports "already evaluated" rather than double-running', async () => {
+    jest.useFakeTimers().setSystemTime(INSIDE_WINDOW);
     const { service, evaluator } = build({
       tables: { campaigns: [campaignRow({ status: 'active' })] },
     });
@@ -461,6 +509,7 @@ describe('manual run', () => {
   });
 
   it('records the run in the audit trail', async () => {
+    jest.useFakeTimers().setSystemTime(INSIDE_WINDOW);
     const { service, audit } = build({
       tables: { campaigns: [campaignRow({ status: 'active' })], campaign_runs: [] },
     });
