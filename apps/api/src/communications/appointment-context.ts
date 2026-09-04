@@ -27,6 +27,55 @@ export interface AppointmentNotificationContext {
   stylistName?: string | null;
 }
 
+/** One `booking.appointment_services` row, as far as message rendering cares. */
+interface AppointmentServiceLineRow {
+  service_name_snapshot: string | null;
+  sequence_no: number | null;
+  /** 0110 provenance: `booked` | `post_checkin_add` | `post_checkin_replace`. */
+  origin: string | null;
+  /** 0110 line status: `cancelled` means taken off the visit after check-in. */
+  status: string | null;
+}
+
+/**
+ * THE SEMANTIC, stated once so every message agrees with it.
+ *
+ * A confirmation or a reminder tells the client WHAT THEY ARE BOOKED FOR. That
+ * is the live booked line set:
+ *
+ *   origin = 'booked'        — what the booking says, at whatever generation the
+ *                              booking editor has most recently left it. A
+ *                              pre-check-in change (Service A swapped for
+ *                              Service B) therefore corrects every message not
+ *                              yet rendered, which is the defect this fixes.
+ *   status <> 'cancelled'    — minus anything taken off the visit.
+ *
+ * Deliberately NOT the performed set. A toner added during the appointment is
+ * `origin = 'post_checkin_add'` and must never appear in a "your appointment is
+ * tomorrow for …" message: by then the client is in the chair, and rewriting a
+ * booking reminder to describe work that happened during the visit would make
+ * the message untrue about the thing it is actually describing.
+ *
+ * `appointments.metadata.service_names` is the creation-time copy. It is never
+ * updated, so it is only a last-resort fallback for a row with no line records
+ * at all — and it is still what an ALREADY-SENT message shows, because sent
+ * copy lives in `comms.message_logs` and is never rewritten.
+ */
+function bookedServiceNames(
+  lines: AppointmentServiceLineRow[],
+  metadata: Record<string, unknown>,
+): string[] {
+  const booked = lines
+    .filter((line) => (line.origin ?? 'booked') === 'booked' && line.status !== 'cancelled')
+    .map((line) => line.service_name_snapshot)
+    .filter((name): name is string => typeof name === 'string' && name.trim().length > 0);
+  if (booked.length > 0) return booked;
+
+  return Array.isArray(metadata['service_names'])
+    ? (metadata['service_names'] as unknown[]).filter((v): v is string => typeof v === 'string')
+    : [];
+}
+
 /** Appointment statuses for which reminders/confirmations must never go out. */
 export const INACTIVE_APPOINTMENT_STATUSES = new Set(['cancelled', 'no_show']);
 
@@ -52,7 +101,7 @@ export async function loadAppointmentContext(
   if (error) throw new Error(`load appointment failed: ${error.message}`);
   if (!appointment) return null;
 
-  const [location, client] = await Promise.all([
+  const [location, client, lines] = await Promise.all([
     admin
       .schema('core')
       .from('locations')
@@ -72,15 +121,23 @@ export async function loadAppointmentContext(
             communication_preference: string | null;
           }>()
       : Promise.resolve({ data: null, error: null }),
+    // THE SERVICES THE CLIENT IS CURRENTLY BOOKED FOR — see the note on
+    // `serviceNames` for exactly what that means and why.
+    admin
+      .schema('booking')
+      .from('appointment_services')
+      .select('service_name_snapshot,sequence_no,origin,status')
+      .eq('appointment_id', appointment.id)
+      .order('sequence_no', { ascending: true })
+      .returns<AppointmentServiceLineRow[]>(),
   ]);
 
   if (location.error) throw new Error(`load location failed: ${location.error.message}`);
   if (client.error) throw new Error(`load client failed: ${client.error.message}`);
+  if (lines.error) throw new Error(`load appointment services failed: ${lines.error.message}`);
 
   const metadata = appointment.metadata ?? {};
-  const serviceNames = Array.isArray(metadata['service_names'])
-    ? (metadata['service_names'] as unknown[]).filter((v): v is string => typeof v === 'string')
-    : [];
+  const serviceNames = bookedServiceNames(lines.data ?? [], metadata);
 
   const preference =
     (appointment.communication_preference as CommunicationPreference | null) ??
