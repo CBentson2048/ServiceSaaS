@@ -369,21 +369,9 @@ export class ZacEvidenceService {
     });
   }
 
-  /**
-   * A remembered rebooking goal, if the user stated one. Read from the already
-   * scope-filtered memory the turn retrieved — this never widens what memory
-   * the actor can see, and private coaching belonging to others cannot reach
-   * here because it is filtered out upstream.
-   */
+  /** @see rebookingGoalFromMemory — kept as a method so the adapters read the same. */
   private rebookingGoalFromMemory(memory: ZacModelMemoryItem[]): number | null {
-    for (const item of memory) {
-      if (!/rebook/i.test(item.summary)) continue;
-      const match = /(\d{1,3})\s?%/.exec(item.summary);
-      if (!match) continue;
-      const value = Number(match[1]);
-      if (Number.isFinite(value) && value > 0 && value <= 100) return value;
-    }
-    return null;
+    return rebookingGoalFromMemory(memory);
   }
 
   private signal(input: {
@@ -423,7 +411,7 @@ export class ZacEvidenceService {
       priorityScore: 0,
       headline: input.headline,
     };
-    signal.priorityScore = scoreSignal(signal);
+    signal.priorityScore = scoreEvidenceSignal(signal);
     return signal;
   }
 
@@ -431,6 +419,27 @@ export class ZacEvidenceService {
   rank(signals: ZacEvidenceSignal[]): ZacEvidenceSignal[] {
     return [...signals].sort((a, b) => b.priorityScore - a.priorityScore);
   }
+}
+
+/**
+ * A remembered rebooking goal, if the user stated one. Read from the already
+ * scope-filtered memory the turn retrieved — this never widens what memory the
+ * actor can see, and private coaching belonging to others cannot reach here
+ * because it is filtered out upstream.
+ *
+ * Exported so the Phase 2 metric-observation layer resolves a user-stated
+ * target through exactly this rule rather than a second regex that drifts from
+ * it.
+ */
+export function rebookingGoalFromMemory(memory: ZacModelMemoryItem[]): number | null {
+  for (const item of memory) {
+    if (!/rebook/i.test(item.summary)) continue;
+    const match = /(\d{1,3})\s?%/.exec(item.summary);
+    if (!match) continue;
+    const value = Number(match[1]);
+    if (Number.isFinite(value) && value > 0 && value <= 100) return value;
+  }
+  return null;
 }
 
 /**
@@ -444,7 +453,7 @@ export class ZacEvidenceService {
  * It orders CANDIDATES. The synthesis still chooses and explains, and may only
  * choose from signals that exist.
  */
-function scoreSignal(signal: ZacEvidenceSignal): number {
+export function scoreEvidenceSignal(signal: ZacEvidenceSignal): number {
   const severityWeight = signal.severity === 'attention' ? 1 : signal.severity === 'watch' ? 0.55 : 0.15;
   const materialityWeight = missesTarget(signal) ? 1.3 : 1;
   const directionWeight = signal.direction === 'declining' ? 1.15 : 1;

@@ -10,7 +10,13 @@ import { ZacCostTelemetryService } from './measurement/zac-cost-telemetry.servic
 import { ZacMeasurementService } from './measurement/zac-measurement.service';
 import { ZacMemoryExtractionService } from './memory/zac-memory-extraction.service';
 import { ZacMemoryService } from './memory/zac-memory.service';
+import { ZacIntelligenceSignalService } from './intelligence/zac-intelligence-signal.service';
+import { ZacMetricObservationService } from './intelligence/zac-metric-observation.service';
+import { ZacSignalEvaluatorRegistry } from './intelligence/zac-signal-evaluator.registry';
+import { ZacSignalPriorityAdapter } from './intelligence/zac-signal-priority.adapter';
+import { ZacSignalReconciler } from './intelligence/zac-signal-reconciler';
 import { ZacConversationStore } from './persistence/zac-conversation.store';
+import { ZacIntelligenceSignalStore } from './persistence/zac-intelligence-signal.store';
 import { ZacMeasurementStore } from './persistence/zac-measurement.store';
 import { ZacMemoryStore } from './persistence/zac-memory.store';
 import { ZacRequestModeClassifierService } from './routing/zac-request-mode-classifier.service';
@@ -69,6 +75,14 @@ import { ZacService } from './zac.service';
     ZacConversationStore,
     ZacMemoryStore,
     ZacMeasurementStore,
+    // Phase 2 Workstream 1 — the intelligence/signal framework. Evaluation is
+    // on demand only: no scheduler, no background scan, no proactive feed.
+    ZacIntelligenceSignalStore,
+    ZacMetricObservationService,
+    ZacSignalEvaluatorRegistry,
+    ZacSignalReconciler,
+    ZacSignalPriorityAdapter,
+    ZacIntelligenceSignalService,
     ZacConversationService,
     ZacMemoryExtractionService,
     ZacMemoryService,
@@ -122,5 +136,8 @@ import { ZacService } from './zac.service';
     },
     ZacService,
   ],
+  // Exported so a later workstream can consume persisted signals without
+  // reaching into ZAC internals. Nothing outside ZacModule injects it today.
+  exports: [ZacIntelligenceSignalService],
 })
 export class ZacModule {}

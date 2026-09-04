@@ -59,7 +59,15 @@ export type ZacSpineEventName =
   /** An explicit outcome event was stored (never inferred). */
   | 'outcome_recorded'
   /** Real model usage persisted without a monetary estimate (ZAC_PRICE_* unset). */
-  | 'cost_estimate_unavailable';
+  | 'cost_estimate_unavailable'
+  /**
+   * One intelligence-signal evaluation run: how many scopes were read, how many
+   * candidates were raised, how many were WITHHELD and what the reconciler did.
+   * Counts and closed enums only — never a headline or a business figure.
+   */
+  | 'signal_evaluated'
+  /** Persisted signals surfaced to an actor after a live permission re-check. */
+  | 'signal_retrieved';
 
 export interface ZacSpineEventMetadata {
   trace_id: string;
