@@ -1053,3 +1053,47 @@ describe('confidence ordering', () => {
     expect(unknownSample).toBeLessThan(known);
   });
 });
+
+// ===========================================================================
+// Fixture H — WHY a signal resolves: recovered vs superseded
+// ===========================================================================
+
+describe('H: why a signal resolves — recovered is earned against the signal’s own target', () => {
+  type Memory = Parameters<ZacMetricObservationService['observe']>[3];
+  const goal30: Memory = [{ kind: 'business_goal', summary: 'Get rebooking back to 30%.' }];
+  const withMemory = (result: ZacToolResult, memory: Memory): ZacSignalEvaluation => {
+    const observation = observations.observe('rebooking_rate', result, businessScope, memory);
+    const [evaluation] = evaluators.evaluate({ businessId: BUSINESS_A, observation, evaluatedAt: NOW });
+    return evaluation;
+  };
+  const shortfall = () =>
+    persist(evaluate('rebooking_rate', rebookingResult({ ratePercent: 34, completedBookings: 120 })).candidates[0]);
+  const resolveOf = (plan: ReturnType<ZacSignalReconciler['reconcile']>) => plan.actions.find((a) => a.kind === 'resolve');
+
+  it('ends a progress episode as superseded, never recovered', () => {
+    const progress = persist(evaluate('rebooking_rate', rebookingResult({ ratePercent: 62, completedBookings: 130 })).candidates[0]);
+    const fallback = evaluate('rebooking_rate', rebookingResult({ ratePercent: 34, completedBookings: 120 }));
+    const plan = reconciler.reconcile([progress], [fallback], NOW);
+    expect(resolveOf(plan)?.existing?.id).toBe(progress.id);
+    expect(resolveOf(plan)?.resolutionReason).toBe('superseded');
+  });
+
+  it('records recovered when the reading closed the gap against the target the signal was raised for', () => {
+    const recovered = evaluate('rebooking_rate', rebookingResult({ ratePercent: 62, completedBookings: 130 }));
+    expect(resolveOf(reconciler.reconcile([shortfall()], [recovered], NOW))?.resolutionReason).toBe('recovered');
+  });
+
+  it('records superseded when only the TARGET moved: a goal typed into memory is not a business improvement', () => {
+    // The identical 34% reading, now "healthy" only because a 30% goal is remembered.
+    const substituted = withMemory(rebookingResult({ ratePercent: 34, completedBookings: 120 }), goal30);
+    expect(substituted.candidates[0]?.signalType).toBe('progress');
+    const plan = reconciler.reconcile([shortfall()], [substituted], NOW);
+    expect(resolveOf(plan)?.existing?.signalKey).toBe(shortfall().signalKey);
+    expect(resolveOf(plan)?.resolutionReason).toBe('superseded');
+  });
+
+  it('still records recovered when the target moved AND the reading cleared the original target', () => {
+    const genuinelyBetter = withMemory(rebookingResult({ ratePercent: 62, completedBookings: 130 }), goal30);
+    expect(resolveOf(reconciler.reconcile([shortfall()], [genuinelyBetter], NOW))?.resolutionReason).toBe('recovered');
+  });
+});

@@ -162,6 +162,14 @@ export interface ZacSignalEvaluation {
   metricKey: ZacMetricKey;
   scope: ZacSignalScope;
   observationStatus: ZacMetricObservationStatus;
+  /**
+   * The reading and the target it was judged against, carried so the reconciler
+   * can tell a gap that CLOSED from a target that MOVED: a remembered goal
+   * appearing under an unchanged number retires the old signal as superseded,
+   * never as recovered. Null when the observation carried none.
+   */
+  observedValue: number | null;
+  target: number | null;
   candidates: ZacSignalCandidate[];
   withheld: ZacWithheldSignal[];
 }

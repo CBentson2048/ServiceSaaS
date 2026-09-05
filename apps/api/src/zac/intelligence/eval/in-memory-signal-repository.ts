@@ -32,7 +32,7 @@ export class InMemorySignalRepository implements ZacSignalRepository {
   async listLive(businessId: string, limit = 500): Promise<ZacPersistedSignal[]> {
     return this.rows
       .filter((row) => row.businessId === businessId && (row.status === 'active' || row.status === 'suppressed'))
-      .sort((a, b) => b.materiality - a.materiality)
+      .sort((a, b) => b.materiality - a.materiality || b.lastEvaluatedAt.localeCompare(a.lastEvaluatedAt))
       .slice(0, limit)
       .map(clone);
   }
@@ -89,6 +89,9 @@ export class InMemorySignalRepository implements ZacSignalRepository {
     const row = this.find(signal.id, signal.businessId);
     if (!row) return; // An UPDATE that matches no row is a no-op in Postgres too.
     if (!signal.keepSuppressed) {
+      // Postgres enforces the partial unique index on UPDATE as well: a row
+      // becoming live must not collide with another live row for its key.
+      this.assertNoOtherLiveRow(row);
       row.status = 'active';
       row.resolutionReason = null;
       row.resolvedAt = null;
@@ -115,6 +118,7 @@ export class InMemorySignalRepository implements ZacSignalRepository {
   async suppress(businessId: string, signalId: string, until: string, at: string): Promise<void> {
     const row = this.find(signalId, businessId);
     if (!row) return;
+    this.assertNoOtherLiveRow(row);
     row.status = 'suppressed';
     row.resolutionReason = 'suppressed_by_actor';
     row.suppressedUntil = until;
@@ -125,6 +129,23 @@ export class InMemorySignalRepository implements ZacSignalRepository {
   /** Every row across every business — for isolation assertions only. */
   snapshot(): ZacPersistedSignal[] {
     return this.rows.map(clone);
+  }
+
+  /** The partial unique index, applied to a row about to be (or stay) live. */
+  private assertNoOtherLiveRow(row: ZacPersistedSignal): void {
+    const collides = this.rows.some(
+      (other) =>
+        other !== row &&
+        other.businessId === row.businessId &&
+        other.signalKey === row.signalKey &&
+        (other.status === 'active' || other.status === 'suppressed'),
+    );
+    if (collides) {
+      this.duplicateLiveAttempts += 1;
+      throw new Error(
+        `duplicate key value violates unique constraint "idx_zac_intelligence_signals_live_key" (${row.signalKey})`,
+      );
+    }
   }
 
   private find(id: string, businessId: string): ZacPersistedSignal | undefined {

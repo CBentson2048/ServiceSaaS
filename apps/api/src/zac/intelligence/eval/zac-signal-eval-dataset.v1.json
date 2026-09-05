@@ -1,6 +1,6 @@
 {
   "version": "zac-signal-eval-v1",
-  "frameworkVersion": "ws1-2026-09-04",
+  "frameworkVersion": "ws1-2026-09-05",
   "cases": [
     {
       "id": "reb-01-material-shortfall",
@@ -16,7 +16,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -85,7 +85,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 47,
                 "rebooked_visits": 0,
@@ -151,7 +151,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 10,
                 "rebooked_visits": 0,
@@ -217,7 +217,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 0,
                 "rebooked_visits": 0,
@@ -283,7 +283,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 0,
                 "rebooked_visits": 0,
@@ -352,7 +352,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -395,7 +395,10 @@
                 "produced": false,
                 "withheldReason": "missing"
               }
-            ]
+            ],
+            "store": {
+              "activeSignals": 0
+            }
           }
         }
       ],
@@ -417,7 +420,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -483,7 +486,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -547,7 +550,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -591,7 +594,10 @@
                 "produced": false,
                 "withheldReason": "insufficient_sample"
               }
-            ]
+            ],
+            "store": {
+              "activeSignals": 0
+            }
           }
         }
       ]
@@ -610,7 +616,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -673,7 +679,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -745,7 +751,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -803,7 +809,7 @@
     {
       "id": "reb-13-memory-goal-makes-healthy",
       "domain": "rebooking",
-      "description": "A stated goal of 30% makes a 34% reading healthy: above target, no comparison → progress (clears target).",
+      "description": "A stated goal of 30% makes a 34% reading healthy: above target, no comparison → progress (clears target). What that does to an EXISTING shortfall is life-21.",
       "steps": [
         {
           "kind": "evaluate",
@@ -814,7 +820,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -886,7 +892,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 62,
                 "rebooked_visits": 0,
@@ -952,7 +958,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 50,
                 "rebooked_visits": 0,
@@ -1018,7 +1024,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 48.5,
                 "rebooked_visits": 0,
@@ -1062,7 +1068,10 @@
                 "produced": false,
                 "withheldReason": "below_materiality_floor"
               }
-            ]
+            ],
+            "store": {
+              "activeSignals": 0
+            }
           }
         }
       ]
@@ -1070,7 +1079,7 @@
     {
       "id": "reb-17-no-comparison-source",
       "domain": "rebooking",
-      "description": "The rebooking source carries no previous-period figure, so direction is always unknown — a documented limitation, asserted so it cannot silently change.",
+      "description": "The rebooking source carries no previous-period figure, so direction is ALWAYS unknown for rebooking — “improving/declining while below” is structurally unobservable from this source and is asserted so it cannot silently change. (Utilisation covers direction.)",
       "steps": [
         {
           "kind": "evaluate",
@@ -1081,7 +1090,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 40,
                 "rebooked_visits": 0,
@@ -1155,12 +1164,12 @@
                 "produced": false,
                 "withheldReason": "missing"
               }
-            ]
+            ],
+            "store": {
+              "activeSignals": 0
+            }
           }
         }
-      ],
-      "invariants": [
-        "failed_read_never_resolves"
       ]
     },
     {
@@ -1188,7 +1197,10 @@
                 "produced": false,
                 "withheldReason": "missing"
               }
-            ]
+            ],
+            "store": {
+              "activeSignals": 0
+            }
           }
         }
       ]
@@ -1218,7 +1230,10 @@
                 "produced": false,
                 "withheldReason": "missing"
               }
-            ]
+            ],
+            "store": {
+              "activeSignals": 0
+            }
           }
         }
       ]
@@ -1237,7 +1252,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -1303,7 +1318,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -1352,18 +1367,18 @@
     {
       "id": "reb-22-multi-location-note",
       "domain": "rebooking",
-      "description": "Business scope over several locations gains a limitation explaining per-location rebooking is not measured separately.",
+      "description": "A two-location owner: the business-scope aggregate over two sites gains a limitation explaining per-location rebooking is not measured separately; each site is its own location signal.",
       "steps": [
         {
           "kind": "evaluate",
           "id": "T1",
           "evaluatedAt": "2026-09-04T09:00:00.000Z",
-          "actor": "owner_single",
+          "actor": "owner",
           "tools": {
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -1379,10 +1394,44 @@
                     "location_name": "Site 2",
                     "rebooking_rate_percent": 34,
                     "rebooked_visits": 0
-                  },
+                  }
+                ],
+                "completed_bookings": 240
+              },
+              "explanation": "",
+              "rowCount": 2,
+              "presentation": {
+                "answer": "x",
+                "evidence": [
                   {
-                    "location_name": "Site 3",
-                    "rebooking_rate_percent": 34,
+                    "source_type": "report.dashboard",
+                    "source_ref": "DashboardService.kpis",
+                    "as_of": "2026-09-04T09:00:00.000Z",
+                    "entities_used": []
+                  }
+                ],
+                "confidence": "medium",
+                "limitations": [
+                  "Rebooking is a lower bound — rebookings made outside QLOOQO are not captured.",
+                  "No-show data is not reliably captured yet, so it is excluded rather than shown as zero."
+                ],
+                "suggestedNextStep": null,
+                "responseType": "Insight"
+              }
+            },
+            "report.rebooking_summary@10000000-0000-4000-8000-0000000000a1": {
+              "status": "ok",
+              "data": {
+                "range_start": "2026-08-28T09:00:00.000Z",
+                "range_end": "2026-09-04T09:00:00.000Z",
+                "rebooking_rate_percent": 30,
+                "rebooked_visits": 0,
+                "stylist_rebooked_visits": 0,
+                "client_rebooked_visits": 0,
+                "by_location": [
+                  {
+                    "location_name": "Site 1",
+                    "rebooking_rate_percent": 30,
                     "rebooked_visits": 0
                   }
                 ],
@@ -1408,6 +1457,51 @@
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
+            },
+            "report.rebooking_summary@10000000-0000-4000-8000-0000000000a2": {
+              "status": "ok",
+              "data": {
+                "range_start": "2026-08-28T09:00:00.000Z",
+                "range_end": "2026-09-04T09:00:00.000Z",
+                "rebooking_rate_percent": 38,
+                "rebooked_visits": 0,
+                "stylist_rebooked_visits": 0,
+                "client_rebooked_visits": 0,
+                "by_location": [
+                  {
+                    "location_name": "Site 1",
+                    "rebooking_rate_percent": 38,
+                    "rebooked_visits": 0
+                  }
+                ],
+                "completed_bookings": 120
+              },
+              "explanation": "",
+              "rowCount": 1,
+              "presentation": {
+                "answer": "x",
+                "evidence": [
+                  {
+                    "source_type": "report.dashboard",
+                    "source_ref": "DashboardService.kpis",
+                    "as_of": "2026-09-04T09:00:00.000Z",
+                    "entities_used": []
+                  }
+                ],
+                "confidence": "medium",
+                "limitations": [
+                  "Rebooking is a lower bound — rebookings made outside QLOOQO are not captured.",
+                  "No-show data is not reliably captured yet, so it is excluded rather than shown as zero."
+                ],
+                "suggestedNextStep": null,
+                "responseType": "Insight"
+              }
+            },
+            "report.utilisation_summary": {
+              "status": "permission_denied",
+              "data": null,
+              "explanation": "That data is not available to your role.",
+              "rowCount": null
             }
           },
           "expected": {
@@ -1415,11 +1509,29 @@
               {
                 "metric": "rebooking_rate",
                 "produced": true,
+                "scopeType": "business",
                 "limitationsInclude": [
                   "not measured separately"
                 ]
+              },
+              {
+                "metric": "rebooking_rate",
+                "produced": true,
+                "scopeType": "location",
+                "locationId": "10000000-0000-4000-8000-0000000000a1",
+                "kind": "opportunity"
+              },
+              {
+                "metric": "rebooking_rate",
+                "produced": true,
+                "scopeType": "location",
+                "locationId": "10000000-0000-4000-8000-0000000000a2",
+                "kind": "opportunity"
               }
-            ]
+            ],
+            "store": {
+              "activeSignals": 3
+            }
           }
         }
       ]
@@ -1438,7 +1550,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -1482,7 +1594,10 @@
                 "produced": false,
                 "withheldReason": "missing"
               }
-            ]
+            ],
+            "store": {
+              "activeSignals": 0
+            }
           }
         }
       ]
@@ -1490,7 +1605,7 @@
     {
       "id": "utl-01-material-shortfall",
       "domain": "utilisation",
-      "description": "44% against a 60% threshold over 100 rostered hours → risk, attention.",
+      "description": "44% against a 60% threshold over 100 rostered hours → risk, attention. Confidence 0.9×1×1×0.8 = 0.72 → high.",
       "steps": [
         {
           "kind": "evaluate",
@@ -1503,7 +1618,7 @@
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 6000,
@@ -1537,7 +1652,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -1554,7 +1672,10 @@
                 "direction": "unknown",
                 "confidenceBand": "high",
                 "targetSource": "location_setting",
-                "lifecycleAction": "open"
+                "lifecycleAction": "open",
+                "limitationsInclude": [
+                  "rostered available hours"
+                ]
               }
             ]
           }
@@ -1577,7 +1698,7 @@
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 6000,
@@ -1611,7 +1732,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -1647,7 +1771,7 @@
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 6000,
@@ -1681,7 +1805,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -1694,7 +1821,10 @@
                 "produced": false,
                 "withheldReason": "below_materiality_floor"
               }
-            ]
+            ],
+            "store": {
+              "activeSignals": 0
+            }
           }
         }
       ]
@@ -1702,7 +1832,7 @@
     {
       "id": "utl-04-valid-zero",
       "domain": "utilisation",
-      "description": "0% over 100 rostered hours is a measured, empty diary → risk at full materiality.",
+      "description": "0% over 100 rostered hours is a measured, empty diary → risk at full materiality. A measured zero has the lower 0.85 base: 0.85×1×1×0.8 = 0.68 → medium.",
       "steps": [
         {
           "kind": "evaluate",
@@ -1715,7 +1845,7 @@
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 6000,
@@ -1749,7 +1879,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -1763,7 +1896,7 @@
                 "kind": "risk",
                 "severity": "attention",
                 "materialityBand": "attention",
-                "confidenceBand": "high"
+                "confidenceBand": "medium"
               }
             ]
           }
@@ -1786,7 +1919,7 @@
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 6000,
@@ -1820,7 +1953,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -1857,7 +1993,7 @@
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 6000,
@@ -1891,7 +2027,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -1904,7 +2043,10 @@
                 "produced": false,
                 "withheldReason": "no_target"
               }
-            ]
+            ],
+            "store": {
+              "activeSignals": 0
+            }
           }
         }
       ]
@@ -1925,7 +2067,7 @@
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 1800,
@@ -1959,7 +2101,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -1972,7 +2117,10 @@
                 "produced": false,
                 "withheldReason": "insufficient_sample"
               }
-            ]
+            ],
+            "store": {
+              "activeSignals": 0
+            }
           }
         }
       ]
@@ -2002,7 +2150,10 @@
                 "produced": false,
                 "withheldReason": "not_applicable"
               }
-            ]
+            ],
+            "store": {
+              "activeSignals": 0
+            }
           }
         }
       ],
@@ -2035,12 +2186,12 @@
                 "produced": false,
                 "withheldReason": "missing"
               }
-            ]
+            ],
+            "store": {
+              "activeSignals": 0
+            }
           }
         }
-      ],
-      "invariants": [
-        "failed_read_never_resolves"
       ]
     },
     {
@@ -2059,7 +2210,7 @@
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 0,
@@ -2093,7 +2244,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -2106,7 +2260,10 @@
                 "produced": false,
                 "withheldReason": "not_applicable"
               }
-            ]
+            ],
+            "store": {
+              "activeSignals": 0
+            }
           }
         }
       ]
@@ -2127,7 +2284,7 @@
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 6000,
@@ -2161,7 +2318,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -2198,7 +2358,7 @@
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 6000,
@@ -2232,7 +2392,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -2268,7 +2431,7 @@
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 6000,
@@ -2302,7 +2465,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -2338,7 +2504,7 @@
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 6000,
@@ -2372,7 +2538,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -2385,7 +2554,10 @@
                 "produced": false,
                 "withheldReason": "healthy_steady"
               }
-            ]
+            ],
+            "store": {
+              "activeSignals": 0
+            }
           }
         }
       ]
@@ -2406,7 +2578,7 @@
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 6000,
@@ -2440,7 +2612,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -2476,7 +2651,7 @@
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 6000,
@@ -2510,7 +2685,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -2532,7 +2710,7 @@
     {
       "id": "utl-17-data-quality-notes-lower-confidence",
       "domain": "utilisation",
-      "description": "Three data-quality notes drop the coverage factor to 0.7 → confidence 0.63 → medium.",
+      "description": "Three data-quality notes on top of the two standing caveats → the coverage factor bottoms out at 0.7 → 0.63 → medium.",
       "steps": [
         {
           "kind": "evaluate",
@@ -2545,7 +2723,7 @@
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 6000,
@@ -2583,7 +2761,13 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption).",
+                  "Bookings without a matching shift were excluded.",
+                  "One location has no rota this week.",
+                  "Two shifts cross midnight."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -2630,7 +2814,10 @@
                 "produced": false,
                 "withheldReason": "missing"
               }
-            ]
+            ],
+            "store": {
+              "activeSignals": 0
+            }
           }
         }
       ]
@@ -2638,7 +2825,7 @@
     {
       "id": "utl-19-sample-at-floor",
       "domain": "utilisation",
-      "description": "Exactly 40 rostered hours meets the floor → signal raised.",
+      "description": "Exactly 40 rostered hours meets the floor → signal raised at LOW confidence: sample factor floored at 0.6 → 0.9×0.6×1×0.8 = 0.43.",
       "steps": [
         {
           "kind": "evaluate",
@@ -2651,7 +2838,79 @@
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
+                "rangeEnd": "2026-09-04T00:00:00.000Z",
+                "overall": {
+                  "availableMinutes": 2400,
+                  "bookedMinutes": 1056,
+                  "utilisationPercent": 44,
+                  "staffDayCount": 20
+                },
+                "previousPeriod": {
+                  "availableMinutes": 2400,
+                  "bookedMinutes": 0,
+                  "utilisationPercent": null
+                },
+                "byLocation": [],
+                "byWeekday": [],
+                "quietestWeekday": null,
+                "busiestWeekday": null,
+                "largestGaps": [],
+                "warningThresholdPercent": 60,
+                "dataQuality": []
+              },
+              "explanation": "",
+              "rowCount": 20,
+              "presentation": {
+                "answer": "x",
+                "evidence": [
+                  {
+                    "source_type": "report.utilisation",
+                    "source_ref": "computeDailyUtilisation",
+                    "as_of": "2026-09-04T00:00:00.000Z",
+                    "entities_used": []
+                  }
+                ],
+                "confidence": "medium",
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
+                "suggestedNextStep": null,
+                "responseType": "Insight"
+              }
+            }
+          },
+          "expected": {
+            "signals": [
+              {
+                "metric": "utilisation_rate",
+                "produced": true,
+                "kind": "risk",
+                "confidenceBand": "low"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "utl-20-no-caveats-isolates-coverage",
+      "domain": "utilisation",
+      "description": "The same reading as utl-19 with the caveats stripped scores 0.54 → medium — the coverage factor, isolated.",
+      "steps": [
+        {
+          "kind": "evaluate",
+          "id": "T1",
+          "evaluatedAt": "2026-09-04T09:00:00.000Z",
+          "actor": "owner_single",
+          "tools": {
+            "report.utilisation_summary": {
+              "status": "ok",
+              "data": {
+                "scope": "owner",
+                "period": "week",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 2400,
@@ -2718,7 +2977,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -2785,7 +3044,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -2911,7 +3170,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -3038,7 +3297,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -3131,7 +3390,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -3222,7 +3481,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -3348,7 +3607,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -3462,7 +3721,7 @@
     {
       "id": "life-08-valid-recovery-resolves",
       "domain": "lifecycle",
-      "description": "A valid reading clearing the target resolves the gap (recovered) and opens a separate progress signal.",
+      "description": "A valid reading clearing the target resolves the gap (RECOVERED — it closed against the target it was raised for) and opens a separate progress signal in the same step.",
       "steps": [
         {
           "kind": "evaluate",
@@ -3473,7 +3732,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -3567,8 +3826,16 @@
               {
                 "metric": "rebooking_rate",
                 "produced": true,
+                "family": "progress",
                 "kind": "progress",
                 "lifecycleAction": "open"
+              },
+              {
+                "metric": "rebooking_rate",
+                "produced": false,
+                "family": "shortfall",
+                "lifecycleAction": "resolve",
+                "resolutionReason": "recovered"
               }
             ],
             "store": {
@@ -3600,7 +3867,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -3725,7 +3992,7 @@
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 6000,
@@ -3759,7 +4026,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -3816,7 +4086,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-09-04 to 2026-09-11, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -3858,7 +4131,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -4032,7 +4305,7 @@
     {
       "id": "life-12-progress-superseded-not-recovered",
       "domain": "lifecycle",
-      "description": "When the metric falls back, the progress episode ends as SUPERSEDED — never “recovered”.",
+      "description": "When the metric falls back, the progress episode ends as SUPERSEDED — never “recovered” — while the new gap opens in the same step.",
       "steps": [
         {
           "kind": "evaluate",
@@ -4043,7 +4316,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 62,
                 "rebooked_visits": 0,
@@ -4144,8 +4417,16 @@
               {
                 "metric": "rebooking_rate",
                 "produced": true,
+                "family": "shortfall",
                 "kind": "opportunity",
                 "lifecycleAction": "open"
+              },
+              {
+                "metric": "rebooking_rate",
+                "produced": false,
+                "family": "progress",
+                "lifecycleAction": "resolve",
+                "resolutionReason": "superseded"
               }
             ],
             "store": {
@@ -4172,7 +4453,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -4402,7 +4683,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -4548,7 +4829,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -4670,7 +4951,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -4723,6 +5004,14 @@
             }
           },
           "expected": {
+            "signals": [
+              {
+                "metric": "rebooking_rate",
+                "produced": false,
+                "lifecycleAction": "expire",
+                "resolutionReason": "expired_unconfirmed"
+              }
+            ],
             "store": {
               "statuses": {
                 "expired": 1
@@ -4794,6 +5083,9 @@
             }
           }
         }
+      ],
+      "invariants": [
+        "failed_read_never_resolves"
       ]
     },
     {
@@ -4810,7 +5102,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -4877,7 +5169,8 @@
             "store": {
               "statuses": {
                 "expired": 1,
-                "active": 0
+                "active": 0,
+                "resolved": 0
               }
             }
           }
@@ -4901,7 +5194,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -5033,7 +5326,7 @@
     {
       "id": "life-19-utilisation-recovery",
       "domain": "lifecycle",
-      "description": "Utilisation: a valid improving reading clearing the threshold resolves the risk and opens progress.",
+      "description": "Utilisation: a valid improving reading clearing the threshold resolves the risk (recovered) and opens progress.",
       "steps": [
         {
           "kind": "evaluate",
@@ -5046,7 +5339,7 @@
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 6000,
@@ -5080,7 +5373,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -5141,7 +5437,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-09-04 to 2026-09-11, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -5152,9 +5451,17 @@
               {
                 "metric": "utilisation_rate",
                 "produced": true,
+                "family": "progress",
                 "kind": "progress",
                 "direction": "improving",
                 "lifecycleAction": "open"
+              },
+              {
+                "metric": "utilisation_rate",
+                "produced": false,
+                "family": "shortfall",
+                "lifecycleAction": "resolve",
+                "resolutionReason": "recovered"
               }
             ],
             "store": {
@@ -5183,7 +5490,7 @@
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 6000,
@@ -5217,7 +5524,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -5266,6 +5576,348 @@
       ]
     },
     {
+      "id": "life-21-goal-substitution-is-superseded-not-recovered",
+      "domain": "lifecycle",
+      "description": "The SAME 34% reading, but a 30% goal now remembered: the reading is healthy against the new target, so a progress signal opens — and the old shortfall ends as SUPERSEDED, never “recovered”: the number did not move, the target did.",
+      "steps": [
+        {
+          "kind": "evaluate",
+          "id": "T1",
+          "evaluatedAt": "2026-09-04T09:00:00.000Z",
+          "actor": "owner_single",
+          "tools": {
+            "report.rebooking_summary": {
+              "status": "ok",
+              "data": {
+                "range_start": "2026-08-28T09:00:00.000Z",
+                "range_end": "2026-09-04T09:00:00.000Z",
+                "rebooking_rate_percent": 34,
+                "rebooked_visits": 0,
+                "stylist_rebooked_visits": 0,
+                "client_rebooked_visits": 0,
+                "by_location": [
+                  {
+                    "location_name": "Site 1",
+                    "rebooking_rate_percent": 34,
+                    "rebooked_visits": 0
+                  }
+                ],
+                "completed_bookings": 120
+              },
+              "explanation": "",
+              "rowCount": 1,
+              "presentation": {
+                "answer": "x",
+                "evidence": [
+                  {
+                    "source_type": "report.dashboard",
+                    "source_ref": "DashboardService.kpis",
+                    "as_of": "2026-09-04T09:00:00.000Z",
+                    "entities_used": []
+                  }
+                ],
+                "confidence": "medium",
+                "limitations": [
+                  "Rebooking is a lower bound — rebookings made outside QLOOQO are not captured.",
+                  "No-show data is not reliably captured yet, so it is excluded rather than shown as zero."
+                ],
+                "suggestedNextStep": null,
+                "responseType": "Insight"
+              }
+            }
+          },
+          "expected": {
+            "signals": [
+              {
+                "metric": "rebooking_rate",
+                "produced": true,
+                "kind": "opportunity",
+                "targetSource": "canonical_threshold"
+              }
+            ],
+            "store": {
+              "activeSignals": 1
+            }
+          }
+        },
+        {
+          "kind": "evaluate",
+          "id": "T2",
+          "evaluatedAt": "2026-09-11T09:00:00.000Z",
+          "actor": "owner_single",
+          "tools": {
+            "report.rebooking_summary": {
+              "status": "ok",
+              "data": {
+                "range_start": "2026-09-04T09:00:00.000Z",
+                "range_end": "2026-09-11T09:00:00.000Z",
+                "rebooking_rate_percent": 34,
+                "rebooked_visits": 0,
+                "stylist_rebooked_visits": 0,
+                "client_rebooked_visits": 0,
+                "by_location": [
+                  {
+                    "location_name": "Site 1",
+                    "rebooking_rate_percent": 34,
+                    "rebooked_visits": 0
+                  }
+                ],
+                "completed_bookings": 120
+              },
+              "explanation": "",
+              "rowCount": 1,
+              "presentation": {
+                "answer": "x",
+                "evidence": [
+                  {
+                    "source_type": "report.dashboard",
+                    "source_ref": "DashboardService.kpis",
+                    "as_of": "2026-09-04T09:00:00.000Z",
+                    "entities_used": []
+                  }
+                ],
+                "confidence": "medium",
+                "limitations": [
+                  "Rebooking is a lower bound — rebookings made outside QLOOQO are not captured.",
+                  "No-show data is not reliably captured yet, so it is excluded rather than shown as zero."
+                ],
+                "suggestedNextStep": null,
+                "responseType": "Insight"
+              }
+            }
+          },
+          "expected": {
+            "signals": [
+              {
+                "metric": "rebooking_rate",
+                "produced": true,
+                "family": "progress",
+                "kind": "progress",
+                "targetSource": "user_stated_goal",
+                "lifecycleAction": "open"
+              },
+              {
+                "metric": "rebooking_rate",
+                "produced": false,
+                "family": "shortfall",
+                "lifecycleAction": "resolve",
+                "resolutionReason": "superseded"
+              }
+            ],
+            "store": {
+              "statuses": {
+                "resolved": 1,
+                "active": 1
+              },
+              "episodes": 2
+            }
+          },
+          "memory": [
+            {
+              "kind": "business_goal",
+              "summary": "Get rebooking back to 30%."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "life-22-lapsed-suppression-resurfaces-on-missing-read",
+      "domain": "lifecycle",
+      "description": "A suppression ends by itself: once the window lapses the signal is readable again even though the next read is MISSING (which correctly retains, leaving the stored status alone); the next valid reading flips it back to active.",
+      "steps": [
+        {
+          "kind": "evaluate",
+          "id": "T1",
+          "evaluatedAt": "2026-09-04T09:00:00.000Z",
+          "actor": "owner_single",
+          "tools": {
+            "report.rebooking_summary": {
+              "status": "ok",
+              "data": {
+                "range_start": "2026-08-28T09:00:00.000Z",
+                "range_end": "2026-09-04T09:00:00.000Z",
+                "rebooking_rate_percent": 34,
+                "rebooked_visits": 0,
+                "stylist_rebooked_visits": 0,
+                "client_rebooked_visits": 0,
+                "by_location": [
+                  {
+                    "location_name": "Site 1",
+                    "rebooking_rate_percent": 34,
+                    "rebooked_visits": 0
+                  }
+                ],
+                "completed_bookings": 120
+              },
+              "explanation": "",
+              "rowCount": 1,
+              "presentation": {
+                "answer": "x",
+                "evidence": [
+                  {
+                    "source_type": "report.dashboard",
+                    "source_ref": "DashboardService.kpis",
+                    "as_of": "2026-09-04T09:00:00.000Z",
+                    "entities_used": []
+                  }
+                ],
+                "confidence": "medium",
+                "limitations": [
+                  "Rebooking is a lower bound — rebookings made outside QLOOQO are not captured.",
+                  "No-show data is not reliably captured yet, so it is excluded rather than shown as zero."
+                ],
+                "suggestedNextStep": null,
+                "responseType": "Insight"
+              }
+            }
+          },
+          "expected": {
+            "store": {
+              "activeSignals": 1
+            },
+            "visibleTo": [
+              {
+                "actor": "owner_single",
+                "count": 1
+              }
+            ]
+          }
+        },
+        {
+          "kind": "suppress",
+          "id": "S1",
+          "at": "2026-09-04T10:00:00.000Z",
+          "actor": "owner_single",
+          "metric": "rebooking_rate",
+          "until": "2026-09-06T09:00:00.000Z",
+          "expected": {
+            "accepted": true,
+            "store": {
+              "statuses": {
+                "suppressed": 1
+              }
+            },
+            "visibleTo": [
+              {
+                "actor": "owner_single",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "kind": "evaluate",
+          "id": "T2",
+          "evaluatedAt": "2026-09-08T09:00:00.000Z",
+          "actor": "owner_single",
+          "tools": {
+            "report.rebooking_summary": {
+              "status": "error",
+              "data": null,
+              "explanation": "That data is temporarily unavailable.",
+              "rowCount": null
+            }
+          },
+          "expected": {
+            "signals": [
+              {
+                "metric": "rebooking_rate",
+                "produced": false,
+                "withheldReason": "missing",
+                "lifecycleAction": "retain"
+              }
+            ],
+            "store": {
+              "statuses": {
+                "suppressed": 1,
+                "active": 0,
+                "resolved": 0
+              }
+            },
+            "visibleTo": [
+              {
+                "actor": "owner_single",
+                "count": 1
+              }
+            ]
+          }
+        },
+        {
+          "kind": "evaluate",
+          "id": "T3",
+          "evaluatedAt": "2026-09-09T09:00:00.000Z",
+          "actor": "owner_single",
+          "tools": {
+            "report.rebooking_summary": {
+              "status": "ok",
+              "data": {
+                "range_start": "2026-09-02T09:00:00.000Z",
+                "range_end": "2026-09-09T09:00:00.000Z",
+                "rebooking_rate_percent": 34,
+                "rebooked_visits": 0,
+                "stylist_rebooked_visits": 0,
+                "client_rebooked_visits": 0,
+                "by_location": [
+                  {
+                    "location_name": "Site 1",
+                    "rebooking_rate_percent": 34,
+                    "rebooked_visits": 0
+                  }
+                ],
+                "completed_bookings": 120
+              },
+              "explanation": "",
+              "rowCount": 1,
+              "presentation": {
+                "answer": "x",
+                "evidence": [
+                  {
+                    "source_type": "report.dashboard",
+                    "source_ref": "DashboardService.kpis",
+                    "as_of": "2026-09-04T09:00:00.000Z",
+                    "entities_used": []
+                  }
+                ],
+                "confidence": "medium",
+                "limitations": [
+                  "Rebooking is a lower bound — rebookings made outside QLOOQO are not captured.",
+                  "No-show data is not reliably captured yet, so it is excluded rather than shown as zero."
+                ],
+                "suggestedNextStep": null,
+                "responseType": "Insight"
+              }
+            }
+          },
+          "expected": {
+            "signals": [
+              {
+                "metric": "rebooking_rate",
+                "produced": true,
+                "lifecycleAction": "refresh"
+              }
+            ],
+            "store": {
+              "statuses": {
+                "active": 1,
+                "suppressed": 0
+              },
+              "episodes": 1
+            },
+            "visibleTo": [
+              {
+                "actor": "owner_single",
+                "count": 1
+              }
+            ]
+          }
+        }
+      ],
+      "invariants": [
+        "missing_data_never_resolves"
+      ]
+    },
+    {
       "id": "scope-01-different-businesses",
       "domain": "scoping",
       "description": "The identical gap in two businesses is two isolated signals; the second OPENS rather than refreshing the first, and each owner sees only their own.",
@@ -5279,7 +5931,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -5331,7 +5983,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -5417,7 +6069,7 @@
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 12000,
@@ -5451,17 +6103,20 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
             },
-            "report.utilisation_summary@l0000000-0000-0000-0000-000000000001": {
+            "report.utilisation_summary@10000000-0000-4000-8000-0000000000a1": {
               "status": "ok",
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 6000,
@@ -5495,17 +6150,20 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
             },
-            "report.utilisation_summary@l0000000-0000-0000-0000-000000000002": {
+            "report.utilisation_summary@10000000-0000-4000-8000-0000000000a2": {
               "status": "ok",
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 5400,
@@ -5539,7 +6197,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -5562,14 +6223,14 @@
                 "metric": "utilisation_rate",
                 "produced": true,
                 "scopeType": "location",
-                "locationId": "l0000000-0000-0000-0000-000000000001",
+                "locationId": "10000000-0000-4000-8000-0000000000a1",
                 "kind": "risk"
               },
               {
                 "metric": "utilisation_rate",
                 "produced": true,
                 "scopeType": "location",
-                "locationId": "l0000000-0000-0000-0000-000000000002",
+                "locationId": "10000000-0000-4000-8000-0000000000a2",
                 "kind": "risk"
               }
             ],
@@ -5594,12 +6255,12 @@
           "evaluatedAt": "2026-09-04T09:00:00.000Z",
           "actor": "owner",
           "tools": {
-            "report.utilisation_summary@l0000000-0000-0000-0000-000000000001": {
+            "report.utilisation_summary@10000000-0000-4000-8000-0000000000a1": {
               "status": "ok",
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 6000,
@@ -5633,17 +6294,20 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
             },
-            "report.utilisation_summary@l0000000-0000-0000-0000-000000000002": {
+            "report.utilisation_summary@10000000-0000-4000-8000-0000000000a2": {
               "status": "ok",
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 5400,
@@ -5677,7 +6341,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -5687,7 +6354,7 @@
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 12000,
@@ -5721,7 +6388,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -5745,7 +6415,7 @@
           "evaluatedAt": "2026-09-11T09:00:00.000Z",
           "actor": "owner",
           "tools": {
-            "report.utilisation_summary@l0000000-0000-0000-0000-000000000001": {
+            "report.utilisation_summary@10000000-0000-4000-8000-0000000000a1": {
               "status": "ok",
               "data": {
                 "scope": "owner",
@@ -5784,12 +6454,15 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-09-04 to 2026-09-11, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
             },
-            "report.utilisation_summary@l0000000-0000-0000-0000-000000000002": {
+            "report.utilisation_summary@10000000-0000-4000-8000-0000000000a2": {
               "status": "ok",
               "data": {
                 "scope": "owner",
@@ -5828,7 +6501,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-09-04 to 2026-09-11, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -5838,7 +6514,7 @@
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 12000,
@@ -5872,7 +6548,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -5890,15 +6569,25 @@
                 "metric": "utilisation_rate",
                 "produced": true,
                 "scopeType": "location",
-                "locationId": "l0000000-0000-0000-0000-000000000001",
+                "locationId": "10000000-0000-4000-8000-0000000000a1",
+                "family": "progress",
                 "kind": "progress",
                 "lifecycleAction": "open"
               },
               {
                 "metric": "utilisation_rate",
+                "produced": false,
+                "scopeType": "location",
+                "locationId": "10000000-0000-4000-8000-0000000000a1",
+                "family": "shortfall",
+                "lifecycleAction": "resolve",
+                "resolutionReason": "recovered"
+              },
+              {
+                "metric": "utilisation_rate",
                 "produced": true,
                 "scopeType": "location",
-                "locationId": "l0000000-0000-0000-0000-000000000002",
+                "locationId": "10000000-0000-4000-8000-0000000000a2",
                 "kind": "risk",
                 "lifecycleAction": "refresh"
               }
@@ -5916,7 +6605,7 @@
     {
       "id": "scope-04-manager-cannot-see-other-location",
       "domain": "scoping",
-      "description": "A signal at L2 is invisible to the L1 manager, visible to the L2 manager and the owner; a stylist sees nothing.",
+      "description": "A location signal at L2 is invisible to the L1 manager, visible to the L2 manager and the owner; a stylist sees nothing.",
       "steps": [
         {
           "kind": "evaluate",
@@ -5929,7 +6618,7 @@
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 6000,
@@ -5963,7 +6652,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -5981,7 +6673,7 @@
                 "metric": "utilisation_rate",
                 "produced": true,
                 "scopeType": "location",
-                "locationId": "l0000000-0000-0000-0000-000000000002",
+                "locationId": "10000000-0000-4000-8000-0000000000a2",
                 "kind": "risk"
               }
             ],
@@ -6024,7 +6716,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -6106,7 +6798,7 @@
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 6000,
@@ -6140,7 +6832,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -6148,7 +6843,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -6213,7 +6908,7 @@
     {
       "id": "scope-07-manager-cannot-speak-for-business",
       "domain": "scoping",
-      "description": "A location-restricted manager’s reading is filed as a LOCATION signal, never the business’s; the owner’s later business-wide reading is a separate signal.",
+      "description": "A location-restricted manager’s reading is filed as a LOCATION signal, never the business’s; the owner’s later business-wide reading is a separate signal that the manager cannot read — a business-wide KPI is data their own tools would not return.",
       "steps": [
         {
           "kind": "evaluate",
@@ -6224,7 +6919,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -6273,7 +6968,7 @@
                 "metric": "rebooking_rate",
                 "produced": true,
                 "scopeType": "location",
-                "locationId": "l0000000-0000-0000-0000-000000000001",
+                "locationId": "10000000-0000-4000-8000-0000000000a1",
                 "kind": "opportunity",
                 "lifecycleAction": "open"
               }
@@ -6292,7 +6987,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -6348,7 +7043,21 @@
             "store": {
               "activeSignals": 2,
               "episodes": 2
-            }
+            },
+            "visibleTo": [
+              {
+                "actor": "owner",
+                "count": 2
+              },
+              {
+                "actor": "manager_l1",
+                "count": 1
+              },
+              {
+                "actor": "manager_l2",
+                "count": 0
+              }
+            ]
           }
         }
       ],
@@ -6360,7 +7069,7 @@
     {
       "id": "scope-08-manager-suppress-cannot-reach-foreign-location",
       "domain": "scoping",
-      "description": "The L1 manager cannot suppress the L2 manager’s signal: it is not visible to them, so the request is refused with no state change.",
+      "description": "The L1 manager cannot suppress the L2 manager’s signal: service.suppress() refuses it as not visible, with no state change.",
       "steps": [
         {
           "kind": "evaluate",
@@ -6373,7 +7082,7 @@
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 6000,
@@ -6407,7 +7116,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -6431,7 +7143,6 @@
           "at": "2026-09-04T10:00:00.000Z",
           "actor": "manager_l1",
           "metric": "utilisation_rate",
-          "locationId": "l0000000-0000-0000-0000-000000000002",
           "until": "2026-09-12T09:00:00.000Z",
           "expected": {
             "accepted": false,
@@ -6441,7 +7152,26 @@
                 "suppressed": 0
               }
             }
-          }
+          },
+          "locationId": "10000000-0000-4000-8000-0000000000a2"
+        },
+        {
+          "kind": "suppress",
+          "id": "S2",
+          "at": "2026-09-04T11:00:00.000Z",
+          "actor": "manager_l2",
+          "metric": "utilisation_rate",
+          "until": "2026-09-12T09:00:00.000Z",
+          "expected": {
+            "accepted": true,
+            "store": {
+              "statuses": {
+                "active": 0,
+                "suppressed": 1
+              }
+            }
+          },
+          "locationId": "10000000-0000-4000-8000-0000000000a2"
         }
       ],
       "invariants": [
@@ -6462,7 +7192,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -6503,7 +7233,7 @@
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 6000,
@@ -6537,7 +7267,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -6568,7 +7301,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -6656,7 +7389,7 @@
                 "responseType": "Insight"
               }
             },
-            "report.rebooking_summary@l0000000-0000-0000-0000-000000000001": {
+            "report.rebooking_summary@10000000-0000-4000-8000-0000000000a1": {
               "status": "ok",
               "data": {
                 "range_start": "2026-09-04T09:00:00.000Z",
@@ -6713,11 +7446,376 @@
               }
             }
           },
-          "locationFocus": "l0000000-0000-0000-0000-000000000001"
+          "locationFocus": "10000000-0000-4000-8000-0000000000a1"
         }
       ],
       "invariants": [
         "repeat_run_no_duplicate"
+      ]
+    },
+    {
+      "id": "scope-11-multi-location-rebooking-fan-out",
+      "domain": "scoping",
+      "description": "A two-location owner’s rebooking run evaluates the business AND each location through the per-location tool dispatch: three signals with distinct keys, each location visible only to its own manager, the business row only to the owner.",
+      "steps": [
+        {
+          "kind": "evaluate",
+          "id": "T1",
+          "evaluatedAt": "2026-09-04T09:00:00.000Z",
+          "actor": "owner",
+          "tools": {
+            "report.rebooking_summary": {
+              "status": "ok",
+              "data": {
+                "range_start": "2026-08-28T09:00:00.000Z",
+                "range_end": "2026-09-04T09:00:00.000Z",
+                "rebooking_rate_percent": 34,
+                "rebooked_visits": 0,
+                "stylist_rebooked_visits": 0,
+                "client_rebooked_visits": 0,
+                "by_location": [
+                  {
+                    "location_name": "Site 1",
+                    "rebooking_rate_percent": 34,
+                    "rebooked_visits": 0
+                  },
+                  {
+                    "location_name": "Site 2",
+                    "rebooking_rate_percent": 34,
+                    "rebooked_visits": 0
+                  }
+                ],
+                "completed_bookings": 240
+              },
+              "explanation": "",
+              "rowCount": 2,
+              "presentation": {
+                "answer": "x",
+                "evidence": [
+                  {
+                    "source_type": "report.dashboard",
+                    "source_ref": "DashboardService.kpis",
+                    "as_of": "2026-09-04T09:00:00.000Z",
+                    "entities_used": []
+                  }
+                ],
+                "confidence": "medium",
+                "limitations": [
+                  "Rebooking is a lower bound — rebookings made outside QLOOQO are not captured.",
+                  "No-show data is not reliably captured yet, so it is excluded rather than shown as zero."
+                ],
+                "suggestedNextStep": null,
+                "responseType": "Insight"
+              }
+            },
+            "report.rebooking_summary@10000000-0000-4000-8000-0000000000a1": {
+              "status": "ok",
+              "data": {
+                "range_start": "2026-08-28T09:00:00.000Z",
+                "range_end": "2026-09-04T09:00:00.000Z",
+                "rebooking_rate_percent": 30,
+                "rebooked_visits": 0,
+                "stylist_rebooked_visits": 0,
+                "client_rebooked_visits": 0,
+                "by_location": [
+                  {
+                    "location_name": "Site 1",
+                    "rebooking_rate_percent": 30,
+                    "rebooked_visits": 0
+                  }
+                ],
+                "completed_bookings": 120
+              },
+              "explanation": "",
+              "rowCount": 1,
+              "presentation": {
+                "answer": "x",
+                "evidence": [
+                  {
+                    "source_type": "report.dashboard",
+                    "source_ref": "DashboardService.kpis",
+                    "as_of": "2026-09-04T09:00:00.000Z",
+                    "entities_used": []
+                  }
+                ],
+                "confidence": "medium",
+                "limitations": [
+                  "Rebooking is a lower bound — rebookings made outside QLOOQO are not captured.",
+                  "No-show data is not reliably captured yet, so it is excluded rather than shown as zero."
+                ],
+                "suggestedNextStep": null,
+                "responseType": "Insight"
+              }
+            },
+            "report.rebooking_summary@10000000-0000-4000-8000-0000000000a2": {
+              "status": "ok",
+              "data": {
+                "range_start": "2026-08-28T09:00:00.000Z",
+                "range_end": "2026-09-04T09:00:00.000Z",
+                "rebooking_rate_percent": 38,
+                "rebooked_visits": 0,
+                "stylist_rebooked_visits": 0,
+                "client_rebooked_visits": 0,
+                "by_location": [
+                  {
+                    "location_name": "Site 1",
+                    "rebooking_rate_percent": 38,
+                    "rebooked_visits": 0
+                  }
+                ],
+                "completed_bookings": 120
+              },
+              "explanation": "",
+              "rowCount": 1,
+              "presentation": {
+                "answer": "x",
+                "evidence": [
+                  {
+                    "source_type": "report.dashboard",
+                    "source_ref": "DashboardService.kpis",
+                    "as_of": "2026-09-04T09:00:00.000Z",
+                    "entities_used": []
+                  }
+                ],
+                "confidence": "medium",
+                "limitations": [
+                  "Rebooking is a lower bound — rebookings made outside QLOOQO are not captured.",
+                  "No-show data is not reliably captured yet, so it is excluded rather than shown as zero."
+                ],
+                "suggestedNextStep": null,
+                "responseType": "Insight"
+              }
+            },
+            "report.utilisation_summary": {
+              "status": "permission_denied",
+              "data": null,
+              "explanation": "That data is not available to your role.",
+              "rowCount": null
+            }
+          },
+          "expected": {
+            "signals": [
+              {
+                "metric": "rebooking_rate",
+                "produced": true,
+                "scopeType": "business",
+                "kind": "opportunity",
+                "lifecycleAction": "open"
+              },
+              {
+                "metric": "rebooking_rate",
+                "produced": true,
+                "scopeType": "location",
+                "locationId": "10000000-0000-4000-8000-0000000000a1",
+                "kind": "opportunity",
+                "lifecycleAction": "open"
+              },
+              {
+                "metric": "rebooking_rate",
+                "produced": true,
+                "scopeType": "location",
+                "locationId": "10000000-0000-4000-8000-0000000000a2",
+                "kind": "opportunity",
+                "lifecycleAction": "open"
+              }
+            ],
+            "store": {
+              "activeSignals": 3,
+              "episodes": 3
+            },
+            "visibleTo": [
+              {
+                "actor": "owner",
+                "count": 3
+              },
+              {
+                "actor": "manager_l1",
+                "count": 1
+              },
+              {
+                "actor": "manager_l2",
+                "count": 1
+              },
+              {
+                "actor": "owner_b",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "kind": "evaluate",
+          "id": "T2",
+          "evaluatedAt": "2026-09-11T09:00:00.000Z",
+          "actor": "owner",
+          "tools": {
+            "report.rebooking_summary": {
+              "status": "ok",
+              "data": {
+                "range_start": "2026-09-04T09:00:00.000Z",
+                "range_end": "2026-09-11T09:00:00.000Z",
+                "rebooking_rate_percent": 35,
+                "rebooked_visits": 0,
+                "stylist_rebooked_visits": 0,
+                "client_rebooked_visits": 0,
+                "by_location": [
+                  {
+                    "location_name": "Site 1",
+                    "rebooking_rate_percent": 35,
+                    "rebooked_visits": 0
+                  },
+                  {
+                    "location_name": "Site 2",
+                    "rebooking_rate_percent": 35,
+                    "rebooked_visits": 0
+                  }
+                ],
+                "completed_bookings": 236
+              },
+              "explanation": "",
+              "rowCount": 2,
+              "presentation": {
+                "answer": "x",
+                "evidence": [
+                  {
+                    "source_type": "report.dashboard",
+                    "source_ref": "DashboardService.kpis",
+                    "as_of": "2026-09-04T09:00:00.000Z",
+                    "entities_used": []
+                  }
+                ],
+                "confidence": "medium",
+                "limitations": [
+                  "Rebooking is a lower bound — rebookings made outside QLOOQO are not captured.",
+                  "No-show data is not reliably captured yet, so it is excluded rather than shown as zero."
+                ],
+                "suggestedNextStep": null,
+                "responseType": "Insight"
+              }
+            },
+            "report.rebooking_summary@10000000-0000-4000-8000-0000000000a1": {
+              "status": "ok",
+              "data": {
+                "range_start": "2026-09-04T09:00:00.000Z",
+                "range_end": "2026-09-11T09:00:00.000Z",
+                "rebooking_rate_percent": 31,
+                "rebooked_visits": 0,
+                "stylist_rebooked_visits": 0,
+                "client_rebooked_visits": 0,
+                "by_location": [
+                  {
+                    "location_name": "Site 1",
+                    "rebooking_rate_percent": 31,
+                    "rebooked_visits": 0
+                  }
+                ],
+                "completed_bookings": 118
+              },
+              "explanation": "",
+              "rowCount": 1,
+              "presentation": {
+                "answer": "x",
+                "evidence": [
+                  {
+                    "source_type": "report.dashboard",
+                    "source_ref": "DashboardService.kpis",
+                    "as_of": "2026-09-04T09:00:00.000Z",
+                    "entities_used": []
+                  }
+                ],
+                "confidence": "medium",
+                "limitations": [
+                  "Rebooking is a lower bound — rebookings made outside QLOOQO are not captured.",
+                  "No-show data is not reliably captured yet, so it is excluded rather than shown as zero."
+                ],
+                "suggestedNextStep": null,
+                "responseType": "Insight"
+              }
+            },
+            "report.rebooking_summary@10000000-0000-4000-8000-0000000000a2": {
+              "status": "ok",
+              "data": {
+                "range_start": "2026-09-04T09:00:00.000Z",
+                "range_end": "2026-09-11T09:00:00.000Z",
+                "rebooking_rate_percent": 39,
+                "rebooked_visits": 0,
+                "stylist_rebooked_visits": 0,
+                "client_rebooked_visits": 0,
+                "by_location": [
+                  {
+                    "location_name": "Site 1",
+                    "rebooking_rate_percent": 39,
+                    "rebooked_visits": 0
+                  }
+                ],
+                "completed_bookings": 118
+              },
+              "explanation": "",
+              "rowCount": 1,
+              "presentation": {
+                "answer": "x",
+                "evidence": [
+                  {
+                    "source_type": "report.dashboard",
+                    "source_ref": "DashboardService.kpis",
+                    "as_of": "2026-09-04T09:00:00.000Z",
+                    "entities_used": []
+                  }
+                ],
+                "confidence": "medium",
+                "limitations": [
+                  "Rebooking is a lower bound — rebookings made outside QLOOQO are not captured.",
+                  "No-show data is not reliably captured yet, so it is excluded rather than shown as zero."
+                ],
+                "suggestedNextStep": null,
+                "responseType": "Insight"
+              }
+            },
+            "report.utilisation_summary": {
+              "status": "permission_denied",
+              "data": null,
+              "explanation": "That data is not available to your role.",
+              "rowCount": null
+            }
+          },
+          "expected": {
+            "signals": [
+              {
+                "metric": "rebooking_rate",
+                "produced": true,
+                "scopeType": "business",
+                "lifecycleAction": "refresh"
+              },
+              {
+                "metric": "rebooking_rate",
+                "produced": true,
+                "scopeType": "location",
+                "locationId": "10000000-0000-4000-8000-0000000000a1",
+                "lifecycleAction": "refresh"
+              },
+              {
+                "metric": "rebooking_rate",
+                "produced": true,
+                "scopeType": "location",
+                "locationId": "10000000-0000-4000-8000-0000000000a2",
+                "lifecycleAction": "refresh"
+              }
+            ],
+            "store": {
+              "activeSignals": 3,
+              "episodes": 3,
+              "sameSignalKeyAsStep": {
+                "step": "T1",
+                "metric": "rebooking_rate",
+                "locationId": "10000000-0000-4000-8000-0000000000a1"
+              }
+            }
+          }
+        }
+      ],
+      "invariants": [
+        "repeat_run_no_duplicate",
+        "restricted_scope_never_widens"
       ]
     },
     {
@@ -6734,7 +7832,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -6855,7 +7953,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -6970,7 +8068,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 46,
                 "rebooked_visits": 0,
@@ -7074,7 +8172,11 @@
             ],
             "store": {
               "activeSignals": 1,
-              "episodes": 1
+              "episodes": 1,
+              "sameSignalKeyAsStep": {
+                "step": "T1",
+                "metric": "rebooking_rate"
+              }
             }
           }
         }
@@ -7097,7 +8199,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -7211,7 +8313,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -7252,7 +8354,7 @@
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 6000,
@@ -7286,7 +8388,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -7314,7 +8419,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -7362,7 +8467,7 @@
             "report.rebooking_summary": {
               "status": "ok",
               "data": {
-                "range_start": "2026-09--3T09:00:00.000Z",
+                "range_start": "2026-08-28T09:00:00.000Z",
                 "range_end": "2026-09-04T09:00:00.000Z",
                 "rebooking_rate_percent": 34,
                 "rebooked_visits": 0,
@@ -7406,7 +8511,11 @@
                 "produced": true,
                 "lifecycleAction": "open"
               }
-            ]
+            ],
+            "store": {
+              "activeSignals": 1,
+              "episodes": 1
+            }
           }
         },
         {
@@ -7465,7 +8574,11 @@
             ],
             "store": {
               "activeSignals": 1,
-              "episodes": 1
+              "episodes": 1,
+              "sameSignalKeyAsStep": {
+                "step": "T1",
+                "metric": "rebooking_rate"
+              }
             }
           }
         }
@@ -7485,12 +8598,12 @@
           "evaluatedAt": "2026-09-04T09:00:00.000Z",
           "actor": "owner",
           "tools": {
-            "report.utilisation_summary@l0000000-0000-0000-0000-000000000001": {
+            "report.utilisation_summary@10000000-0000-4000-8000-0000000000a1": {
               "status": "ok",
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 6000,
@@ -7524,17 +8637,20 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
             },
-            "report.utilisation_summary@l0000000-0000-0000-0000-000000000002": {
+            "report.utilisation_summary@10000000-0000-4000-8000-0000000000a2": {
               "status": "ok",
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 6000,
@@ -7568,7 +8684,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -7578,7 +8697,7 @@
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 12000,
@@ -7612,7 +8731,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -7636,7 +8758,7 @@
           "evaluatedAt": "2026-09-11T09:00:00.000Z",
           "actor": "owner",
           "tools": {
-            "report.utilisation_summary@l0000000-0000-0000-0000-000000000001": {
+            "report.utilisation_summary@10000000-0000-4000-8000-0000000000a1": {
               "status": "ok",
               "data": {
                 "scope": "owner",
@@ -7675,12 +8797,15 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-09-04 to 2026-09-11, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
             },
-            "report.utilisation_summary@l0000000-0000-0000-0000-000000000002": {
+            "report.utilisation_summary@10000000-0000-4000-8000-0000000000a2": {
               "status": "ok",
               "data": {
                 "scope": "owner",
@@ -7719,7 +8844,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-09-04 to 2026-09-11, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -7729,7 +8857,7 @@
               "data": {
                 "scope": "owner",
                 "period": "week",
-                "rangeStart": "2026-09--3T00:00:00.000Z",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
                 "rangeEnd": "2026-09-04T00:00:00.000Z",
                 "overall": {
                   "availableMinutes": 12000,
@@ -7763,7 +8891,10 @@
                   }
                 ],
                 "confidence": "medium",
-                "limitations": [],
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
                 "suggestedNextStep": null,
                 "responseType": "Insight"
               }
@@ -7781,20 +8912,25 @@
                 "metric": "utilisation_rate",
                 "produced": true,
                 "scopeType": "location",
-                "locationId": "l0000000-0000-0000-0000-000000000001",
+                "locationId": "10000000-0000-4000-8000-0000000000a1",
                 "lifecycleAction": "refresh"
               },
               {
                 "metric": "utilisation_rate",
                 "produced": true,
                 "scopeType": "location",
-                "locationId": "l0000000-0000-0000-0000-000000000002",
+                "locationId": "10000000-0000-4000-8000-0000000000a2",
                 "lifecycleAction": "refresh"
               }
             ],
             "store": {
               "activeSignals": 2,
-              "episodes": 2
+              "episodes": 2,
+              "sameSignalKeyAsStep": {
+                "step": "T1",
+                "metric": "utilisation_rate",
+                "locationId": "10000000-0000-4000-8000-0000000000a2"
+              }
             }
           }
         }

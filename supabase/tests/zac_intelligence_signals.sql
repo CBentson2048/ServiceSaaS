@@ -10,7 +10,7 @@
 -- constraints, the partial unique index, the policies and the grants run for
 -- real.
 --
--- 28 numbered cases. Every RESULT must read PASS.
+-- 29 numbered cases. Every RESULT must read PASS.
 --
 -- Run against a SCRATCH database with every migration through 0112 applied:
 --   psql -d <scratch> -f supabase/tests/zac_intelligence_signals.sql
@@ -536,6 +536,49 @@ when others then
   insert into probe_results values ('28_RESOLUTION_REASON_CLOSED','FAIL: unexpected ' || sqlerrm);
 end $$;
 select case_name as case, result from probe_results where case_name='28_RESOLUTION_REASON_CLOSED';
+
+-- ===========================================================================
+-- 29. A MANAGER reads NOTHING through RLS — not even a manager_team_theme row
+--     at their own location. There is deliberately no manager policy: 0090 set
+--     the same owner-only pattern on zac.outputs, and managers are served by the
+--     API (service role), which enforces location scope itself
+--     (ZacIntelligenceSignalService.canSee). The owner reads the same row. This
+--     probe exists so that adding a manager policy later is a decision, not a
+--     drift.
+-- ===========================================================================
+insert into zac.intelligence_signals (
+  id, business_id, location_id, signal_key, evaluator_key, metric_key, issue_key,
+  scope_type, visibility_scope, signal_type, severity, materiality, confidence,
+  observation_status, headline_redacted
+) values (
+  '1a000000-0000-0000-0000-0000000000c2',
+  '1a000000-0000-0000-0000-000000000001','1a000000-0000-0000-0000-0000000000a1',
+  'biz|team_probe|utilisation_rate|location|a1||shortfall',
+  'team_probe','utilisation_rate','utilisation','location',
+  'manager_team_theme','risk','attention',0.2500,0.7000,'valid','Pinner utilisation team signal'
+);
+do $$
+declare manager_sees integer; owner_sees integer;
+begin
+  perform set_config('request.jwt.claim.sub','1a000000-0000-0000-0000-0000000000f2',true);
+  set local role authenticated;
+  select count(*) into manager_sees from zac.intelligence_signals
+   where id='1a000000-0000-0000-0000-0000000000c2';
+  reset role;
+  perform set_config('request.jwt.claim.sub','1a000000-0000-0000-0000-0000000000f1',true);
+  set local role authenticated;
+  select count(*) into owner_sees from zac.intelligence_signals
+   where id='1a000000-0000-0000-0000-0000000000c2';
+  reset role;
+  insert into probe_results values ('29_MANAGER_HAS_NO_RLS_PATH',
+    case when manager_sees > 0 then 'FAIL: a manager read a signal through RLS (no manager policy is declared)'
+         when owner_sees <> 1 then 'FAIL: the owner could not read the team row'
+         else 'PASS' end);
+exception when others then
+  reset role;
+  insert into probe_results values ('29_MANAGER_HAS_NO_RLS_PATH','FAIL: unexpected ' || sqlerrm);
+end $$;
+select case_name as case, result from probe_results where case_name='29_MANAGER_HAS_NO_RLS_PATH';
 
 -- ===========================================================================
 -- SUMMARY

@@ -10,14 +10,30 @@ import type { ZacToolRegistryService } from '../../tools/zac-tool-registry.servi
 import { ZacIntelligenceSignalService } from '../zac-intelligence-signal.service';
 import { ZacMetricObservationService } from '../zac-metric-observation.service';
 import { metricDefinition } from '../zac-metric-registry';
-import { isPositiveEvidence, type ZacMetricKey, type ZacSignalScopeType } from '../zac-metric.types';
+import {
+  ZAC_METRIC_KEYS,
+  ZAC_METRIC_TARGET_SOURCES,
+  isPositiveEvidence,
+  type ZacMetricKey,
+  type ZacSignalScopeType,
+} from '../zac-metric.types';
 import { ZacSignalEvaluatorRegistry } from '../zac-signal-evaluator.registry';
 import { ZacSignalPriorityAdapter } from '../zac-signal-priority.adapter';
 import { ZacSignalReconciler, type ZacSignalAction } from '../zac-signal-reconciler';
-import type { ZacPersistedSignal, ZacSignalCandidate } from '../zac-signal.types';
+import {
+  ZAC_SIGNAL_RESOLUTION_REASONS,
+  ZAC_SIGNAL_SEVERITIES,
+  ZAC_SIGNAL_STATUSES,
+  ZAC_SIGNAL_TYPES,
+  signalFamily,
+  type ZacPersistedSignal,
+  type ZacSignalCandidate,
+  type ZacWithheldSignal,
+} from '../zac-signal.types';
 import { InMemorySignalRepository } from './in-memory-signal-repository';
 import {
   SIGNAL_EVAL_ACTORS,
+  SIGNAL_EVAL_TOOLS,
   type SignalEvalActor,
   type SignalEvalCase,
   type SignalEvalCaseResult,
@@ -62,7 +78,7 @@ import {
 
 export const SIGNAL_EVAL_DATASET_VERSION = 'zac-signal-eval-v1';
 /** Bumped when a change to the framework alters what existing labels mean. */
-export const SIGNAL_FRAMEWORK_VERSION = 'ws1-2026-09-04';
+export const SIGNAL_FRAMEWORK_VERSION = 'ws1-2026-09-05';
 
 export function loadSignalEvalDataset(): SignalEvalDataset {
   const path = join(__dirname, 'zac-signal-eval-dataset.v1.json');
@@ -71,21 +87,77 @@ export function loadSignalEvalDataset(): SignalEvalDataset {
   return dataset;
 }
 
-/** Authoring mistakes are harness failures, never silently-passing cases. */
+const WITHHELD_REASONS: ReadonlyArray<ZacWithheldSignal['reason']> = [
+  'no_target',
+  'below_materiality_floor',
+  'insufficient_sample',
+  'missing',
+  'not_applicable',
+  'healthy_steady',
+];
+const LIFECYCLE_ACTIONS: ReadonlyArray<ZacSignalAction['kind']> = ['open', 'refresh', 'resolve', 'expire', 'retain'];
+const MATERIALITY_BANDS: ReadonlyArray<SignalEvalMaterialityBand> = ['zero', 'watch', 'attention'];
+const CONFIDENCE_BANDS: readonly string[] = ['high', 'medium', 'low'];
+const FAMILIES: readonly string[] = ['shortfall', 'progress'];
+
+/**
+ * Authoring mistakes are harness failures, never silently-passing cases.
+ *
+ * The JSON is cast to the label contract at load, so the closed vocabularies
+ * are re-checked here against the framework's OWN exported lists: a label the
+ * pipeline can never produce (a typo, a stale value after a vocabulary change)
+ * fails the load rather than becoming an assertion that can never pass — or,
+ * worse, one that is never reached.
+ */
 function validateDataset(dataset: SignalEvalDataset): void {
   if (dataset.version !== SIGNAL_EVAL_DATASET_VERSION) {
     throw new Error(`dataset version ${dataset.version} does not match harness ${SIGNAL_EVAL_DATASET_VERSION}`);
   }
+  if (dataset.frameworkVersion !== SIGNAL_FRAMEWORK_VERSION) {
+    throw new Error(
+      `dataset was labelled against framework ${dataset.frameworkVersion}; harness is ${SIGNAL_FRAMEWORK_VERSION} — re-verify the labels`,
+    );
+  }
+  const oneOf = <T>(where: string, what: string, value: T | undefined, allowed: readonly T[]): void => {
+    if (value !== undefined && !allowed.includes(value)) {
+      throw new Error(`${where}: ${what} ${JSON.stringify(value)} is not one of ${JSON.stringify(allowed)}`);
+    }
+  };
   const ids = new Set<string>();
   for (const evalCase of dataset.cases) {
     if (ids.has(evalCase.id)) throw new Error(`duplicate case id ${evalCase.id}`);
     ids.add(evalCase.id);
+    for (const invariant of evalCase.invariants ?? []) oneOf(evalCase.id, 'invariant', invariant, INVARIANTS);
     const stepIds = new Set<string>();
     for (const step of evalCase.steps) {
-      if (stepIds.has(step.id)) throw new Error(`${evalCase.id}: duplicate step id ${step.id}`);
+      const where = `${evalCase.id}/${step.id}`;
+      if (stepIds.has(step.id)) throw new Error(`${where}: duplicate step id`);
       stepIds.add(step.id);
-      if (!SIGNAL_EVAL_ACTORS.includes(step.actor)) {
-        throw new Error(`${evalCase.id}/${step.id}: unknown actor ${step.actor}`);
+      oneOf(where, 'actor', step.actor, SIGNAL_EVAL_ACTORS);
+      for (const visibility of step.expected.visibleTo ?? []) oneOf(where, 'visibleTo actor', visibility.actor, SIGNAL_EVAL_ACTORS);
+      for (const status of Object.keys(step.expected.store?.statuses ?? {})) {
+        oneOf(where, 'store status', status as ZacPersistedSignal['status'], ZAC_SIGNAL_STATUSES);
+      }
+      if (step.kind === 'suppress') {
+        oneOf(where, 'metric', step.metric, ZAC_METRIC_KEYS);
+        continue;
+      }
+      for (const tool of Object.keys(step.tools)) {
+        oneOf(where, 'tool', tool.split('@')[0] as ZacToolName, SIGNAL_EVAL_TOOLS);
+      }
+      for (const signal of step.expected.signals ?? []) {
+        oneOf(where, 'metric', signal.metric, ZAC_METRIC_KEYS);
+        oneOf(where, 'family', signal.family, FAMILIES as readonly typeof signal.family[]);
+        oneOf(where, 'withheldReason', signal.withheldReason, WITHHELD_REASONS);
+        oneOf(where, 'kind', signal.kind, ZAC_SIGNAL_TYPES);
+        oneOf(where, 'severity', signal.severity, ZAC_SIGNAL_SEVERITIES);
+        oneOf(where, 'materialityBand', signal.materialityBand, MATERIALITY_BANDS);
+        oneOf(where, 'confidenceBand', signal.confidenceBand, CONFIDENCE_BANDS as readonly typeof signal.confidenceBand[]);
+        if (signal.targetSource !== undefined && signal.targetSource !== null) {
+          oneOf(where, 'targetSource', signal.targetSource, ZAC_METRIC_TARGET_SOURCES);
+        }
+        oneOf(where, 'lifecycleAction', signal.lifecycleAction, LIFECYCLE_ACTIONS);
+        oneOf(where, 'resolutionReason', signal.resolutionReason, ZAC_SIGNAL_RESOLUTION_REASONS);
       }
     }
   }
@@ -97,9 +169,11 @@ function validateDataset(dataset: SignalEvalDataset): void {
 
 export const BUSINESS_A = 'b0000000-0000-0000-0000-00000000000a';
 export const BUSINESS_B = 'b0000000-0000-0000-0000-00000000000b';
-export const LOCATION_1 = 'l0000000-0000-0000-0000-000000000001';
-export const LOCATION_2 = 'l0000000-0000-0000-0000-000000000002';
-export const LOCATION_3 = 'l0000000-0000-0000-0000-000000000003';
+// Hex-only, so every id the harness writes is one the uuid columns and FKs in
+// 0112 would accept — a fixture Postgres would reject certifies nothing.
+export const LOCATION_1 = '10000000-0000-4000-8000-0000000000a1';
+export const LOCATION_2 = '10000000-0000-4000-8000-0000000000a2';
+export const LOCATION_3 = '10000000-0000-4000-8000-0000000000a3';
 
 const OWNER_PERMISSIONS: Permission[] = ['zac.access', 'report.dashboard.view', 'report.performance.view'];
 
@@ -140,7 +214,7 @@ export function actorProfile(preset: SignalEvalActor, locationFocus: string | nu
       roleContext: input.roles[0] as ZacActingContext['roleContext'],
       roles: input.roles,
       permissions: input.permissions,
-      staffProfileId: input.roles[0] === 'stylist' ? 's0000000-0000-0000-0000-000000000003' : null,
+      staffProfileId: input.roles[0] === 'stylist' ? '10000000-0000-4000-8000-0000000000f3' : null,
       requestSource: 'web_dashboard',
       timezone: 'Europe/London',
       locale: 'en-GB',
@@ -157,23 +231,23 @@ export function actorProfile(preset: SignalEvalActor, locationFocus: string | nu
 
   switch (preset) {
     case 'owner':
-      return base({ ...A, id: 'u0000000-0000-0000-0000-000000000001', roles: ['owner'], permissions: OWNER_PERMISSIONS, locations: two });
+      return base({ ...A, id: '10000000-0000-4000-8000-0000000000e1', roles: ['owner'], permissions: OWNER_PERMISSIONS, locations: two });
     case 'owner_single':
-      return base({ ...A, id: 'u0000000-0000-0000-0000-000000000001', roles: ['owner'], permissions: OWNER_PERMISSIONS, locations: one });
+      return base({ ...A, id: '10000000-0000-4000-8000-0000000000e1', roles: ['owner'], permissions: OWNER_PERMISSIONS, locations: one });
     case 'manager_l1':
-      return base({ ...A, id: 'u0000000-0000-0000-0000-000000000002', roles: ['manager'], permissions: OWNER_PERMISSIONS, locations: one });
+      return base({ ...A, id: '10000000-0000-4000-8000-0000000000e2', roles: ['manager'], permissions: OWNER_PERMISSIONS, locations: one });
     case 'manager_l2':
-      return base({ ...A, id: 'u0000000-0000-0000-0000-000000000004', roles: ['manager'], permissions: OWNER_PERMISSIONS, locations: [{ id: LOCATION_2, name: 'Primrose Hill' }] });
+      return base({ ...A, id: '10000000-0000-4000-8000-0000000000e4', roles: ['manager'], permissions: OWNER_PERMISSIONS, locations: [{ id: LOCATION_2, name: 'Primrose Hill' }] });
     case 'stylist':
-      return base({ ...A, id: 'u0000000-0000-0000-0000-000000000003', roles: ['stylist'], permissions: ['zac.access'], locations: one });
+      return base({ ...A, id: '10000000-0000-4000-8000-0000000000e3', roles: ['stylist'], permissions: ['zac.access'], locations: one });
     case 'owner_no_dashboard':
-      return base({ ...A, id: 'u0000000-0000-0000-0000-000000000001', roles: ['owner'], permissions: ['zac.access', 'report.performance.view'], locations: two });
+      return base({ ...A, id: '10000000-0000-4000-8000-0000000000e1', roles: ['owner'], permissions: ['zac.access', 'report.performance.view'], locations: two });
     case 'owner_no_performance':
-      return base({ ...A, id: 'u0000000-0000-0000-0000-000000000001', roles: ['owner'], permissions: ['zac.access', 'report.dashboard.view'], locations: two });
+      return base({ ...A, id: '10000000-0000-4000-8000-0000000000e1', roles: ['owner'], permissions: ['zac.access', 'report.dashboard.view'], locations: two });
     case 'owner_no_zac':
-      return base({ ...A, id: 'u0000000-0000-0000-0000-000000000001', roles: ['owner'], permissions: ['report.dashboard.view', 'report.performance.view'], locations: two });
+      return base({ ...A, id: '10000000-0000-4000-8000-0000000000e1', roles: ['owner'], permissions: ['report.dashboard.view', 'report.performance.view'], locations: two });
     case 'owner_b':
-      return base({ businessId: BUSINESS_B, businessName: 'Rival Salon', id: 'u0000000-0000-0000-0000-00000000000b', roles: ['owner'], permissions: OWNER_PERMISSIONS, locations: [{ id: LOCATION_3, name: 'Watford' }] });
+      return base({ businessId: BUSINESS_B, businessName: 'Rival Salon', id: '10000000-0000-4000-8000-0000000000eb', roles: ['owner'], permissions: OWNER_PERMISSIONS, locations: [{ id: LOCATION_3, name: 'Watford' }] });
     default:
       throw new Error(`unknown actor preset ${String(preset)}`);
   }
@@ -251,6 +325,7 @@ export async function runSignalEvalCase(evalCase: SignalEvalCase): Promise<Signa
   const liveKeysByStep = new Map<string, Map<string, string>>();
   let falseResolutions = 0;
   let crossTenant = 0;
+  let crossTenantVisible = 0;
   const invariants = evalCase.invariants ?? [];
   const gate = (category: SignalEvalCheck['category']): SignalEvalInvariant | undefined =>
     invariantFor(category, invariants);
@@ -282,7 +357,7 @@ export async function runSignalEvalCase(evalCase: SignalEvalCase): Promise<Signa
       if (step.kind === 'suppress') {
         await runSuppressStep(harness, step, check);
         await assertStore(harness, step.id, actorProfile(step.actor).context.businessId, step.expected.store, liveKeysByStep, check);
-        await assertVisibility(harness, step.id, step.expected.visibleTo, check);
+        crossTenantVisible += await assertVisibility(harness, step.id, step.at, step.expected.visibleTo, check);
         continue;
       }
 
@@ -313,7 +388,16 @@ export async function runSignalEvalCase(evalCase: SignalEvalCase): Promise<Signa
         }
       }
       if (run.persistenceErrors.length > 0) {
-        check(step.id, 'store', 'persistence errors', [], run.persistenceErrors, 'repeat_run_no_duplicate');
+        // Only a refused duplicate belongs to the dedupe gate; any other write
+        // failure is a store failure in its own right and must not inflate it.
+        const duplicate = /idx_zac_intelligence_signals_live_key/.test(JSON.stringify(run.persistenceErrors));
+        check(step.id, 'store', 'persistence errors', [], run.persistenceErrors, duplicate ? 'repeat_run_no_duplicate' : undefined);
+      }
+      // Every resolve, label or no label: a progress episode never "recovers".
+      for (const action of run.reconciliation.actions) {
+        if (action.kind === 'resolve' && action.existing && signalFamily(action.existing.signalType) === 'progress') {
+          check(step.id, 'resolution_reason', `${action.existing.metricKey} progress episode ends as superseded`, 'superseded', action.resolutionReason ?? null);
+        }
       }
 
       // ---- Signal expectations.
@@ -327,7 +411,7 @@ export async function runSignalEvalCase(evalCase: SignalEvalCase): Promise<Signa
       for (const row of live) keys.set(`${row.metricKey}|${row.scopeType}|${row.locationId ?? '-'}`, row.signalKey);
       liveKeysByStep.set(step.id, keys);
       await assertStore(harness, step.id, profile.context.businessId, step.expected.store, liveKeysByStep, check);
-      await assertVisibility(harness, step.id, step.expected.visibleTo, check);
+      crossTenantVisible += await assertVisibility(harness, step.id, step.evaluatedAt, step.expected.visibleTo, check);
     }
   } catch (error) {
     return {
@@ -338,6 +422,7 @@ export async function runSignalEvalCase(evalCase: SignalEvalCase): Promise<Signa
       falseResolutionsOnMissingData: falseResolutions,
       duplicateLiveAttempts: harness.repository.duplicateLiveAttempts,
       crossTenantReconciliations: crossTenant,
+      crossTenantVisibleRows: 0,
       error: (error as Error).message,
     };
   }
@@ -350,6 +435,7 @@ export async function runSignalEvalCase(evalCase: SignalEvalCase): Promise<Signa
     falseResolutionsOnMissingData: falseResolutions,
     duplicateLiveAttempts: harness.repository.duplicateLiveAttempts,
     crossTenantReconciliations: crossTenant,
+    crossTenantVisibleRows: crossTenantVisible,
   };
 }
 
@@ -381,9 +467,12 @@ function assertSignal(
     check(step.id, 'signal_presence', `${where} evaluated`, true, false);
     return;
   }
-  const candidate = evaluation.candidates[0];
+  const candidates = expectation.family
+    ? evaluation.candidates.filter((c) => signalFamily(c.signalType) === expectation.family)
+    : evaluation.candidates;
+  const candidate = candidates[0];
   const produced = candidate !== undefined;
-  check(step.id, 'signal_presence', `${where} produced`, expectation.produced, produced);
+  check(step.id, 'signal_presence', `${where}${expectation.family ? ' ' + expectation.family : ''} produced`, expectation.produced, produced);
 
   if (!expectation.produced) {
     if (expectation.withheldReason !== undefined) {
@@ -440,20 +529,26 @@ function reconciliationActionFor(
     (a) =>
       a.existing !== null &&
       a.existing.metricKey === expectation.metric &&
-      scopeMatches(expectation, { type: a.existing.scopeType, locationId: a.existing.locationId }),
+      scopeMatches(expectation, { type: a.existing.scopeType, locationId: a.existing.locationId }) &&
+      (expectation.family === undefined || signalFamily(a.existing.signalType) === expectation.family),
   );
 }
 
 async function runSuppressStep(harness: Harness, step: SignalEvalSuppressStep, check: Check): Promise<void> {
   const profile = actorProfile(step.actor);
   const service = harness.service({});
-  const visible = await service.listVisible(profile.actor, profile.context);
-  const target = visible.find(
+  // The target is located in the STORE, not through the actor's own view: a
+  // refusal must come from service.suppress()'s visibility gate, or the harness
+  // would be certifying its own short-circuit rather than the service.
+  const rows = await harness.repository.listLive(profile.context.businessId);
+  const target = rows.find(
     (s) => s.metricKey === step.metric && (step.locationId === undefined ? s.scopeType === 'business' : s.locationId === step.locationId),
   );
-  const accepted = target
-    ? await service.suppress(profile.actor, profile.context, target.id, step.until, step.at)
-    : false;
+  if (!target) {
+    check(step.id, 'suppress', `suppress ${step.metric}: a live row exists to target`, true, false);
+    return;
+  }
+  const accepted = await service.suppress(profile.actor, profile.context, target.id, step.until, step.at);
   check(step.id, 'suppress', `suppress ${step.metric} accepted`, step.expected.accepted, accepted);
 }
 
@@ -476,11 +571,10 @@ async function assertStore(
       check(stepId, 'store', `rows with status ${status}`, count, by(status as ZacPersistedSignal['status']));
     }
   }
-  // Also enforce, unconditionally: no two live rows share a key. The database
-  // would refuse it; the harness must refuse it too.
-  const liveKeys = all.filter((r) => r.status === 'active' || r.status === 'suppressed').map((r) => r.signalKey);
-  check(stepId, 'dedupe', 'live signal keys unique', liveKeys.length, new Set(liveKeys).size, 'repeat_run_no_duplicate');
-
+  // Live-key uniqueness is NOT asserted here: the repository refuses a second
+  // live row the way the partial unique index does, so the attempt surfaces as
+  // a persistence error and the derived duplicate counter — a per-step check
+  // could never fail and would only inflate the dedupe accuracy line.
   const live = await harness.repository.listLive(businessId);
   const keyFor = (metric: ZacMetricKey, locationId: string | null | undefined) => {
     const row = live.find((r) => r.metricKey === metric && (locationId === undefined ? r.scopeType === 'business' : r.locationId === locationId));
@@ -489,7 +583,9 @@ async function assertStore(
   if (expected.sameSignalKeyAsStep) {
     const { step, metric, locationId } = expected.sameSignalKeyAsStep;
     const prior = liveKeysByStep.get(step)?.get(`${metric}|${locationId === undefined ? 'business' : 'location'}|${locationId ?? '-'}`) ?? null;
-    check(stepId, 'dedupe', `same signal key as step ${step} for ${metric}`, prior, keyFor(metric, locationId));
+    const now = keyFor(metric, locationId);
+    // Two absent rows are not "the same signal" — both must exist AND match.
+    check(stepId, 'dedupe', `same signal key as step ${step} for ${metric}`, true, prior !== null && now !== null && prior === now);
   }
   if (expected.differentSignalKeyFromStep) {
     const { step, metric, locationId } = expected.differentSignalKeyFromStep;
@@ -499,17 +595,22 @@ async function assertStore(
   }
 }
 
+/** Returns the number of rows any actor saw from a business other than their own. */
 async function assertVisibility(
   harness: Harness,
   stepId: string,
+  at: string,
   expected: SignalEvalVisibilityExpectation[] | undefined,
   check: Check,
-): Promise<void> {
+): Promise<number> {
+  let leaked = 0;
   for (const expectation of expected ?? []) {
     const profile = actorProfile(expectation.actor);
-    const visible = await harness.service({}).listVisible(profile.actor, profile.context);
+    const visible = await harness.service({}).listVisible(profile.actor, profile.context, at);
     check(stepId, 'visibility', `visible to ${expectation.actor}`, expectation.count, visible.length);
+    leaked += visible.filter((s) => s.businessId !== profile.context.businessId).length;
   }
+  return leaked;
 }
 
 // ---------------------------------------------------------------------------
@@ -539,11 +640,18 @@ export function scoreSignalEval(dataset: SignalEvalDataset, results: SignalEvalC
 
   const isNegativeKind = (kind: string) => kind === 'opportunity' || kind === 'risk' || kind === 'watch_point';
 
+  const invariantsByCase = new Map(dataset.cases.map((c) => [c.id, c.invariants ?? []]));
+
   for (const result of results) {
+    // A case tagged with an invariant GUARDS it: if the case fails for any
+    // reason, the invariant is unproven and the gate must say so — whatever
+    // category the failing check happened to land in.
+    const failedInvariants = new Set<SignalEvalInvariant>();
+    if (!result.passed) for (const invariant of invariantsByCase.get(result.caseId) ?? []) failedInvariants.add(invariant);
     for (const c of result.checks) {
       accuracy[c.category].asserted += 1;
       if (c.passed) accuracy[c.category].correct += 1;
-      if (!c.passed && c.invariant) invariantFailures[c.invariant] += 1;
+      if (!c.passed && c.invariant) failedInvariants.add(c.invariant);
 
       if (c.category === 'signal_presence' && c.label.endsWith('produced')) {
         const expectedProduced = c.expected === 'true';
@@ -554,9 +662,15 @@ export function scoreSignalEval(dataset: SignalEvalDataset, results: SignalEvalC
       if (c.category === 'kind' && c.expected === '"progress"' && c.actual !== '"progress"' && isNegativeKind(JSON.parse(c.actual))) {
         fpNeg += 1;
       }
-      if (c.category === 'visibility' && !c.passed) {
-        if (c.label.includes('owner_b')) isolation += 1; else permission += 1;
-      }
+      // A wrong visibility count is a permission/scope failure; tenant
+      // isolation is counted from ACTUALS (rows seen across a business,
+      // reconciliation across a business), never from an actor's name.
+      if (c.category === 'visibility' && !c.passed) permission += 1;
+    }
+    for (const invariant of failedInvariants) invariantFailures[invariant] += 1;
+    if (result.crossTenantVisibleRows > 0) {
+      isolation += result.crossTenantVisibleRows;
+      invariantFailures.tenants_never_reconcile += result.crossTenantVisibleRows;
     }
     if (result.falseResolutionsOnMissingData > 0) {
       invariantFailures.missing_data_never_resolves += result.falseResolutionsOnMissingData;

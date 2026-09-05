@@ -1,6 +1,6 @@
 # ZAC Phase 2 — Workstream 1 close-out report
 
-> **Status: ENGINEERING COMPLETE · HOSTED VERIFICATION COMPLETE on dev-test (production not a target of this close-out)**
+> **Status: ENGINEERING COMPLETE · HOSTED VERIFICATION COMPLETE on dev-test (production not a target of this close-out) · adversarial review actioned (§17)**
 >
 > **Workstream 1 is closed.**
 >
@@ -46,10 +46,10 @@ updated plan's Workstream 2. The tracking rule is now recorded in
 | Deliverable | Implementation | Proof | Status |
 |---|---|---|---|
 | Canonical metric registry | `intelligence/zac-metric-registry.ts` | registry spec + harness `target_source` (6/6) | ✅ complete |
-| Proactive signal lifecycle | `intelligence/zac-signal-reconciler.ts`, `supabase/migrations/0112` | reconciler spec; harness lifecycle (35/35) + resolution (2/2); SQL suite 28/28; hosted T1–T5 (§18) | ✅ complete |
-| Opportunity/risk/watch-point contracts | `intelligence/zac-signal.types.ts` (+ `progress`) | harness kind accuracy (34/34) | ✅ complete |
+| Proactive signal lifecycle | `intelligence/zac-signal-reconciler.ts`, `supabase/migrations/0112` | reconciler spec (+ fixture H: recovered vs superseded); harness lifecycle (50/50) + resolution (10/10, `superseded` asserted); SQL suite 29/29; hosted T1–T5 twice (§18) | ✅ complete |
+| Opportunity/risk/watch-point contracts | `intelligence/zac-signal.types.ts` (+ `progress`) | harness kind accuracy (42/42) | ✅ complete |
 | Materiality/severity rules | `intelligence/zac-signal-scoring.ts` | harness materiality band (13/13), severity (11/11), confidence band (12/12) | ✅ complete |
-| Deduplication | `buildSignalKey` + partial unique index `idx_zac_intelligence_signals_live_key` | harness dedupe (78/78), `repeat_run_no_duplicate` PASS; hosted T2 (§18) | ✅ complete |
+| Deduplication | `buildSignalKey` + partial unique index `idx_zac_intelligence_signals_live_key` | harness dedupe (12/12 real key assertions — the 70 unfireable per-step checks the review found were removed), `repeat_run_no_duplicate` PASS, 0 duplicate attempts; hosted T2 (§18) | ✅ complete |
 | Phase 2 evaluation harness | `intelligence/eval/`, `scripts/zac-signal-eval.ts`, `pnpm --filter @sheer/api zac-signal-eval` | §14–§16 below | ✅ complete |
 
 ## 5. Canonical metric registry
@@ -123,8 +123,12 @@ advanced only by positive evidence), `resolve` (`recovered` for a shortfall,
 `retain` (any non-positive observation — missing, failed, not_applicable,
 insufficient_sample, no target — leaves the row exactly as it was). Suppression
 is a human action bounded by `suppressed_until`; a suppressed row still holds
-its issue's live slot. **Expiry is not resolution**: it says "we could no
-longer tell", and the persisted reason says so.
+its issue's live slot; once the window lapses the row is readable again even
+before the next positive reading flips its status (a suppression "ends by
+itself"). **Expiry is not resolution**: it says "we could no longer tell", and
+the persisted reason says so. **Recovery is earned**: `recovered` only when the
+reading closed the gap against the target the signal was raised for; a target
+that moved under an unchanged number ends the old signal as `superseded`.
 
 ## 12. Persistence
 
@@ -136,7 +140,9 @@ subject: own personal rows). `ZacIntelligenceSignalStore` (service-role client,
 per-query `.schema('zac')`, `.eq('business_id')` on every statement) implements
 the `ZacSignalRepository` port the service depends on. Visibility is a
 write-time snapshot that only narrows; the service re-checks the actor's
-current permissions and scope on every read.
+current permissions and scope on every read. Business-scope rows are
+owner-only; location/team rows are readable by owners and the row's own-location
+managers; personal rows by their subject alone.
 
 ## 13. Evaluation harness
 
@@ -160,75 +166,105 @@ counters are derived from what the pipeline *did*, not from labels.
 
 ## 14. Dataset version
 
-`zac-signal-eval-v1` · framework `ws1-2026-09-04` · **80 cases / 120 steps**
-(`apps/api/src/zac/intelligence/eval/zac-signal-eval-dataset.v1.json`):
+`zac-signal-eval-v1` · framework `ws1-2026-09-05` · **84 cases / 130 steps**
+(`apps/api/src/zac/intelligence/eval/zac-signal-eval-dataset.v1.json`), validated at
+load against the framework's exported vocabularies and against
+`SIGNAL_FRAMEWORK_VERSION` (a label the pipeline cannot produce, or a dataset
+labelled against an older contract, fails the load).
 
-| Domain | Cases | Steps | Invariant-tagged |
-|---|---|---|---|
-| rebooking | 24 | 24 | zero-denominator 5 |
-| utilisation | 19 | 19 | failed-read 4 |
-| lifecycle | 20 | 48 | missing-never-resolves 8, repeat-run-no-duplicate 9 |
-| scoping | 10 | 15 | tenants-never-reconcile 3, restricted-scope 4, removed-permission 3 |
-| dedupe | 7 | 14 | — |
+| Domain | Cases | Steps |
+|---|---|---|
+| rebooking | 24 | 24 |
+| utilisation | 20 | 20 |
+| lifecycle | 22 | 54 |
+| scoping | 11 | 18 |
+| dedupe | 7 | 14 |
 
-Future workstreams add cases and a `domain`; runner, scorer, actor presets and
-gates are unchanged. `frameworkVersion` is bumped only when a framework change
-alters what an existing label means.
+| Invariant | Tagged cases |
+|---|---|
+| `failed_read_never_resolves` | 3 |
+| `missing_data_never_resolves` | 9 |
+| `removed_permission_hides` | 3 |
+| `repeat_run_no_duplicate` | 10 |
+| `restricted_scope_never_widens` | 5 |
+| `tenants_never_reconcile` | 3 |
+| `zero_denominator_no_false_negative` | 5 |
+
+Fixtures use hex-only UUIDs and real ISO dates, and carry each tool's standing
+caveats, so nothing certified here would be rejected or reshaped by Postgres or
+by the real tool. Future workstreams add cases and a `domain`; runner, scorer,
+actor presets and gates are unchanged. `frameworkVersion` is bumped only when a
+framework change alters what an existing label means (it was, on 2026-09-05:
+the resolution-reason rule and the visibility matrix changed).
 
 ## 15. Evaluation results
 
-`pnpm --filter @sheer/api zac-signal-eval` on the close-out tree
-(HEAD at run time `59d5656`; the run is reproduced by the CI spec on the
-close-out commit itself):
+`pnpm --filter @sheer/api zac-signal-eval`, 2026-09-05, on the tree committed
+as the review-hardening commit (§28); HEAD at run time `9f357f7`:
 
 ```
-Dataset                                zac-signal-eval-v1
-Framework                              ws1-2026-09-04
-Cases 80 · Passed 80 · Failed 0
+Cases                                  84
+Passed                                 84
+Failed                                 0
 
-Signal/no-signal accuracy              100.0%   (83/83)
-Kind accuracy                          100.0%   (34/34)
+Signal/no-signal accuracy              100.0%   (102/102)
+Kind accuracy                          100.0%   (42/42)
 Direction accuracy                     100.0%   (10/10)
 Materiality-band accuracy              100.0%   (13/13)
 Severity accuracy                      100.0%   (11/11)
-Confidence-band accuracy               100.0%   (12/12)
-Target-source accuracy                 100.0%   (6/6)
-Withheld-reason accuracy               100.0%   (26/26)
-Lifecycle transition accuracy          100.0%   (35/35)
-Resolution accuracy                    100.0%   (2/2)
-Dedupe accuracy                        100.0%   (78/78)
-Store-state accuracy                   100.0%   (112/112)
-Visibility accuracy                    100.0%   (18/18)
+Confidence-band accuracy               100.0%   (13/13)
+Target-source accuracy                 100.0%   (8/8)
+Withheld-reason accuracy               100.0%   (27/27)
+Lifecycle transition accuracy          100.0%   (50/50)
+Resolution accuracy                    100.0%   (10/10)
+Dedupe accuracy                        100.0%   (12/12)
+Store-state accuracy                   100.0%   (149/149)
+Visibility accuracy                    100.0%   (29/29)
 
-False-positive negative signals        0 / 30
-False-negative signals                 0 / 53
+False-positive negative signals        0 / 37
+False-negative signals                 0 / 65
 Duplicate active signals               0
 False resolution on missing/failed     0
 Tenant isolation failures              0
 Permission failures                    0
 
-Hard invariants (zero tolerance):      7 of 7 PASS
+Hard invariants (zero tolerance):      all 7 PASS
 ```
 
-Every percentage above is computed from the individual checks at run time;
-none is hard-coded.
+**Mutation check** (in-process prototype patches, no tree edits) — each of the
+holes the review named now turns the run red, and the control passes:
+
+| Mutation | Result |
+|---|---|
+| every resolve says `recovered` | FAIL — `life-11`, `life-12`, `life-21` |
+| managers read `business_owner` rows again | FAIL — `scope-07`, `scope-11`; `restricted_scope_never_widens` |
+| `suppress()` skips its visibility gate | FAIL — `life-14`, `scope-08` |
+| lapsed suppression stays hidden | FAIL — `life-22` |
+| missing observation resolves (the core invariant) | FAIL — 9 cases; `missing_data_never_resolves` ×16, `failed_read_never_resolves`, `zero_denominator_no_false_negative` |
+| control (no mutation) | PASS |
 
 ## 16. All failed evaluation cases
 
-At close-out: **none** — 80 of 80 cases, 0 failed checks, 0 invariant failures.
+At close-out: **none** — 84 of 84 cases, 0 failed checks, 0 invariant failures.
 
-Found and fixed while the harness was being built (the reason it exists):
+Found and fixed while the harness was being built and reviewed (the reason it exists):
 
-| Case(s) | What the harness exposed | Disposition |
+| Case(s) | What the harness or its review exposed | Disposition |
 |---|---|---|
-| 7 rebooking/lifecycle confidence labels | Authored as `high`; the real tool always carries two caveats → 0.684 `medium`, and 0.41 `low` at the floor | Labels corrected; `reb-21b` added as a no-caveat control; calibration note recorded (§9) |
-| `life-16`, `life-18` (expiry) | Reconciler `expire` actions carried no `resolutionReason`; only the service stamped `expired_unconfirmed` | **Class B (WS1 defect), fixed**: the plan now states the reason itself; the service applies the plan's reason |
+| 7 rebooking/lifecycle confidence labels | Authored as `high`; the real tool always carries two caveats → 0.684 `medium`, and 0.41 `low` at the floor | Labels corrected; `reb-21b` added as a no-caveat control |
+| `life-16`, `life-18` (expiry) | Reconciler `expire` actions carried no `resolutionReason`; only the service stamped `expired_unconfirmed` | **Class B, fixed**: the plan states the reason; the service applies it |
+| `life-12` (review #1/#7/#18) | `superseded` was never assertable — the label contract had no signal family | **Class B, fixed**: family-aware expectations; `superseded` asserted; always-on check that a progress episode never `recovers` |
+| `life-21` (new; review #2) | A goal appearing under an unchanged number resolved the shortfall as `recovered` | **Class B, fixed** in the reconciler: `recovered` is earned against the signal's own target, else `superseded` |
+| `life-22` (new; review #5/#40) | A lapsed suppression followed by a missing read stayed invisible indefinitely | **Class B, fixed**: read-side lapse rule in `listVisible`/`suppress` |
+| `scope-07`, `scope-11` (review #15) | Managers could read business-wide KPI rows their own tools would not return | **Class B, fixed**: `business_owner` rows owner-only |
+| `scope-08` (review #3/#16/#46) | The suppress step never reached `service.suppress()`'s gate | Harness fixed; the same manager's *accepted* suppression added as the positive control |
+| `utl-04`, `utl-19` (review #17) | Utilisation fixtures omitted the tool's two standing caveats; labels flipped under the real shape | Fixtures carry the caveats; labels `medium`/`low`; `utl-20` isolates the factor |
+| 88 fixtures (review #24/#30/#48) | Malformed dates from generator arithmetic; non-UUID ids | Regenerated with real dates and hex UUIDs |
 
-Transient, not a defect: one run of the script reported `scope-09` failing
-(6 rows written by a revoked actor) while an automated review was rewriting
-source files in the working tree; the same tree re-run after the review was
-stopped passes 80/80 (the run quoted in §15). Recorded because a red scorecard must be
-explained, not because the framework misbehaved.
+Transient, not a defect: one run of the script on 2026-09-04 reported `scope-09`
+failing (6 rows written by a revoked actor) while an automated review was
+rewriting source files in the working tree; the same tree re-run after the
+review was stopped passed. Recorded because a red scorecard must be explained.
 
 ## 17. Migration 0112 review
 
@@ -246,8 +282,34 @@ Dependencies: `extensions.gen_random_uuid`, `public.current_user_id`,
 `core.locations`, `core.user_profiles` — all present on the hosted target
 before `0111`, so 0112 is safe to apply ahead of 0111 there.
 
-Adversarial review (read-only, seven lenses, every finding independently
-verified): «PENDING-REVIEW»
+Adversarial review (read-only, seven lenses — hollow checks, invariant counters,
+repository fidelity, migration 0112, dataset honesty, reconciler delta,
+documentation — each candidate finding then handed to an independent verifier
+told to refute it): **85 candidate findings; 53 verified on 2026-09-04, of
+which 48 confirmed and 5 refuted; 32 verifications aborted on a session limit
+and were resumed on 2026-09-05** (status at commit time in §28). The 48 confirmed
+findings reduce to the root causes below; migration items are recorded, not
+patched into an applied migration.
+
+| Root cause (finding #s) | Severity | Disposition |
+|---|---|---|
+| `superseded` inexpressible in the label contract (#1, #7, #18) | high | **Fixed** — family-aware expectations; asserted; always-on progress check |
+| Goal substitution resolved an unchanged shortfall as `recovered` (#2) | medium | **Fixed** — reconciler rule; fixture H; `life-21` |
+| Suppress step short-circuited before the service gate (#3, #16, #46) | medium | **Fixed** in the harness |
+| Invariant tags decorative on 8 cases; `invariantFor` mapped 6 of 15 categories (#4, #8, #19, #22, #29) | medium | **Fixed** — a failing tagged case fails its invariants; every invariant has tagged cases |
+| Lapsed suppression + missing read hidden indefinitely (#5, #40) | medium/low | **Fixed** — read-side lapse rule; `life-22`; service spec |
+| 70 unfireable dedupe checks; `null == null` key match (#6, #45) | medium/low | **Fixed** — removed; both rows must exist |
+| Tenant counters measured the fake; leak scored by actor-name substring (#9, #12, #20, #23, #27, #37) | medium/low | **Fixed** — cross-business rows counted from actuals; wording corrected (the reconciliation counter guards the service's business scoping) |
+| Label contract a runtime cast; `SIGNAL_EVAL_TOOLS` unused; `frameworkVersion` unvalidated (#10, #36) | medium/low | **Fixed** — full load-time validation |
+| Managers read business-wide KPI rows (#15) | medium | **Fixed** — owner-only; documented as a deliberate tightening of the mirrored matrix |
+| Utilisation fixtures without the tool's caveats (#17) | medium | **Fixed** — labels moved as predicted |
+| Repository more lenient than Postgres: uniqueness on update, tie order, CHECKs/UUIDs (#21, #28, #32, #33, #34) | low | **Fixed** — uniqueness on update, deterministic order in store and fake, hex UUIDs; CHECK-level fidelity remains the hosted smoke's job (§18) |
+| Persistence-error attribution hard-wired to the dedupe gate (#31) | low | **Fixed** |
+| Malformed fixture dates; inconsistent multi-location fixture; fan-out untested (#24, #30, #44, #48) | low | **Fixed** — regenerated; `reb-22` consistent; `scope-11` fan-out |
+| Personal/team scopes absent from the harness (#47) | low | **Deferred** — no WS1 evaluator produces a personal signal; a WS6 dependency, recorded |
+| Docs: stale "not applied", `scope-04` mis-cited, rounding misattributed (#13, #14, #35) | medium/low | **Fixed** |
+| Migration: `suppressed` with NULL `suppressed_until` allowed (#11); `ON DELETE SET NULL` can orphan scoped rows, no scope↔id or status↔reason CHECK (#25, #42); owner policy admits `system_safe_summary` that the service denies (#38); subject policy has no membership check (#39); `numeric(12,4)` too small for minor-unit money metrics (#41); suite left idempotency and a manager probe unproven (#43) | low | **Recorded for a hardening migration (0113, Workstream 8)** — none affects the two admitted metrics or the API path, which writes bounded windows through the service role; suite gained case 29 (manager has no RLS path) and 0112 was re-applied on a fully migrated stack without error |
+
 
 ## 18. Hosted / staging verification
 
@@ -278,20 +340,23 @@ for those targets is in §23 of the framework doc.
 ## 19. Permission / tenant verification
 
 Service-side (`listVisible`, current permissions and context re-checked) and
-database-side (RLS as **real authenticated users**, no bypass), on dev-test:
+database-side (RLS as **real authenticated users**, no bypass), on dev-test —
+run on 2026-09-04 and **re-run on 2026-09-05** after the review fixes:
 
 | Brief property | Evidence |
 |---|---|
-| Business A's signal cannot be read from Business B | TESTBUSINESS-1's real owner: service-side sees only its own business row; RLS returns exactly its 2 rows and **0** demo-salon rows. Another business's owner: **0** rows. |
-| Manager with Location A scope cannot retrieve the Location B signal | Pinner manager sees Pinner's row, never Thame's; Thame manager the mirror. (Both also see the business-scope row — the designed matrix, `canSee` = `ZacMemoryService.canSee`, harness `scope-04`.) |
+| Business A's signal cannot be read from Business B | TESTBUSINESS-1's real owner: service-side sees only its own business row; RLS returns exactly its 2 rows and **0** demo-salon rows. Another business's owner (1 active owner membership elsewhere): **0** rows. Stylist: **0** rows. |
+| Manager with Location A scope cannot retrieve the Location B signal | Pinner manager sees **Pinner only**; Thame manager **Thame only**. On 2026-09-04 both also saw the business-scope row (the matrix as first built, mirroring `ZacMemoryService.canSee`); the review flagged it as exposing data the manager's own tool would never return, `canSee` was tightened, and the re-run shows the business row hidden from both. |
 | Removing a permission after creation prevents later retrieval | Owner with `report.dashboard.view` removed: **nothing** returned, rows still present. |
-| Persisted visibility never grants access | The same rows carry `business_owner` visibility; without the permission they are invisible. Stylist: nothing. |
-| Current acting context remains authoritative | Every read above is decided from the actor/context passed on that call, not from the row. |
-| Direct-DB defence in depth | `authenticated` UPDATE → **42501 permission denied**; anonymous PostgREST → **401**. |
+| Persisted visibility never grants access | The same rows carry `business_owner` visibility; without the permission, or as a manager, they are invisible. Stylist: nothing. |
+| Current acting context remains authoritative | The same manager id with Pinner scope sees Pinner only and with Thame scope sees Thame only; every read is decided from the actor/context on that call, not from the row. |
+| Direct-DB defence in depth | `authenticated` UPDATE → **42501 permission denied**; anonymous PostgREST → **401**; a manager has no RLS SELECT path at all (SQL case 29) — managers are served by the API, which enforces location scope itself. |
 
-Two smoke-script expectations were mine and wrong (managers seeing no business
-row; a "narrowed" owner whose `locationScope.kind` stayed `'all'`); they are
-recorded in the framework doc §23.2 rather than hidden.
+One smoke-script expectation was mine and wrong: it "narrowed" an owner's
+context while leaving the actor's `locationScope.kind = 'all'`; an owner's scope
+is all locations by definition, so the acting-context property is proved with a
+manager. All smoke rows (7 on each run) were deleted by id; both fixture
+businesses and the table are at 0 rows.
 
 ## 20. Documentation corrections
 
@@ -333,6 +398,13 @@ in newly-created Phase 2 code.
 | 5 | The KPI `tool_threshold` rebooking target does not reach the persisted signal | Phase 1 evidence carries it (`zac-evidence.service.ts:209`); `report.rebooking_summary` does not expose it, so the WS1 observation cannot see it | **C** — Workstream 2 dependency | No Phase 1 acceptance criterion requires a persisted signal to carry the configured KPI threshold; the Phase 1 evidence path already does. Making a *configured* rebooking target drive the signal (`location_setting` provenance, already in the vocabulary) is Workstream 2's "stable … intelligence" work, gated on the tool exposing the threshold | Hosted smoke used a remembered goal to supply the brief's 60% target (§18) |
 | 6 | `rebookingGoalFromMemory` treats any remembered percentage near "rebook" as a goal | `analysis/zac-evidence.service.ts:434`, called unfiltered at `:347` (Phase 1 evidence/memory) | **A** — Phase 1 evidence defect | A `recurring_problem` memory ("rebooking dipped to 40% last spring") becomes a 40% goal in Phase 1 evidence | **Contained in Phase 2 code, not fixed in Phase 1**: the WS1 observation only passes goal-kind memories (`GOAL_MEMORY_KINDS`), proved by harness case `reb-12` |
 
+**Class B (Workstream 1 defects, fixed inside Phase 2 code):** the expire
+action's missing reason (found by the harness); and, from the close-out review,
+the resolution-reason rule under target substitution, lapsed-suppression
+visibility, owner-only business rows, uniqueness-on-update in the in-memory
+repository, and the harness assertion holes in §16/§17. All are in files created
+by `d617323`/`9f357f7`; none touches Phase 1 code.
+
 No **D** (non-blocking technical debt) classification was used for these six:
 each is a defect in a Phase 1 layer the plan names explicitly, so it is Phase 1
 completion by the plan's own rule, whatever its severity.
@@ -341,7 +413,7 @@ completion by the plan's own rule, whatever its severity.
 
 | Bucket | Work | Commits | Hours |
 |---|---|---|---|
-| **Workstream 1 (24h plan)** | framework, registry, lifecycle, contracts, materiality/severity, dedupe, 0112, adapter; evaluation harness + dataset; documentation corrections; WS1-specific verification (local suites, hosted smoke) | `d617323` (22 files, +6,654), `bb0f8f3`; this close-out commit («PENDING-SHA») | see §23 |
+| **Workstream 1 (24h plan)** | framework, registry, lifecycle, contracts, materiality/severity, dedupe, 0112, adapter; evaluation harness + dataset; documentation corrections; WS1-specific verification (local suites, hosted smoke) | `d617323` (22 files, +6,654), `bb0f8f3`; this close-out commit (`9f357f7`) | see §23 |
 | **Phase 1 remediation** | the six defects in §21 | none — **0h consumed**; not fixed | estimate to fix all six: ~3–5h, **Phase 1 completion, not Phase 2** |
 | **Cross-cutting provider architecture** | OpenAI/Anthropic provider abstraction, profiles, benchmark architecture | `cf56719` (26 files, +3,980), `2e9c82b`, `383e002` | **not Workstream 1**. Under the plan this is Workstream 7 territory ("model routing & cost controls", 34h) and was requested separately; it is recorded here so it is not silently absorbed into WS1's 24h |
 
@@ -362,37 +434,62 @@ the close-out commit (§28) on 2026-09-04.
 
 ## 25. Risks
 
-- Confidence calibration: static product caveats and genuine data-quality
-  notes currently weigh the same; rebooking cannot reach `high`. Recorded for
-  the Workstream 2/5 calibration pass; it never gates raising.
+- **Hardening migration outstanding (0113, Workstream 8):** `suppressed` rows
+  with a NULL window are accepted by 0112 and honoured as permanent by the
+  reconciler (only out-of-band writes can create one — the service always
+  writes a bounded window); `ON DELETE SET NULL` on `location_id`/`subject_user_id`
+  can leave a scoped row without its scope id; no CHECK ties `scope_type` to its
+  id or `status` to `resolution_reason`; the owner policy admits
+  `system_safe_summary`, which the service denies; the subject policy does not
+  require an active membership; `numeric(12,4)` would overflow a minor-unit money
+  metric ≥ 1e8. None affects the two admitted metrics or the API path today.
+- **Visibility decision to confirm with the client:** business-scope signals are
+  owner-only (tightened 2026-09-05). If managers are meant to see business-wide
+  signals, it is a one-line matrix change with a harness case (`scope-07`,
+  `scope-11`) to flip — a decision, not drift.
+- Confidence calibration: static product caveats and genuine data-quality notes
+  weigh the same; rebooking cannot reach `high`. Recorded for the Workstream 2/5
+  calibration pass; it never gates raising.
 - Configured rebooking targets do not reach the signal (§21 #5) until the tool
   exposes the threshold — Workstream 2.
-- The in-memory harness repository mirrors the live-uniqueness rule and tenant
-  filter, not every CHECK constraint or `numeric(6,4)` rounding; the hosted
-  smoke test is what proves those («PENDING-REVIEW» for any further items).
+- The in-memory harness repository mirrors live-uniqueness (insert and update),
+  tenant filtering and ordering, not every CHECK constraint; the hosted smoke
+  test (§18) is what proves those.
 - Nothing evaluates signals on a schedule; until Workstream 5 the framework
   runs only when invoked.
+- The resumed adversarial verification of 32 findings was still running at the
+  time of the hardening commit; its outcome is recorded in §28's follow-up.
 
 ## 26. Deferred items
 
 - Everything in §1's "not" list (Workstreams 2, 3, 4, 5, 7, product boundary).
-- Phase 1 defects #1–#6 (Phase 1 completion).
-- Configured rebooking targets reaching the signal (§21 #5) — Workstream 2.
-- Confidence calibration of static caveats vs data-quality notes — Workstream 2/5.
-- Applying the ZAC migration stack to `develop`/`staging` — deployment, pre-existing.
+- Phase 1 defects #1–#6 (Phase 1 completion; §21).
+- Hardening migration 0113 (the six 0112 items in §25) — Workstream 8.
+- Personal/team-scope harness cases — needs a WS6 evaluator that produces a
+  personal signal; the label contract already carries `subjectUserId`/`family`.
+- A configured (`location_setting`) rebooking target — Workstream 2, once the
+  rebooking tool exposes the threshold.
 
 ## 27. Final test counts
 
-| Check | Result |
+| Check | Result (2026-09-05) |
 |---|---|
-| Evaluation harness (`zac-signal-eval`) | 80/80 cases, 7/7 invariants, exit 0 |
-| `npx jest src/zac/intelligence` (framework A–L, service, harness gate) | 3 suites, **107 passed** |
-| Full API suite `npx jest` (apps/api) | **121 suites, 2,511 passed, 226 todo, 0 failed** |
-| `tsc --noEmit` (apps/api) | 0 errors |
-| `eslint src/zac scripts/zac-signal-eval.ts` | 0 problems |
-| `supabase/tests/zac_intelligence_signals.sql` (PGlite, 112 migrations) | 28/28 PASS |
-| All 19 SQL suites, full stack vs stack capped at 0111 | identical outcomes (§17) |
+| Evaluation harness (`zac-signal-eval`) | 84/84 cases, 130 steps, 7/7 invariants, exit 0; mutation check 5/5 red, control green |
+| `npx jest src/zac/intelligence` (framework A–L + H, service, harness gate) | 3 suites, **113 passed** |
+| Full API suite `npx jest` (apps/api) | **121 suites, 2,517 passed, 226 todo, 0 failed** |
+| `tsc --noEmit` (apps/api) | clean |
+| `eslint` (zac/intelligence, store, script) | clean |
+| `supabase/tests/zac_intelligence_signals.sql` (PGlite, all 112 migrations) | **29 of 29 PASS**; 0112 re-applied on the migrated stack: no error |
+| All 19 SQL suites, full stack vs 0111-capped control | identical outcomes (§17) |
+| Hosted (dev-test) | 0112 applied 2026-09-04; T1–T5, M, B, V **PASS** on 2026-09-04 and 2026-09-05; RLS probes as real users; rows cleaned (0 remain) |
 
 ## 28. Final commit SHA
 
-«PENDING-SHA»
+- `9f357f7350ac4215c204d2918d4100ca1246e526` — `feat(zac): close out Phase 2 Workstream 1 with the evaluation harness`
+- «HARDENING-SHA» — `fix(zac): harden the Workstream 1 framework and harness after adversarial review`
+
+Both on `feature/post-checkin-service-lifecycle` (the branch carrying the
+user's plan commit `59d5656`, which had fast-forwarded over
+`feature/zac-phase2-intelligence-signals` at `383e002`). The hardening SHA and
+the outcome of the resumed verification are recorded by the docs-only commit
+that follows.

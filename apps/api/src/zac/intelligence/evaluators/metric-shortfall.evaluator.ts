@@ -81,6 +81,8 @@ export abstract class MetricShortfallEvaluator implements ZacSignalEvaluator {
       metricKey: this.metricKey,
       scope: observation.scope,
       observationStatus: observation.status,
+      observedValue: observation.value,
+      target: observation.target,
     };
     const withhold = (reason: ZacWithheldSignal['reason'], note: string): ZacSignalEvaluation => ({
       ...shell,

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { metricDefinition } from './zac-metric-registry';
+import { computeMateriality } from './zac-signal-scoring';
 import { isPositiveEvidence, type ZacMetricObservationStatus } from './zac-metric.types';
 import {
   buildCoverageKey,
@@ -115,7 +116,13 @@ export class ZacSignalReconciler {
     /** metric+scope -> what the reading was, and whether it can retire anything. */
     const coverage = new Map<
       string,
-      { status: ZacMetricObservationStatus; recoveryEvidence: boolean }
+      {
+        status: ZacMetricObservationStatus;
+        recoveryEvidence: boolean;
+        /** The reading behind the verdict, for the recovered-vs-superseded decision. */
+        value: number | null;
+        target: number | null;
+      }
     >();
     for (const evaluation of evaluations) {
       const key = buildCoverageKey({
@@ -136,6 +143,8 @@ export class ZacSignalReconciler {
       coverage.set(key, {
         status: evaluation.observationStatus,
         recoveryEvidence: (previous?.recoveryEvidence ?? false) || recoveryEvidence,
+        value: evaluation.observedValue ?? previous?.value ?? null,
+        target: evaluation.target ?? previous?.target ?? null,
       });
     }
 
@@ -261,9 +270,7 @@ export class ZacSignalReconciler {
         existing: signal,
         candidate: null,
         observationStatus: covered.status,
-        // A progress episode does not "recover" — it is superseded by whatever
-        // the metric did next.
-        resolutionReason: signalFamily(signal.signalType) === 'progress' ? 'superseded' : 'recovered',
+        resolutionReason: this.resolutionReasonFor(signal, covered.value),
       });
     }
 
@@ -275,6 +282,29 @@ export class ZacSignalReconciler {
       expired: actions.filter((action) => action.kind === 'expire').length,
       retained: actions.filter((action) => action.kind === 'retain').length,
     };
+  }
+
+  /**
+   * Why a signal is being resolved — and the distinction is load-bearing.
+   *
+   * A progress episode does not "recover"; it is SUPERSEDED by whatever the
+   * metric did next. A shortfall is RECOVERED only when the reading closed the
+   * gap against the target the signal was raised for (to zero or inside the
+   * metric's noise floor, exactly as the evaluator judges recovery). If the
+   * number did not move but the TARGET did — a remembered goal appearing, a
+   * threshold lowered — the old signal no longer applies, but nothing recovered:
+   * that is superseded too. Without this rule a goal typed into memory would
+   * be recorded as a business improvement.
+   */
+  private resolutionReasonFor(
+    signal: ZacPersistedSignal,
+    value: number | null,
+  ): 'recovered' | 'superseded' {
+    if (signalFamily(signal.signalType) === 'progress') return 'superseded';
+    if (value === null || signal.targetValue === null) return 'recovered';
+    const definition = metricDefinition(signal.metricKey);
+    const gapAgainstOwnTarget = computeMateriality(definition, value, signal.targetValue);
+    return gapAgainstOwnTarget < definition.materialityBands.watch ? 'recovered' : 'superseded';
   }
 
   /** When a freshly confirmed signal stops being credible, from its metric's window. */

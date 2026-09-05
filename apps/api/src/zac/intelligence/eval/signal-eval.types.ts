@@ -8,6 +8,7 @@ import type {
 import type { ZacSignalActionKind } from '../zac-signal-reconciler';
 import type {
   ZacSignalDirection,
+  ZacSignalFamily,
   ZacSignalResolutionReason,
   ZacSignalSeverity,
   ZacSignalStatus,
@@ -74,7 +75,15 @@ export interface SignalEvalSignalExpectation {
   /** Defaults to the business scope. */
   scopeType?: ZacSignalScopeType;
   locationId?: string | null;
-  /** Was a candidate raised at all? */
+  /**
+   * Which of the two logical signals about this (metric, scope) the expectation
+   * is about. A shortfall and a progress run have different keys and can change
+   * state in the SAME step (one opens while the other resolves); without this
+   * the resolve of the progress row — the `superseded` semantic — could not be
+   * asserted. Omitted = whichever candidate the step produced.
+   */
+  family?: ZacSignalFamily;
+  /** Was a candidate raised at all (for the family, when given)? */
   produced: boolean;
   /** When not produced: why the evaluator declined. */
   withheldReason?: ZacWithheldSignal['reason'];
@@ -217,6 +226,8 @@ export interface SignalEvalCaseResult {
   falseResolutionsOnMissingData: number;
   duplicateLiveAttempts: number;
   crossTenantReconciliations: number;
+  /** Rows returned by listVisible whose business is not the actor's. Must be 0. */
+  crossTenantVisibleRows: number;
   /** Case-level authoring or runtime error, if the case could not run at all. */
   error?: string;
 }

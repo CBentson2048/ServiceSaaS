@@ -143,6 +143,7 @@ export class ZacIntelligenceSignalStore implements ZacSignalRepository {
       .eq('business_id', businessId)
       .in('status', ['active', 'suppressed'])
       .order('materiality', { ascending: false })
+      .order('last_evaluated_at', { ascending: false })
       .limit(limit);
 
     if (error) {

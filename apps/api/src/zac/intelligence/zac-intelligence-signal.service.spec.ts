@@ -486,6 +486,41 @@ describe('K: a permission removed after a signal was written hides it', () => {
     expect(await service.listVisible(authUser(), actingContext())).toHaveLength(1);
   });
 
+  it('keeps a business-scope signal owner-only: a manager\'s own tools would never return the business-wide KPI', async () => {
+    const { service } = makeService({
+      [TABLE]: [storedRow({ id: 'sig-biz', location_id: null, scope_type: 'business', visibility_scope: 'business_owner' })],
+    });
+    const manager = authUser({ id: MANAGER_ID, roles: ['manager'], primaryRole: 'manager', allowedLocationIds: [LOCATION_1] });
+    const context = actingContext({
+      actorUserId: MANAGER_ID,
+      roleContext: 'manager',
+      roles: ['manager'],
+      accessibleLocationIds: [LOCATION_1],
+      accessibleLocations: [{ id: LOCATION_1, name: 'Pinner' }],
+    });
+    expect(await service.listVisible(manager, context)).toHaveLength(0);
+    expect(await service.listVisible(authUser(), actingContext())).toHaveLength(1);
+  });
+
+  it('lets a suppression end by itself: the row is readable again once its window has lapsed, before any reading flips its status', async () => {
+    const { service } = makeService({
+      [TABLE]: [
+        storedRow({
+          id: 'sig-suppressed',
+          status: 'suppressed',
+          resolution_reason: 'suppressed_by_actor',
+          suppressed_until: '2026-09-10T00:00:00.000Z',
+        }),
+      ],
+    });
+    // Inside the window: hidden, exactly as a suppression promises.
+    expect(await service.listVisible(authUser(), actingContext(), '2026-09-08T09:00:00.000Z')).toHaveLength(0);
+    // Window lapsed, status still 'suppressed' in the store: visible again — a
+    // missing read after the lapse (which correctly retains) must not hide a
+    // live problem indefinitely.
+    expect(await service.listVisible(authUser(), actingContext(), '2026-09-11T09:00:00.000Z')).toHaveLength(1);
+  });
+
   it('fails closed for a team-scoped signal with no resolvable location', async () => {
     const { service } = makeService({
       [TABLE]: [

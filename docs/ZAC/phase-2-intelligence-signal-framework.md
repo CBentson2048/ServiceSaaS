@@ -138,7 +138,7 @@ Reused **as-is**, not reimplemented:
 | `ZacEvidenceSignal` / `ZacEvidenceItem` | The adapter's output type and the evidence-reference contract. |
 | `redactForStorage()` (`zac-redaction.ts`) | Every persisted headline, at the same 300-char cap a memory summary uses. |
 | `ZacCostTelemetryService.recordSpineEvent` | Two new closed event names, `signal_evaluated` and `signal_retrieved`. |
-| `ZacMemoryService.canSee` semantics | The visibility matrix is mirrored, **including** the manager-location check that the outputs store omits (§19). |
+| `ZacMemoryService.canSee` semantics | Mirrored for personal and team rows, **including** the manager-location check that the outputs store omits (§19) — and **tightened** for `business_owner` rows, which are owner-only: a business-wide KPI is data a manager's own guarded tool would never return to them (review finding, 2026-09-05; §23.2). |
 | Migration house style | `0077`'s table shape, `0089`'s additive/idempotent pattern, `0090`'s scope-aware policy pair, `0080`'s explicit grant block. |
 | `createSupabaseFake` | The shared test fake, no new mocking convention. |
 
@@ -411,7 +411,22 @@ unsuppress path — adding one would be a new surface — so an open-ended
 suppression would silence a real business problem permanently. Bounding it
 means every suppression ends by itself and the next evaluation says whether the
 problem is still there. Returning to `active` also clears `suppressed_until`,
-so an active signal never reads as one somebody had silenced.
+so an active signal never reads as one somebody had silenced. "Ends by itself"
+is enforced on the read path as well: once `suppressed_until` has passed,
+`listVisible` returns the row again even though its stored status is still
+`suppressed` — otherwise a lapsed suppression followed by a *missing* read
+(which correctly retains) would hide a live problem indefinitely. The next
+positive reading flips the status back to `active` through the ordinary refresh.
+
+**Why a signal resolved is recorded, and earned.** A progress episode never
+"recovers": it is `superseded` by whatever the metric did next. A shortfall is
+`recovered` only when the reading closed the gap against the target *the signal
+was raised for* — to zero or inside the metric's noise floor, exactly as the
+evaluator judges recovery. If the number did not move but the target did (a goal
+remembered, a threshold lowered), the old signal no longer applies but nothing
+recovered: that is `superseded` too. Without this rule a goal typed into memory
+would be recorded as a business improvement (found by the close-out review;
+harness case `life-21`, fixture H in the framework spec).
 
 A recurrence after `resolved`/`expired` **opens a new episode**: the partial
 unique index covers only live rows, so the closed episode survives as history
@@ -478,7 +493,7 @@ SELECT, write revoked) rather than relying on schema defaults, per `0080`.
 > and write returns `PGRST106`, and ZAC persistence is fail-soft, so the failure
 > is silent.
 
-**Apply status: authored, not applied to any hosted project.** Verified locally
+**Apply status: applied to `dev-test` on 2026-09-04 (§23); not applied to `develop`, `staging` or production.** Verified locally
 against a real Postgres (see §15).
 
 ---
@@ -575,14 +590,14 @@ available, so good news never displaces a problem and needs no special case.
 
 | Suite | Command | Result |
 |---|---|---|
-| Framework acceptance fixtures A–L | `npx jest src/zac/intelligence/zac-signal-framework.spec.ts` | **70 passed** |
-| **Phase 2 evaluation harness gate** | `npx jest src/zac/intelligence/eval/signal-eval.spec.ts` | **4 passed** (80/80 cases, 7/7 invariants) |
-| Service: persistence, scope attribution, visibility, isolation | `npx jest src/zac/intelligence/zac-intelligence-signal.service.spec.ts` | **33 passed** |
-| **Full API suite** | `pnpm --filter @sheer/api test` | **2458 passed, 226 todo, 2684 total; 116 suites, 0 failed** |
+| Framework acceptance fixtures A–L, H | `npx jest src/zac/intelligence/zac-signal-framework.spec.ts` | **74 passed** |
+| **Phase 2 evaluation harness gate** | `npx jest src/zac/intelligence/eval/signal-eval.spec.ts` | **4 passed** (84/84 cases, 130 steps, 7/7 invariants) |
+| Service: persistence, scope attribution, visibility, isolation | `npx jest src/zac/intelligence/zac-intelligence-signal.service.spec.ts` | **35 passed** |
+| **Full API suite** | `pnpm --filter @sheer/api test` | **2517 passed, 226 todo, 2743 total; 121 suites, 0 failed** (2026-09-05) |
 | Typecheck | `pnpm --filter @sheer/api typecheck` | clean |
 | Lint | `pnpm --filter @sheer/api lint` | clean |
-| SQL behavioural suite | `supabase/tests/zac_intelligence_signals.sql` | **28 of 28 PASS** |
-| All 19 SQL behavioural suites | PGlite, all 112 migrations | see §23 |
+| SQL behavioural suite | `supabase/tests/zac_intelligence_signals.sql` | **29 of 29 PASS** (PGlite, all 112 migrations); 0112 re-applied on the fully migrated stack without error (idempotent) |
+| All 19 SQL behavioural suites, full stack vs 0111-capped control | PGlite, all 112 migrations | identical outcomes — [close-out report §17](phase-2-ws1-closeout-report.md) |
 
 The SQL suite was run for real: all **112 migrations** (through `0112`) applied
 into a fresh PGlite Postgres, then the suite executed inside one rolled-back
@@ -619,7 +634,7 @@ pnpm --filter @sheer/api zac-signal-eval
 
 The last Workstream 1 deliverable, and the one the A–L unit fixtures could not
 stand in for. It runs a **versioned labelled dataset** (`zac-signal-eval-v1`,
-80 cases / 120 steps) through the **real** pipeline — the real observation
+84 cases / 130 steps) through the **real** pipeline — the real observation
 service, evaluator registry, reconciler and `ZacIntelligenceSignalService`
 (scope fan-out, visibility matrix, permission re-check, plan application) —
 over an in-memory repository that enforces the same live-uniqueness rule as the
@@ -664,10 +679,31 @@ The three invariant counters that matter most are derived from what the
 pipeline **actually did**, not from labels: a resolve on a non-positive
 observation, an insert the unique index would reject, a refresh across tenants.
 
-**Result at close-out** (commit recorded in §23): 80/80 cases, 100% on every
-asserted category, 0/30 false-positive negative signals, 0/53 false negatives,
+**Result at close-out** (framework `ws1-2026-09-05`): 84/84 cases, 100% on every
+asserted category, 0/37 false-positive negative signals, 0/65 false negatives,
 0 duplicate active signals, 0 false resolutions on missing data, 0 tenant
 isolation failures, 0 permission failures, all seven hard invariants PASS.
+
+**Hardened after the adversarial close-out review (2026-09-05).** The review's
+central charge was that parts of the green scorecard were *hollow* — checks that
+could not fail. Each was closed in the harness, not argued with: expectations
+are **family-aware** (`shortfall` | `progress`), so the `superseded` resolution
+of a progress row is asserted in the same step the new gap opens (`life-12`,
+`life-21`); a *suppress* step now locates its target in the store and lets
+`service.suppress()`'s own visibility gate refuse it (`scope-08` also proves the
+same manager *can* suppress their own row); a tagged case that fails for **any**
+reason marks its invariants failed; the per-step "live keys unique" check —
+unfireable, because the repository already refuses duplicates — was removed
+and the dedupe line now counts only real key assertions; tenant isolation is
+counted from rows actually returned across a business, never from an actor's
+name; the dataset is validated at load against the framework's exported
+vocabularies and its `frameworkVersion`; fixture ids are hex UUIDs and dates
+are real; utilisation fixtures carry the tool's two standing caveats (three
+confidence labels moved as a result, and `utl-20` isolates the coverage factor).
+A **mutation check** then confirmed the gates are live: forcing every resolve to
+`recovered`, re-widening manager visibility, bypassing the suppress gate, hiding
+lapsed suppressions, or resolving on a missing observation each turns the run
+red; the unmutated control passes.
 
 **What the harness found while being built** — the reason it exists:
 - Seven authored confidence labels were wrong: the canonical rebooking tool
@@ -934,7 +970,49 @@ docs/ZAC/phase-2-intelligence-signal-framework.md
 ```
 
 **Commit:** `d6173238c87904e635629523ede98a56646c5768` on
-`feature/zac-phase2-intelligence-signals`.
+`feature/zac-phase2-intelligence-signals` (framework build).
+
+**Close-out commits** on `feature/post-checkin-service-lifecycle` (the branch
+carrying the plan commit `59d5656`, fast-forwarded over the ZAC branch):
+`9f357f7350ac4215c204d2918d4100ca1246e526` — evaluation harness, repository
+port, `expired_unconfirmed` on the plan, documentation corrections, hosted
+verification; and the review-hardening commit recorded in the close-out report
+§28 — resolution-reason rule, owner-only business rows, lapsed-suppression
+visibility, uniqueness on update, deterministic order, family-aware harness,
+dataset validation and fixture fidelity, SQL case 29.
+
+**New at close-out**
+
+```
+apps/api/src/zac/intelligence/eval/signal-eval.ts
+apps/api/src/zac/intelligence/eval/signal-eval.types.ts
+apps/api/src/zac/intelligence/eval/in-memory-signal-repository.ts
+apps/api/src/zac/intelligence/eval/zac-signal-eval-dataset.v1.json
+apps/api/src/zac/intelligence/eval/signal-eval.spec.ts
+apps/api/scripts/zac-signal-eval.ts
+docs/ZAC/phase-2-ws1-closeout-report.md
+```
+
+**Close-out commit:** `9f357f7350ac4215c204d2918d4100ca1246e526` on
+`feature/post-checkin-service-lifecycle` (the branch carrying the plan commit
+`59d5656`, fast-forwarded over the ZAC branch). New in it:
+
+```
+apps/api/src/zac/intelligence/eval/signal-eval.ts
+apps/api/src/zac/intelligence/eval/signal-eval.types.ts
+apps/api/src/zac/intelligence/eval/in-memory-signal-repository.ts
+apps/api/src/zac/intelligence/eval/zac-signal-eval-dataset.v1.json
+apps/api/src/zac/intelligence/eval/signal-eval.spec.ts
+apps/api/scripts/zac-signal-eval.ts
+docs/ZAC/phase-2-ws1-closeout-report.md
+```
+
+Changed in it: `apps/api/package.json` (`zac-signal-eval` script);
+`zac-intelligence-signal.store.ts` (`ZacSignalRepository` port);
+`zac-intelligence-signal.service.ts` (depends on the port; expire applies the
+plan's reason); `zac-signal-reconciler.ts` (expire actions carry
+`expired_unconfirmed`); `docs/ZAC/README.md`; this document (§0, §4, §15,
+§15b, §18, §20, §23).
 
 **Changed** (additive only)
 
@@ -1002,8 +1080,10 @@ signal today (Phase 1 defect triage, close-out report §21 #5). Sample 240.
 
 Every field above is what the brief's expected outcomes describe, including
 the documented recurrence semantics (historical resolved occurrence preserved
-+ new occurrence). `numeric(6,4)` rounding is visible (0.18333… → 0.1833) and
-is immaterial: reconciliation is key-based, never value-based.
++ new occurrence). Materiality is stored to four decimal places (0.1833, from
+0.18333…) and timestamps come back with a `+00:00` offset rather than `Z`; both
+are wire-format facts, immaterial to behaviour: reconciliation is key-based,
+never value- or string-based.
 
 ### 23.2 Permission / tenant smoke test (brief §16)
 
@@ -1017,19 +1097,29 @@ written through the store's normal insert path (B2):
 |---|---|---|
 | Demo owner, all locations, full permissions | business + Pinner + Thame | baseline |
 | Demo owner with `report.dashboard.view` **removed after creation** | **nothing** | removing a permission hides existing rows; persisted `business_owner` visibility granted nothing |
-| Pinner manager | business + **Pinner only** | a manager with Location A scope cannot retrieve the Location B signal |
-| Thame manager | business + **Thame only** | same, mirrored |
+| Pinner manager | **Pinner only** (re-run 2026-09-05; the 2026-09-04 run also returned the business row — see below) | a manager with Location A scope cannot retrieve the Location B signal, nor the business-wide row |
+| Thame manager | **Thame only** | same, mirrored |
 | Demo stylist (`zac.access` only) | nothing | no report permission → no signals |
 | TESTBUSINESS-1 owner | its own business row (+ the personal row it is the subject of) — **no demo-salon row** | Business A's signals are not readable from Business B |
 
-Managers seeing the business-scope row is the designed matrix (`canSee`
-mirrors `ZacMemoryService.canSee`: `business_owner` rows are readable by
-owners and managers; `manager_team_theme` rows only by owners and the row's
-own-location managers) and is what harness case `scope-04` asserts. Two
-expectations in the smoke script were mine and wrong, not the framework's: it
-expected managers to see no business row, and it "narrowed" an owner's context
-while leaving the actor's `locationScope.kind = 'all'` — an owner's scope is
-all locations by definition.
+On 2026-09-04 both managers also received the business-scope row: the matrix
+as first built mirrored `ZacMemoryService.canSee`, where `business_owner` items
+are readable by owners *and* managers. The adversarial review flagged this as
+exposing data a manager's own guarded tool would never return (rebooking and
+utilisation reads are location-scoped for everyone but an owner), and `canSee`
+was tightened the same day: `business_owner` rows are owner-only. The re-run
+above is the tightened behaviour; harness cases `scope-07` and `scope-11` assert
+it (`scope-04`, cited on 2026-09-04, only covers location rows). One smoke
+expectation was mine and wrong: it "narrowed" an owner's context while leaving
+the actor's `locationScope.kind = 'all'` — an owner's scope is all locations by
+definition; the acting-context property is proved with a manager instead.
+
+**Re-run 2026-09-05** (after the review fixes: resolution-reason rule, owner-only
+business rows, lapsed-suppression visibility): T1–T5, M1/M2, B1/B2 and every
+visibility check **PASS** with identical lifecycle semantics — ids `6d906d72…`
+(T1–T4 episode), `07074933…` (T5), `33264f56…` (progress), `01e4e6d0…`/`1a2b8a4e…`
+(Pinner/Thame), `94533696…`/`cfa625b8…` (TESTBUSINESS-1) — then deleted by id;
+both fixture businesses and the table back to 0 rows.
 
 Database-side, through RLS as **real authenticated users** (`set local role
 authenticated` + `request.jwt.claim.sub`; no bypass):

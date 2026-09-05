@@ -178,14 +178,22 @@ export class ZacIntelligenceSignalService {
    * `business_id` for every query, so no signal from another tenant can reach
    * this filter to be judged by it.
    */
-  async listVisible(actor: AuthUser, context: ZacActingContext): Promise<ZacPersistedSignal[]> {
+  async listVisible(
+    actor: AuthUser,
+    context: ZacActingContext,
+    at: string = new Date().toISOString(),
+  ): Promise<ZacPersistedSignal[]> {
     // `zac.access` is a feature gate, not a data grant — but without it there is
     // no ZAC surface to read signals through at all.
     if (!userHasPermission(actor, 'zac.access')) return [];
 
     const live = await this.store.listLive(context.businessId);
     return live.filter((signal) => {
-      if (signal.status !== 'active') return false;
+      // A suppression "ends by itself": once its window has lapsed the row is
+      // readable again even before the next positive reading flips its status
+      // back to active — otherwise a lapsed suppression followed by a missing
+      // read (which correctly RETAINS) would hide a live problem indefinitely.
+      if (!this.isLiveAt(signal, at)) return false;
       if (!this.canSee(context, signal)) return false;
       // A row whose metric is no longer registered has no resolvable permission
       // requirement, so it cannot be authorised — hide it rather than throw.
@@ -205,8 +213,9 @@ export class ZacIntelligenceSignalService {
   async priorityCandidates(
     actor: AuthUser,
     context: ZacActingContext,
+    at: string = new Date().toISOString(),
   ): Promise<ZacConsolidationResult> {
-    const visible = await this.listVisible(actor, context);
+    const visible = await this.listVisible(actor, context, at);
     return this.priorities.consolidate(this.adapter.toEvidenceSignals(visible));
   }
 
@@ -231,7 +240,7 @@ export class ZacIntelligenceSignalService {
     until: string,
     at: string,
   ): Promise<boolean> {
-    const visible = await this.listVisible(actor, context);
+    const visible = await this.listVisible(actor, context, at);
     // Existence-hiding, matching requireAccessibleOutput: a signal the actor may
     // not see cannot be suppressed, and the caller learns nothing about whether
     // it exists.
@@ -469,7 +478,13 @@ export class ZacIntelligenceSignalService {
         // it — the Phase 1 private-coaching boundary, unchanged.
         return signal.subjectUserId === context.actorUserId;
       case 'business_owner':
-        return context.roleContext === 'owner' || context.roleContext === 'manager';
+        // Business-scope readings are owner-only. ZacMemoryService.canSee lets a
+        // manager read business_owner MEMORY, but a business-wide KPI is data the
+        // manager's own guarded tool would never return to them — the rebooking
+        // and utilisation reads are location-scoped for everyone but an owner —
+        // so a signal derived from it must not widen what they can see. (Review
+        // finding, 2026-09-05; a deliberate tightening of the mirrored matrix.)
+        return context.roleContext === 'owner';
       case 'manager_team_theme':
         if (context.roleContext === 'owner') return true;
         if (context.roleContext !== 'manager') return false;
@@ -485,6 +500,15 @@ export class ZacIntelligenceSignalService {
       default:
         return false;
     }
+  }
+
+  /** Active, or suppressed with a window that has already lapsed. */
+  private isLiveAt(signal: ZacPersistedSignal, at: string): boolean {
+    if (signal.status === 'active') return true;
+    if (signal.status !== 'suppressed' || !signal.suppressedUntil) return false;
+    const until = Date.parse(signal.suppressedUntil);
+    const atMs = Date.parse(at);
+    return Number.isFinite(until) && Number.isFinite(atMs) && until <= atMs;
   }
 
   /** The metric's own permission requirement, against CURRENT effective permissions. */
