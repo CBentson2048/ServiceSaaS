@@ -486,10 +486,16 @@ the close-out commit (§28) on 2026-09-04.
 ## 28. Final commit SHA
 
 - `9f357f7350ac4215c204d2918d4100ca1246e526` — `feat(zac): close out Phase 2 Workstream 1 with the evaluation harness`
-- «HARDENING-SHA» — `fix(zac): harden the Workstream 1 framework and harness after adversarial review`
+- `76660e94b7e0bc70783c359bed619070347d712f` — `fix(zac): harden the Workstream 1 framework and harness after adversarial review`
 
 Both on `feature/post-checkin-service-lifecycle` (the branch carrying the
 user's plan commit `59d5656`, which had fast-forwarded over
-`feature/zac-phase2-intelligence-signals` at `383e002`). The hardening SHA and
-the outcome of the resumed verification are recorded by the docs-only commit
-that follows.
+`feature/zac-phase2-intelligence-signals` at `383e002`). Recorded by the docs-only commit that follows `76660e9`.
+
+**Resumed verification of the 32 findings whose verifiers hit the session
+limit:** re-launched 2026-09-05 (read-only). At the time of this recording its
+lens phase was still running, so those 32 claims stand as *unverified* rather
+than confirmed or refuted; they were raised by the same seven lenses and, by
+title, fall inside the root causes already fixed in `76660e9` or the recorded
+0113 items. Its outcome, when it lands, is appended below this line rather than
+rewriting anything above it.
