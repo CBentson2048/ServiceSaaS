@@ -61,6 +61,7 @@
                 "kind": "opportunity",
                 "severity": "attention",
                 "materialityBand": "attention",
+                "materiality": 0.32,
                 "direction": "unknown",
                 "confidenceBand": "medium",
                 "targetSource": "canonical_threshold",
@@ -130,6 +131,7 @@
                 "kind": "watch_point",
                 "severity": "watch",
                 "materialityBand": "watch",
+                "materiality": 0.06,
                 "confidenceBand": "medium"
               }
             ]
@@ -262,6 +264,7 @@
                 "kind": "opportunity",
                 "severity": "attention",
                 "materialityBand": "attention",
+                "materiality": 1,
                 "confidenceBand": "medium"
               }
             ]
@@ -1079,7 +1082,7 @@
     {
       "id": "reb-17-no-comparison-source",
       "domain": "rebooking",
-      "description": "The rebooking source carries no previous-period figure, so direction is ALWAYS unknown for rebooking — “improving/declining while below” is structurally unobservable from this source and is asserted so it cannot silently change. (Utilisation covers direction.)",
+      "description": "The observation layer derives no comparison from the fields report.rebooking_summary emits today (no previous-period figure), so direction is unknown from this payload — “improving/declining while below” is unobservable for rebooking until the tool exposes a prior window (Phase 1 tool gap, framework §19). Utilisation covers direction.",
       "steps": [
         {
           "kind": "evaluate",
@@ -1669,6 +1672,7 @@
                 "kind": "risk",
                 "severity": "attention",
                 "materialityBand": "attention",
+                "materiality": 0.2667,
                 "direction": "unknown",
                 "confidenceBand": "high",
                 "targetSource": "location_setting",
@@ -3843,6 +3847,9 @@
                 "resolved": 1,
                 "active": 1
               },
+              "resolutionReasons": {
+                "recovered": 1
+              },
               "episodes": 2,
               "differentSignalKeyFromStep": {
                 "step": "T1",
@@ -3970,6 +3977,9 @@
               "statuses": {
                 "resolved": 1,
                 "active": 0
+              },
+              "resolutionReasons": {
+                "recovered": 1
               }
             }
           }
@@ -4433,6 +4443,9 @@
               "statuses": {
                 "resolved": 1,
                 "active": 1
+              },
+              "resolutionReasons": {
+                "superseded": 1
               }
             }
           }
@@ -4515,6 +4528,9 @@
               "statuses": {
                 "suppressed": 1,
                 "active": 0
+              },
+              "resolutionReasons": {
+                "suppressed_by_actor": 1
               }
             },
             "visibleTo": [
@@ -4927,6 +4943,10 @@
                 "expired": 1,
                 "active": 0,
                 "resolved": 0
+              },
+              "resolutionReasons": {
+                "expired_unconfirmed": 1,
+                "recovered": 0
               }
             }
           }
@@ -5708,6 +5728,10 @@
               "statuses": {
                 "resolved": 1,
                 "active": 1
+              },
+              "resolutionReasons": {
+                "superseded": 1,
+                "recovered": 0
               },
               "episodes": 2
             }
@@ -7290,7 +7314,7 @@
     {
       "id": "scope-10-single-location-focus-is-business",
       "domain": "scoping",
-      "description": "A single-location owner evaluating with a location focus refreshes the SAME business signal — one fact, one key.",
+      "description": "A single-location owner evaluating with a location focus refreshes the SAME business signal — one fact, one key — and reads the AGGREGATE (the per-location fixture carries a watch-band value that must not be the one used).",
       "steps": [
         {
           "kind": "evaluate",
@@ -7394,14 +7418,14 @@
               "data": {
                 "range_start": "2026-09-04T09:00:00.000Z",
                 "range_end": "2026-09-11T09:00:00.000Z",
-                "rebooking_rate_percent": 34,
+                "rebooking_rate_percent": 47,
                 "rebooked_visits": 0,
                 "stylist_rebooked_visits": 0,
                 "client_rebooked_visits": 0,
                 "by_location": [
                   {
                     "location_name": "Site 1",
-                    "rebooking_rate_percent": 34,
+                    "rebooking_rate_percent": 47,
                     "rebooked_visits": 0
                   }
                 ],
@@ -7434,7 +7458,9 @@
               {
                 "metric": "rebooking_rate",
                 "produced": true,
-                "lifecycleAction": "refresh"
+                "lifecycleAction": "refresh",
+                "materialityBand": "attention",
+                "kind": "opportunity"
               }
             ],
             "store": {
@@ -7815,6 +7841,170 @@
       ],
       "invariants": [
         "repeat_run_no_duplicate",
+        "restricted_scope_never_widens"
+      ]
+    },
+    {
+      "id": "scope-12-partial-multi-site-manager",
+      "domain": "scoping",
+      "description": "A manager holding TWO of the business’s locations evaluates with no focus: two location signals (distinct keys), never a business row; each single-site manager sees only their own, the two-site manager both, the owner both.",
+      "steps": [
+        {
+          "kind": "evaluate",
+          "id": "T1",
+          "evaluatedAt": "2026-09-04T09:00:00.000Z",
+          "actor": "manager_l1_l2",
+          "tools": {
+            "report.utilisation_summary@10000000-0000-4000-8000-0000000000a1": {
+              "status": "ok",
+              "data": {
+                "scope": "owner",
+                "period": "week",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
+                "rangeEnd": "2026-09-04T00:00:00.000Z",
+                "overall": {
+                  "availableMinutes": 6000,
+                  "bookedMinutes": 2520,
+                  "utilisationPercent": 42,
+                  "staffDayCount": 20
+                },
+                "previousPeriod": {
+                  "availableMinutes": 6000,
+                  "bookedMinutes": 0,
+                  "utilisationPercent": null
+                },
+                "byLocation": [],
+                "byWeekday": [],
+                "quietestWeekday": null,
+                "busiestWeekday": null,
+                "largestGaps": [],
+                "warningThresholdPercent": 60,
+                "dataQuality": []
+              },
+              "explanation": "",
+              "rowCount": 20,
+              "presentation": {
+                "answer": "x",
+                "evidence": [
+                  {
+                    "source_type": "report.utilisation",
+                    "source_ref": "computeDailyUtilisation",
+                    "as_of": "2026-09-04T00:00:00.000Z",
+                    "entities_used": []
+                  }
+                ],
+                "confidence": "medium",
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
+                "suggestedNextStep": null,
+                "responseType": "Insight"
+              }
+            },
+            "report.utilisation_summary@10000000-0000-4000-8000-0000000000a2": {
+              "status": "ok",
+              "data": {
+                "scope": "owner",
+                "period": "week",
+                "rangeStart": "2026-08-28T00:00:00.000Z",
+                "rangeEnd": "2026-09-04T00:00:00.000Z",
+                "overall": {
+                  "availableMinutes": 5400,
+                  "bookedMinutes": 2538,
+                  "utilisationPercent": 47,
+                  "staffDayCount": 20
+                },
+                "previousPeriod": {
+                  "availableMinutes": 5400,
+                  "bookedMinutes": 0,
+                  "utilisationPercent": null
+                },
+                "byLocation": [],
+                "byWeekday": [],
+                "quietestWeekday": null,
+                "busiestWeekday": null,
+                "largestGaps": [],
+                "warningThresholdPercent": 60,
+                "dataQuality": []
+              },
+              "explanation": "",
+              "rowCount": 20,
+              "presentation": {
+                "answer": "x",
+                "evidence": [
+                  {
+                    "source_type": "report.utilisation",
+                    "source_ref": "computeDailyUtilisation",
+                    "as_of": "2026-09-04T00:00:00.000Z",
+                    "entities_used": []
+                  }
+                ],
+                "confidence": "medium",
+                "limitations": [
+                  "Utilisation measures booked stylist time against rostered available hours (breaks and hour-reducing book-outs excluded) — the same formula as the calendar badge.",
+                  "Period measured: 2026-08-28 to 2026-09-04, on UTC day boundaries (Europe/London operating assumption)."
+                ],
+                "suggestedNextStep": null,
+                "responseType": "Insight"
+              }
+            },
+            "report.rebooking_summary": {
+              "status": "permission_denied",
+              "data": null,
+              "explanation": "That data is not available to your role.",
+              "rowCount": null
+            }
+          },
+          "expected": {
+            "signals": [
+              {
+                "metric": "utilisation_rate",
+                "produced": true,
+                "scopeType": "location",
+                "locationId": "10000000-0000-4000-8000-0000000000a1",
+                "kind": "risk",
+                "lifecycleAction": "open"
+              },
+              {
+                "metric": "utilisation_rate",
+                "produced": true,
+                "scopeType": "location",
+                "locationId": "10000000-0000-4000-8000-0000000000a2",
+                "kind": "risk",
+                "lifecycleAction": "open"
+              }
+            ],
+            "store": {
+              "activeSignals": 2,
+              "episodes": 2
+            },
+            "visibleTo": [
+              {
+                "actor": "manager_l1_l2",
+                "count": 2
+              },
+              {
+                "actor": "manager_l1",
+                "count": 1
+              },
+              {
+                "actor": "manager_l2",
+                "count": 1
+              },
+              {
+                "actor": "owner",
+                "count": 2
+              },
+              {
+                "actor": "stylist",
+                "count": 0
+              }
+            ]
+          }
+        }
+      ],
+      "invariants": [
         "restricted_scope_never_widens"
       ]
     },

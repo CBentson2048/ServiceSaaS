@@ -54,9 +54,13 @@ updated plan's Workstream 2. The tracking rule is now recorded in
 
 ## 5. Canonical metric registry
 
-Two metrics are admitted; each passes the four-criterion bar the registry
-enforces (canonical implementation with a source reference; exposed
-denominator; stateable sample floor; target with provenance):
+Two metrics are admitted; each meets the four-criterion bar the registry
+declares (canonical implementation with a source reference; exposed
+denominator; stateable sample floor; target with provenance) — the structural
+half of which is now asserted by a framework-spec test over every definition
+(source reference, tool, sample unit and floor, ordered bands, stale window,
+permission requirement); the judgement half (is the source *canonical*?) is a
+documented decision per metric, not something a test can decide:
 
 | Metric | Canonical source (Phase 1 tool) | Denominator / floor | Target and provenance |
 |---|---|---|---|
@@ -78,7 +82,7 @@ Closed vocabularies, all persisted with CHECK constraints in 0112:
   a persisted signal becomes a priority candidate by identity, not translation)
 - direction: `improving | stable | declining | unknown`
 - observation: `valid | zero | missing | insufficient_sample | not_applicable`
-- withheld reasons: `no_target | below_materiality_floor | insufficient_sample | missing_observation | not_applicable`
+- withheld reasons: `no_target | below_materiality_floor | insufficient_sample | missing | not_applicable | healthy_steady`
 - lifecycle: `active | resolved | suppressed | expired`; resolution
   `recovered | superseded | expired_unconfirmed | suppressed_by_actor`
 
@@ -157,8 +161,8 @@ permission re-check, plan application) — over a versioned labelled dataset and
 an in-memory repository that enforces the same live-uniqueness rule as
 Postgres. Only tool results, memory and the clock are canned. **No model, no
 provider SDK, no `ZAC_AI_PROVIDER`** — pinned by the harness spec. Labels are
-the framework's own closed types (a vocabulary change is a compile error in
-the dataset). Cases are sequences of `evaluate` / `suppress` steps, because
+the framework's own closed types (a vocabulary change fails the dataset load —
+`validateDataset` re-checks every label against the exported vocabularies). Cases are sequences of `evaluate` / `suppress` steps, because
 refresh-not-duplicate, never-resolve-on-missing and expire-is-not-resolve are
 only observable across runs. Every metric is computed from individual checks
 and every failed check is printed with expected vs actual. Three invariant
@@ -166,7 +170,7 @@ counters are derived from what the pipeline *did*, not from labels.
 
 ## 14. Dataset version
 
-`zac-signal-eval-v1` · framework `ws1-2026-09-05` · **84 cases / 130 steps**
+`zac-signal-eval-v1` · framework `ws1-2026-09-05` · **85 cases / 131 steps**
 (`apps/api/src/zac/intelligence/eval/zac-signal-eval-dataset.v1.json`), validated at
 load against the framework's exported vocabularies and against
 `SIGNAL_FRAMEWORK_VERSION` (a label the pipeline cannot produce, or a dataset
@@ -177,7 +181,7 @@ labelled against an older contract, fails the load).
 | rebooking | 24 | 24 |
 | utilisation | 20 | 20 |
 | lifecycle | 22 | 54 |
-| scoping | 11 | 18 |
+| scoping | 12 | 19 |
 | dedupe | 7 | 14 |
 
 | Invariant | Tagged cases |
@@ -186,7 +190,7 @@ labelled against an older contract, fails the load).
 | `missing_data_never_resolves` | 9 |
 | `removed_permission_hides` | 3 |
 | `repeat_run_no_duplicate` | 10 |
-| `restricted_scope_never_widens` | 5 |
+| `restricted_scope_never_widens` | 6 |
 | `tenants_never_reconcile` | 3 |
 | `zero_denominator_no_false_negative` | 5 |
 
@@ -199,30 +203,32 @@ the resolution-reason rule and the visibility matrix changed).
 
 ## 15. Evaluation results
 
-`pnpm --filter @sheer/api zac-signal-eval`, 2026-09-05, on the tree committed
-as the review-hardening commit (§28); HEAD at run time `9f357f7`:
+`pnpm --filter @sheer/api zac-signal-eval`, 2026-09-06, on the tree committed
+as the follow-up commit (§28):
 
 ```
-Cases                                  84
-Passed                                 84
+Cases                                  85
+Passed                                 85
 Failed                                 0
 
-Signal/no-signal accuracy              100.0%   (102/102)
-Kind accuracy                          100.0%   (42/42)
+Signal/no-signal accuracy              100.0%   (104/104)
+Kind accuracy                          100.0%   (45/45)
 Direction accuracy                     100.0%   (10/10)
-Materiality-band accuracy              100.0%   (13/13)
+Materiality-band accuracy              100.0%   (18/18)   incl. 4 numeric materiality checks
 Severity accuracy                      100.0%   (11/11)
 Confidence-band accuracy               100.0%   (13/13)
 Target-source accuracy                 100.0%   (8/8)
 Withheld-reason accuracy               100.0%   (27/27)
-Lifecycle transition accuracy          100.0%   (50/50)
-Resolution accuracy                    100.0%   (10/10)
+Lifecycle transition accuracy          100.0%   (52/52)
+Resolution accuracy                    100.0%   (18/18)   incl. 8 PERSISTED-reason checks
 Dedupe accuracy                        100.0%   (12/12)
-Store-state accuracy                   100.0%   (149/149)
-Visibility accuracy                    100.0%   (29/29)
+Limitations accuracy                   100.0%   (4/4)
+Store-state accuracy                   100.0%   (151/151)
+Visibility accuracy                    100.0%   (34/34)
+Suppress accuracy                      100.0%   (6/6)
 
-False-positive negative signals        0 / 37
-False-negative signals                 0 / 65
+False-positive negative signals        0 / 47
+False-negative signals                 0 / 67
 Duplicate active signals               0
 False resolution on missing/failed     0
 Tenant isolation failures              0
@@ -245,14 +251,14 @@ holes the review named now turns the run red, and the control passes:
 
 ## 16. All failed evaluation cases
 
-At close-out: **none** — 84 of 84 cases, 0 failed checks, 0 invariant failures.
+At close-out: **none** — 85 of 85 cases, 0 failed checks, 0 invariant failures.
 
 Found and fixed while the harness was being built and reviewed (the reason it exists):
 
 | Case(s) | What the harness or its review exposed | Disposition |
 |---|---|---|
 | 7 rebooking/lifecycle confidence labels | Authored as `high`; the real tool always carries two caveats → 0.684 `medium`, and 0.41 `low` at the floor | Labels corrected; `reb-21b` added as a no-caveat control |
-| `life-16`, `life-18` (expiry) | Reconciler `expire` actions carried no `resolutionReason`; only the service stamped `expired_unconfirmed` | **Class B, fixed**: the plan states the reason; the service applies it |
+| `life-15`, `life-16` (expiry) | Reconciler `expire` actions carried no `resolutionReason`; only the service stamped `expired_unconfirmed` | **Class B, fixed**: the plan states the reason; the service applies it |
 | `life-12` (review #1/#7/#18) | `superseded` was never assertable — the label contract had no signal family | **Class B, fixed**: family-aware expectations; `superseded` asserted; always-on check that a progress episode never `recovers` |
 | `life-21` (new; review #2) | A goal appearing under an unchanged number resolved the shortfall as `recovered` | **Class B, fixed** in the reconciler: `recovered` is earned against the signal's own target, else `superseded` |
 | `life-22` (new; review #5/#40) | A lapsed suppression followed by a missing read stayed invisible indefinitely | **Class B, fixed**: read-side lapse rule in `listVisible`/`suppress` |
@@ -299,7 +305,7 @@ patched into an applied migration.
 | Invariant tags decorative on 8 cases; `invariantFor` mapped 6 of 15 categories (#4, #8, #19, #22, #29) | medium | **Fixed** — a failing tagged case fails its invariants; every invariant has tagged cases |
 | Lapsed suppression + missing read hidden indefinitely (#5, #40) | medium/low | **Fixed** — read-side lapse rule; `life-22`; service spec |
 | 70 unfireable dedupe checks; `null == null` key match (#6, #45) | medium/low | **Fixed** — removed; both rows must exist |
-| Tenant counters measured the fake; leak scored by actor-name substring (#9, #12, #20, #23, #27, #37) | medium/low | **Fixed** — cross-business rows counted from actuals; wording corrected (the reconciliation counter guards the service's business scoping) |
+| Tenant counters measured the fake; leak scored by actor-name substring (#9, #12, #20, #23, #27, #37) | medium/low | **Partly fixed, honestly bounded** — cross-business rows are now counted from actuals and the actor-name rule is gone; but both counters can only observe rows the in-memory repository returned, and that repository filters by business itself. They therefore guard the *service's* business scoping (the businessId it passes down and reconciles against), not the store's `.eq('business_id')` boundary — which is proven by the hosted smoke (real store, TESTBUSINESS-1 sees no demo-salon row) and SQL case 25, not by the harness |
 | Label contract a runtime cast; `SIGNAL_EVAL_TOOLS` unused; `frameworkVersion` unvalidated (#10, #36) | medium/low | **Fixed** — full load-time validation |
 | Managers read business-wide KPI rows (#15) | medium | **Fixed** — owner-only; documented as a deliberate tightening of the mirrored matrix |
 | Utilisation fixtures without the tool's caveats (#17) | medium | **Fixed** — labels moved as predicted |
@@ -396,7 +402,7 @@ in newly-created Phase 2 code.
 | 3 | `kpi_summary` drops the rebooking denominator | `tools/tools/kpi-summary.tool.ts:95` (Core MVP tool) | **A** — Core MVP tool defect (also a **C** dependency for WS2 per-stylist rebooking) | The tool reports per-stylist rates without `completed` counts, so no stylist-level metric can pass registry criterion 2 | None for the two admitted metrics; blocks a future `personal`-scope rebooking metric |
 | 4 | `by_location` rows lack a denominator | `tools/tools/rebooking-summary.tool.ts:66` (Core MVP tool, 2026-07-28) | **A** — Core MVP tool defect (also **C** for WS2 location breakdowns) | Location rows carry rate and count but not `completed_bookings` | Worked around, not fixed: WS1 dispatches the tool per accessible location and never reads sub-slices (`zac-metric-observation.service.ts:43`) |
 | 5 | The KPI `tool_threshold` rebooking target does not reach the persisted signal | Phase 1 evidence carries it (`zac-evidence.service.ts:209`); `report.rebooking_summary` does not expose it, so the WS1 observation cannot see it | **C** — Workstream 2 dependency | No Phase 1 acceptance criterion requires a persisted signal to carry the configured KPI threshold; the Phase 1 evidence path already does. Making a *configured* rebooking target drive the signal (`location_setting` provenance, already in the vocabulary) is Workstream 2's "stable … intelligence" work, gated on the tool exposing the threshold | Hosted smoke used a remembered goal to supply the brief's 60% target (§18) |
-| 6 | `rebookingGoalFromMemory` treats any remembered percentage near "rebook" as a goal | `analysis/zac-evidence.service.ts:434`, called unfiltered at `:347` (Phase 1 evidence/memory) | **A** — Phase 1 evidence defect | A `recurring_problem` memory ("rebooking dipped to 40% last spring") becomes a 40% goal in Phase 1 evidence | **Contained in Phase 2 code, not fixed in Phase 1**: the WS1 observation only passes goal-kind memories (`GOAL_MEMORY_KINDS`), proved by harness case `reb-12` |
+| 6 | `rebookingGoalFromMemory` treats any remembered percentage near "rebook" as a goal | `analysis/zac-evidence.service.ts:434`, called unfiltered at `:347` (Phase 1 evidence/memory) | **A** — Phase 1 evidence defect | A `recurring_problem` memory ("rebooking dipped to 40% last spring") becomes a 40% goal in Phase 1 evidence | **Kind-filtered in Phase 2 code, not fixed in Phase 1**: the WS1 observation passes only goal-kind memories (`GOAL_MEMORY_KINDS`) — harness case `reb-12` proves a `recurring_problem` memory is ignored; the content shape ("rebook" + first percentage) and first-match ordering are NOT contained and remain the Phase 1 defect |
 
 **Class B (Workstream 1 defects, fixed inside Phase 2 code):** the expire
 action's missing reason (found by the harness); and, from the close-out review,
@@ -468,18 +474,25 @@ the close-out commit (§28) on 2026-09-04.
 - Personal/team-scope harness cases — needs a WS6 evaluator that produces a
   personal signal; the label contract already carries `subjectUserId`/`family`.
 - A configured (`location_setting`) rebooking target — Workstream 2, once the
-  rebooking tool exposes the threshold.
+  rebooking tool exposes the threshold; and a previous-period figure from the
+  same tool so rebooking direction becomes observable.
+- Checking the PGlite migration/suite runner into the repo with a `--cap`
+  option, so the SQL evidence in §17 is re-runnable in CI rather than from a
+  session scratchpad (Workstream 8).
+- In-memory repository emulation of 0112's CHECK constraints (today it mirrors
+  the unique index, tenant filter and ordering only) — the hosted smoke covers
+  the difference.
 
 ## 27. Final test counts
 
-| Check | Result (2026-09-05) |
+| Check | Result (2026-09-06) |
 |---|---|
-| Evaluation harness (`zac-signal-eval`) | 84/84 cases, 130 steps, 7/7 invariants, exit 0; mutation check 5/5 red, control green |
-| `npx jest src/zac/intelligence` (framework A–L + H, service, harness gate) | 3 suites, **113 passed** |
-| Full API suite `npx jest` (apps/api) | **121 suites, 2,517 passed, 226 todo, 0 failed** |
+| Evaluation harness (`zac-signal-eval`) | 85/85 cases, 131 steps, 7/7 invariants, exit 0; mutation check 5/5 red, control green |
+| `npx jest src/zac/intelligence` (framework A–L + H + registry structure, service, harness gate) | 3 suites, **114 passed** |
+| Full API suite `npx jest` (apps/api) | **121 suites, 2,518 passed, 226 todo, 0 failed** |
 | `tsc --noEmit` (apps/api) | clean |
 | `eslint` (zac/intelligence, store, script) | clean |
-| `supabase/tests/zac_intelligence_signals.sql` (PGlite, all 112 migrations) | **29 of 29 PASS**; 0112 re-applied on the migrated stack: no error |
+| `supabase/tests/zac_intelligence_signals.sql` (PGlite, all 112 migrations) | **30 of 30 PASS** (case 29 manager RLS path, case 30 expiry episode + recurrence; case 22 now asserts index predicates/uniqueness); 0112 re-applied on the migrated stack: no error |
 | All 19 SQL suites, full stack vs 0111-capped control | identical outcomes (§17) |
 | Hosted (dev-test) | 0112 applied 2026-09-04; T1–T5, M, B, V **PASS** on 2026-09-04 and 2026-09-05; RLS probes as real users; rows cleaned (0 remain) |
 
@@ -497,5 +510,28 @@ limit:** re-launched 2026-09-05 (read-only). At the time of this recording its
 lens phase was still running, so those 32 claims stand as *unverified* rather
 than confirmed or refuted; they were raised by the same seven lenses and, by
 title, fall inside the root causes already fixed in `76660e9` or the recorded
-0113 items. Its outcome, when it lands, is appended below this line rather than
-rewriting anything above it.
+0113 items. Its outcome, when it landed, is appended below rather than rewriting anything
+above it.
+
+---
+
+**Appendix — resumed verification (2026-09-06).** The re-launched read-only
+review completed: 84 candidate findings from 7 lenses, **39 confirmed, 45
+refuted**, 24 verifier calls timed out. Of the 39: eleven restated defects that
+`76660e9` had already fixed (their own verdicts say so: the suppress
+short-circuit, `null == null` key match, non-UUID fixtures, decorative invariant
+tags, stale counts); the rest were acted on in the follow-up commit
+«FOLLOWUP-SHA» — the persisted resolution reason is now asserted from the store
+(8 checks), numeric materiality labels (4), fixture tools derived from the
+registry and per-location fixture ids validated, false-positive counting made
+kind-aware with progress expectations in its denominator, two previously
+unprinted scorecard lines (limitations, suppress), a partial multi-site manager
+preset and case (`scope-12`), a discriminating `scope-10`, a structural
+registry test, SQL cases 22 (predicates/uniqueness) and 30 (expiry episode +
+recurrence), the stale profitability comment in the registry source, and the
+documentation-accuracy items (plan status *proposed*, withheld vocabulary,
+expiry-case attribution, load-time not compile-time validation, nine CHECK
+vocabularies, WS5 wording, line references, honest coverage statement). Still
+recorded rather than done: the 0112 CHECK/policy items (0113), CHECK emulation
+in the in-memory repository, and checking in the PGlite runner (§26).
+

@@ -46,7 +46,7 @@ describe('ZAC Phase 2 signal evaluation harness', () => {
   it('asserts every scorecard category at least once — an unasserted metric is not measured', async () => {
     const { metrics } = await runSignalEval(dataset);
     const unasserted = Object.entries(metrics.accuracy)
-      .filter(([category, a]) => a.asserted === 0 && category !== 'limitations')
+      .filter(([, a]) => a.asserted === 0)
       .map(([category]) => category);
     expect(unasserted).toEqual([]);
   });

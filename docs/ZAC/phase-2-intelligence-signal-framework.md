@@ -1,7 +1,7 @@
 # ZAC — Phase 2 Workstream 1: Intelligence & Signal Framework (implemented)
 
 > **Status: ENGINEERING COMPLETE — hosted verification recorded separately (§23).**
-> Workstream 1 of the approved Phase 2 plan is delivered: the canonical metric
+> Workstream 1 of the authoritative Phase 2 plan (Client Review Edition — *proposed for review and approval*; see README) is delivered: the canonical metric
 > registry, the proactive signal lifecycle, the opportunity/risk/watch-point
 > contracts, deterministic materiality/severity rules, deduplication, and the
 > Phase 2 evaluation harness. **This is the reusable intelligence/signal
@@ -46,9 +46,17 @@ deliverable, not its population.
 
 **Workstream 1 does NOT include** scheduled evaluation, a proactive priority
 feed, the weekly/Sunday review or proactive notifications. Those are
-**Workstream 5 — Proactive intelligence & weekly business review (38h)**. The
-framework is invoked on demand by design, and nothing here is wired into a
-scheduler or the live `/zac/ask` turn (§17).
+**Workstream 5 — Proactive intelligence & weekly business review (38h)**, whose
+plan line reads verbatim: *"Scheduled signal evaluation; prioritisation;
+suppression/deduplication; proactive priority feed; weekly/Sunday review
+integration and progress follow-up."* Two words in that line — *prioritisation*
+and *suppression/deduplication* — name capabilities whose **primitives** ship
+here: the dedupe identity and partial unique index, the suppression window as a
+lifecycle state, and the adapter into the Phase 1 consolidator. Workstream 5
+builds the proactive *use* of them (what to surface, when, to whom, on a
+schedule); Workstream 1 does not decide any of that. The framework is invoked on
+demand by design, and nothing here is wired into a scheduler or the live
+`/zac/ask` turn (§17).
 
 **Workstream 1 does NOT include** QLAB intelligence, stock intelligence, Value
 Created, RAG or autonomous actions (Workstreams 3, 4, 7 and the Phase 2 product
@@ -115,7 +123,7 @@ metrics, the tool catalogue, the `zac` schema and the Phase 0/1 planning corpus.
 | **`ZacPriorityService.consolidate(signals)`** already dedupes identical readings, groups by **business issue**, scores the issue once and ranks — the fix for a hosted defect where one rebooking problem filled three slots and printed twice. | No Phase 2 priority engine. The adapter feeds `consolidate()`. |
 | `ZacEvidenceSignal.sourceTool` is a **closed union of Phase 1 tool names**; widening it ripples into the model-provider contract. | Every metric definition names its canonical `ZacToolName`. **Zero Phase 1 type changes.** |
 | Phase 1's `identityKey` = `issueKey\|metric\|scope\|period\|current\|target` — correct for deduping *within one turn*. | A persisted signal spans turns, so its key excludes period and value (§8). |
-| `ZacEvidenceService.normalise()` is the only signal producer, called from exactly one line (`zac-orchestrator.service.ts:286`), which sits **outside every intent conditional**. | Wiring persisted signals in there would change comparison/explanation/health answers too — deliberately not done (§17). |
+| `ZacEvidenceService.normalise()` is the only signal producer, called from exactly one line (`zac-orchestrator.service.ts`, the single `normalise` call), which sits **outside every intent conditional**. | Wiring persisted signals in there would change comparison/explanation/health answers too — deliberately not done (§17). |
 | Severity `'positive' \| 'watch' \| 'attention'` (ZAC) already collides with `'info' \| 'attention' \| 'high'` (`packages/domain/src/operational-signals.ts`), where `attention` means something different. `IntelligenceSignalType` is also **already taken** there. | Severity is **reused verbatim**; nothing in this build is named `IntelligenceSignalType`. |
 | `packages/domain` has **no test runner** (no `test` script, no `*.spec.ts` anywhere). `ZacEvidenceService`/`ZacPriorityService` are pure, `new`-able and live in `apps/api`. | Deterministic evaluation lives in `apps/api/src/zac/intelligence/`. |
 | Migration `0106` states QLOOQO's intelligence pattern is **compute-on-read, with deliberately no signal/flag table**. | A persisted table reverses a documented precedent, so `0112`'s header argues the case rather than assuming it (§11). |
@@ -467,7 +475,7 @@ as a source of truth, only as the reading that justified the signal.
 
 No operational payload, no client identifiers, no prompt or answer text.
 
-**Constraints.** Seven closed vocabularies as named `CHECK`s (`signal_type`,
+**Constraints.** Nine closed vocabularies as named `CHECK`s (`signal_type`, `direction`, `target_source`,
 `severity`, `status`, `observation_status`, `scope_type`, `visibility_scope`,
 `resolution_reason`),
 plus `[0,1]` bounds on `materiality` and `confidence`. This deliberately does
@@ -590,19 +598,19 @@ available, so good news never displaces a problem and needs no special case.
 
 | Suite | Command | Result |
 |---|---|---|
-| Framework acceptance fixtures A–L, H | `npx jest src/zac/intelligence/zac-signal-framework.spec.ts` | **74 passed** |
-| **Phase 2 evaluation harness gate** | `npx jest src/zac/intelligence/eval/signal-eval.spec.ts` | **4 passed** (84/84 cases, 130 steps, 7/7 invariants) |
+| Framework acceptance fixtures A–L, H (+ registry structure) | `npx jest src/zac/intelligence/zac-signal-framework.spec.ts` | **75 passed** |
+| **Phase 2 evaluation harness gate** | `npx jest src/zac/intelligence/eval/signal-eval.spec.ts` | **4 passed** (85/85 cases, 131 steps, 7/7 invariants) |
 | Service: persistence, scope attribution, visibility, isolation | `npx jest src/zac/intelligence/zac-intelligence-signal.service.spec.ts` | **35 passed** |
-| **Full API suite** | `pnpm --filter @sheer/api test` | **2517 passed, 226 todo, 2743 total; 121 suites, 0 failed** (2026-09-05) |
+| **Full API suite** | `pnpm --filter @sheer/api test` | **2518 passed, 226 todo, 2744 total; 121 suites, 0 failed** (2026-09-06) |
 | Typecheck | `pnpm --filter @sheer/api typecheck` | clean |
 | Lint | `pnpm --filter @sheer/api lint` | clean |
-| SQL behavioural suite | `supabase/tests/zac_intelligence_signals.sql` | **29 of 29 PASS** (PGlite, all 112 migrations); 0112 re-applied on the fully migrated stack without error (idempotent) |
+| SQL behavioural suite | `supabase/tests/zac_intelligence_signals.sql` | **30 of 30 PASS** (PGlite, all 112 migrations); 0112 re-applied on the fully migrated stack without error (idempotent) |
 | All 19 SQL behavioural suites, full stack vs 0111-capped control | PGlite, all 112 migrations | identical outcomes — [close-out report §17](phase-2-ws1-closeout-report.md) |
 
 The SQL suite was run for real: all **112 migrations** (through `0112`) applied
 into a fresh PGlite Postgres, then the suite executed inside one rolled-back
 transaction. It proves what the Jest suites structurally cannot — the partial
-unique index, the six `CHECK` vocabularies, the bounds, the FK, the
+unique index, the nine `CHECK` vocabularies, the bounds, the FK, the
 `updated_at` trigger, the four indexes, the grants, and the RLS policies under
 PostgREST-shaped sessions (`set local role authenticated` +
 `request.jwt.claim.sub`).
@@ -634,11 +642,14 @@ pnpm --filter @sheer/api zac-signal-eval
 
 The last Workstream 1 deliverable, and the one the A–L unit fixtures could not
 stand in for. It runs a **versioned labelled dataset** (`zac-signal-eval-v1`,
-84 cases / 130 steps) through the **real** pipeline — the real observation
+85 cases / 131 steps) through the **real** pipeline — the real observation
 service, evaluator registry, reconciler and `ZacIntelligenceSignalService`
 (scope fan-out, visibility matrix, permission re-check, plan application) —
 over an in-memory repository that enforces the same live-uniqueness rule as the
-database. Only inputs are faked: canned Phase 1 tool results in the exact shape
+database. Only inputs are faked: canned Phase 1 tool results (in the exact shape
+the tools emit, including each tool's standing caveats), retrieved memory
+summaries, and the clock — dispatch itself is replaced, so what the harness
+proves is the framework's handling of a result, not the tool's production of it;
 the tools emit, and the clock.
 
 **It calls no model and imports no provider SDK.** Signal intelligence is
@@ -648,7 +659,9 @@ harness spec pins that.
 **Label contract** — every expected value is one of the framework's own closed
 types (`ZacSignalType`, `ZacSignalSeverity`, `ZacSignalDirection`,
 `ZacSignalActionKind`, `ZacSignalResolutionReason`, `ZacWithheldSignal['reason']`),
-so a vocabulary change is a compile error in the dataset, not a stale label. The
+so a vocabulary change fails the dataset LOAD (`validateDataset` re-checks every
+label against the framework's exported vocabularies and the `frameworkVersion`),
+not a stale label. The
 two band labels are projections of framework numbers onto framework thresholds
 (materiality onto the metric's own bands; confidence onto the existing
 `confidenceScoreBucket`).
@@ -679,8 +692,8 @@ The three invariant counters that matter most are derived from what the
 pipeline **actually did**, not from labels: a resolve on a non-positive
 observation, an insert the unique index would reject, a refresh across tenants.
 
-**Result at close-out** (framework `ws1-2026-09-05`): 84/84 cases, 100% on every
-asserted category, 0/37 false-positive negative signals, 0/65 false negatives,
+**Result at close-out** (framework `ws1-2026-09-05`): 85/85 cases, 100% on every
+asserted category, 0/47 false-positive negative signals, 0/67 false negatives,
 0 duplicate active signals, 0 false resolutions on missing data, 0 tenant
 isolation failures, 0 permission failures, all seven hard invariants PASS.
 
@@ -704,6 +717,20 @@ A **mutation check** then confirmed the gates are live: forcing every resolve to
 `recovered`, re-widening manager visibility, bypassing the suppress gate, hiding
 lapsed suppressions, or resolving on a missing observation each turns the run
 red; the unmutated control passes.
+
+**Coverage the harness does NOT have, stated plainly.** Team and personal
+scopes (and the `subjectUserId` component of the signal key) are exercised by
+no case, because no Workstream 1 evaluator produces a personal signal — a
+Workstream 6 dependency. Rebooking direction (improving/declining while below)
+is unobservable from `report.rebooking_summary`, which exposes no previous-period
+figure; `reb-17` pins that the observation layer derives none from today's
+payload, not that the tool could never supply one (§19). The tenant-isolation
+counters observe rows the in-memory repository returned, and that repository
+filters by business itself: they guard the *service's* business scoping, while
+the store's `.eq('business_id')` boundary is proven by the hosted smoke (§23)
+and SQL case 25. A partial multi-site manager (two of the business's locations)
+is covered by `scope-12`; a manager with more than ten locations (the fan-out
+cap) is not.
 
 **What the harness found while being built** — the reason it exists:
 - Seven authored confidence labels were wrong: the canonical rebooking tool
@@ -801,7 +828,7 @@ underlying looseness is reported as a Phase 1 defect (§19.11).
 The adapter is built, tested and callable through
 `ZacIntelligenceSignalService.priorityCandidates()`, which composes it with the
 existing `ZacPriorityService`. It is **not** injected at
-`zac-orchestrator.service.ts:286`.
+`zac-orchestrator.service.ts` (the single `this.evidence.normalise(...)` call).
 
 That line sits outside every intent conditional, so injecting there would
 change `comparison`, `explanation`, `diagnostic` and `business_health` answers
@@ -913,7 +940,7 @@ with its own blast radius.
 | QLAB and stock metrics + evaluators | **Workstream 3** (probe-gated on V1.1 stability) |
 | Per-stylist / personal-scope evaluators | Blocked on defect (1) |
 | Per-location rebooking | Blocked on defect (2) |
-| Scheduled evaluation, proactive priority feed, weekly/Sunday review, proactive notifications | **Workstream 5** — depends on notification/scheduler infrastructure that does not yet exist |
+| Scheduled evaluation, proactive priority feed, weekly/Sunday review, proactive notifications; the proactive *use* of the dedupe/suppression/priority primitives shipped here | **Workstream 5** — depends on notification/scheduler infrastructure that does not yet exist |
 | Wiring persisted signals into the live `/zac/ask` priority path | §17 |
 | Value Created / outcome attribution | Workstream 4 |
 | Knowledge / RAG, model routing, cost controls | Workstream 7 |

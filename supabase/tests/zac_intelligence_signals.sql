@@ -10,7 +10,7 @@
 -- constraints, the partial unique index, the policies and the grants run for
 -- real.
 --
--- 29 numbered cases. Every RESULT must read PASS.
+-- 30 numbered cases. Every RESULT must read PASS.
 --
 -- Run against a SCRATCH database with every migration through 0112 applied:
 --   psql -d <scratch> -f supabase/tests/zac_intelligence_signals.sql
@@ -398,12 +398,18 @@ select case_name as case, result from probe_results where case_name='21_UPDATED_
 insert into probe_results values ('22_INDEXES_PRESENT',
   case when (select count(*) from pg_indexes
               where schemaname = 'zac' and tablename = 'intelligence_signals'
-                and indexname in (
-                  'idx_zac_intelligence_signals_live_key',
-                  'idx_zac_intelligence_signals_business_live',
-                  'idx_zac_intelligence_signals_location',
-                  'idx_zac_intelligence_signals_subject')) = 4
-       then 'PASS' else 'FAIL: an expected index is missing' end);
+                and (
+                  -- the dedupe guarantee: UNIQUE and PARTIAL over the live statuses
+                  (indexname = 'idx_zac_intelligence_signals_live_key'
+                     and indexdef ilike 'create unique index%' and indexdef ilike '%where%status%active%suppressed%')
+                  or (indexname = 'idx_zac_intelligence_signals_business_live'
+                     and indexdef ilike '%materiality desc%' and indexdef ilike '%where%status%')
+                  or (indexname = 'idx_zac_intelligence_signals_location'
+                     and indexdef ilike '%where%location_id is not null%')
+                  or (indexname = 'idx_zac_intelligence_signals_subject'
+                     and indexdef ilike '%where%subject_user_id is not null%')
+                )) = 4
+       then 'PASS' else 'FAIL: an expected index is missing or has lost its predicate/uniqueness' end);
 select case_name as case, result from probe_results where case_name='22_INDEXES_PRESENT';
 
 -- ===========================================================================
@@ -579,6 +585,59 @@ exception when others then
   insert into probe_results values ('29_MANAGER_HAS_NO_RLS_PATH','FAIL: unexpected ' || sqlerrm);
 end $$;
 select case_name as case, result from probe_results where case_name='29_MANAGER_HAS_NO_RLS_PATH';
+
+-- ===========================================================================
+-- 30. EXPIRY is the other way an episode closes, and it must behave like
+--     resolution at the schema level: the expired row keeps its reason, and the
+--     same issue can open a fresh live row beside it. Seeds its own episode
+--     (b5) as a lapsed suppression that then expired, so the probe also shows
+--     'suppressed_until' may legitimately remain set on history.
+-- ===========================================================================
+do $$
+declare live_after integer; expired_kept integer;
+begin
+  insert into zac.intelligence_signals (
+    id, business_id, signal_key, evaluator_key, metric_key, issue_key, scope_type,
+    visibility_scope, signal_type, severity, materiality, confidence,
+    observation_status, headline_redacted, status, resolution_reason, suppressed_until
+  ) values (
+    '1a000000-0000-0000-0000-0000000000b5',
+    '1a000000-0000-0000-0000-000000000001',
+    'biz|utilisation_shortfall|utilisation_rate|business|-|-|shortfall',
+    'utilisation_shortfall','utilisation_rate','utilisation','business',
+    'business_owner','risk','attention',0.3000,0.8000,'valid','first episode',
+    'suppressed','suppressed_by_actor', now() - interval '1 day'
+  );
+  update zac.intelligence_signals
+     set status='expired', resolution_reason='expired_unconfirmed', resolved_at=now()
+   where id = '1a000000-0000-0000-0000-0000000000b5';
+
+  insert into zac.intelligence_signals (
+    id, business_id, signal_key, evaluator_key, metric_key, issue_key, scope_type,
+    visibility_scope, signal_type, severity, materiality, confidence,
+    observation_status, headline_redacted
+  ) values (
+    '1a000000-0000-0000-0000-0000000000b6',
+    '1a000000-0000-0000-0000-000000000001',
+    'biz|utilisation_shortfall|utilisation_rate|business|-|-|shortfall',
+    'utilisation_shortfall','utilisation_rate','utilisation','business',
+    'business_owner','risk','attention',0.3000,0.8000,'valid','back after expiry'
+  );
+
+  select count(*) into live_after from zac.intelligence_signals
+   where signal_key = 'biz|utilisation_shortfall|utilisation_rate|business|-|-|shortfall'
+     and status in ('active','suppressed');
+  select count(*) into expired_kept from zac.intelligence_signals
+   where id = '1a000000-0000-0000-0000-0000000000b5'
+     and status = 'expired' and resolution_reason = 'expired_unconfirmed';
+
+  insert into probe_results values ('30_EXPIRED_EPISODE_KEEPS_REASON_AND_RECURS',
+    case when live_after = 1 and expired_kept = 1 then 'PASS'
+         else 'FAIL: live=' || live_after || ' expired_kept=' || expired_kept end);
+exception when others then
+  insert into probe_results values ('30_EXPIRED_EPISODE_KEEPS_REASON_AND_RECURS','FAIL: unexpected ' || sqlerrm);
+end $$;
+select case_name as case, result from probe_results where case_name='30_EXPIRED_EPISODE_KEEPS_REASON_AND_RECURS';
 
 -- ===========================================================================
 -- SUMMARY

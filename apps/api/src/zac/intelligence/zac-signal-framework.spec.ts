@@ -250,6 +250,22 @@ describe('canonical metric registry', () => {
     expect(() => metricDefinition('colour_waste' as ZacMetricKey)).toThrow(/unregistered/);
   });
 
+  it('admits only definitions that meet the four-criterion bar, structurally', () => {
+    // The bar is documented prose unless something checks it: a canonical source
+    // reference, a real tool, a stateable sample floor with its unit, ordered
+    // materiality bands, and a permission requirement.
+    for (const definition of allMetricDefinitions()) {
+      expect(definition.canonicalSourceRef.length).toBeGreaterThan(0);
+      expect(definition.sourceTool.length).toBeGreaterThan(0);
+      expect(definition.sampleUnit.length).toBeGreaterThan(0);
+      expect(definition.minimumSample).toBeGreaterThan(0);
+      expect(definition.materialityBands.watch).toBeGreaterThan(0);
+      expect(definition.materialityBands.attention).toBeGreaterThan(definition.materialityBands.watch);
+      expect(definition.staleAfterDays).toBeGreaterThan(0);
+      expect(definition.requiredPermissions.length).toBeGreaterThan(0);
+    }
+  });
+
   it('points every metric at a real Phase 1 tool rather than recreating the formula', () => {
     expect(metricDefinition('rebooking_rate').sourceTool).toBe('report.rebooking_summary');
     expect(metricDefinition('utilisation_rate').sourceTool).toBe('report.utilisation_summary');

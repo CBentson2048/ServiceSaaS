@@ -28,6 +28,7 @@ import {
   signalFamily,
   type ZacPersistedSignal,
   type ZacSignalCandidate,
+  type ZacSignalType,
   type ZacWithheldSignal,
 } from '../zac-signal.types';
 import { InMemorySignalRepository } from './in-memory-signal-repository';
@@ -143,7 +144,11 @@ function validateDataset(dataset: SignalEvalDataset): void {
         continue;
       }
       for (const tool of Object.keys(step.tools)) {
-        oneOf(where, 'tool', tool.split('@')[0] as ZacToolName, SIGNAL_EVAL_TOOLS);
+        const [base, suffix, ...rest] = tool.split('@');
+        oneOf(where, 'tool', base as ZacToolName, SIGNAL_EVAL_TOOLS);
+        // A per-location override must name a fixture location, or a typo would
+        // silently fall back to the aggregate fixture (or to DENIED).
+        if (suffix !== undefined || rest.length > 0) oneOf(where, 'fixture location', suffix, KNOWN_LOCATIONS);
       }
       for (const signal of step.expected.signals ?? []) {
         oneOf(where, 'metric', signal.metric, ZAC_METRIC_KEYS);
@@ -174,6 +179,7 @@ export const BUSINESS_B = 'b0000000-0000-0000-0000-00000000000b';
 export const LOCATION_1 = '10000000-0000-4000-8000-0000000000a1';
 export const LOCATION_2 = '10000000-0000-4000-8000-0000000000a2';
 export const LOCATION_3 = '10000000-0000-4000-8000-0000000000a3';
+const KNOWN_LOCATIONS: readonly string[] = [LOCATION_1, LOCATION_2, LOCATION_3];
 
 const OWNER_PERMISSIONS: Permission[] = ['zac.access', 'report.dashboard.view', 'report.performance.view'];
 
@@ -238,6 +244,8 @@ export function actorProfile(preset: SignalEvalActor, locationFocus: string | nu
       return base({ ...A, id: '10000000-0000-4000-8000-0000000000e2', roles: ['manager'], permissions: OWNER_PERMISSIONS, locations: one });
     case 'manager_l2':
       return base({ ...A, id: '10000000-0000-4000-8000-0000000000e4', roles: ['manager'], permissions: OWNER_PERMISSIONS, locations: [{ id: LOCATION_2, name: 'Primrose Hill' }] });
+    case 'manager_l1_l2':
+      return base({ ...A, id: '10000000-0000-4000-8000-0000000000e5', roles: ['manager'], permissions: OWNER_PERMISSIONS, locations: two });
     case 'stylist':
       return base({ ...A, id: '10000000-0000-4000-8000-0000000000e3', roles: ['stylist'], permissions: ['zac.access'], locations: one });
     case 'owner_no_dashboard':
@@ -336,13 +344,16 @@ export async function runSignalEvalCase(evalCase: SignalEvalCase): Promise<Signa
     label: string,
     expected: unknown,
     actual: unknown,
-    invariant = gate(category),
+    invariant?: SignalEvalInvariant,
+    producedKind?: ZacSignalType | null,
   ): boolean => {
+    invariant = invariant ?? gate(category);
     const passed = JSON.stringify(expected) === JSON.stringify(actual);
     checks.push({
       caseId: evalCase.id,
       stepId,
       category,
+      ...(producedKind !== undefined ? { producedKind } : {}),
       label,
       expected: JSON.stringify(expected),
       actual: JSON.stringify(actual),
@@ -451,7 +462,15 @@ function invariantFor(category: SignalEvalCheck['category'], invariants: SignalE
   return (map[category] ?? []).find((candidate) => invariants.includes(candidate));
 }
 
-type Check = (stepId: string, category: SignalEvalCheck['category'], label: string, expected: unknown, actual: unknown, invariant?: SignalEvalInvariant) => boolean;
+type Check = (
+  stepId: string,
+  category: SignalEvalCheck['category'],
+  label: string,
+  expected: unknown,
+  actual: unknown,
+  invariant?: SignalEvalInvariant,
+  producedKind?: ZacSignalType | null,
+) => boolean;
 
 function assertSignal(
   step: SignalEvalEvaluateStep,
@@ -472,7 +491,7 @@ function assertSignal(
     : evaluation.candidates;
   const candidate = candidates[0];
   const produced = candidate !== undefined;
-  check(step.id, 'signal_presence', `${where}${expectation.family ? ' ' + expectation.family : ''} produced`, expectation.produced, produced);
+  check(step.id, 'signal_presence', `${where}${expectation.family ? ' ' + expectation.family : ''} produced`, expectation.produced, produced, undefined, candidate?.signalType ?? null);
 
   if (!expectation.produced) {
     if (expectation.withheldReason !== undefined) {
@@ -496,6 +515,9 @@ function assertSignal(
   if (expectation.kind !== undefined) check(step.id, 'kind', `${where} kind`, expectation.kind, candidate.signalType);
   if (expectation.direction !== undefined) check(step.id, 'direction', `${where} direction`, expectation.direction, candidate.direction);
   if (expectation.materialityBand !== undefined) check(step.id, 'materiality_band', `${where} materiality band`, expectation.materialityBand, materialityBand(candidate));
+  if (expectation.materiality !== undefined) {
+    check(step.id, 'materiality_band', `${where} materiality ≈ ${expectation.materiality}`, true, Math.abs(candidate.materiality - expectation.materiality) < 1e-4 ? true : candidate.materiality);
+  }
   if (expectation.severity !== undefined) check(step.id, 'severity', `${where} severity`, expectation.severity, candidate.severity);
   if (expectation.confidenceBand !== undefined) check(step.id, 'confidence_band', `${where} confidence band`, expectation.confidenceBand, confidenceScoreBucket(candidate.confidence));
   if (expectation.targetSource !== undefined) check(step.id, 'target_source', `${where} target source`, expectation.targetSource, candidate.targetSource);
@@ -569,6 +591,11 @@ async function assertStore(
   if (expected.statuses) {
     for (const [status, count] of Object.entries(expected.statuses)) {
       check(stepId, 'store', `rows with status ${status}`, count, by(status as ZacPersistedSignal['status']));
+    }
+  }
+  if (expected.resolutionReasons) {
+    for (const [reason, count] of Object.entries(expected.resolutionReasons)) {
+      check(stepId, 'resolution_reason', `rows persisted with resolution reason ${reason}`, count, all.filter((r) => r.resolutionReason === reason).length);
     }
   }
   // Live-key uniqueness is NOT asserted here: the repository refuses a second
@@ -657,10 +684,12 @@ export function scoreSignalEval(dataset: SignalEvalDataset, results: SignalEvalC
         const expectedProduced = c.expected === 'true';
         const actualProduced = c.actual === 'true';
         if (expectedProduced) { fnDen += 1; if (!actualProduced) fnSig += 1; }
-        else { fpDen += 1; if (actualProduced) fpNeg += 1; }
+        else { fpDen += 1; if (actualProduced && (c.producedKind === undefined || c.producedKind === null || isNegativeKind(c.producedKind))) fpNeg += 1; }
       }
-      if (c.category === 'kind' && c.expected === '"progress"' && c.actual !== '"progress"' && isNegativeKind(JSON.parse(c.actual))) {
-        fpNeg += 1;
+      if (c.category === 'kind' && c.expected === '"progress"') {
+        // An expected progress signal is a place a false negative signal could appear.
+        fpDen += 1;
+        if (c.actual !== '"progress"' && isNegativeKind(JSON.parse(c.actual))) fpNeg += 1;
       }
       // A wrong visibility count is a permission/scope failure; tenant
       // isolation is counted from ACTUALS (rows seen across a business,
@@ -739,8 +768,10 @@ export function formatSignalEvalReport(metrics: SignalEvalMetrics, meta: { commi
   acc('Lifecycle transition accuracy', 'lifecycle_action');
   acc('Resolution accuracy', 'resolution_reason');
   acc('Dedupe accuracy', 'dedupe');
+  acc('Limitations accuracy', 'limitations');
   acc('Store-state accuracy', 'store');
   acc('Visibility accuracy', 'visibility');
+  acc('Suppress accuracy', 'suppress');
   lines.push('');
   row('False-positive negative signals', `${metrics.falsePositiveNegativeSignals.count} / ${metrics.falsePositiveNegativeSignals.denominator}`);
   row('False-negative signals', `${metrics.falseNegativeSignals.count} / ${metrics.falseNegativeSignals.denominator}`);

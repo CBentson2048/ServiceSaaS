@@ -1,5 +1,6 @@
 import type { ZacConfidenceBucket } from '../../routing/zac-request-mode.types';
 import type { ZacToolName, ZacToolResult } from '../../tools/zac-tool.types';
+import { allMetricDefinitions } from '../zac-metric-registry';
 import type {
   ZacMetricKey,
   ZacMetricTargetSource,
@@ -45,6 +46,8 @@ export type SignalEvalActor =
   | 'manager_l1'
   /** Business A manager scoped to L2 only. */
   | 'manager_l2'
+  /** Business A manager holding TWO of the business's locations (L1 and L2): a partial, multi-site scope. */
+  | 'manager_l1_l2'
   /** Business A stylist: zac.access only, no report permissions. */
   | 'stylist'
   /** Business A owner with report.dashboard.view REMOVED (rebooking metric denied). */
@@ -90,6 +93,8 @@ export interface SignalEvalSignalExpectation {
   kind?: ZacSignalType;
   direction?: ZacSignalDirection;
   materialityBand?: SignalEvalMaterialityBand;
+  /** The materiality NUMBER (gap / target), to 1e-4 — the band alone cannot see a wrong formula inside the right band. */
+  materiality?: number;
   severity?: ZacSignalSeverity;
   confidenceBand?: ZacConfidenceBucket;
   targetSource?: ZacMetricTargetSource | null;
@@ -110,6 +115,12 @@ export interface SignalEvalStoreExpectation {
   episodes?: number;
   /** Row counts by status for the actor's business. */
   statuses?: Partial<Record<ZacSignalStatus, number>>;
+  /**
+   * Row counts by PERSISTED resolution reason — what the store holds after the
+   * service applied the plan, not what the plan said. The two can only differ
+   * if the service mis-applies a reason, which is exactly what this catches.
+   */
+  resolutionReasons?: Partial<Record<ZacSignalResolutionReason, number>>;
   /**
    * DEDUPE: the active signal key for `metric` (+ optional scope) must equal
    * the key that was live after the named earlier step. Same logical issue,
@@ -215,6 +226,8 @@ export interface SignalEvalCheck {
   passed: boolean;
   /** Which zero-tolerance gate this check belongs to, if any. */
   invariant?: SignalEvalInvariant;
+  /** For a presence check: the kind the pipeline actually produced, so the scorer can tell a false NEGATIVE signal from unexpected good news. */
+  producedKind?: ZacSignalType | null;
 }
 
 export interface SignalEvalCaseResult {
@@ -259,6 +272,7 @@ export const SIGNAL_EVAL_ACTORS: readonly SignalEvalActor[] = [
   'owner_single',
   'manager_l1',
   'manager_l2',
+  'manager_l1_l2',
   'stylist',
   'owner_no_dashboard',
   'owner_no_performance',
@@ -266,7 +280,9 @@ export const SIGNAL_EVAL_ACTORS: readonly SignalEvalActor[] = [
   'owner_b',
 ];
 
-export const SIGNAL_EVAL_TOOLS: readonly ZacToolName[] = [
-  'report.rebooking_summary',
-  'report.utilisation_summary',
-];
+/**
+ * The tools a fixture may name — derived from the registry, so registering a
+ * new metric (with its `sourceTool`) is what admits its fixtures: no second
+ * list to keep in step.
+ */
+export const SIGNAL_EVAL_TOOLS: readonly ZacToolName[] = allMetricDefinitions().map((d) => d.sourceTool);

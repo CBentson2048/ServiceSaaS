@@ -20,8 +20,10 @@ import type { ZacMetricDefinition, ZacMetricKey } from './zac-metric.types';
  *    skeletons returning `not_connected`, and the Phase 1 feasibility report
  *    records that no supplier / purchase-order / lead-time / expiry entity
  *    exists and that `inventory.waste_events` is written but never read.
- *  - Profitability: `billing.location_fixed_costs` is applied but empty, so a
- *    margin would be computed against nothing.
+ *  - Profitability: `billing.location_fixed_costs` has a full CRUD path
+ *    (owner-location-settings.service.ts) but no canonical profitability
+ *    computation exists to point at — criterion 1 — and no target with
+ *    provenance — criterion 4. Workstream 2.
  *  - Retention: only a proxy over rebooking exists; lapsed-client detection
  *    (0097) answers a different question and produces no rate.
  *  - Revenue and cancellations: proven readings, but neither has a target with
