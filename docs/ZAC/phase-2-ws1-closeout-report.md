@@ -500,6 +500,7 @@ the close-out commit (§28) on 2026-09-04.
 
 - `9f357f7350ac4215c204d2918d4100ca1246e526` — `feat(zac): close out Phase 2 Workstream 1 with the evaluation harness`
 - `76660e94b7e0bc70783c359bed619070347d712f` — `fix(zac): harden the Workstream 1 framework and harness after adversarial review`
+- `d5e5032cbe9c4e115873c69ee22fa5bfae580fa2` — `test(zac): close the remaining Workstream 1 review items in the harness and docs` (see appendix)
 
 Both on `feature/post-checkin-service-lifecycle` (the branch carrying the
 user's plan commit `59d5656`, which had fast-forwarded over
@@ -521,7 +522,7 @@ refuted**, 24 verifier calls timed out. Of the 39: eleven restated defects that
 `76660e9` had already fixed (their own verdicts say so: the suppress
 short-circuit, `null == null` key match, non-UUID fixtures, decorative invariant
 tags, stale counts); the rest were acted on in the follow-up commit
-«FOLLOWUP-SHA» — the persisted resolution reason is now asserted from the store
+`d5e5032cbe9c4e115873c69ee22fa5bfae580fa2` — the persisted resolution reason is now asserted from the store
 (8 checks), numeric materiality labels (4), fixture tools derived from the
 registry and per-location fixture ids validated, false-positive counting made
 kind-aware with progress expectations in its denominator, two previously
