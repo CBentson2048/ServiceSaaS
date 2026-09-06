@@ -35,6 +35,17 @@ export function LoginPage() {
     return <Navigate to="/book/date-time" replace />;
   }
 
+  // A signed-in user opening /login (a bookmark, or the marketing site's "Log
+  // in" button) should not see the credentials form flash past while the stored
+  // session is still being proved.
+  if (auth.status === 'bootstrapping') {
+    return (
+      <div className="grid min-h-screen place-items-center bg-bg text-text-secondary">
+        Restoring your Qlooqo session...
+      </div>
+    );
+  }
+
   if (auth.user) {
     if (bookingMode && auth.session && auth.user.clientProfileId) {
       completeBookingAuth({ session: auth.session, user: auth.user });

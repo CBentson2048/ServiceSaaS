@@ -6,6 +6,7 @@ import {
   InternalServerErrorException,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -38,6 +39,7 @@ import {
 } from '@sheer/domain';
 import type { ClientBookingAccountDto, ClientBookingLoginDto, CreateCustomerAccountDto } from './dto';
 import { normalizeE164 } from '../communications/phone';
+import { VerifiedTokenCache } from './verified-token.cache';
 import { EmailService } from '../email/email.service';
 import { renderPasswordResetEmail } from '../email/templates/password-reset.template';
 
@@ -127,6 +129,29 @@ interface PasswordResetRow {
 const PASSWORD_RESET_EXPIRY_HOURS = 1;
 const PASSWORD_RESET_MIN_LENGTH = 8;
 
+/**
+ * Did Supabase ANSWER "these credentials are not valid", or did we merely fail
+ * to ask it?
+ *
+ * Only the first proves a session is dead, and the difference is load-bearing:
+ * every client in this repo reads a 401/403 from the auth endpoints as proof
+ * that the stored session is gone and deletes it. Reporting "we could not tell"
+ * as 401 therefore signs every signed-in user out over a redeploy, a dropped
+ * connection or a rate-limit answer — none of which say anything about the
+ * user's credentials.
+ *
+ * A 4xx is GoTrue's verdict (400 `invalid_grant` for a spent refresh token,
+ * 401/403 for a bad or expired JWT). A timeout, a 429 from the per-IP auth
+ * budget the whole platform shares, a 5xx, or a transport failure with no
+ * status at all are all outages, and callers should be told to try again.
+ */
+export function isAuthoritativeRejection(error: unknown): boolean {
+  const status = (error as { status?: unknown } | null | undefined)?.status;
+  if (typeof status !== 'number') return false;
+  if (status === 408 || status === 429) return false;
+  return status >= 400 && status < 500;
+}
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -135,6 +160,8 @@ export class AuthService {
   private readonly anon: SupabaseClient;
   private readonly admin: SupabaseClient;
   private readonly resetBaseUrl: string;
+  /** Short-lived verified-token cache; see verified-token.cache.ts. */
+  private readonly verifiedTokens = new VerifiedTokenCache();
 
   constructor(
     config: ConfigService,
@@ -144,6 +171,10 @@ export class AuthService {
     this.anonKey = config.getOrThrow<string>('SUPABASE_ANON_KEY');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
 
+    // NOTE: this shared client is for STATELESS calls only — `getUser(jwt)`,
+    // which auth-js answers with a direct request and no session handling. Every
+    // call that RETURNS a session goes through `sessionClient()` instead; see
+    // the comment there for why sharing one is unsafe.
     this.anon = createClient(this.supabaseUrl, this.anonKey, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
@@ -351,7 +382,7 @@ export class AuthService {
   async loginClientForBooking(input: ClientBookingLoginDto): Promise<LoginResponse> {
     const location = await this.fetchBookingLocation(input.locationId);
     const email = input.email.trim().toLowerCase();
-    const { data, error } = await this.anon.auth.signInWithPassword({
+    const { data, error } = await this.sessionClient().auth.signInWithPassword({
       email,
       password: input.password,
     });
@@ -382,12 +413,13 @@ export class AuthService {
   }
 
   async login(email: string, password: string, surface: RuntimeSurface = 'api'): Promise<LoginResponse> {
-    const { data, error } = await this.anon.auth.signInWithPassword({
+    const { data, error } = await this.sessionClient().auth.signInWithPassword({
       email,
       password,
     });
 
     if (error || !data.user || !data.session) {
+      this.assertUpstreamAnswered(error, 'sign-in');
       throw new UnauthorizedException('Invalid email or password');
     }
 
@@ -401,15 +433,23 @@ export class AuthService {
   }
 
   async refresh(refreshToken: string, surface: RuntimeSurface = 'api'): Promise<LoginResponse> {
-    const { data, error } = await this.anon.auth.refreshSession({
+    const { data, error } = await this.sessionClient().auth.refreshSession({
       refresh_token: refreshToken,
     });
 
     if (error || !data.user || !data.session) {
+      this.assertUpstreamAnswered(error, 'session refresh');
       throw new UnauthorizedException('Session refresh failed');
     }
 
-    const user = await this.resolveAuthUser(data.user.id);
+    // Supabase has now ROTATED the refresh token: the one the caller sent is
+    // spent, and only the session in `data` can be used again. Anything that
+    // fails from here on therefore strands the caller with a dead credential,
+    // so a transient failure gets one immediate retry rather than becoming a
+    // silent sign-out. (A caller that still loses the race recovers by retrying
+    // quickly: Supabase honours a spent token for `refresh_token_reuse_interval`
+    // and answers with the same rotated session.)
+    const user = await this.resolveAuthUserWithRetry(data.user.id);
     this.assertSurfaceAccess(user, surface);
 
     return {
@@ -418,32 +458,125 @@ export class AuthService {
     };
   }
 
+  /**
+   * End THIS session — and only this one.
+   *
+   * `scope: 'local'` is the whole point. auth-js defaults to `'global'`, which
+   * revokes every session the person holds, so signing out of the dashboard
+   * used to sign the same person out of the phone app and the Lab tablet as
+   * well. Each surface signs in separately and should sign out separately;
+   * "sign out everywhere" would be a deliberate, separate action.
+   *
+   * Best effort by design — the caller has already forgotten the session — but
+   * not fire-and-forget: each branch below exists because a real client reaches
+   * it, and a sign-out that quietly revokes nothing leaves a live credential
+   * behind.
+   */
   async logout(accessToken?: string, refreshToken?: string): Promise<void> {
-    if (accessToken && refreshToken) {
-      const sessionClient = createClient(this.supabaseUrl, this.anonKey, {
-        auth: { autoRefreshToken: false, persistSession: false },
-      });
+    if (accessToken) this.verifiedTokens.invalidate(accessToken);
+    if (!accessToken && !refreshToken) return;
 
-      await sessionClient.auth.setSession({
-        access_token: accessToken,
-        refresh_token: refreshToken,
-      });
-      await sessionClient.auth.signOut();
-      return;
-    }
+    const client = this.sessionClient();
+    try {
+      if (accessToken && refreshToken) {
+        // `setSession` refreshes first when the access token has already
+        // expired, so an expired-but-refreshable session still gets revoked.
+        const { error } = await client.auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        });
+        if (!error) {
+          await client.auth.signOut({ scope: 'local' });
+          return;
+        }
+      }
 
-    if (accessToken) {
-      await this.admin.auth.admin.signOut(accessToken, 'global');
+      if (refreshToken) {
+        // No usable access token: trade the refresh token for one rather than
+        // return 204 having revoked nothing.
+        const { data, error } = await client.auth.refreshSession({ refresh_token: refreshToken });
+        if (!error && data.session) {
+          await client.auth.signOut({ scope: 'local' });
+          return;
+        }
+      }
+
+      if (accessToken) {
+        await this.admin.auth.admin.signOut(accessToken, 'local');
+      }
+    } catch (error) {
+      this.logger.warn(`Sign-out could not be completed upstream: ${describeError(error)}`);
     }
   }
 
   async verifyAccessToken(accessToken: string): Promise<AuthUser> {
+    const cached = this.verifiedTokens.get(accessToken);
+    if (cached) return cached;
+
+    // `getUser(jwt)` is the one auth-js call that carries no session state: with
+    // an explicit token it is a plain request, so the shared client is safe here.
     const { data, error } = await this.anon.auth.getUser(accessToken);
     if (error || !data.user) {
+      this.assertUpstreamAnswered(error, 'token verification');
       throw new UnauthorizedException('Invalid or expired session');
     }
 
-    return this.resolveAuthUser(data.user.id);
+    const user = await this.resolveAuthUser(data.user.id);
+    this.verifiedTokens.set(accessToken, user);
+    return user;
+  }
+
+  /**
+   * A throwaway auth client for ONE session-bearing call.
+   *
+   * `signInWithPassword` and `refreshSession` both STORE the resulting session
+   * on the client they were called on (auth-js keeps an in-memory store even
+   * with `persistSession: false`). A later `refreshSession` on that same client
+   * loads that stored session first and, if it is near expiry, refreshes it —
+   * so on one process-wide client a refresh for user B issues an extra token
+   * grant carrying user A's refresh token, and concurrent refreshes are
+   * serialised behind a single shared in-flight promise.
+   *
+   * Supabase's parent-token rule means that stray rotation does not lock user A
+   * out today, but it is another user's credential being spent, an extra call
+   * against a per-IP rate limit the whole platform shares, and a session-killing
+   * bug the moment this API runs more than one replica. A client per call costs
+   * an object and no network, and the session dies with the request.
+   */
+  private sessionClient(): SupabaseClient {
+    return createClient(this.supabaseUrl, this.anonKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+  }
+
+  /**
+   * Refuse to turn an outage into a sign-out. See {@link isAuthoritativeRejection}.
+   */
+  private assertUpstreamAnswered(error: unknown, action: string): void {
+    if (!error || isAuthoritativeRejection(error)) return;
+    this.logger.error(`Supabase auth ${action} did not answer: ${describeError(error)}`);
+    throw new ServiceUnavailableException(
+      'The sign-in service is temporarily unavailable. Please try again.',
+    );
+  }
+
+  /**
+   * `resolveAuthUser`, with one immediate retry for failures that are not a
+   * verdict about the user. Used on the refresh path, where the credential has
+   * already been rotated and giving up means signing the caller out.
+   */
+  private async resolveAuthUserWithRetry(userId: string): Promise<AuthUser> {
+    try {
+      return await this.resolveAuthUser(userId);
+    } catch (error) {
+      // A membership verdict (403) or a missing profile (404) is an answer, not
+      // an outage: retrying would only produce the same answer.
+      if (error instanceof ForbiddenException || error instanceof NotFoundException) throw error;
+      this.logger.warn(
+        `Re-resolving ${userId} after a transient failure on the refresh path: ${describeError(error)}`,
+      );
+      return this.resolveAuthUser(userId);
+    }
   }
 
   async resolveAuthUser(userId: string): Promise<AuthUser> {
@@ -1307,6 +1440,13 @@ export class AuthService {
  * link; only its hash is persisted, so a database leak alone cannot
  * reset anyone's password.
  */
+/** A log-safe one-liner for an unknown thrown value. Never includes a token. */
+function describeError(error: unknown): string {
+  if (error instanceof Error) return `${error.name}: ${error.message}`;
+  const message = (error as { message?: unknown } | null | undefined)?.message;
+  return typeof message === 'string' ? message : String(error);
+}
+
 function generateResetToken(): { token: string; hash: string } {
   const token = randomBytes(32).toString('base64url');
   return { token, hash: hashResetToken(token) };

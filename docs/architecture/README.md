@@ -40,6 +40,15 @@ Expo RN phone        Expo RN iPad         Vite React
 - Multi-tenant via `location_id` columns + RLS policies.
 - Auth via Supabase Auth; JWT verified by NestJS guards.
 
+## Sessions
+
+No client uses `supabase-js`: every surface signs in through the API, stores the
+returned `AuthSession`, and rotates it before the one-hour access token expires.
+See **[session-management.md](session-management.md)** for the state machine,
+the "an outage is not an expired session" rule, sign-out scope, and the known
+gaps (including the Lab's separate device/PIN sessions, described in
+[sheer-lab-session-flow.md](sheer-lab-session-flow.md)).
+
 ## Planned ADRs
 
 - 0001 - Supabase vs self-hosted Postgres

@@ -4,12 +4,13 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
 import type { AuthSession, AuthUser, LoginResponse } from '@sheer/domain';
 import * as authApi from './api';
-import { ApiRequestError } from './api';
+import { ApiRequestError, setExpiredTokenHandler } from './api';
 
 const STORAGE_KEY = 'sheer.web.auth.session';
 
@@ -22,6 +23,33 @@ const REFRESH_LOCK_NAME = 'sheer.web.auth.refresh';
  * offline browser is not left staring at the restoring screen.
  */
 const REVALIDATE_RETRY_DELAYS_MS = [1_000, 3_000, 6_000];
+
+/**
+ * How long before the access token expires we rotate it. Comfortably longer than
+ * a slow round trip, so a request is never issued with a token that expires in
+ * flight.
+ */
+const REFRESH_MARGIN_MS = 60_000;
+
+/**
+ * Back-off when a scheduled refresh cannot reach the API. The first retry is
+ * deliberately quick: Supabase honours a just-rotated refresh token for a short
+ * reuse interval, so a fast retry after a failure mid-rotation still succeeds.
+ */
+const REFRESH_RETRY_DELAYS_MS = [2_000, 5_000, 15_000, 30_000];
+
+/** `setTimeout` clamps above this, which would fire the timer immediately. */
+const MAX_TIMEOUT_MS = 2_147_483_647;
+
+/**
+ * The closest together two scheduled rotations may be.
+ *
+ * A device whose clock is wrong sees every fresh token as already past its
+ * deadline, which without a floor would rotate in a tight loop for as long as
+ * the tab is open. The session still works — the server judges expiry by its own
+ * clock — so this bounds the damage to one wasted refresh a minute.
+ */
+const MIN_ROTATION_SPACING_MS = 60_000;
 
 interface AuthState {
   status: 'bootstrapping' | 'authenticated' | 'anonymous';
@@ -44,8 +72,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthState['status']>('bootstrapping');
   const [user, setUser] = useState<AuthUser | null>(null);
   const [session, setSession] = useState<AuthSession | null>(() => readStoredSession());
+  /**
+   * Bumped when something suggests it is worth trying the API again — the
+   * browser came back online, the tab was brought forward. Both the bootstrap
+   * and the refresh timer watch it, so a session that stood down during an
+   * outage recovers by itself instead of waiting for a reload.
+   */
+  const [recoveryTick, setRecoveryTick] = useState(0);
+  /**
+   * The access token we have already proved is good. A session we just received
+   * from the API does not need proving again — without this the bootstrap effect
+   * re-ran on every sign-in and every rotation, spending a second `/auth/me` and
+   * (if that one blipped) throwing away the session it had just been handed.
+   */
+  const provenToken = useRef<string | null>(null);
+  /** When the scheduler last rotated, so a skewed clock cannot spin. */
+  const lastRotationAt = useRef(0);
 
   const applySession = useCallback((nextSession: AuthSession, nextUser: AuthUser) => {
+    provenToken.current = nextSession.accessToken;
     setSession(nextSession);
     setUser(nextUser);
     setStatus('authenticated');
@@ -53,6 +98,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const clearSession = useCallback(() => {
+    provenToken.current = null;
     setSession(null);
     setUser(null);
     setStatus('anonymous');
@@ -60,11 +106,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   /**
-   * Gives up on this page load WITHOUT discarding the stored session. Used when
+   * Gives up on this attempt WITHOUT discarding the stored session. Used when
    * the API could not be reached: the credentials are very likely still good, so
-   * throwing them away would sign the user out over someone else's outage.
+   * throwing them away would sign the user out over someone else's outage. The
+   * recovery listeners below try again when the world looks better.
    */
   const standDown = useCallback(() => {
+    provenToken.current = null;
     setUser(null);
     setStatus('anonymous');
   }, []);
@@ -78,10 +126,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
+      // Already proved on this page load — nothing to re-check.
+      if (provenToken.current === session.accessToken) return;
+
       const result = await revalidateAccessToken(session.accessToken, () => cancelled);
       if (cancelled) return;
 
       if (result.outcome === 'valid') {
+        provenToken.current = session.accessToken;
         setUser(result.user);
         setStatus('authenticated');
         return;
@@ -114,7 +166,115 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [applySession, clearSession, standDown, session?.accessToken, session?.refreshToken]);
+  }, [
+    applySession,
+    clearSession,
+    standDown,
+    session?.accessToken,
+    session?.refreshToken,
+    recoveryTick,
+  ]);
+
+  /**
+   * Rotate the token BEFORE it expires.
+   *
+   * This is the difference between a session that lasts as long as someone is
+   * working and one that stops an hour after they signed in. The API returns
+   * `expiresAt` with every session; until this existed, nothing read it, and
+   * the first anyone knew about expiry was every page failing at once.
+   */
+  useEffect(() => {
+    if (status !== 'authenticated') return;
+    const refreshToken = session?.refreshToken;
+    const expiresAt = session?.expiresAt;
+    if (!refreshToken || !expiresAt) return;
+
+    const expiresAtMs = Date.parse(expiresAt);
+    if (!Number.isFinite(expiresAtMs)) return;
+
+    let cancelled = false;
+    let attempt = 0;
+    let timer = 0;
+
+    const rotate = async () => {
+      if (cancelled) return;
+      lastRotationAt.current = Date.now();
+      try {
+        const refreshed = await refreshSessionOnce(refreshToken);
+        if (!cancelled) applySession(refreshed.session, refreshed.user);
+      } catch (error: unknown) {
+        if (cancelled) return;
+        if (isAuthFailure(error)) {
+          clearSession();
+          return;
+        }
+        const delayMs = REFRESH_RETRY_DELAYS_MS[Math.min(attempt, REFRESH_RETRY_DELAYS_MS.length - 1)];
+        attempt += 1;
+        timer = window.setTimeout(() => void rotate(), delayMs);
+      }
+    };
+
+    // A machine that slept through the deadline lands here with a negative
+    // delay and rotates immediately.
+    const now = Date.now();
+    const dueInMs = Math.min(
+      Math.max(expiresAtMs - now - REFRESH_MARGIN_MS, lastRotationAt.current + MIN_ROTATION_SPACING_MS - now, 0),
+      MAX_TIMEOUT_MS,
+    );
+    timer = window.setTimeout(() => void rotate(), dueInMs);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [
+    applySession,
+    clearSession,
+    status,
+    session?.accessToken,
+    session?.expiresAt,
+    session?.refreshToken,
+    recoveryTick,
+  ]);
+
+  /**
+   * Lets any authenticated request recover from an expired token by rotating
+   * once and replaying itself. Reads the session from storage rather than from
+   * this closure so it always uses the newest token — including one another tab
+   * rotated a moment ago.
+   */
+  useEffect(() => {
+    setExpiredTokenHandler(async (staleToken: string) => {
+      const current = readStoredSession();
+      if (!current?.refreshToken) return null;
+      // A page can hold a token captured before the last rotation. If storage
+      // already has a newer one, hand that over rather than spending another.
+      if (current.accessToken && current.accessToken !== staleToken) return current.accessToken;
+      try {
+        const refreshed = await refreshSessionOnce(current.refreshToken);
+        applySession(refreshed.session, refreshed.user);
+        return refreshed.session.accessToken;
+      } catch (error: unknown) {
+        if (isAuthFailure(error)) clearSession();
+        return null;
+      }
+    });
+    return () => setExpiredTokenHandler(null);
+  }, [applySession, clearSession]);
+
+  // Something changed for the better: try whatever we gave up on.
+  useEffect(() => {
+    const retry = () => setRecoveryTick((tick) => tick + 1);
+    const retryIfVisible = () => {
+      if (document.visibilityState === 'visible') retry();
+    };
+    window.addEventListener('online', retry);
+    document.addEventListener('visibilitychange', retryIfVisible);
+    return () => {
+      window.removeEventListener('online', retry);
+      document.removeEventListener('visibilitychange', retryIfVisible);
+    };
+  }, []);
 
   // Another dashboard tab signed in, signed out, or rotated the token. Adopt its
   // result rather than carrying on with a session the server has already
@@ -124,7 +284,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (event.key !== STORAGE_KEY || event.storageArea !== localStorage) return;
 
       const next = readStoredSession();
-      setSession((current) => (next?.accessToken === current?.accessToken ? current : next));
+      setSession((current) => {
+        if (next?.accessToken === current?.accessToken) return current;
+        // A different token may belong to a different person, so the user this
+        // tab is showing is no longer known to be right. Leaving `status` alone
+        // keeps the UI up while the bootstrap effect re-proves it.
+        provenToken.current = null;
+        return next;
+      });
       if (!next) {
         setUser(null);
         setStatus('anonymous');

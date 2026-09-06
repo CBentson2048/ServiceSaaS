@@ -240,6 +240,27 @@ import type {
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL ?? 'http://localhost:3001').replace(/\/$/, '');
 
+/**
+ * Exchanges an expired access token for a fresh one, or resolves null when the
+ * session is genuinely gone. Installed by `AuthProvider`; absent on the public
+ * booking pages, which carry no session.
+ */
+type ExpiredTokenHandler = (staleToken: string) => Promise<string | null>;
+
+let onExpiredToken: ExpiredTokenHandler | null = null;
+
+export function setExpiredTokenHandler(handler: ExpiredTokenHandler | null): void {
+  onExpiredToken = handler;
+}
+
+/**
+ * The auth endpoints resolve their own 401s (that is what the handler above
+ * calls), so replaying them here would recurse.
+ */
+function isAuthPath(path: string): boolean {
+  return path.startsWith('/auth/');
+}
+
 interface LoginInput {
   email: string;
   password: string;
@@ -3015,11 +3036,14 @@ function dashboardDateRangeSearch(params: {
   return search;
 }
 
-async function request<T>(
-  path: string,
-  init: { method?: string; body?: unknown; accessToken?: string } = {},
-): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}/api${path}`, {
+interface RequestInit_ {
+  method?: string;
+  body?: unknown;
+  accessToken?: string;
+}
+
+function send(path: string, init: RequestInit_): Promise<Response> {
+  return fetch(`${API_BASE_URL}/api${path}`, {
     method: init.method ?? 'GET',
     headers: {
       'Content-Type': 'application/json',
@@ -3027,6 +3051,29 @@ async function request<T>(
     },
     body: init.body ? JSON.stringify(init.body) : undefined,
   });
+}
+
+/**
+ * One authenticated call, with a single transparent retry when the access token
+ * turned out to have expired.
+ *
+ * Supabase access tokens last an hour. Without this, the hour simply ran out
+ * mid-session and every subsequent call failed — each page showing its own
+ * error or empty state while the top bar still said the user was signed in —
+ * until someone reloaded, because a reload was the only thing that refreshed.
+ * The provider's scheduled refresh normally rotates the token before it
+ * expires; this is the safety net for a laptop that was asleep, a clock skew,
+ * or a token revoked and reissued elsewhere.
+ */
+async function request<T>(path: string, init: RequestInit_ = {}): Promise<T> {
+  let response = await send(path, init);
+
+  if (response.status === 401 && init.accessToken && !isAuthPath(path) && onExpiredToken) {
+    const refreshed = await onExpiredToken(init.accessToken).catch(() => null);
+    if (refreshed && refreshed !== init.accessToken) {
+      response = await send(path, { ...init, accessToken: refreshed });
+    }
+  }
 
   if (!response.ok) {
     const raw = await response.text();
@@ -3062,10 +3109,22 @@ async function requestBlob(
   path: string,
   init: { method?: string; accessToken?: string } = {},
 ): Promise<BlobDownload> {
-  const response = await fetch(`${API_BASE_URL}/api${path}`, {
-    method: init.method ?? 'GET',
-    headers: init.accessToken ? { Authorization: `Bearer ${init.accessToken}` } : undefined,
-  });
+  const sendBlob = (accessToken?: string): Promise<Response> =>
+    fetch(`${API_BASE_URL}/api${path}`, {
+      method: init.method ?? 'GET',
+      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+    });
+
+  let response = await sendBlob(init.accessToken);
+
+  // Same one-shot refresh as `request` — an export is exactly the kind of slow,
+  // occasional action that lands on the wrong side of an hour boundary.
+  if (response.status === 401 && init.accessToken && !isAuthPath(path) && onExpiredToken) {
+    const refreshed = await onExpiredToken(init.accessToken).catch(() => null);
+    if (refreshed && refreshed !== init.accessToken) {
+      response = await sendBlob(refreshed);
+    }
+  }
 
   if (!response.ok) {
     const raw = await response.text();

@@ -91,6 +91,22 @@ export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): voi
   onUnauthorized = handler;
 }
 
+/**
+ * Exchanges an expired access token for a fresh one, or resolves null when the
+ * session is genuinely gone. Registered by AuthProvider.
+ *
+ * Without this, a 401 meant "signed out": an access token lasts an hour, the
+ * notification badge polls every minute, so a stylist was thrown back to the
+ * login screen roughly an hour into every shift — with a perfectly good refresh
+ * token sitting in SecureStore, which `clearSession` then deleted.
+ */
+type SessionRefresher = (staleToken: string) => Promise<string | null>;
+let refreshExpiredSession: SessionRefresher | null = null;
+
+export function setSessionRefreshHandler(handler: SessionRefresher | null): void {
+  refreshExpiredSession = handler;
+}
+
 export async function login(email: string, password: string): Promise<LoginResponse> {
   return request<LoginResponse>('/auth/login', {
     method: 'POST',
@@ -655,15 +671,32 @@ async function request<T>(
     suppressAuthRedirect?: boolean;
   } = {},
 ): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}/api${path}`, {
-    method: init.method ?? 'GET',
-    headers: {
-      'Content-Type': 'application/json',
-      'Cache-Control': 'no-cache',
-      ...(init.accessToken ? { Authorization: `Bearer ${init.accessToken}` } : {}),
-    },
-    body: init.body ? JSON.stringify(init.body) : undefined,
-  });
+  const send = (accessToken?: string): Promise<Response> =>
+    fetch(`${API_BASE_URL}/api${path}`, {
+      method: init.method ?? 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      },
+      body: init.body ? JSON.stringify(init.body) : undefined,
+    });
+
+  let response = await send(init.accessToken);
+
+  // The access token expired mid-session: rotate once and replay, so the user
+  // never sees it. Only if that fails is the session actually over.
+  if (
+    response.status === 401 &&
+    init.accessToken &&
+    !init.suppressAuthRedirect &&
+    refreshExpiredSession
+  ) {
+    const refreshed = await refreshExpiredSession(init.accessToken).catch(() => null);
+    if (refreshed && refreshed !== init.accessToken) {
+      response = await send(refreshed);
+    }
+  }
 
   if (!response.ok) {
     const raw = await response.text();
