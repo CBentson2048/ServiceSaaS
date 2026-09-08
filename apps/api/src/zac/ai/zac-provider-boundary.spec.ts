@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 
 /**
  * THE IMPORT BOUNDARY, asserted rather than documented.
@@ -34,6 +34,20 @@ const ADAPTER_SPECS: readonly string[] = [
 
 const SDK_IMPORT = /^\s*import\s[^;]*?from\s+['"](openai|@anthropic-ai\/[^'"]+)['"]/m;
 
+/**
+ * Repo-relative path with POSIX separators.
+ *
+ * `relative()` returns the HOST's separators, so on Windows every path came
+ * back as `models\providers\...` and matched neither the allowlist
+ * constants below nor `startsWith('intelligence/')`. The sweep then reported
+ * every adapter as an unlisted offender and the intelligence layer as almost
+ * empty — a boundary test that fails on one OS and passes on another is worse
+ * than none, because the failure is assumed to be the platform's fault.
+ */
+function repoPath(file: string): string {
+  return relative(ZAC_ROOT, file).split(sep).join('/');
+}
+
 function walk(dir: string): string[] {
   return readdirSync(dir).flatMap((entry) => {
     const full = join(dir, entry);
@@ -44,7 +58,7 @@ function walk(dir: string): string[] {
 
 describe('provider SDK imports are confined to provider adapters', () => {
   const files = walk(ZAC_ROOT).map((file) => ({
-    path: relative(ZAC_ROOT, file),
+    path: repoPath(file),
     source: readFileSync(file, 'utf8'),
   }));
 

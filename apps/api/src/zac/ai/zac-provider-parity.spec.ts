@@ -6,9 +6,11 @@ import { ZacPriorityService } from '../analysis/zac-priority.service';
 import { ZacToolPlannerService } from '../analysis/zac-tool-planner.service';
 import type { ZacActingContext } from '../context/zac-context.types';
 import { ZacToolRegistryService } from '../tools/zac-tool-registry.service';
+import type { ClientIntelligenceService } from '../../client-intelligence/client-intelligence.service';
 import type { DashboardService } from '../../dashboard/dashboard.service';
 import type { KpiService } from '../../kpi/kpi.service';
 import type { LabAppointmentsService } from '../../lab-appointments/lab-appointments.service';
+import type { RetailSalesService } from '../../retail-sales/retail-sales.service';
 import type { UtilisationService } from '../../kpi/utilisation.service';
 import type {
   ZacAnalysisPlanOutcome,
@@ -110,7 +112,27 @@ function makeRegistry(): ZacToolRegistryService {
   } as unknown as KpiService;
   const utilisation = { summary: jest.fn().mockRejectedValue(new Error('n/a')) } as unknown as UtilisationService;
   const labAppointments = { today: jest.fn(), list: jest.fn() } as unknown as LabAppointmentsService;
-  return new ZacToolRegistryService(dashboard, kpi, labAppointments, utilisation);
+  const retailSales = {
+    list: jest.fn().mockResolvedValue({ sales: [], totalAmountCents: 0, currencyCode: 'GBP' }),
+  } as unknown as RetailSalesService;
+  const clientIntelligence = {
+    listLapsedClients: jest.fn().mockResolvedValue({
+      clients: [],
+      counts: { active: 0, atRisk: 0, lapsed: 0, booked: 0, insufficientHistory: 0 },
+      settings: { lapsedBufferDays: 14, minCompletedVisits: 3, historyVisitLimit: 10 },
+      truncated: false,
+      evaluatedClientCount: 0,
+      pagination: { page: 1, pageSize: 1, total: 0, totalPages: 1 },
+    }),
+  } as unknown as ClientIntelligenceService;
+  return new ZacToolRegistryService(
+    dashboard,
+    kpi,
+    labAppointments,
+    utilisation,
+    retailSales,
+    clientIntelligence,
+  );
 }
 
 const PLAN: ZacAnalysisPlanOutcome = {

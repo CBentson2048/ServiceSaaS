@@ -6,10 +6,12 @@ import {
   createSupabaseFakeState,
   type SupabaseFakeState,
 } from '../common/testing/supabase-fake';
+import type { ClientIntelligenceService } from '../client-intelligence/client-intelligence.service';
 import type { DashboardService } from '../dashboard/dashboard.service';
 import type { KpiService } from '../kpi/kpi.service';
 import type { UtilisationService } from '../kpi/utilisation.service';
 import type { LabAppointmentsService } from '../lab-appointments/lab-appointments.service';
+import type { RetailSalesService } from '../retail-sales/retail-sales.service';
 import { ZacContextService } from './context/zac-context.service';
 import { ZacConversationService } from './conversation/zac-conversation.service';
 import type { ZacCostTelemetryService } from './measurement/zac-cost-telemetry.service';
@@ -160,7 +162,16 @@ function makeActor(overrides: Partial<AuthUser> = {}): AuthUser {
       { id: 'loc-2', name: 'Second' },
     ],
     profile: { id: 'profile-1', email: 'owner@example.com', fullName: 'Owner One' },
-    permissions: ['zac.access', 'report.dashboard.view', 'report.performance.view'],
+    permissions: [
+      'zac.access',
+      'report.dashboard.view',
+      'report.performance.view',
+      // Workstream 1 sources. The default actor must hold every permission an
+      // ENABLED tool needs, or the permission-explainability answer reports a
+      // gap for a fully-permissioned owner.
+      'report.financials.view',
+      'crm.view',
+    ],
     ...overrides,
   } as AuthUser;
 }
@@ -251,6 +262,30 @@ const UTILISATION_FIXTURE = {
   dataQuality: [],
 } as unknown as Awaited<ReturnType<UtilisationService['summary']>>;
 
+/**
+ * Workstream 1 fixtures. Both are DELIBERATELY empty by default: every existing
+ * assertion in this file was written against a catalogue without them, and a
+ * default that returned figures would change what a broad analysis ranks.
+ * Tests that exercise the new tools pass their own payload.
+ */
+const RETAIL_FIXTURE = {
+  scope: 'owner',
+  rangeStart: '2026-07-28T00:00:00.000Z',
+  rangeEnd: '2026-08-27T00:00:00.000Z',
+  sales: [],
+  totalAmountCents: 0,
+  currencyCode: 'GBP',
+} as unknown as Awaited<ReturnType<RetailSalesService['list']>>;
+
+const LAPSE_FIXTURE = {
+  clients: [],
+  counts: { active: 0, atRisk: 0, lapsed: 0, booked: 0, insufficientHistory: 0 },
+  settings: { lapsedBufferDays: 14, minCompletedVisits: 3, historyVisitLimit: 10 },
+  truncated: false,
+  evaluatedClientCount: 0,
+  pagination: { page: 1, pageSize: 1, total: 0, totalPages: 1 },
+} as unknown as Awaited<ReturnType<ClientIntelligenceService['listLapsedClients']>>;
+
 function makeService(
   env: Record<string, string | undefined> = { ZAC_ENABLED: 'true' },
   dashboard: Partial<DashboardService> = { kpis: jest.fn().mockResolvedValue(KPI_FIXTURE) },
@@ -265,6 +300,10 @@ function makeService(
     summary: jest.fn().mockResolvedValue(UTILISATION_FIXTURE),
   },
   semanticProvider: ZacSemanticProvider | null = null,
+  retailSales: Partial<RetailSalesService> = { list: jest.fn().mockResolvedValue(RETAIL_FIXTURE) },
+  clientIntelligence: Partial<ClientIntelligenceService> = {
+    listLapsedClients: jest.fn().mockResolvedValue(LAPSE_FIXTURE),
+  },
 ): {
   service: ZacService;
   telemetry: { recordCostEvent: jest.Mock; recordSpineEvent: jest.Mock };
@@ -286,6 +325,8 @@ function makeService(
     kpi as KpiService,
     labAppointments as LabAppointmentsService,
     utilisation as UtilisationService,
+    retailSales as RetailSalesService,
+    clientIntelligence as ClientIntelligenceService,
   );
   const service = new ZacService(
     new ZacRolloutService(config),
@@ -678,6 +719,58 @@ describe('ZacService', () => {
         question: 'How are bookings at my Soho location?',
       });
       expect(bookings.tool_calls[0].tool).toBe('report.business_health');
+    });
+
+    describe('Workstream 1 — Expanded Intelligence routing', () => {
+      it.each([
+        ['How is my retail doing?', 'report.retail_performance'],
+        ['What was my retail revenue last month?', 'report.retail_performance'],
+        ['Are we selling any products?', 'report.retail_performance'],
+        ['What is my retail attachment rate?', 'report.retail_performance'],
+        ['What are my top services?', 'report.service_mix'],
+        ['Which services make me the most money?', 'report.service_mix'],
+        ['Show me my service mix', 'report.service_mix'],
+        ['What is my most popular service?', 'report.service_mix'],
+        ['How many clients have lapsed?', 'report.client_retention'],
+        ['What is my client retention like?', 'report.client_retention'],
+        ['Which clients are at risk?', 'report.client_retention'],
+        ['Are clients coming back?', 'report.client_retention'],
+        ['What is my cancellation rate?', 'report.appointment_summary'],
+        ['How many appointments did we take?', 'report.appointment_summary'],
+        ['Did we have any no-shows?', 'report.appointment_summary'],
+        ['How many bookings were cancelled?', 'report.appointment_summary'],
+        ['What is my profit margin?', 'report.profitability'],
+        ['Am I profitable?', 'report.profitability'],
+      ])('routes %j to %s', async (question, tool) => {
+        const { service } = makeService();
+
+        const response = await service.ask(makeActor(), { question });
+
+        expect(response.tool_calls[0].tool).toBe(tool);
+      });
+
+      it('keeps a retail TARGET question with the team, not the retail report', async () => {
+        const { service } = makeService();
+
+        const response = await service.ask(makeActor(), {
+          question: 'Which stylists are below their retail target?',
+        });
+
+        expect(response.tool_calls[0].tool).toBe('report.kpi_summary');
+      });
+
+      it('answers a profit question honestly instead of substituting revenue', async () => {
+        const { service } = makeService();
+
+        const response = await service.ask(makeActor(), { question: 'What is my profit margin?' });
+
+        expect(response.response_type).toBe('Refusal / Insufficient Data');
+        expect(response.answer).toContain('no profitability calculation');
+        // The honest reason: the capability does not exist, which is neither a
+        // permission problem nor a temporary data outage.
+        expect(response.technical_details.blocking_reason).toBe('unsupported_capability');
+        expect(response.answer).not.toMatch(/£\d/);
+      });
     });
 
     it('does not treat words containing "location" as location questions', async () => {
@@ -1399,9 +1492,12 @@ describe('ZacService', () => {
           'report.business_health',
           'report.utilisation_summary',
         ]),
-        // No disabled tools remain visible for this actor: the optional QLab /
-        // stock skeletons need permissions makeActor does not hold.
-        disabled_tools: [],
+        // The QLab / stock skeletons need permissions makeActor does not hold,
+        // so they stay invisible. Profitability does NOT: this owner holds
+        // report.financials.view, so they can see that the capability exists
+        // and is not connected — which is the honest state, and exactly why
+        // the tool is registered disabled rather than omitted.
+        disabled_tools: ['report.profitability'],
         provider: 'stub',
         model: 'zac-stub-1',
         request_mode: 'qlooqo_data',
@@ -2800,7 +2896,16 @@ describe('ZacService', () => {
       const manager = makeActor({
         roles: ['manager'],
         primaryRole: 'manager',
-        permissions: ['zac.access', 'report.dashboard.view', 'report.performance.view'],
+        permissions: [
+      'zac.access',
+      'report.dashboard.view',
+      'report.performance.view',
+      // Workstream 1 sources. The default actor must hold every permission an
+      // ENABLED tool needs, or the permission-explainability answer reports a
+      // gap for a fully-permissioned owner.
+      'report.financials.view',
+      'crm.view',
+    ],
       } as Partial<AuthUser>);
 
       const response = await service.ask(manager, {
@@ -4751,7 +4856,16 @@ describe('ZacService', () => {
       const manager = makeActor({
         roles: ['manager'],
         primaryRole: 'manager',
-        permissions: ['zac.access', 'report.dashboard.view', 'report.performance.view'],
+        permissions: [
+      'zac.access',
+      'report.dashboard.view',
+      'report.performance.view',
+      // Workstream 1 sources. The default actor must hold every permission an
+      // ENABLED tool needs, or the permission-explainability answer reports a
+      // gap for a fully-permissioned owner.
+      'report.financials.view',
+      'crm.view',
+    ],
       } as Partial<AuthUser>);
 
       const response = await service.ask(manager, {

@@ -38,6 +38,22 @@ const TOOL_DESCRIPTORS: Partial<Record<ZacToolName, Omit<ZacPlanningToolDescript
     purpose: 'Stylist ranking by completed bookings, revenue and rebooking rate.',
     domains: ['team_performance'],
   },
+  'report.appointment_summary': {
+    purpose: 'Appointment volume, completion, cancellations and recorded no-shows.',
+    domains: ['appointments'],
+  },
+  'report.service_mix': {
+    purpose: 'Which services earn the most, and how concentrated that revenue is.',
+    domains: ['services'],
+  },
+  'report.retail_performance': {
+    purpose: 'Retail sales value, leading products and retail attachment per paid visit.',
+    domains: ['retail'],
+  },
+  'report.client_retention': {
+    purpose: 'How many clients are active, overdue, lapsed or already rebooked.',
+    domains: ['client_retention'],
+  },
   'kpi.personal_coaching': {
     purpose: "The acting stylist's own targets, rebooking and retail habits.",
     domains: ['personal_performance'],
@@ -75,6 +91,14 @@ const INTENT_PLANS: Record<ZacAnalysisIntent, ZacPlannedTool[]> = {
     { toolName: 'report.utilisation_summary', purpose: 'priority_signal' },
     { toolName: 'report.kpi_summary', purpose: 'priority_signal' },
     { toolName: 'report.stylist_performance', purpose: 'supporting_evidence' },
+    // Workstream 1 sources sit BELOW the shipped five on purpose. The plan is
+    // truncated at MAX_MULTI_TOOL_CALLS, so appending here widens what the
+    // model planner may choose without silently changing the deterministic
+    // plan an existing deployment already runs.
+    { toolName: 'report.client_retention', purpose: 'priority_signal' },
+    { toolName: 'report.retail_performance', purpose: 'priority_signal' },
+    { toolName: 'report.appointment_summary', purpose: 'supporting_evidence' },
+    { toolName: 'report.service_mix', purpose: 'supporting_evidence' },
   ],
   team_priorities: [
     { toolName: 'report.kpi_summary', purpose: 'priority_signal' },
@@ -91,6 +115,8 @@ const INTENT_PLANS: Record<ZacAnalysisIntent, ZacPlannedTool[]> = {
   diagnostic: [
     { toolName: 'report.business_health', purpose: 'baseline' },
     { toolName: 'report.rebooking_summary', purpose: 'diagnostic' },
+    { toolName: 'report.appointment_summary', purpose: 'diagnostic' },
+    { toolName: 'report.client_retention', purpose: 'diagnostic' },
   ],
   comparison: [{ toolName: 'report.business_health', purpose: 'comparison' }],
   explanation: [{ toolName: 'report.business_health', purpose: 'supporting_evidence' }],

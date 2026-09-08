@@ -5,6 +5,9 @@
   "description": "Sheer Platform backend API (NestJS).",
   "main": "dist/main.js",
   "scripts": {
+    "// build note": "apps/api/tsconfig.build.json clears `paths`, so nest resolves @sheer/* to each package's dist rather than its source. Without these hooks a stale workspace dist compiles against fresh app code and nest reports errors in files nobody touched. Turbo's ^build covers `turbo run build`; these cover running nest directly.",
+    "prebuild": "pnpm --filter \"@sheer/api^...\" run build",
+    "predev": "pnpm --filter \"@sheer/api^...\" run build",
     "dev": "nest start --watch",
     "start": "node dist/main.js",
     "start:prod": "node dist/main.js",
@@ -25,6 +28,7 @@
     "week6-acceptance": "ts-node --transpile-only scripts/week6-acceptance.ts",
     "notifications-acceptance": "ts-node --transpile-only scripts/notifications-acceptance.ts",
     "zac-routing-eval": "ts-node --transpile-only scripts/zac-routing-eval.ts",
+    "zac-semantic-probe": "ts-node --transpile-only scripts/zac-semantic-probe.ts",
     "zac-hosted-acceptance": "ts-node --transpile-only scripts/zac-hosted-acceptance.ts",
     "zac-production-eval": "ts-node --transpile-only scripts/zac-production-eval.ts",
     "zac-provider-benchmark": "ts-node --transpile-only scripts/zac-provider-benchmark.ts",

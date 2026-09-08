@@ -1,8 +1,10 @@
 import type { AuthUser, DashboardKpisResponse, Permission, UserRole } from '@sheer/domain';
+import type { ClientIntelligenceService } from '../../client-intelligence/client-intelligence.service';
 import type { DashboardService } from '../../dashboard/dashboard.service';
 import type { KpiService } from '../../kpi/kpi.service';
 import type { UtilisationService } from '../../kpi/utilisation.service';
 import type { LabAppointmentsService } from '../../lab-appointments/lab-appointments.service';
+import type { RetailSalesService } from '../../retail-sales/retail-sales.service';
 import type { ZacActingContext } from '../context/zac-context.types';
 import { ZacToolRegistryService } from './zac-tool-registry.service';
 import type { ZacToolName } from './zac-tool.types';
@@ -18,6 +20,11 @@ const LIVE_TOOLS: ZacToolName[] = [
   'report.utilisation_summary',
   'kpi.personal_coaching',
   'schedule.my_appointments',
+  // Workstream 1 - Expanded Intelligence.
+  'report.appointment_summary',
+  'report.service_mix',
+  'report.retail_performance',
+  'report.client_retention',
 ];
 
 const STYLIST_PERF_FIXTURE = {
@@ -256,6 +263,8 @@ function makeRegistry(
     kpiFake as KpiService,
     labFake as LabAppointmentsService,
     utilisationFake as UtilisationService,
+    RETAIL_SALES_FAKE as RetailSalesService,
+    CLIENT_INTELLIGENCE_FAKE as ClientIntelligenceService,
   );
 }
 
@@ -284,6 +293,27 @@ function contextWith(overrides: Partial<ZacActingContext> = {}): ZacActingContex
   };
 }
 
+/** Workstream 1 sources. Frozen payloads - these specs test wiring, not maths. */
+const RETAIL_SALES_FAKE = {
+  list: jest.fn().mockResolvedValue({
+    scope: 'owner',
+    sales: [],
+    totalAmountCents: 0,
+    currencyCode: 'GBP',
+  }),
+} as Partial<RetailSalesService>;
+
+const CLIENT_INTELLIGENCE_FAKE = {
+  listLapsedClients: jest.fn().mockResolvedValue({
+    clients: [],
+    counts: { active: 0, atRisk: 0, lapsed: 0, booked: 0, insufficientHistory: 0 },
+    settings: { lapsedBufferDays: 14, minCompletedVisits: 3, historyVisitLimit: 10 },
+    truncated: false,
+    evaluatedClientCount: 0,
+    pagination: { page: 1, pageSize: 1, total: 0, totalPages: 1 },
+  }),
+} as Partial<ClientIntelligenceService>;
+
 const OWNER_ALL = actorWith(
   ['owner'],
   [
@@ -293,6 +323,8 @@ const OWNER_ALL = actorWith(
     'report.commission.view',
     'report.lab_analytics.view',
     'inventory.manage',
+    'report.financials.view',
+    'crm.view',
   ],
 );
 
@@ -313,7 +345,7 @@ describe('ZacToolRegistryService', () => {
     }
   });
 
-  it('enables exactly the nine live tools; everything else stays disabled', () => {
+  it('enables exactly the live tools; everything else stays disabled', () => {
     const everything = registry.buildFor(
       actorWith(['owner', 'manager', 'stylist'], [...OWNER_ALL.permissions, 'bookings.manage']),
     );

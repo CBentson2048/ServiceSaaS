@@ -1,9 +1,11 @@
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AuthModule } from '../auth/auth.module';
+import { ClientIntelligenceModule } from '../client-intelligence/client-intelligence.module';
 import { DashboardModule } from '../dashboard/dashboard.module';
 import { KpiModule } from '../kpi/kpi.module';
 import { LabAppointmentsModule } from '../lab-appointments/lab-appointments.module';
+import { RetailSalesModule } from '../retail-sales/retail-sales.module';
 import { ZacContextService } from './context/zac-context.service';
 import { ZacConversationService } from './conversation/zac-conversation.service';
 import { ZacCostTelemetryService } from './measurement/zac-cost-telemetry.service';
@@ -54,7 +56,16 @@ import { ZacService } from './zac.service';
  * operational records.
  */
 @Module({
-  imports: [AuthModule, DashboardModule, KpiModule, LabAppointmentsModule],
+  imports: [
+    AuthModule,
+    DashboardModule,
+    KpiModule,
+    LabAppointmentsModule,
+    // Workstream 1 — Expanded Intelligence reads these two through their own
+    // guarded services, exactly as their HTTP endpoints do.
+    RetailSalesModule,
+    ClientIntelligenceModule,
+  ],
   controllers: [ZacController],
   providers: [
     ZacFeatureGuard,

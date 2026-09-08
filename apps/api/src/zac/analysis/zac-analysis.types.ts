@@ -77,7 +77,11 @@ export type ZacDataDomain =
   | 'utilisation'
   | 'team_performance'
   | 'personal_performance'
-  | 'appointments';
+  | 'appointments'
+  // Workstream 1 — Expanded Intelligence.
+  | 'services'
+  | 'retail'
+  | 'client_retention';
 
 /**
  * Safe planning metadata for ONE tool the actor may currently use. Contains no

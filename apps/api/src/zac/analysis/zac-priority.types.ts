@@ -19,6 +19,9 @@ export type ZacPriorityDomain =
   | 'personal_performance'
   | 'appointment_capacity'
   | 'business_health'
+  | 'services'
+  | 'retail'
+  | 'client_retention'
   | 'other';
 
 export const ZAC_PRIORITY_DOMAINS: readonly ZacPriorityDomain[] = [
@@ -30,6 +33,9 @@ export const ZAC_PRIORITY_DOMAINS: readonly ZacPriorityDomain[] = [
   'personal_performance',
   'appointment_capacity',
   'business_health',
+  'services',
+  'retail',
+  'client_retention',
   'other',
 ];
 

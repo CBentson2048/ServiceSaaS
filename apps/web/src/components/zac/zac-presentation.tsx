@@ -15,6 +15,15 @@ export const ZAC_STARTER_QUESTIONS = [
   'Who is my top performer?',
   'Which stylists are below rebooking target?',
   "How's my rebooking rate?",
+  // Workstream 1 — Expanded Intelligence. Starters are how these areas get
+  // discovered: an owner has no reason to guess that ZAC can now answer them.
+  // A starter for an area the actor cannot access is not a leak — the answer
+  // is still permission-checked server-side, and hearing "that needs a
+  // permission you do not have" is the honest outcome.
+  'What are my top services?',
+  'How is my retail doing?',
+  'How many clients have lapsed?',
+  'What is my cancellation rate?',
   'Which locations can you see?',
 ];
 
@@ -29,6 +38,12 @@ export const ZAC_EVIDENCE_SOURCE_LABELS: Record<string, string> = {
   'zac.intent': 'Question understanding',
   'zac.foundation': 'ZAC foundation',
   'zac.access_boundary': 'Your role’s access level',
+  'crm.client_intelligence': 'Client retention analysis',
+  'billing.retail_sales': 'Retail sales records',
+  'zac.reasoning': 'ZAC reasoning (no salon data)',
+  'zac.memory': 'What you asked ZAC to remember',
+  'zac.permissions': 'Your effective permissions',
+  'zac.analysis': 'Multi-source analysis',
 };
 
 export const ZAC_RESPONSE_TYPE_BADGES: Record<string, { label: string; tone: StatusTone }> = {

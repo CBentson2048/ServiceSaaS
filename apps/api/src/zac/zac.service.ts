@@ -2232,6 +2232,56 @@ export class ZacService {
     if (/rebook/.test(q)) {
       return 'report.rebooking_summary';
     }
+    // ---- Workstream 1: Expanded Intelligence -------------------------------
+    // All five sit ABOVE business health, whose broad pattern (revenue,
+    // bookings, "doing", "performing") would otherwise swallow every one of
+    // them, and BELOW the staff branches, so "which stylists are below their
+    // retail target" stays a team-KPI question rather than becoming a retail
+    // report. Each pattern is deliberately narrow: a question that is merely
+    // ADJACENT to one of these subjects keeps its existing route.
+    //
+    // Retail is matched before profit so "what is my retail margin?" reaches
+    // the tool that can actually answer it.
+    if (
+      /\bretail\b|\bproduct sales\b|\b(sell|selling|sold)\b[^.?!]*\bproducts?\b|\bproducts?\b[^.?!]*\b(sell|selling|sold|sales)\b/.test(
+        q,
+      )
+    ) {
+      return 'report.retail_performance';
+    }
+    // Profit has no canonical source; the tool is registered and disabled so
+    // this returns an honest "not connected", never a guess or a silent
+    // fallback to a revenue figure dressed up as profit.
+    if (/\bprofit\w*\b|\bmargins?\b|\bp\s?&\s?l\b|\bbottom line\b|\bprofitab/.test(q)) {
+      return 'report.profitability';
+    }
+    if (
+      /\bservice mix\b|\bwhich services\b|\btop services?\b|\bbest[- ]selling services?\b|\bmost (popular|booked) services?\b|\bservices? (earn|make|bring)\b|\bhighest[- ]earning service/.test(
+        q,
+      )
+    ) {
+      return 'report.service_mix';
+    }
+    // Retention: overdue, lapsed and not-coming-back questions. "Rebooking"
+    // is a different question and matched above — it is about the forward
+    // booking taken at the chair, not about who has stopped returning.
+    if (
+      /\bretention\b|\blapsed?\b|\blapsing\b|\bchurn\w*\b|\blos(e|ing) clients?\b|\bclients?\b[^.?!]*\bat[- ]risk\b|\bat[- ]risk\b[^.?!]*\bclients?\b|\bclients? (are |who )?(not |haven'?t )?(com(e|ing)|be(en|ing)) back\b|\bhaven'?t (been|come|returned) (back|in)\b|\bstopped coming\b|\bwon'?t come back\b/.test(
+        q,
+      )
+    ) {
+      return 'report.client_retention';
+    }
+    // Appointments: only the diary-outcome questions. "How are bookings at my
+    // Soho location?" is a trading question and stays business health — the
+    // patterns below require an explicit cancellation, no-show or count word.
+    if (
+      /\bcancell?ation\w*\b|\bcancell?ed\b|\bno[- ]?shows?\b|\bhow many (appointments|bookings)\b|\b(appointment|booking) (volume|numbers|count|summary)\b|\bcompletion rate\b|\bdid ?n'?t (turn up|show up)\b|\bturn(ed)? up\b/.test(
+        q,
+      )
+    ) {
+      return 'report.appointment_summary';
+    }
     if (
       /how('s| is| are)?\s+(my|the|our)\s+(business|salon)|business health|\bhow healthy\b|\bdoing\b|performing|revenue|\bbookings?\b/.test(
         q,

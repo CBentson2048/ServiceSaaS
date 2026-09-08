@@ -48,6 +48,15 @@ export class ZacEvidenceService {
         return this.fromKpi(data, evidence, limitations);
       case 'report.stylist_performance':
         return this.fromStylistPerformance(data, evidence, limitations);
+      // Workstream 1 - Expanded Intelligence.
+      case 'report.appointment_summary':
+        return this.fromAppointments(data, evidence, limitations);
+      case 'report.service_mix':
+        return this.fromServiceMix(data, evidence, limitations);
+      case 'report.retail_performance':
+        return this.fromRetail(data, evidence, limitations);
+      case 'report.client_retention':
+        return this.fromClientRetention(data, evidence, limitations);
       case 'kpi.personal_coaching':
         return this.fromPersonalCoaching(data, evidence, limitations, memory);
       default:
@@ -329,6 +338,217 @@ export class ZacEvidenceService {
   }
 
   // ---------------------------------------------------------------------------
+
+
+  /**
+   * Appointments. The cancelled share deliberately carries the SAME issueKey,
+   * metric, scope and window as the business-health reading of it, so two
+   * tools measuring one thing consolidate into one priority instead of two.
+   *
+   * No-shows are emitted only when one was actually recorded. A zero here means
+   * "nobody marked one", which is not evidence that nobody failed to arrive —
+   * and a confident 0% no-show signal would be exactly that false claim.
+   */
+  private fromAppointments(
+    data: Record<string, unknown>,
+    evidence: ZacEvidenceItem[],
+    limitations: string[],
+  ): ZacEvidenceSignal[] {
+    const signals: ZacEvidenceSignal[] = [];
+    const total = numberOrNull(data['total_bookings']);
+    const cancelled = numberOrNull(data['cancelled_bookings']);
+    const noShows = numberOrNull(data['no_show_bookings']);
+    const cancellationRate = numberOrNull(data['cancellation_rate_percent']);
+    const period = periodOf(data);
+
+    if (total !== null && cancelled !== null && cancellationRate !== null && total > 0) {
+      signals.push(
+        this.signal({
+          sourceTool: 'report.appointment_summary',
+          domain: 'bookings',
+          issueKey: 'cancellations',
+          period,
+          metric: 'Cancelled share of bookings',
+          currentValue: cancellationRate,
+          severity:
+            cancellationRate >= 15 ? 'attention' : cancellationRate >= 8 ? 'watch' : 'positive',
+          confidence: 0.8,
+          evidence,
+          limitations,
+          headline: `${cancelled} of ${total} bookings in the period were cancelled (${cancellationRate}%).`,
+        }),
+      );
+    }
+
+    if (total !== null && noShows !== null && noShows > 0 && total > 0) {
+      const share = Math.round((noShows / total) * 100);
+      signals.push(
+        this.signal({
+          sourceTool: 'report.appointment_summary',
+          domain: 'appointments',
+          issueKey: 'no_shows',
+          period,
+          metric: 'Recorded no-show share',
+          currentValue: share,
+          // Capture is manual, so a recorded no-show count is a FLOOR.
+          // Confidence reflects that, not the arithmetic.
+          severity: share >= 8 ? 'attention' : share >= 4 ? 'watch' : 'positive',
+          confidence: 0.55,
+          evidence,
+          limitations,
+          headline: `${noShows} of ${total} bookings were marked as no-shows (${share}%) — a lower bound, since marking is manual.`,
+        }),
+      );
+    }
+
+    return signals;
+  }
+
+  /**
+   * Service mix. The reading is CONCENTRATION, not revenue: how much of the
+   * ranked services' revenue sits with the leader. It is scored as a watch
+   * point at worst, because concentration is a resilience observation — a
+   * salon can be both concentrated and perfectly healthy.
+   */
+  private fromServiceMix(
+    data: Record<string, unknown>,
+    evidence: ZacEvidenceItem[],
+    limitations: string[],
+  ): ZacEvidenceSignal[] {
+    const share = numberOrNull(data['top_service_share_percent']);
+    const rankedCount = numberOrNull(data['ranked_service_count']);
+    const services = Array.isArray(data['services'])
+      ? (data['services'] as Record<string, unknown>[])
+      : [];
+    const leader = services[0];
+    // A "share" of a single ranked service is always 100% and says nothing.
+    if (share === null || !leader || rankedCount === null || rankedCount < 2) return [];
+
+    const leaderName = stringOrNull(leader['service_name']) ?? 'your leading service';
+    return [
+      this.signal({
+        sourceTool: 'report.service_mix',
+        domain: 'services',
+        issueKey: 'service_concentration',
+        period: periodOf(data),
+        metric: 'Leading service share of ranked revenue',
+        currentValue: share,
+        severity: share >= 50 ? 'watch' : 'positive',
+        confidence: 0.7,
+        evidence,
+        limitations,
+        headline: `${leaderName} is ${share}% of the revenue across your top ${rankedCount} services.`,
+      }),
+    ];
+  }
+
+  /**
+   * Retail. Two readings at most: the money taken, and how often a product
+   * left with a paying client. Attachment is the one worth acting on, so it is
+   * the one that can become a watch point; the total is context.
+   *
+   * Nothing here scores MARGIN. It is reported to the user with its coverage
+   * attached, but a partially-covered margin is not a comparable business
+   * reading and must not compete for a priority slot against a fully measured
+   * one.
+   */
+  private fromRetail(
+    data: Record<string, unknown>,
+    evidence: ZacEvidenceItem[],
+    limitations: string[],
+  ): ZacEvidenceSignal[] {
+    const signals: ZacEvidenceSignal[] = [];
+    const totalCents = numberOrNull(data['total_amount_cents']);
+    const saleCount = numberOrNull(data['sale_count']);
+    const attachRate = numberOrNull(data['attach_rate_percent']);
+    const period = periodOf(data);
+    const currency = stringOrNull(data['currency_code']);
+
+    if (totalCents !== null && saleCount !== null && saleCount > 0) {
+      signals.push(
+        this.signal({
+          sourceTool: 'report.retail_performance',
+          domain: 'retail',
+          issueKey: 'retail_performance',
+          period,
+          metric: 'Retail revenue in the reporting period',
+          currentValue: formatMoney(totalCents, currency),
+          severity: 'positive',
+          confidence: 0.85,
+          evidence,
+          limitations,
+          headline: `Retail took ${formatMoney(totalCents, currency)} from ${saleCount} sales in the period.`,
+        }),
+      );
+    }
+
+    // Reported per 100 paid visits by the tool. There is no configured retail
+    // target in QLOOQO, so a low rate is a watch point and never an alarm.
+    if (attachRate !== null) {
+      signals.push(
+        this.signal({
+          sourceTool: 'report.retail_performance',
+          domain: 'retail',
+          issueKey: 'retail_attachment',
+          period,
+          metric: 'Retail sales per 100 paid visits',
+          currentValue: attachRate,
+          severity: attachRate < 10 ? 'watch' : 'positive',
+          confidence: 0.7,
+          evidence,
+          limitations,
+          headline: `Retail attaches to roughly ${attachRate} of every 100 paid visits.`,
+        }),
+      );
+    }
+
+    return signals;
+  }
+
+  /**
+   * Client retention. Shares the `client_retention` issue with the
+   * business-health repeat-client reading on purpose: the two measure one
+   * business concern from opposite ends (who came back, who has not), and
+   * raising them as separate priorities is precisely the duplication the
+   * consolidation layer exists to prevent.
+   *
+   * The denominator is the tool's `measurable_clients`, never the evaluated
+   * total: clients ZAC could not assess are not evidence of health.
+   */
+  private fromClientRetention(
+    data: Record<string, unknown>,
+    evidence: ZacEvidenceItem[],
+    limitations: string[],
+  ): ZacEvidenceSignal[] {
+    const measurable = numberOrNull(data['measurable_clients']);
+    const atRisk = numberOrNull(data['at_risk_clients']);
+    const lapsed = numberOrNull(data['lapsed_clients']);
+    const atRiskShare = numberOrNull(data['at_risk_share_percent']);
+    const lapsedShare = numberOrNull(data['lapsed_share_percent']);
+    if (measurable === null || measurable === 0) return [];
+    if (atRisk === null || lapsed === null || atRiskShare === null || lapsedShare === null) {
+      return [];
+    }
+
+    // One signal, not two: "overdue" and "lapsed" are stages of one leak, and
+    // the combined share is what an owner would actually act on.
+    const combinedShare = atRiskShare + lapsedShare;
+    return [
+      this.signal({
+        sourceTool: 'report.client_retention',
+        domain: 'client_retention',
+        issueKey: 'client_retention',
+        period: null,
+        metric: 'Clients overdue or lapsed',
+        currentValue: combinedShare,
+        severity: combinedShare >= 30 ? 'attention' : combinedShare >= 15 ? 'watch' : 'positive',
+        confidence: 0.75,
+        evidence,
+        limitations,
+        headline: `${atRisk + lapsed} of ${measurable} measurable clients are overdue or lapsed (${combinedShare}%).`,
+      }),
+    ];
+  }
 
   /**
    * Rebooking, with a remembered goal folded in as a SEPARATE, attributed

@@ -17,6 +17,14 @@ export type ZacToolName =
   | 'report.rebooking_summary'
   | 'report.utilisation_summary'
   | 'report.stylist_performance'
+  // Workstream 1 (Expanded Intelligence): appointments, services, retail and
+  // client retention. `report.profitability` is registered DISABLED — see its
+  // tool for why no canonical profit figure exists to read.
+  | 'report.appointment_summary'
+  | 'report.service_mix'
+  | 'report.retail_performance'
+  | 'report.client_retention'
+  | 'report.profitability'
   | 'kpi.personal_coaching'
   | 'schedule.my_appointments'
   | 'qlab.colour_analytics'
@@ -99,6 +107,19 @@ export interface ZacReadOnlyTool {
   readonly requiresStaffSelf: boolean;
   /** False until the tool is wired to its guarded QLOOQO service (Week 2+). */
   readonly enabled: boolean;
+  /**
+   * Why a DISABLED tool is not connected, in the tool's own words. Optional:
+   * without it the registry uses its generic line, which is right for a
+   * capability that is simply not built yet.
+   *
+   * It exists because "not connected yet" implies "coming soon", and that is
+   * not true of every disabled capability. Profitability has no canonical
+   * QLOOQO computation to read at all, and telling an owner to check back is a
+   * different — and false — statement from telling them the figure does not
+   * exist. A disabled tool never executes, so this is the only way its own
+   * reason can reach the answer.
+   */
+  readonly notConnectedExplanation?: string;
   /**
    * `actor` is the guard-verified AuthUser, passed through unchanged so live
    * tools can call existing guarded QLOOQO services (which re-check role and

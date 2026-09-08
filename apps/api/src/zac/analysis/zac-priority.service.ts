@@ -19,6 +19,10 @@ const ISSUE_DOMAIN: Record<string, ZacPriorityDomain> = {
   team_kpi_standing: 'team_performance',
   team_consistency: 'team_performance',
   personal_performance: 'personal_performance',
+  no_shows: 'bookings',
+  service_concentration: 'services',
+  retail_performance: 'retail',
+  retail_attachment: 'retail',
 };
 
 /** Issue key → the title the owner sees. Never an internal identifier. */
@@ -31,6 +35,10 @@ const ISSUE_TITLE: Record<string, string> = {
   team_kpi_standing: 'Team KPI standing',
   team_consistency: 'Consistency across the team',
   personal_performance: 'Your own performance',
+  no_shows: 'No-shows',
+  service_concentration: 'Service mix concentration',
+  retail_performance: 'Retail',
+  retail_attachment: 'Retail attachment',
 };
 
 /**

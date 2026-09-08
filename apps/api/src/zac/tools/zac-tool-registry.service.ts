@@ -6,20 +6,27 @@ import {
   userHasPermission,
 } from '@sheer/domain';
 import type { AuthUser } from '@sheer/domain';
+import { ClientIntelligenceService } from '../../client-intelligence/client-intelligence.service';
 import { DashboardService } from '../../dashboard/dashboard.service';
 import { KpiService } from '../../kpi/kpi.service';
 import { UtilisationService } from '../../kpi/utilisation.service';
 import { LabAppointmentsService } from '../../lab-appointments/lab-appointments.service';
+import { RetailSalesService } from '../../retail-sales/retail-sales.service';
 import type { ZacActingContext } from '../context/zac-context.types';
+import { AppointmentSummaryTool } from './tools/appointment-summary.tool';
 import { BusinessContextSummaryTool } from './tools/business-context-summary.tool';
 import { BusinessHealthSummaryTool } from './tools/business-health.tool';
+import { ClientRetentionTool } from './tools/client-retention.tool';
 import { InventoryStockStatusTool } from './tools/inventory-stock-status.tool';
 import { KpiSummaryTool } from './tools/kpi-summary.tool';
 import { LocationContextSummaryTool } from './tools/location-context-summary.tool';
 import { MyScheduleTool } from './tools/my-schedule.tool';
 import { PersonalStylistCoachingTool } from './tools/personal-stylist-coaching.tool';
+import { ProfitabilityTool } from './tools/profitability.tool';
 import { QlabColourAnalyticsTool } from './tools/qlab-colour-analytics.tool';
 import { RebookingSummaryTool } from './tools/rebooking-summary.tool';
+import { RetailPerformanceTool } from './tools/retail-performance.tool';
+import { ServiceMixTool } from './tools/service-mix.tool';
 import { StylistPerformanceTool } from './tools/stylist-performance.tool';
 import { UtilisationSummaryTool } from './tools/utilisation-summary.tool';
 import { ZacCapabilitySummaryTool } from './tools/zac-capability-summary.tool';
@@ -40,6 +47,8 @@ export class ZacToolRegistryService {
     kpi: KpiService,
     labAppointments: LabAppointmentsService,
     utilisation: UtilisationService,
+    retailSales: RetailSalesService,
+    clientIntelligence: ClientIntelligenceService,
   ) {
     const tools: ZacReadOnlyTool[] = [
       // Live tools. Context tools read only the guard-resolved acting context;
@@ -59,7 +68,17 @@ export class ZacToolRegistryService {
       new MyScheduleTool(labAppointments),
       // The final Core MVP tool: canonical utilisation over rota + bookings.
       new UtilisationSummaryTool(utilisation),
-      // Optional/deferred skeletons — registered but disabled.
+      // Workstream 1 — Expanded Intelligence. Each reads an EXISTING guarded
+      // QLOOQO service with the resolved actor; none introduces a new KPI
+      // formula, and each declares the same permission its own endpoint does.
+      new AppointmentSummaryTool(dashboard),
+      new ServiceMixTool(dashboard),
+      new RetailPerformanceTool(retailSales, dashboard),
+      new ClientRetentionTool(clientIntelligence),
+      // Optional/deferred skeletons — registered but disabled. Registering
+      // them is what lets ZAC answer "not connected yet" honestly instead of
+      // falling through to generic capability copy.
+      new ProfitabilityTool(),
       new QlabColourAnalyticsTool(),
       new InventoryStockStatusTool(),
     ];
@@ -151,7 +170,10 @@ export class ZacToolRegistryService {
       return deny('permission_denied', 'This is only available to the stylist the data belongs to.');
     }
     if (!tool.enabled) {
-      return deny('not_connected', 'This capability is not connected to live data yet.');
+      return deny(
+        'not_connected',
+        tool.notConnectedExplanation ?? 'This capability is not connected to live data yet.',
+      );
     }
 
     try {
