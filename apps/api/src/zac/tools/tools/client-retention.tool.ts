@@ -2,6 +2,7 @@ import type { AuthUser, ListClientLapseResponse } from '@sheer/domain';
 import type { ClientIntelligenceService } from '../../../client-intelligence/client-intelligence.service';
 import type { ZacActingContext } from '../../context/zac-context.types';
 import type { ZacReadOnlyTool, ZacToolResult } from '../zac-tool.types';
+import type { ZacResolvedPeriod } from '../zac-period';
 
 /**
  * One row is requested because ZAC reports COUNTS, never a client list. The
@@ -60,8 +61,17 @@ export class ClientRetentionTool implements ZacReadOnlyTool {
   async execute(
     actor: AuthUser,
     context: ZacActingContext,
-    _input: Record<string, unknown>,
+    input: Record<string, unknown>,
   ): Promise<ZacToolResult> {
+    // Retention has no window: listLapsedClients answers "who is overdue NOW".
+    // If the question asked for a historical period we say we cannot rewind,
+    // rather than returning today's figures under last month's question.
+    const requested = input['requestedPeriod'] as ZacResolvedPeriod | undefined;
+    const askedForHistory = requested?.explicit === true;
+    const historyNote = askedForHistory
+      ? `Retention is measured as it stands today, so I cannot rewind it to ${requested?.label}. These counts are current.`
+      : null;
+
     let lapse: ListClientLapseResponse;
     try {
       lapse = await this.clientIntelligence.listLapsedClients(actor, {
@@ -119,6 +129,7 @@ export class ClientRetentionTool implements ZacReadOnlyTool {
           limitations: [
             `A client needs at least ${lapse.settings.minCompletedVisits} completed visits before a personal return pattern can be claimed.`,
             'No client names or contact details are ever part of this answer.',
+            ...(historyNote ? [historyNote] : []),
           ],
           suggestedNextStep:
             'Ask "How is my rebooking rate?" for the forward-booking picture instead.',
@@ -156,6 +167,7 @@ export class ClientRetentionTool implements ZacReadOnlyTool {
         limitations: [
           `"Overdue" is measured against each client's own usual visit gap plus your ${lapse.settings.lapsedBufferDays}-day grace period, not a fixed calendar rule.`,
           'These are counts only — I never list or name individual clients.',
+          ...(historyNote ? [historyNote] : []),
           lapse.truncated
             ? 'Visit history was truncated for some clients, so a few patterns rest on partial history.'
             : 'Clients not seen inside the history window are out of scope rather than counted as lapsed.',

@@ -1,3 +1,4 @@
+import { parseZacPeriod } from './zac-period';
 import type {
   AuthUser,
   DashboardKpiSummary,
@@ -186,6 +187,107 @@ function makeRegistry(
     clientIntelligence as ClientIntelligenceService,
   );
 }
+
+describe('period is read from the question, not hardcoded', () => {
+  // The parser is unit-tested in zac-period.spec.ts. These prove the WIRING:
+  // that a resolved window actually reaches the guarded service and the copy,
+  // which is where a silent regression would otherwise hide.
+  const NOW = Date.parse('2026-09-08T10:30:00.000Z');
+
+  it('passes an explicitly asked-for window through to the dashboard service', async () => {
+    const kpis = jest.fn().mockResolvedValue(KPIS);
+    const registry = makeRegistry({ dashboard: { kpis, topServices: jest.fn() } });
+
+    const { result } = await registry.dispatch(
+      actorWith(['owner'], ALL_PERMISSIONS),
+      context(),
+      'report.appointment_summary',
+      { period: parseZacPeriod('how many appointments last month?', 7, NOW) },
+    );
+
+    // August, as a calendar month with an exclusive end — NOT the tool's
+    // 7-day default, which is what this question used to be answered on.
+    expect(kpis).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        from: '2026-08-01T00:00:00.000Z',
+        to: '2026-09-01T00:00:00.000Z',
+      }),
+    );
+    expect(result.presentation?.answer).toContain('Last month');
+    expect(result.presentation?.limitations.join(' ')).toContain('last month');
+  });
+
+  it('still uses the tool default when the question names no period', async () => {
+    const kpis = jest.fn().mockResolvedValue(KPIS);
+    const registry = makeRegistry({ dashboard: { kpis, topServices: jest.fn() } });
+
+    const { result } = await registry.dispatch(
+      actorWith(['owner'], ALL_PERMISSIONS),
+      context(),
+      'report.appointment_summary',
+      { period: parseZacPeriod('how many appointments did we take?', 7, NOW) },
+    );
+
+    expect(result.presentation?.answer).toContain('The last 7 days');
+  });
+
+  it('says which window it used when the requested one was out of range', async () => {
+    const registry = makeRegistry();
+    const { result } = await registry.dispatch(
+      actorWith(['owner'], ALL_PERMISSIONS),
+      context(),
+      'report.appointment_summary',
+      { period: parseZacPeriod('appointments over the last 40 years?', 7, NOW) },
+    );
+
+    // Answers on the default, and states plainly that it did.
+    expect(result.presentation?.limitations.join(' ')).toContain('at most 5 years');
+  });
+
+  it('carries the window into retail as well', async () => {
+    const list = jest.fn().mockResolvedValue(RETAIL);
+    const registry = makeRegistry({ retailSales: { list } });
+
+    await registry.dispatch(
+      actorWith(['owner'], ALL_PERMISSIONS),
+      context(),
+      'report.retail_performance',
+      { period: parseZacPeriod('how was retail in August?', 30, NOW) },
+    );
+
+    expect(list).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ from: '2026-08-01T00:00:00.000Z' }),
+    );
+  });
+
+  it('tells the user retention cannot be rewound to a past period', async () => {
+    const registry = makeRegistry();
+    const { result } = await registry.dispatch(
+      actorWith(['owner'], ALL_PERMISSIONS),
+      context(),
+      'report.client_retention',
+      { requestedPeriod: parseZacPeriod('how many clients lapsed last month?', 0, NOW) },
+    );
+
+    // The underlying service takes no window; saying so beats returning
+    // today's counts under last month's question.
+    expect(result.presentation?.limitations.join(' ')).toContain('cannot rewind it to last month');
+  });
+
+  it('adds no such caveat when no period was asked for', async () => {
+    const registry = makeRegistry();
+    const { result } = await registry.dispatch(
+      actorWith(['owner'], ALL_PERMISSIONS),
+      context(),
+      'report.client_retention',
+      { requestedPeriod: parseZacPeriod('how many clients have lapsed?', 0, NOW) },
+    );
+
+    expect(result.presentation?.limitations.join(' ')).not.toContain('cannot rewind');
+  });
+});
 
 describe('ZAC Workstream 1 — Expanded Intelligence', () => {
   describe('report.appointment_summary', () => {

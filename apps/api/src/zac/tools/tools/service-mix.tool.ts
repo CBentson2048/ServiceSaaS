@@ -2,6 +2,7 @@ import type { AuthUser, DashboardTopServicesResponse } from '@sheer/domain';
 import type { DashboardService } from '../../../dashboard/dashboard.service';
 import type { ZacActingContext } from '../../context/zac-context.types';
 import type { ZacReadOnlyTool, ZacToolResult } from '../zac-tool.types';
+import { capitalise, periodFromInput } from '../zac-period';
 
 /** Service mix reads a trading month — a week is too few bookings per service. */
 const DEFAULT_RANGE_DAYS = 30;
@@ -47,10 +48,11 @@ export class ServiceMixTool implements ZacReadOnlyTool {
   async execute(
     actor: AuthUser,
     context: ZacActingContext,
-    _input: Record<string, unknown>,
+    input: Record<string, unknown>,
   ): Promise<ZacToolResult> {
-    const to = new Date();
-    const from = new Date(to.getTime() - DEFAULT_RANGE_DAYS * 24 * 60 * 60 * 1000);
+    const period = periodFromInput(input, DEFAULT_RANGE_DAYS);
+    const to = new Date(period.toIso);
+    const from = new Date(period.fromIso);
 
     let top: DashboardTopServicesResponse;
     try {
@@ -79,7 +81,7 @@ export class ServiceMixTool implements ZacReadOnlyTool {
         explanation: 'No service activity was recorded in the reporting window.',
         rowCount: 0,
         presentation: {
-          answer: `No services were booked in the last ${DEFAULT_RANGE_DAYS} days, so there is no service mix to rank yet.`,
+          answer: `No services were booked in ${period.label}, so there is no service mix to rank yet.`,
           evidence: [this.evidence(top)],
           confidence: 'high',
           limitations: [
@@ -109,7 +111,7 @@ export class ServiceMixTool implements ZacReadOnlyTool {
       .join(', ');
 
     const answer = [
-      `Over the last ${DEFAULT_RANGE_DAYS} days your highest-earning service was ${leader.service_name}: ${formatMoney(leader.revenue_cents, currency)} from ${leader.booking_count} bookings — ${leader.share_of_ranked_revenue_percent}% of the revenue across your top ${rows.length} services.`,
+      `${capitalise(period.label)}: your highest-earning service was ${leader.service_name}: ${formatMoney(leader.revenue_cents, currency)} from ${leader.booking_count} bookings — ${leader.share_of_ranked_revenue_percent}% of the revenue across your top ${rows.length} services.`,
       rest ? `Next: ${rest}.` : '',
       rows.length > 1
         ? `Together your top ${rows.length} services took ${formatMoney(rankedRevenueCents, currency)}.`
@@ -138,7 +140,8 @@ export class ServiceMixTool implements ZacReadOnlyTool {
         confidence: 'medium',
         limitations: [
           `This ranks your top ${rows.length} services only — shares are of that ranked group, not of all salon revenue.`,
-          `Figures cover the last ${DEFAULT_RANGE_DAYS} days and the locations you can see.`,
+          `Figures cover ${period.label} and the locations you can see.`,
+          ...(period.unsupportedReason ? [period.unsupportedReason] : []),
           'Service cost and margin are not tracked, so this is revenue mix, not profitability.',
         ],
         suggestedNextStep:

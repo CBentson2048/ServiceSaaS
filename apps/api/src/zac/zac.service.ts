@@ -66,6 +66,7 @@ import type {
 } from './responses/zac-response.types';
 import { ZacRoleProfileService } from './roles/zac-role-profile.service';
 import { ZacToolRegistryService } from './tools/zac-tool-registry.service';
+import { parseZacPeriod } from './tools/zac-period';
 import { ZacRolloutService } from './zac-rollout.service';
 import type { ZacAskRequestDto } from './dto/zac-ask-request.dto';
 import type { ZacFeedbackRequestDto } from './dto/zac-feedback-request.dto';
@@ -125,6 +126,20 @@ function summariseShadowRoute(
       : null,
   };
 }
+
+/**
+ * Default window per Expanded Intelligence tool, used when the question names
+ * no period. They differ because the underlying data does: a diary reads
+ * usefully over a week, retail is too sparse below a month.
+ */
+const PERIOD_AWARE_TOOLS: Partial<Record<ZacToolName, number>> = {
+  'report.appointment_summary': 7,
+  'report.service_mix': 30,
+  'report.retail_performance': 30,
+  // report.client_retention is deliberately absent: it is a point-in-time
+  // snapshot of who is overdue NOW, not a windowed aggregate, and the tool
+  // says so rather than pretending a historical window was applied.
+};
 
 @Injectable()
 export class ZacService {
@@ -2303,7 +2318,24 @@ export class ZacService {
   /** Per-tool dispatch input, derived from the question — never from a model. */
   private toolInput(tool: ZacToolName, question: string): Record<string, unknown> {
     if (tool === 'report.kpi_summary' || tool === 'report.utilisation_summary') {
+      // Phase 1 contract: these take the KPI engine's own period enum, and
+      // their boundaries are pinned client-accepted behaviour. Left alone.
       return { period: this.parsePeriod(question) };
+    }
+    // Expanded Intelligence tools read a real window out of the question.
+    // Without this they answered every question on their own hardcoded range,
+    // so "last month" was silently served as "the last 7 days".
+    const windowed = PERIOD_AWARE_TOOLS[tool];
+    if (windowed !== undefined) {
+      return { period: parseZacPeriod(question, windowed) };
+    }
+    if (tool === 'report.client_retention') {
+      // Retention is a snapshot of who is overdue NOW — the underlying service
+      // takes no window. The requested period is passed anyway so the tool can
+      // SAY it cannot rewind, which is the honest answer to "how many lapsed
+      // last month?". Silently returning today's figures under last month's
+      // question is the failure this avoids.
+      return { requestedPeriod: parseZacPeriod(question, 0) };
     }
     if (tool === 'context.capabilities' && /who are you\b/i.test(question)) {
       // Identity IS the answer here — introduce ZAC even mid-conversation.

@@ -3,6 +3,7 @@ import type { DashboardService } from '../../../dashboard/dashboard.service';
 import type { RetailSalesService } from '../../../retail-sales/retail-sales.service';
 import type { ZacActingContext } from '../../context/zac-context.types';
 import type { ZacReadOnlyTool, ZacToolResult } from '../zac-tool.types';
+import { periodFromInput } from '../zac-period';
 
 /** A trading month — retail is too sparse to read weekly. */
 const DEFAULT_RANGE_DAYS = 30;
@@ -72,10 +73,11 @@ export class RetailPerformanceTool implements ZacReadOnlyTool {
   async execute(
     actor: AuthUser,
     context: ZacActingContext,
-    _input: Record<string, unknown>,
+    input: Record<string, unknown>,
   ): Promise<ZacToolResult> {
-    const to = new Date();
-    const from = new Date(to.getTime() - DEFAULT_RANGE_DAYS * 24 * 60 * 60 * 1000);
+    const period = periodFromInput(input, DEFAULT_RANGE_DAYS);
+    const to = new Date(period.toIso);
+    const from = new Date(period.fromIso);
 
     let retail: RetailSalesListResponse;
     try {
@@ -118,7 +120,7 @@ export class RetailPerformanceTool implements ZacReadOnlyTool {
         explanation: 'No retail sales were recorded in the reporting window.',
         rowCount: 0,
         presentation: {
-          answer: `No retail sales were recorded in the last ${DEFAULT_RANGE_DAYS} days. If products are being sold, they may be going through as part of the bill rather than as retail sales.`,
+          answer: `No retail sales were recorded in ${period.label}. If products are being sold, they may be going through as part of the bill rather than as retail sales.`,
           evidence: [this.evidence(retail, to)],
           confidence: 'high',
           limitations: [
@@ -144,7 +146,7 @@ export class RetailPerformanceTool implements ZacReadOnlyTool {
     const margin = this.margin(sales);
 
     const answer = [
-      `Retail took ${formatMoney(totalCents, currency)} over the last ${DEFAULT_RANGE_DAYS} days from ${sales.length} ${sales.length === 1 ? 'sale' : 'sales'} (${unitCount} ${unitCount === 1 ? 'item' : 'items'}), averaging ${formatMoney(averageSaleCents, currency)} a sale.`,
+      `Retail took ${formatMoney(totalCents, currency)} over ${period.label} from ${sales.length} ${sales.length === 1 ? 'sale' : 'sales'} (${unitCount} ${unitCount === 1 ? 'item' : 'items'}), averaging ${formatMoney(averageSaleCents, currency)} a sale.`,
       attachRatePercent !== null
         ? `That is roughly ${attachRatePercent} retail ${attachRatePercent === 1 ? 'sale' : 'sales'} per 100 paid visits.`
         : '',
@@ -160,7 +162,8 @@ export class RetailPerformanceTool implements ZacReadOnlyTool {
 
     const limitations = [
       'Only sales recorded as retail at the till are counted — products added to a service bill are not.',
-      `Figures cover the last ${DEFAULT_RANGE_DAYS} days and the locations you can see.`,
+      `Figures cover ${period.label} and the locations you can see.`,
+          ...(period.unsupportedReason ? [period.unsupportedReason] : []),
     ];
     if (attachRatePercent === null) {
       limitations.push(

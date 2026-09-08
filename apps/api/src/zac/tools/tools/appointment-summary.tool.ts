@@ -2,6 +2,7 @@ import type { AuthUser, DashboardKpisResponse } from '@sheer/domain';
 import type { DashboardService } from '../../../dashboard/dashboard.service';
 import type { ZacActingContext } from '../../context/zac-context.types';
 import type { ZacReadOnlyTool, ZacToolResult } from '../zac-tool.types';
+import { capitalise, periodFromInput } from '../zac-period';
 
 /**
  * The SAME window as business health and rebooking — deliberately, not by
@@ -10,6 +11,7 @@ import type { ZacReadOnlyTool, ZacToolResult } from '../zac-tool.types';
  * reading instead of raising the same issue twice over two different periods.
  */
 const DEFAULT_RANGE_DAYS = 7;
+
 
 /**
  * Expanded Intelligence — the APPOINTMENTS domain.
@@ -56,10 +58,11 @@ export class AppointmentSummaryTool implements ZacReadOnlyTool {
   async execute(
     actor: AuthUser,
     context: ZacActingContext,
-    _input: Record<string, unknown>,
+    input: Record<string, unknown>,
   ): Promise<ZacToolResult> {
-    const to = new Date();
-    const from = new Date(to.getTime() - DEFAULT_RANGE_DAYS * 24 * 60 * 60 * 1000);
+    const period = periodFromInput(input, DEFAULT_RANGE_DAYS);
+    const from = new Date(period.fromIso);
+    const to = new Date(period.toIso);
 
     let kpis: DashboardKpisResponse;
     try {
@@ -114,7 +117,7 @@ export class AppointmentSummaryTool implements ZacReadOnlyTool {
         explanation: 'No appointments fell inside the reporting window.',
         rowCount: 0,
         presentation: {
-          answer: `No appointments were recorded in the last ${DEFAULT_RANGE_DAYS} days, so there are no completion or cancellation rates to report.`,
+          answer: `No appointments were recorded in ${period.label}, so there are no completion or cancellation rates to report.`,
           evidence: [this.evidence(kpis)],
           confidence: 'high',
           limitations: [
@@ -134,7 +137,7 @@ export class AppointmentSummaryTool implements ZacReadOnlyTool {
         : '';
 
     const answer = [
-      `Over the last ${DEFAULT_RANGE_DAYS} days you took ${s.totalBookings} appointments: ${s.completedBookings} completed (${completionRate}%) and ${s.cancelledBookings} cancelled (${cancellationRate}%).`,
+      `${capitalise(period.label)}: you took ${s.totalBookings} appointments: ${s.completedBookings} completed (${completionRate}%) and ${s.cancelledBookings} cancelled (${cancellationRate}%).`,
       s.noShowBookings > 0
         ? `${s.noShowBookings} were marked as no-shows.`
         : 'No no-shows were marked in this window.',
@@ -165,7 +168,8 @@ export class AppointmentSummaryTool implements ZacReadOnlyTool {
         confidence: 'medium',
         limitations: [
           'No-shows are only counted when someone marks them, so a low count may mean they were not recorded rather than that they did not happen.',
-          `Figures cover the last ${DEFAULT_RANGE_DAYS} days and the locations you can see.`,
+          `Figures cover ${period.label} and the locations you can see.`,
+          ...(period.unsupportedReason ? [period.unsupportedReason] : []),
           'Cancellation reasons and who cancelled are not part of this summary.',
         ],
         suggestedNextStep:
