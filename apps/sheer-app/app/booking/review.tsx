@@ -5,7 +5,7 @@ import { Redirect, router } from 'expo-router';
 import { useStripe } from '@stripe/stripe-react-native';
 import type { PublicBookingServiceSummary } from '@sheer/domain';
 import { spacing } from '@sheer/design-tokens';
-import { AppButton } from '@sheer/ui-mobile';
+import { AppButton } from '../../src/design';
 import { ProtectedScreen } from '../../src/auth/ProtectedScreen';
 import { useAuth } from '../../src/auth/AuthProvider';
 import * as api from '../../src/auth/api';

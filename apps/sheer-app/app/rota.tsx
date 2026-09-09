@@ -11,12 +11,13 @@ import {
 } from 'react-native';
 import type { RotaLeaveRequest, RotaShift, StylistMyWeekResponse } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
-import { AppButton, EmptyState, Screen } from '@sheer/ui-mobile';
+import { AppButton, EmptyState, Screen } from '../src/design';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
 import { AppTabBar } from '../src/navigation/AppTabBar';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
 import { BG, BORDER, BRAND, BRAND_LIGHT, CARD } from '../src/design/colors';
+import { ScreenHeader } from '../src/navigation/ScreenHeader';
 
 export default function RotaScreen() {
   const auth = useAuth();
@@ -129,12 +130,11 @@ export default function RotaScreen() {
 
   return (
     <ProtectedScreen allowedRoles={['manager', 'stylist']}>
-      <Screen>
-        {/* ── Header with primary action ── */}
+      <Screen header={<ScreenHeader title="Rota" back={false} />}>
+        {/* ── Primary action. The screen's title lives in ScreenHeader; a
+             "My week" heading here as well was the double header. ── */}
         <View style={styles.header}>
-          <View style={styles.flex}>
-            <Text style={styles.headerTitle}>My week</Text>
-          </View>
+          <View style={styles.flex} />
           <Pressable
             accessibilityRole="button"
             onPress={openLeaveModal}
@@ -688,12 +688,6 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 1.2,
     textTransform: 'uppercase',
-  },
-  headerTitle: {
-    color: palette.white,
-    fontSize: 28,
-    fontWeight: '800',
-    letterSpacing: -0.5,
   },
   requestBtn: {
     flexDirection: 'row',

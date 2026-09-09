@@ -62,6 +62,14 @@ const STYLIST_TABS: AppTab[] = [
   // Every staff role holds zac.access by default since ZAC went generally
   // available, so most stylists see this; an owner can withdraw it per
   // security level.
+  //
+  // THIS IS THE SIXTH TAB, and Apple's guidance is five. On a 390pt screen six
+  // tabs leave ~65pt each, which the redesigned bar fits but does not flatter —
+  // "Schedule" is the label that gets closest to its neighbour. Deleting this
+  // entry moves ZAC out of the bar and the other five breathe; the cost is
+  // discoverability, since ZAC has no other entry point in this app (the web
+  // dashboard has a floating widget, this does not). Left in deliberately —
+  // removing a feature's only route is a product call, not a layout one.
   {
     key: 'zac',
     label: 'ZAC',

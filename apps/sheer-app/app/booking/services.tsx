@@ -9,7 +9,7 @@ import type {
   PublicBookingUpgradeSuggestion,
 } from '@sheer/domain';
 import { palette, spacing } from '@sheer/design-tokens';
-import { AppButton, Card, EmptyState } from '@sheer/ui-mobile';
+import { AppButton, Card, EmptyState } from '../../src/design';
 import { ProtectedScreen } from '../../src/auth/ProtectedScreen';
 import { useAuth } from '../../src/auth/AuthProvider';
 import * as api from '../../src/auth/api';

@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Redirect, router } from 'expo-router';
 import type { PublicBookingLocationSummary } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
-import { AppButton } from '@sheer/ui-mobile';
+import { AppButton } from '../../src/design';
 import { ProtectedScreen } from '../../src/auth/ProtectedScreen';
 import { useBookingFlow } from '../../src/booking/BookingFlowProvider';
 import { bookingStyles, formatDuration, formatMoney } from '../../src/booking/bookingStyles';

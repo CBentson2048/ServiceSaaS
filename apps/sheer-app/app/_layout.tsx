@@ -3,6 +3,7 @@ import { StatusBar } from 'expo-status-bar';
 import { StripeProvider } from '@stripe/stripe-react-native';
 import { AuthProvider } from '../src/auth/AuthProvider';
 import { ThemeProvider } from '../src/design/ThemeProvider';
+import { sheerAppTheme } from '../src/design/appTheme';
 import { BookingFlowProvider } from '../src/booking/BookingFlowProvider';
 import { NotificationsProvider } from '../src/notifications/NotificationsProvider';
 import {
@@ -19,12 +20,14 @@ export default function RootLayout() {
       merchantIdentifier={STRIPE_MERCHANT_IDENTIFIER}
     >
       {/*
-        Mounts the design system's theme. src/design/components (AppText,
-        AppCard, AppButton, Pill, StatusBadge) all call useTheme(), and until
-        this was here none of them could be used — which is why all 23 screens
-        hand-rolled raw StyleSheets instead.
+        Mounts THE theme. Every design component reads it through useTheme(),
+        and src/design/colors.ts derives its named constants from the same
+        object, so a component and a screen's StyleSheet cannot disagree about
+        what a border is. Until this was mounted, src/design/components was
+        unusable dead code — which is why the screens hand-rolled raw
+        StyleSheets and grew a second component library in @sheer/ui-mobile.
       */}
-      <ThemeProvider theme="staff">
+      <ThemeProvider value={sheerAppTheme}>
         <AuthProvider>
         {/*
           Inside AuthProvider because it reads the session, and outside the
@@ -50,6 +53,13 @@ export default function RootLayout() {
               contentStyle: { backgroundColor: '#18141F' },
             }}
           >
+            {/*
+              EVERY route hides the native header and draws `ScreenHeader`
+              instead. Mixing the two is what gave Rota a native "Rota" bar
+              stacked on top of its own "My week" heading while Alerts had
+              neither and Profile had only the custom one — three title
+              treatments across three screens.
+            */}
             <Stack.Screen name="index" options={{ headerShown: false }} />
             {/* Auth screens own their immersive, branded canvas + back control. */}
             <Stack.Screen name="login" options={{ headerShown: false }} />
@@ -64,9 +74,9 @@ export default function RootLayout() {
             <Stack.Screen name="salon-detail" options={{ headerShown: false }} />
             <Stack.Screen name="manage-appointment" options={{ headerShown: false }} />
             <Stack.Screen name="reschedule" options={{ headerShown: false }} />
-            <Stack.Screen name="bookings" options={{ title: 'Bookings' }} />
-            <Stack.Screen name="new-booking" options={{ title: 'New booking' }} />
-            <Stack.Screen name="rota" options={{ title: 'Rota' }} />
+            <Stack.Screen name="bookings" options={{ headerShown: false }} />
+            <Stack.Screen name="new-booking" options={{ headerShown: false }} />
+            <Stack.Screen name="rota" options={{ headerShown: false }} />
             <Stack.Screen name="performance" options={{ headerShown: false }} />
             <Stack.Screen name="notifications" options={{ headerShown: false }} />
             <Stack.Screen name="booking/location" options={{ headerShown: false }} />

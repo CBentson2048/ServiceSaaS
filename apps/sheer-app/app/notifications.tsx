@@ -4,11 +4,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import type { NotificationDto } from '@sheer/domain';
 import { radius, spacing } from '@sheer/design-tokens';
-import { EmptyState, Screen, SectionHeader } from '@sheer/ui-mobile';
+import { EmptyState, Screen } from '../src/design';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
 import { AppTabBar } from '../src/navigation/AppTabBar';
 import { useNotifications } from '../src/notifications/NotificationsProvider';
 import { BORDER, BRAND_LIGHT, CARD } from '../src/design/colors';
+import { ScreenHeader } from '../src/navigation/ScreenHeader';
 
 /**
  * The stylist's alerts (Wrike 4507284172).
@@ -47,7 +48,7 @@ export default function NotificationsScreen() {
 
   return (
     <ProtectedScreen allowedRoles={['manager', 'stylist']}>
-      <Screen>
+      <Screen header={<ScreenHeader title="Alerts" back={false} />}>
         <ScrollView
           contentContainerStyle={s.content}
           refreshControl={
@@ -55,7 +56,6 @@ export default function NotificationsScreen() {
           }
         >
           <View style={s.header}>
-            <SectionHeader title="Alerts" />
             {unreadCount > 0 ? (
               <Pressable
                 accessibilityRole="button"

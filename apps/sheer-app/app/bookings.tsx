@@ -3,11 +3,12 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, 
 import { router, useLocalSearchParams } from 'expo-router';
 import type { AppointmentCompletionResponse, CreateStylistRebookingRequest, StaffBookingSummary } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
-import { AppButton, Card, EmptyState, Screen, SectionHeader } from '@sheer/ui-mobile';
+import { AppButton, Card, EmptyState, Screen, SectionHeader } from '../src/design';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
 import { AppTabBar } from '../src/navigation/AppTabBar';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
+import { ScreenHeader } from '../src/navigation/ScreenHeader';
 
 export default function BookingsScreen() {
   const auth = useAuth();
@@ -137,7 +138,7 @@ export default function BookingsScreen() {
 
   return (
     <ProtectedScreen allowedRoles={['manager', 'stylist']}>
-      <Screen>
+      <Screen header={<ScreenHeader title="Bookings" back={false} />}>
         <AppButton label="+ New booking" onPress={() => router.push('/new-booking')} />
 
         {error ? (

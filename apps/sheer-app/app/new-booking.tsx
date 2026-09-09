@@ -12,11 +12,12 @@ import type {
 } from '@sheer/domain';
 import { applyStylistServicePrices } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
-import { AppButton, Card, EmptyState, Screen, SectionHeader } from '@sheer/ui-mobile';
+import { AppButton, Card, EmptyState, Screen, SectionHeader } from '../src/design';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
 import { AppTabBar } from '../src/navigation/AppTabBar';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
+import { ScreenHeader } from '../src/navigation/ScreenHeader';
 
 type CommPreference = 'whatsapp' | 'sms' | 'email';
 const ANY_STYLIST = 'any';
@@ -345,7 +346,7 @@ export default function NewBookingScreen() {
   if (created) {
     return (
       <ProtectedScreen allowedRoles={['owner', 'manager', 'stylist']}>
-        <Screen>
+        <Screen header={<ScreenHeader title="New booking" />}>
           <SectionHeader title="Appointment booked" subtitle={created.appointment.clientDisplayName} />
           <Card>
             <Text style={s.confirmTitle}>{created.appointment.serviceNames.join(', ')}</Text>
@@ -369,7 +370,7 @@ export default function NewBookingScreen() {
 
   return (
     <ProtectedScreen allowedRoles={['owner', 'manager', 'stylist']}>
-      <Screen>
+      <Screen header={<ScreenHeader title="New booking" />}>
         {locations.length > 1 ? (
           <Card>
             <Text style={s.label}>Location</Text>

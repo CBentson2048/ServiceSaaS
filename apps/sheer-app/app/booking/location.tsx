@@ -13,7 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import type { PublicBookingLocationSummary, PublicSalonSummary } from '@sheer/domain';
 import { palette, spacing } from '@sheer/design-tokens';
-import { AppButton, Card, EmptyState, SectionHeader } from '@sheer/ui-mobile';
+import { AppButton, Card, EmptyState, SectionHeader } from '../../src/design';
 import { ProtectedScreen } from '../../src/auth/ProtectedScreen';
 import { useAuth } from '../../src/auth/AuthProvider';
 import * as api from '../../src/auth/api';

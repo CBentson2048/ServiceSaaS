@@ -7,6 +7,9 @@ import { BORDER, BRAND, BRAND_LIGHT, CARD, TEXT_SUBTLE } from '../design/colors'
 import { useNotifications } from '../notifications/NotificationsProvider';
 import { useAppTabs } from './tabs';
 
+/** Brand tint behind the active tab's icon. */
+const ACTIVE_PILL = 'rgba(166,124,245,0.18)';
+
 /**
  * THE bottom navigation. One implementation for every role.
  *
@@ -18,6 +21,12 @@ import { useAppTabs } from './tabs';
  *
  * Renders nothing when the current route has no tab navigation, so it is safe
  * to place at the bottom of any screen.
+ *
+ * ACTIVE STATE. The selected tab's icon sits in a filled pill. Before, active
+ * was signalled by colour alone — a purple icon among grey ones — which is the
+ * one cue a colour-blind user cannot rely on and which reads weakly at 22px on
+ * a dark ground. The pill gives it a second, non-colour cue; the label still
+ * changes colour and weight as well.
  */
 export function AppTabBar() {
   const pathname = usePathname();
@@ -37,9 +46,7 @@ export function AppTabBar() {
               key={tab.key}
               accessibilityRole="tab"
               accessibilityState={{ selected: active }}
-              accessibilityLabel={
-                badged ? `${tab.label}, ${unreadCount} unread` : tab.label
-              }
+              accessibilityLabel={badged ? `${tab.label}, ${unreadCount} unread` : tab.label}
               // Tabs replace the current route so the stack stays flat — there
               // is no "back" between top-level tabs, matching native tab UX.
               onPress={() => {
@@ -47,10 +54,10 @@ export function AppTabBar() {
               }}
               style={({ pressed }) => [s.item, pressed && s.pressed]}
             >
-              <View>
+              <View style={[s.iconWrap, active && s.iconWrapActive]}>
                 <Ionicons
                   name={active ? tab.activeIcon : tab.icon}
-                  size={22}
+                  size={21}
                   color={active ? BRAND_LIGHT : TEXT_SUBTLE}
                 />
                 {badged ? (
@@ -62,7 +69,9 @@ export function AppTabBar() {
                   </View>
                 ) : null}
               </View>
-              <Text style={[s.label, active && s.labelActive]}>{tab.label}</Text>
+              <Text style={[s.label, active && s.labelActive]} numberOfLines={1}>
+                {tab.label}
+              </Text>
             </Pressable>
           );
         })}
@@ -80,26 +89,35 @@ const s = StyleSheet.create({
     backgroundColor: CARD,
     paddingTop: spacing.sm,
     paddingBottom: spacing.xs,
+    paddingHorizontal: spacing.xs,
   },
   item: {
     flex: 1,
     alignItems: 'center',
-    gap: 4,
-    paddingVertical: spacing.xs,
-    borderRadius: radius.input,
+    gap: 3,
+    // A 44pt-tall target, which is Apple's minimum and what the old 8px-padded
+    // row fell short of.
+    minHeight: 44,
+    justifyContent: 'center',
   },
   pressed: { opacity: 0.6 },
+  iconWrap: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+  },
+  iconWrapActive: { backgroundColor: ACTIVE_PILL },
   label: {
     fontSize: 11,
-    fontWeight: '700',
+    fontWeight: '600',
     color: TEXT_SUBTLE,
-    letterSpacing: 0.3,
+    letterSpacing: 0.2,
   },
-  labelActive: { color: BRAND_LIGHT },
+  labelActive: { color: BRAND_LIGHT, fontWeight: '700' },
   badge: {
     position: 'absolute',
-    top: -5,
-    right: -9,
+    top: -4,
+    right: 4,
     minWidth: 16,
     height: 16,
     paddingHorizontal: 4,
