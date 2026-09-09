@@ -2,6 +2,7 @@ import type { AuthUser, DashboardStylistPerformanceResponse } from '@sheer/domai
 import type { DashboardService } from '../../../dashboard/dashboard.service';
 import type { ZacActingContext } from '../../context/zac-context.types';
 import type { ZacReadOnlyTool, ZacToolResult } from '../zac-tool.types';
+import { capitalise, periodFromInput } from '../zac-period';
 
 /** Same default window as the business-health tool: the last 7 days. */
 const DEFAULT_RANGE_DAYS = 7;
@@ -45,10 +46,11 @@ export class StylistPerformanceTool implements ZacReadOnlyTool {
   async execute(
     actor: AuthUser,
     context: ZacActingContext,
-    _input: Record<string, unknown>,
+    input: Record<string, unknown>,
   ): Promise<ZacToolResult> {
-    const to = new Date();
-    const from = new Date(to.getTime() - DEFAULT_RANGE_DAYS * 24 * 60 * 60 * 1000);
+    const period = periodFromInput(input, DEFAULT_RANGE_DAYS);
+    const to = new Date(period.toIso);
+    const from = new Date(period.fromIso);
 
     let performance: DashboardStylistPerformanceResponse;
     try {
@@ -75,7 +77,7 @@ export class StylistPerformanceTool implements ZacReadOnlyTool {
         explanation: 'No stylist activity was recorded in the reporting window.',
         rowCount: 0,
         presentation: {
-          answer: `No stylist had completed bookings in the last ${DEFAULT_RANGE_DAYS} days, so there is no performance ranking to show yet.`,
+          answer: `No stylist had completed bookings in ${period.label}, so there is no performance ranking to show yet.`,
           evidence: [this.evidence(performance)],
           confidence: 'high',
           limitations: ['An empty window usually means bookings have not been completed/paid yet.'],
@@ -104,7 +106,7 @@ export class StylistPerformanceTool implements ZacReadOnlyTool {
       .join(', ');
 
     const answer = [
-      `Over the last ${DEFAULT_RANGE_DAYS} days your top performer was ${top.stylistName} at ${top.locationName}:`,
+      `${capitalise(period.label)}: your top performer was ${top.stylistName} at ${top.locationName}:`,
       `${formatMoney(top.revenueCents, top.currencyCode)} from ${top.completedBookings} completed bookings, with a ${top.rebookingRatePercent}% rebooking rate.`,
       runnersUp ? `Next: ${runnersUp}.` : '',
     ]
@@ -127,7 +129,8 @@ export class StylistPerformanceTool implements ZacReadOnlyTool {
         confidence: 'medium',
         limitations: [
           'QLOOQO captures no client ratings — "top" here means revenue, completed bookings and rebooking in the window, not reviews.',
-          `Figures cover the last ${DEFAULT_RANGE_DAYS} days and the locations you can see.`,
+          `Figures cover ${period.label} and the locations you can see.`,
+          ...(period.unsupportedReason ? [period.unsupportedReason] : []),
           'Pay, rates and contracted hours are never part of ZAC answers.',
         ],
         suggestedNextStep:

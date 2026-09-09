@@ -5,7 +5,7 @@
  */
 
 import { useState } from 'react';
-import type { SVGProps } from 'react';
+import type { ReactNode, SVGProps } from 'react';
 import type { StatusTone } from '../../design';
 import { ApiRequestError } from '../../auth/api';
 
@@ -247,6 +247,143 @@ export function ZacFeedbackControls({
             : 'Couldn’t save — try again.'}
         </span>
       ) : null}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ANSWER RENDERING
+//
+// ZAC's answers arrive as Markdown. The deterministic tool copy contains none,
+// but the synthesis model narrates in Markdown by default — so a live answer
+// reads "**0% full this week**" and, rendered as plain text, the user sees the
+// asterisks. Emphasis on the figures is genuinely useful here, so the fix is
+// to render it rather than to strip it.
+//
+// Deliberately hand-rolled rather than pulling in a Markdown library:
+//
+//  * SAFETY. Every branch below builds React elements, so the answer text is
+//    escaped by React itself and `dangerouslySetInnerHTML` never appears. Model
+//    output cannot inject markup, which a full Markdown parser with HTML
+//    passthrough would allow.
+//  * LINKS ARE NOT CLICKABLE. A URL in an answer is model-generated, and a
+//    clickable model-generated link is a phishing vector. Link text renders;
+//    the anchor does not.
+//  * NO `_underscore_` EMPHASIS. ZAC legitimately names things like
+//    `report.client_retention`, and underscore emphasis would italicise the
+//    middle of identifiers. Only `**bold**`, `*italic*` and `` `code` `` are
+//    recognised, which is what the model actually emits.
+// ---------------------------------------------------------------------------
+
+/**
+ * `**bold**`, `*italic*`, `` `code` `` — longest delimiter first so `**` wins.
+ *
+ * The italic arm requires its delimiters to HUG non-whitespace, which is the
+ * CommonMark rule and not decoration here: a looser `\*([^*\n]+)\*` matched
+ * from the asterisk in "5 * 3" all the way to the next one in the sentence,
+ * swallowing both delimiters and italicising the text between. A renderer that
+ * silently drops characters out of an answer is worse than one that leaves a
+ * stray asterisk visible.
+ */
+const INLINE_PATTERN = /\*\*([^*]+)\*\*|\*(\S(?:[^*\n]*\S)?)\*|`([^`\n]+)`/g;
+
+function renderInline(text: string, keyPrefix: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  INLINE_PATTERN.lastIndex = 0;
+  while ((match = INLINE_PATTERN.exec(text)) !== null) {
+    if (match.index > lastIndex) nodes.push(text.slice(lastIndex, match.index));
+    const key = `${keyPrefix}-${match.index}`;
+    if (match[1] !== undefined) {
+      nodes.push(
+        <strong key={key} className="font-semibold text-text-primary">
+          {match[1]}
+        </strong>,
+      );
+    } else if (match[2] !== undefined) {
+      nodes.push(<em key={key}>{match[2]}</em>);
+    } else {
+      nodes.push(
+        <code key={key} className="rounded bg-surface-alt px-1 py-px text-[0.92em]">
+          {match[3]}
+        </code>,
+      );
+    }
+    lastIndex = match.index + match[0].length;
+  }
+  // An unmatched delimiter is left exactly as written rather than swallowed —
+  // dropping a stray asterisk would silently alter the answer's text.
+  if (lastIndex < text.length) nodes.push(text.slice(lastIndex));
+  return nodes;
+}
+
+/** Single newlines inside one block become line breaks. */
+function renderLines(block: string, keyPrefix: string): ReactNode[] {
+  return block.split('\n').flatMap((line, index) => {
+    const rendered = renderInline(line, `${keyPrefix}-l${index}`);
+    return index === 0 ? rendered : [<br key={`${keyPrefix}-br${index}`} />, ...rendered];
+  });
+}
+
+const BULLET = /^\s*[-*•]\s+/;
+const NUMBERED = /^\s*\d+[.)]\s+/;
+const HEADING = /^\s*#{1,6}\s+/;
+
+/**
+ * Render one ZAC answer. Blocks are separated by a blank line; a block whose
+ * every line is a list marker becomes a real list, so the bullets ZAC already
+ * emits stop rendering as literal dashes mid-paragraph.
+ */
+export function ZacAnswer({ text, className = '' }: { text: string; className?: string }) {
+  const blocks = text.trim().split(/\n{2,}/);
+
+  return (
+    <div className={className}>
+      {blocks.map((block, blockIndex) => {
+        const lines = block.split('\n').filter((line) => line.trim().length > 0);
+        const key = `b${blockIndex}`;
+        const spacing = blockIndex === 0 ? '' : 'mt-2';
+
+        if (lines.length > 0 && lines.every((line) => BULLET.test(line))) {
+          return (
+            <ul key={key} className={`${spacing} list-disc space-y-1 pl-4`}>
+              {lines.map((line, i) => (
+                <li key={`${key}-${i}`}>{renderInline(line.replace(BULLET, ''), `${key}-${i}`)}</li>
+              ))}
+            </ul>
+          );
+        }
+
+        if (lines.length > 0 && lines.every((line) => NUMBERED.test(line))) {
+          return (
+            <ol key={key} className={`${spacing} list-decimal space-y-1 pl-4`}>
+              {lines.map((line, i) => (
+                <li key={`${key}-${i}`}>
+                  {renderInline(line.replace(NUMBERED, ''), `${key}-${i}`)}
+                </li>
+              ))}
+            </ol>
+          );
+        }
+
+        if (HEADING.test(block)) {
+          // ZAC has its own heading styles; a model-emitted "##" becomes
+          // emphasis rather than a competing type scale.
+          return (
+            <p key={key} className={`${spacing} font-semibold text-text-primary`}>
+              {renderLines(block.replace(HEADING, ''), key)}
+            </p>
+          );
+        }
+
+        return (
+          <p key={key} className={spacing}>
+            {renderLines(block, key)}
+          </p>
+        );
+      })}
     </div>
   );
 }

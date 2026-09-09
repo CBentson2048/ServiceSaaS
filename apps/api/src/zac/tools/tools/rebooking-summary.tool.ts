@@ -2,6 +2,7 @@ import type { AuthUser, DashboardKpisResponse } from '@sheer/domain';
 import type { DashboardService } from '../../../dashboard/dashboard.service';
 import type { ZacActingContext } from '../../context/zac-context.types';
 import type { ZacReadOnlyTool, ZacToolResult } from '../zac-tool.types';
+import { periodFromInput } from '../zac-period';
 
 /** Same default window as the business-health tool: the last 7 days. */
 const DEFAULT_RANGE_DAYS = 7;
@@ -40,10 +41,11 @@ export class RebookingSummaryTool implements ZacReadOnlyTool {
   async execute(
     actor: AuthUser,
     context: ZacActingContext,
-    _input: Record<string, unknown>,
+    input: Record<string, unknown>,
   ): Promise<ZacToolResult> {
-    const to = new Date();
-    const from = new Date(to.getTime() - DEFAULT_RANGE_DAYS * 24 * 60 * 60 * 1000);
+    const period = periodFromInput(input, DEFAULT_RANGE_DAYS);
+    const to = new Date(period.toIso);
+    const from = new Date(period.fromIso);
 
     let kpis: DashboardKpisResponse;
     try {
@@ -77,7 +79,7 @@ export class RebookingSummaryTool implements ZacReadOnlyTool {
         : '';
 
     const answer = [
-      `Your rebooking rate over the last ${DEFAULT_RANGE_DAYS} days was ${s.rebookingRatePercent}% — ${s.rebookedVisits} rebooked visits out of ${s.completedBookings} completed.`,
+      `Your rebooking rate for ${period.label} was ${s.rebookingRatePercent}% — ${s.rebookedVisits} rebooked visits out of ${s.completedBookings} completed.`,
       `${s.stylistRebookedVisits} were rebooked by stylists at the chair and ${s.clientRebookedVisits} by clients themselves.${perLocation}`,
     ].join(' ');
 
@@ -109,6 +111,8 @@ export class RebookingSummaryTool implements ZacReadOnlyTool {
         limitations: [
           'Rebooking is a lower bound — rebookings made outside QLOOQO are not captured.',
           'No-show data is not reliably captured yet, so it is excluded rather than shown as zero.',
+          `Figures cover ${period.label}.`,
+          ...(period.unsupportedReason ? [period.unsupportedReason] : [])
         ],
         suggestedNextStep:
           'Ask "Which stylists are below their rebooking target?" to see who to coach.',

@@ -127,6 +127,10 @@ describe('ZAC period resolution', () => {
       const p = at('how many appointments in December 2027?');
       expect(p.unsupportedReason).toContain('in the future');
       expect(p.kind).toBe('default');
+      // The question is lowercased for matching; echoing that back put
+      // "december 2027 is in the future" in front of the user.
+      expect(p.unsupportedReason).toContain('December 2027');
+      expect(p.unsupportedReason).not.toContain('december');
     });
   });
 

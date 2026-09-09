@@ -17,6 +17,7 @@ import {
   formatEvidenceDate,
   zacFriendlyError,
   ZacFeedbackControls,
+  ZacAnswer,
 } from './zac-presentation';
 import type { ZacAskError } from './zac-presentation';
 import { ZacRoutingInspector } from './ZacRoutingInspector';
@@ -319,9 +320,10 @@ export function ZacAnswerBubble({
             </span>
           </div>
         ) : null}
-        <p className="whitespace-pre-line text-[13px] leading-5 text-text-primary">
-          {response.answer}
-        </p>
+        <ZacAnswer
+          text={response.answer}
+          className="text-[13px] leading-5 text-text-primary"
+        />
         <ZacRoutingInspector details={response.technical_details} enabled={routingDebug} />
 
         {response.output_id && onFeedback ? (

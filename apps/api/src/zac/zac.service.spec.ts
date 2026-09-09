@@ -1399,20 +1399,8 @@ describe('ZacService', () => {
   });
 
   describe('foundation answer (user-facing product copy)', () => {
-    const CAPABILITY_AREAS = [
-      'revenue',
-      'team productivity',
-      'appointments',
-      'utilisation',
-      'retention',
-      'rebooking',
-      'retail performance',
-      'QLAB colour',
-      'stock',
-      'inventory',
-      'trends',
-      'growth opportunities',
-    ];
+    /** What is still genuinely unbuilt — the only areas the copy may call coming. */
+    const UNBUILT_AREAS = ['QLAB colour', 'stock', 'inventory', 'trends'];
 
     it('greets the acting user by first name when available', async () => {
       const { service } = makeService();
@@ -1444,9 +1432,53 @@ describe('ZacService', () => {
       expect(answer).toContain("I'm ZAC, your AI business assistant for QLOOQO.");
       expect(answer).toMatch(/what I can help with right now/i);
       expect(answer).toContain('business health snapshot');
-      expect(answer).toMatch(/foundation mode/i);
-      expect(answer).toMatch(/don't yet have access to your live business data/i);
-      expect(answer).toMatch(/tell you when an answer isn't based on your salon's information/i);
+      // The capability list is now built from the actor's CONNECTED tools, so
+      // every live area must appear. The old copy named two and was never
+      // updated, leaving ZAC denying capabilities it had.
+      expect(answer).toContain('Appointments');
+      expect(answer).toContain('Services');
+      expect(answer).toContain('Retail');
+      expect(answer).toContain('Client retention');
+      // "Foundation mode" is FALSE once anything is connected, and it sat
+      // directly below a list of live capabilities.
+      expect(answer).not.toMatch(/foundation mode/i);
+      expect(answer).not.toMatch(/don't yet have access to your live business data/i);
+      expect(answer).toMatch(/comes from QLOOQO's own reports/i);
+    });
+
+    it('makes no foundation-mode claim even to a permission-poor actor', async () => {
+      // Every actor reaches at least the two context tools, which need no
+      // permission — so "I don't yet have access to your live business data"
+      // is false for everyone, not just owners. The conditional branch remains
+      // as a safety net rather than live copy.
+      const { service } = makeService();
+      const restricted = makeActor({
+        roles: ['manager'],
+        primaryRole: 'manager',
+        permissions: ['zac.access'],
+      });
+
+      const { answer } = await service.ask(restricted, { question: 'What can you help me with?' });
+      expect(answer).not.toMatch(/foundation mode/i);
+      // ...and it still shows only what they can actually reach.
+      expect(answer).not.toContain('business health snapshot');
+      expect(answer).toContain('Your locations');
+    });
+
+    it('never advertises a live capability as still coming', async () => {
+      // The regression that produced a wrong answer in the field: appointments,
+      // retail and retention were listed under "as I continue to develop"
+      // while all three were live.
+      const { service } = makeService();
+
+      const { answer } = await service.ask(makeActor(), { question: 'What can you help me with?' });
+      const coming = answer.split('As I continue to develop')[1] ?? '';
+      for (const live of ['appointments', 'retention', 'retail performance', 'rebooking']) {
+        expect(coming.toLowerCase()).not.toContain(live);
+      }
+      // Genuinely unbuilt areas are still named.
+      expect(coming).toContain('QLAB colour');
+      expect(coming).toContain('stock');
     });
 
     it('omits the health capability for users without the underlying permission', async () => {
@@ -1461,12 +1493,16 @@ describe('ZacService', () => {
       expect(answer).not.toContain('business health snapshot');
     });
 
-    it('lists every future capability area', async () => {
+    it('names the genuinely unbuilt areas as coming', async () => {
       const { service } = makeService();
 
       const { answer } = await service.ask(makeActor(), { question: 'What can you help me with?' });
-      for (const area of CAPABILITY_AREAS) {
-        expect(answer).toContain(area);
+      const coming = answer.split('As I continue to develop')[1] ?? '';
+      // Only what is actually unbuilt. `CAPABILITY_AREAS` is no longer a
+      // checklist for this sentence: most of it shipped, and asserting the old
+      // list verbatim is what kept the stale copy alive.
+      for (const unbuilt of UNBUILT_AREAS) {
+        expect(coming.toLowerCase()).toContain(unbuilt.toLowerCase());
       }
     });
 

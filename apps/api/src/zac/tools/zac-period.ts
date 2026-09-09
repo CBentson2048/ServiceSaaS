@@ -214,13 +214,16 @@ export function parseZacPeriod(
     if (!monthMatch[2] && Date.UTC(year, monthIndex, 1) > nowMs) year -= 1;
     const fromMs = Date.UTC(year, monthIndex, 1);
     const toMs = Date.UTC(year, monthIndex + 1, 1);
+    // Capitalise BEFORE the future check as well: the question was lowercased
+    // for matching, and echoing that back gave "december 2027 is in the
+    // future" in user-facing copy.
+    const name = monthMatch[1]!.charAt(0).toUpperCase() + monthMatch[1]!.slice(1);
     if (fromMs > nowMs) {
       return {
         ...fallback,
-        unsupportedReason: `${monthMatch[1]} ${year} is in the future, so I used ${fallback.label} instead.`,
+        unsupportedReason: `${name} ${year} is in the future, so I used ${fallback.label} instead.`,
       };
     }
-    const name = monthMatch[1]!.charAt(0).toUpperCase() + monthMatch[1]!.slice(1);
     return window(fromMs, Math.min(toMs, nowMs), `${name} ${year}`, 'named_month');
   }
 

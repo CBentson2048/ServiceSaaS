@@ -15,6 +15,7 @@ import {
   formatEvidenceDate,
   zacFriendlyError,
   ZacFeedbackControls,
+  ZacAnswer,
 } from '../components/zac/zac-presentation';
 import type { ZacAskError } from '../components/zac/zac-presentation';
 import {
@@ -255,9 +256,10 @@ export function ZacPage() {
                     {copied ? 'Copied' : 'Copy answer'}
                   </button>
                 </div>
-                <p className="whitespace-pre-line text-[14px] leading-6 text-text-primary">
-                  {response.answer}
-                </p>
+                <ZacAnswer
+                  text={response.answer}
+                  className="text-[14px] leading-6 text-text-primary"
+                />
                 {routingDebug ? (
                   <ZacRoutingBadge details={response.technical_details} className="mt-1.5" />
                 ) : null}

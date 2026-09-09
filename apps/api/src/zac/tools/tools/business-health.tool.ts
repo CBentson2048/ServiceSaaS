@@ -2,6 +2,7 @@ import type { AuthUser, DashboardKpisResponse } from '@sheer/domain';
 import type { DashboardService } from '../../../dashboard/dashboard.service';
 import type { ZacActingContext } from '../../context/zac-context.types';
 import type { ZacReadOnlyTool, ZacToolResult } from '../zac-tool.types';
+import { periodFromInput } from '../zac-period';
 
 /** Default reporting window when the user gives no range: the last 7 days. */
 const DEFAULT_RANGE_DAYS = 7;
@@ -44,10 +45,11 @@ export class BusinessHealthSummaryTool implements ZacReadOnlyTool {
   async execute(
     actor: AuthUser,
     context: ZacActingContext,
-    _input: Record<string, unknown>,
+    input: Record<string, unknown>,
   ): Promise<ZacToolResult> {
-    const to = new Date();
-    const from = new Date(to.getTime() - DEFAULT_RANGE_DAYS * 24 * 60 * 60 * 1000);
+    const period = periodFromInput(input, DEFAULT_RANGE_DAYS);
+    const to = new Date(period.toIso);
+    const from = new Date(period.fromIso);
 
     let kpis: DashboardKpisResponse;
     try {
@@ -74,7 +76,7 @@ export class BusinessHealthSummaryTool implements ZacReadOnlyTool {
     const average = formatMoney(s.averageBookingValueCents, s.currencyCode);
 
     const answer = [
-      `Here's your business health snapshot for the last ${DEFAULT_RANGE_DAYS} days${
+      `Here's your business health snapshot for ${period.label}${
         locationCount > 1 ? ` across ${locationCount} locations` : ''
       }:`,
       `revenue was ${revenue} from ${s.completedPaidBookings} completed paid bookings (average ${average} per booking).`,
@@ -112,7 +114,8 @@ export class BusinessHealthSummaryTool implements ZacReadOnlyTool {
         confidence: 'medium',
         limitations: [
           'This is revenue and activity health, not a profit view — cost and margin data is not tracked yet.',
-          `Figures cover the last ${DEFAULT_RANGE_DAYS} days only; ask again with a location focus for a narrower view.`,
+          `Figures cover ${period.label} only; ask again with a location focus for a narrower view.`,
+          ...(period.unsupportedReason ? [period.unsupportedReason] : []),
           'No-show counts are not reliably captured yet, so they are not part of this snapshot.',
         ],
         suggestedNextStep:

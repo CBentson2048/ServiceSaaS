@@ -1,6 +1,6 @@
 import type { AuthUser } from '@sheer/domain';
 import type { ZacActingContext } from '../../context/zac-context.types';
-import type { ZacReadOnlyTool, ZacToolResult } from '../zac-tool.types';
+import type { ZacReadOnlyTool, ZacToolName, ZacToolResult } from '../zac-tool.types';
 
 /**
  * Live Week 2 tool — answers "what can you help me with?" honestly and
@@ -8,6 +8,44 @@ import type { ZacReadOnlyTool, ZacToolResult } from '../zac-tool.types';
  * tool set at construction time, so connected vs coming-soon is always derived
  * from what this actor can actually reach — never a hardcoded claim.
  */
+/**
+ * One line per capability, keyed by tool name. Adding a tool without adding a
+ * line here means ZAC simply does not mention it — the failure is silent but
+ * harmless, unlike the previous hardcoded list, which actively denied
+ * capabilities that existed.
+ */
+const CAPABILITY_LINES: Partial<Record<ZacToolName, string>> = {
+  'context.business_summary':
+    'Your business context — which business and locations I can see, and what your role lets me look at.',
+  'context.location_summary':
+    'Your locations — how many you can access and which one we are focused on.',
+  'report.business_health':
+    'A business health snapshot — bookings, revenue and rebooking activity from your dashboard KPIs.',
+  'report.utilisation_summary':
+    'Utilisation and diary gaps — booked time against rostered available hours, quiet days and unbooked windows.',
+  'report.stylist_performance':
+    'Stylist performance — who is earning most, their completed bookings and rebooking rates.',
+  'report.kpi_summary': 'Team KPIs — who is meeting their targets and who is below them.',
+  'report.rebooking_summary':
+    'Rebooking — your rate, and whether it came from the chair or the client.',
+  'report.appointment_summary':
+    'Appointments — volume, completion, cancellations and recorded no-shows.',
+  'report.service_mix': 'Services — which services earn most, and their share of your revenue.',
+  'report.retail_performance':
+    'Retail — takings, attachment per visit, and gross margin where product cost was recorded.',
+  'report.client_retention':
+    'Client retention — how many clients are on pattern, overdue or lapsed. Counts only, never names.',
+  'kpi.personal_coaching': 'Your own KPIs and personal coaching.',
+  'schedule.my_appointments': 'Your own diary for today and tomorrow.',
+};
+
+/** Named as coming only while genuinely unbuilt. */
+const PLANNED_AREAS = 'QLAB colour usage and costs, stock and inventory, and trends over time';
+
+/** The full list, used only when nothing at all is connected. */
+const ALL_AREAS =
+  'revenue, team productivity, appointments, utilisation, retention, rebooking, retail performance, QLAB colour usage and costs, stock, inventory, trends and growth opportunities';
+
 export class ZacCapabilitySummaryTool implements ZacReadOnlyTool {
   readonly name = 'context.capabilities' as const;
   readonly domain = 'context' as const;
@@ -102,26 +140,30 @@ export class ZacCapabilitySummaryTool implements ZacReadOnlyTool {
     introduce: boolean,
   ): string {
     const greeting = context.actorFirstName ? `Hi ${context.actorFirstName} 👋` : 'Hi 👋';
-    const connectedLines = [
-      '• Your business context — which business and locations I can see, and what your role lets me look at.',
-      '• Your locations — how many you can access and which one we are focused on.',
-    ];
-    if (connected.some((tool) => tool.name === 'report.business_health')) {
-      connectedLines.push(
-        '• A basic business health snapshot — bookings, revenue and rebooking activity from your dashboard KPIs.',
-      );
-    }
-    if (connected.some((tool) => tool.name === 'report.utilisation_summary')) {
-      connectedLines.push(
-        '• Utilisation and diary gaps — booked time against rostered available hours, quiet days and unbooked windows.',
-      );
-    }
+    // Derived from the ACTOR'S CONNECTED TOOLS, never hardcoded. The previous
+    // version listed two capabilities behind hand-written `if` checks and was
+    // never updated as tools were added, so ZAC told owners it could not do
+    // things it could — and advertised appointments, retail and retention as
+    // "still coming" while they were live. Anything absent from this map is a
+    // capability nobody described, which is visible; a stale sentence is not.
+    const connectedLines = connected
+      .map((tool) => CAPABILITY_LINES[tool.name])
+      .filter((line): line is string => Boolean(line))
+      .map((line) => `• ${line}`);
+
+    // Only genuinely unbuilt areas may be named as coming. Reading a live
+    // capability in this sentence is what made the answer wrong.
+    const planned = connected.length > 0 ? PLANNED_AREAS : ALL_AREAS;
 
     return [
       ...(introduce ? [greeting, "I'm ZAC, your AI business assistant for QLOOQO."] : []),
       `Here's what I can help with right now:\n${connectedLines.join('\n')}`,
-      "As I continue to develop, I'll also help with revenue, team productivity, appointments, utilisation, retention, rebooking, retail performance, QLAB colour usage and costs, stock, inventory, trends and growth opportunities.",
-      "I'm still in foundation mode: beyond the sources above, I don't yet have access to your live business data, and I'll always tell you when an answer isn't based on your salon's information.",
+      `As I continue to develop, I'll also help with ${planned}.`,
+      // The foundation-mode caveat is TRUE only when nothing is connected.
+      // Stated unconditionally it contradicted the list directly above it.
+      connectedLines.length > 0
+        ? "Every figure I give you comes from QLOOQO's own reports, and I'll always say plainly when something isn't connected yet rather than guessing."
+        : "I'm still in foundation mode: I don't yet have access to your live business data, and I'll always tell you when an answer isn't based on your salon's information.",
       'Try asking: "How is my business doing?" or "What locations can I see?" — or check back as more sources come online.',
     ].join('\n\n');
   }

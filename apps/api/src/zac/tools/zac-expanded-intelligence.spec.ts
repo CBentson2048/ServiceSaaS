@@ -262,6 +262,64 @@ describe('period is read from the question, not hardcoded', () => {
     );
   });
 
+  // ---- Phase 1 reports now honour the period too -------------------------
+  // Before this, "last month" was honoured by the newer tools and silently
+  // ignored by these three, so the same phrasing behaved differently inside a
+  // single conversation with nothing to indicate which had happened.
+
+  it('applies an asked-for window to business health', async () => {
+    const kpis = jest.fn().mockResolvedValue(KPIS);
+    const registry = makeRegistry({ dashboard: { kpis, topServices: jest.fn() } });
+
+    const { result } = await registry.dispatch(
+      actorWith(['owner'], ALL_PERMISSIONS),
+      context(),
+      'report.business_health',
+      { period: parseZacPeriod('how was my business last month?', 7, NOW) },
+    );
+
+    expect(kpis).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        from: '2026-08-01T00:00:00.000Z',
+        to: '2026-09-01T00:00:00.000Z',
+      }),
+    );
+    expect(result.presentation?.answer).toContain('last month');
+  });
+
+  it('applies an asked-for window to the rebooking summary', async () => {
+    const kpis = jest.fn().mockResolvedValue(KPIS);
+    const registry = makeRegistry({ dashboard: { kpis, topServices: jest.fn() } });
+
+    const { result } = await registry.dispatch(
+      actorWith(['owner'], ALL_PERMISSIONS),
+      context(),
+      'report.rebooking_summary',
+      { period: parseZacPeriod('what was my rebooking rate in August?', 7, NOW) },
+    );
+
+    expect(kpis).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ from: '2026-08-01T00:00:00.000Z' }),
+    );
+    expect(result.presentation?.answer).toContain('August 2026');
+  });
+
+  it('leaves the Phase 1 defaults untouched when no period is named', async () => {
+    // The 7-day default is pinned client-accepted behaviour: a question with no
+    // period must read exactly as it always did.
+    const registry = makeRegistry();
+    const { result } = await registry.dispatch(
+      actorWith(['owner'], ALL_PERMISSIONS),
+      context(),
+      'report.business_health',
+      { period: parseZacPeriod('how is my business doing?', 7, NOW) },
+    );
+
+    expect(result.presentation?.answer).toContain('the last 7 days');
+  });
+
   it('tells the user retention cannot be rewound to a past period', async () => {
     const registry = makeRegistry();
     const { result } = await registry.dispatch(

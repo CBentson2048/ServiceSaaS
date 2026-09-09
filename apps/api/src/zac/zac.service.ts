@@ -136,6 +136,14 @@ const PERIOD_AWARE_TOOLS: Partial<Record<ZacToolName, number>> = {
   'report.appointment_summary': 7,
   'report.service_mix': 30,
   'report.retail_performance': 30,
+  // Phase 1 reports. Their 7-day defaults are UNCHANGED, so a question that
+  // names no period behaves exactly as it always has; naming one now works
+  // here too. Without these three, "last month" was honoured by the newer
+  // tools and silently ignored by these, which is a worse failure than the
+  // original bug: same phrasing, different behaviour, no way to tell which.
+  'report.business_health': 7,
+  'report.rebooking_summary': 7,
+  'report.stylist_performance': 7,
   // report.client_retention is deliberately absent: it is a point-in-time
   // snapshot of who is overdue NOW, not a windowed aggregate, and the tool
   // says so rather than pretending a historical window was applied.
@@ -2298,7 +2306,7 @@ export class ZacService {
       return 'report.appointment_summary';
     }
     if (
-      /how('s| is| are)?\s+(my|the|our)\s+(business|salon)|business health|\bhow healthy\b|\bdoing\b|performing|revenue|\bbookings?\b/.test(
+      /how('s| is| are| was| were| did)?\s+(my|the|our)\s+(business|salon)|business health|\bhow healthy\b|\bdoing\b|performing|revenue|\bbookings?\b/.test(
         q,
       ) ||
       // Official Owner acceptance phrasings: money worries, attention and
