@@ -15,11 +15,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { describeZacRouting, userHasPermission, userHasRole } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
-import { StylistTabBar } from '../src/navigation/StylistTabBar';
+import { AppTabBar } from '../src/navigation/AppTabBar';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
 import { ApiError, SessionExpiredError } from '../src/auth/api';
 import type { ZacAskResponse } from '../src/auth/api';
+import { BG, BORDER, BORDER_SUBTLE, BRAND, CARD } from '../src/design/colors';
 
 const BUSINESS_STARTERS = [
   'What can you help me with?',
@@ -545,7 +546,7 @@ export default function ZacScreen() {
           )}
         </ScrollView>
 
-        {isStylist ? <StylistTabBar /> : null}
+        <AppTabBar />
       </SafeAreaView>
     </ProtectedScreen>
   );
@@ -602,11 +603,6 @@ function withAlpha(hex: string, alpha: number): string {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
-const BG = palette.ink[950];
-const CARD = palette.ink[700];
-const BORDER = 'rgba(255,255,255,0.13)';
-const BORDER_SOFT = 'rgba(255,255,255,0.08)';
-const BRAND = palette.brand[500];
 const MONO = Platform.select({ ios: 'Courier', default: 'monospace' });
 
 const s = StyleSheet.create({
@@ -717,7 +713,7 @@ const s = StyleSheet.create({
   },
   askBtnDisabled: { opacity: 0.5 },
   askBtnText: { color: palette.white, fontSize: 15, fontWeight: '700' },
-  divider: { height: 1, backgroundColor: BORDER_SOFT },
+  divider: { height: 1, backgroundColor: BORDER_SUBTLE },
   chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   chip: {
     borderRadius: radius.pill,
@@ -825,7 +821,7 @@ const s = StyleSheet.create({
   },
   followUpBtnText: { color: palette.brand[300], fontSize: 12, fontWeight: '700' },
 
-  section: { gap: spacing.sm, borderTopWidth: 1, borderTopColor: BORDER_SOFT, paddingTop: spacing.md },
+  section: { gap: spacing.sm, borderTopWidth: 1, borderTopColor: BORDER_SUBTLE, paddingTop: spacing.md },
   sectionLabel: {
     color: 'rgba(255,255,255,0.4)',
     fontSize: 10,
@@ -848,7 +844,7 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     borderTopWidth: 1,
-    borderTopColor: BORDER_SOFT,
+    borderTopColor: BORDER_SUBTLE,
     paddingTop: spacing.md,
   },
   devToggleText: { color: 'rgba(255,255,255,0.55)', fontSize: 12, fontWeight: '600' },

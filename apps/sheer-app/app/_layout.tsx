@@ -2,6 +2,7 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { StripeProvider } from '@stripe/stripe-react-native';
 import { AuthProvider } from '../src/auth/AuthProvider';
+import { ThemeProvider } from '../src/design/ThemeProvider';
 import { BookingFlowProvider } from '../src/booking/BookingFlowProvider';
 import { NotificationsProvider } from '../src/notifications/NotificationsProvider';
 import {
@@ -17,7 +18,14 @@ export default function RootLayout() {
       urlScheme={STRIPE_URL_SCHEME}
       merchantIdentifier={STRIPE_MERCHANT_IDENTIFIER}
     >
-      <AuthProvider>
+      {/*
+        Mounts the design system's theme. src/design/components (AppText,
+        AppCard, AppButton, Pill, StatusBadge) all call useTheme(), and until
+        this was here none of them could be used — which is why all 23 screens
+        hand-rolled raw StyleSheets instead.
+      */}
+      <ThemeProvider theme="staff">
+        <AuthProvider>
         {/*
           Inside AuthProvider because it reads the session, and outside the
           navigator because the alerts badge renders on every screen's tab bar.
@@ -78,8 +86,9 @@ export default function RootLayout() {
             />
           </Stack>
           </BookingFlowProvider>
-        </NotificationsProvider>
-      </AuthProvider>
+          </NotificationsProvider>
+        </AuthProvider>
+      </ThemeProvider>
     </StripeProvider>
   );
 }

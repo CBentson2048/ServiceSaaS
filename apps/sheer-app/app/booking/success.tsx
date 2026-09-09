@@ -8,6 +8,7 @@ import { AppButton } from '@sheer/ui-mobile';
 import { ProtectedScreen } from '../../src/auth/ProtectedScreen';
 import { useBookingFlow } from '../../src/booking/BookingFlowProvider';
 import { bookingStyles, formatDuration, formatMoney } from '../../src/booking/bookingStyles';
+import { BG } from '../../src/design/colors';
 
 export default function BookingSuccessScreen() {
   const { draft, resetDraft } = useBookingFlow();
@@ -172,7 +173,6 @@ function formatAddress(location: PublicBookingLocationSummary): string {
     .join(', ');
 }
 
-const BG = palette.ink[950];
 const BORDER_MED = 'rgba(255,255,255,0.11)';
 
 const s = StyleSheet.create({

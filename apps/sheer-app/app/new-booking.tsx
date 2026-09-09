@@ -10,11 +10,11 @@ import type {
   StaffBookingPaymentMode,
   StaffBookingSource,
 } from '@sheer/domain';
-import { applyStylistServicePrices, userHasRole } from '@sheer/domain';
+import { applyStylistServicePrices } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { AppButton, Card, EmptyState, Screen, SectionHeader } from '@sheer/ui-mobile';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
-import { StylistTabBar } from '../src/navigation/StylistTabBar';
+import { AppTabBar } from '../src/navigation/AppTabBar';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
 
@@ -336,8 +336,6 @@ export default function NewBookingScreen() {
     setSendConfirmation(true);
     setError(null);
   }
-
-  const showTabs = userHasRole(auth.user, 'stylist');
   // Whether every required field is present. Used only to hint the user (the
   // button stays pressable so an invalid press always surfaces a clear message).
   const isComplete =
@@ -364,7 +362,7 @@ export default function NewBookingScreen() {
           <AppButton label="Book another" onPress={resetForAnother} />
           <AppButton label="Back to schedule" variant="secondary" onPress={() => router.replace('/bookings')} />
         </Screen>
-        {showTabs ? <StylistTabBar /> : null}
+        <AppTabBar />
       </ProtectedScreen>
     );
   }
@@ -645,7 +643,7 @@ export default function NewBookingScreen() {
           />
         </Card>
       </Screen>
-      {showTabs ? <StylistTabBar /> : null}
+      <AppTabBar />
     </ProtectedScreen>
   );
 }

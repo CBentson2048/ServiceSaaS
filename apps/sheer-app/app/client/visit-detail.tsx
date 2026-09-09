@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router, useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import type { ClientVisitColourFormula, ClientVisitDetail, ClientVisitServiceLine } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { ProtectedScreen } from '../../src/auth/ProtectedScreen';
 import { useAuth } from '../../src/auth/AuthProvider';
 import * as api from '../../src/auth/api';
+import { ScreenHeader } from '../../src/navigation/ScreenHeader';
+import { BG, BRAND_LIGHT, CARD } from '../../src/design/colors';
 
 export default function VisitDetailScreen() {
   const auth = useAuth();
@@ -39,18 +41,7 @@ export default function VisitDetailScreen() {
   return (
     <ProtectedScreen allowedRoles={['client']}>
       <SafeAreaView style={s.screen} edges={['top']}>
-        {/* ── Header ── */}
-        <View style={s.header}>
-          <Pressable
-            style={({ pressed }) => [s.backBtn, pressed && s.pressed]}
-            onPress={() => router.back()}
-          >
-            <Text style={s.backArrow}>‹</Text>
-            <Text style={s.backLabel}>Back</Text>
-          </Pressable>
-          <Text style={s.headerTitle}>Visit details</Text>
-          <View style={s.headerSpacer} />
-        </View>
+        <ScreenHeader title="Visit details" />
 
         {loading ? (
           <View style={s.loadingCard}>
@@ -334,30 +325,13 @@ function formatMoney(amount: number, currency: string): string {
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
-const BG = '#18141F';
-const CARD = '#211A2E';
 const BORDER_MED = 'rgba(255,255,255,0.11)';
-const BRAND_LIGHT = palette.brand[300];
 
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: BG },
   pressed: { opacity: 0.72 },
 
   // ── Header
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.base,
-    paddingVertical: spacing.md,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: BORDER_MED,
-  },
-  backBtn: { flexDirection: 'row', alignItems: 'center', gap: 2, minWidth: 90 },
-  backArrow: { color: BRAND_LIGHT, fontSize: 28, lineHeight: 30, fontWeight: '300', marginTop: -2 },
-  backLabel: { color: BRAND_LIGHT, fontSize: 15, fontWeight: '600' },
-  headerTitle: { color: palette.white, fontSize: 17, fontWeight: '700', letterSpacing: -0.3 },
-  headerSpacer: { minWidth: 90 },
 
   // ── Loading / error
   loadingCard: {

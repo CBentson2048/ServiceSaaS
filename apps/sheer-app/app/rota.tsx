@@ -10,13 +10,13 @@ import {
   View,
 } from 'react-native';
 import type { RotaLeaveRequest, RotaShift, StylistMyWeekResponse } from '@sheer/domain';
-import { userHasRole } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { AppButton, EmptyState, Screen } from '@sheer/ui-mobile';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
-import { StylistTabBar } from '../src/navigation/StylistTabBar';
+import { AppTabBar } from '../src/navigation/AppTabBar';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
+import { BG, BORDER, BRAND, BRAND_LIGHT, CARD } from '../src/design/colors';
 
 export default function RotaScreen() {
   const auth = useAuth();
@@ -126,7 +126,6 @@ export default function RotaScreen() {
   }
 
   const pendingLeaveCount = leaveRequests.filter((request) => request.status === 'pending').length;
-  const showStylistTabs = userHasRole(auth.user, 'stylist');
 
   return (
     <ProtectedScreen allowedRoles={['manager', 'stylist']}>
@@ -235,7 +234,7 @@ export default function RotaScreen() {
         onCancelRequest={(id) => void cancelLeaveRequest(id)}
       />
 
-      {showStylistTabs ? <StylistTabBar /> : null}
+      <AppTabBar />
     </ProtectedScreen>
   );
 }
@@ -669,11 +668,6 @@ function countLeaveDays(leave: StylistMyWeekResponse['leave'], weekDays: Date[])
   }).length;
 }
 
-const CARD = palette.ink[700];
-const BG = palette.ink[950];
-const BORDER = 'rgba(255,255,255,0.12)';
-const BRAND = palette.brand[500];
-const BRAND_LIGHT = palette.brand[300];
 
 const styles = StyleSheet.create({
   flex: {

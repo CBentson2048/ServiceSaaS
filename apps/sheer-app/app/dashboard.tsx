@@ -20,9 +20,10 @@ import { userHasPermission } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
 import { useAuth } from '../src/auth/AuthProvider';
+import { AppTabBar } from '../src/navigation/AppTabBar';
 import * as api from '../src/auth/api';
+import { BG, BORDER, BORDER_SUBTLE, BRAND, BRAND_LIGHT, CARD } from '../src/design/colors';
 
-type BottomTab = 'home' | 'visits' | 'profile';
 
 // ── Root screen ───────────────────────────────────────────────────────────────
 
@@ -35,7 +36,6 @@ export default function DashboardScreen() {
   const [dashboard, setDashboard] = useState<api.MobileDashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<BottomTab>('home');
 
   const load = useCallback(async () => {
     if (!accessToken || !user || !isMobileDashboardRole(user.primaryRole)) return;
@@ -52,13 +52,6 @@ export default function DashboardScreen() {
   }, [accessToken, user]);
 
   useEffect(() => { void load(); }, [load]);
-
-  // Tab navigation — visits tab pushes to dedicated page for non-clients too
-  function handleTabPress(tab: BottomTab) {
-    if (tab === 'profile') { router.push('/profile'); return; }
-    if (tab === 'visits') { router.push('/client/visits'); return; }
-    setActiveTab('home');
-  }
 
   const name = firstName(user?.profile.fullName);
 
@@ -128,61 +121,10 @@ export default function DashboardScreen() {
           ) : null}
         </ScrollView>
 
-        {/* ── Bottom tab bar (client only) ── */}
-        {isClient ? (
-          <SafeAreaView edges={['bottom']} style={s.tabBarSafe}>
-            <View style={s.tabBar}>
-              <TabBarItem
-                icon="⊞"
-                label="Home"
-                active={activeTab === 'home'}
-                onPress={() => handleTabPress('home')}
-              />
-              <TabBarItem
-                icon="◷"
-                label="Visits"
-                active={activeTab === 'visits'}
-                onPress={() => handleTabPress('visits')}
-              />
-              <TabBarItem
-                icon="◉"
-                label="Profile"
-                active={activeTab === 'profile'}
-                onPress={() => handleTabPress('profile')}
-              />
-            </View>
-          </SafeAreaView>
-        ) : null}
+        <AppTabBar />
 
       </SafeAreaView>
     </ProtectedScreen>
-  );
-}
-
-// ── Tab bar item ──────────────────────────────────────────────────────────────
-
-function TabBarItem({
-  icon,
-  label,
-  active,
-  onPress,
-}: {
-  icon: string;
-  label: string;
-  active: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [s.tabItem, pressed && s.pressed]}
-      accessibilityRole="tab"
-      accessibilityState={{ selected: active }}
-    >
-      <Text style={[s.tabIcon, active && s.tabIconActive]}>{icon}</Text>
-      <Text style={[s.tabLabel, active && s.tabLabelActive]}>{label}</Text>
-      {active ? <View style={s.tabDot} /> : null}
-    </Pressable>
   );
 }
 
@@ -533,13 +475,7 @@ function formatStatus(value: string): string {
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
-const BG = '#18141F';
-const CARD = '#211A2E';
 const CARD2 = '#271F38';
-const BORDER = 'rgba(255,255,255,0.08)';
-const BORDER2 = 'rgba(255,255,255,0.13)';
-const BRAND = palette.brand[500];
-const BRAND_LIGHT = palette.brand[300];
 
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: BG },
@@ -597,7 +533,7 @@ const s = StyleSheet.create({
     borderRadius: radius.cardLg,
     backgroundColor: CARD,
     borderWidth: 1,
-    borderColor: BORDER2,
+    borderColor: BORDER,
   },
   loadingText: {
     color: 'rgba(255,255,255,0.55)',
@@ -663,7 +599,7 @@ const s = StyleSheet.create({
     borderRadius: radius.pill,
     backgroundColor: 'rgba(255,255,255,0.07)',
     borderWidth: 1,
-    borderColor: BORDER2,
+    borderColor: BORDER,
   },
   apptLocationText: { color: 'rgba(255,255,255,0.6)', fontSize: 12, fontWeight: '600' },
   apptActions: { flexDirection: 'row', gap: spacing.sm },
@@ -672,7 +608,7 @@ const s = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: radius.pill,
     borderWidth: 1,
-    borderColor: BORDER2,
+    borderColor: BORDER,
   },
   apptActionBtnText: { color: 'rgba(255,255,255,0.72)', fontSize: 12, fontWeight: '700' },
   apptManageBtn: {
@@ -688,7 +624,7 @@ const s = StyleSheet.create({
     padding: spacing.xl,
     borderRadius: radius.cardLg,
     borderWidth: 1,
-    borderColor: BORDER,
+    borderColor: BORDER_SUBTLE,
     backgroundColor: CARD,
     alignItems: 'center',
     gap: spacing.xs,
@@ -749,7 +685,7 @@ const s = StyleSheet.create({
     borderRadius: radius.cardLg,
     backgroundColor: CARD,
     borderWidth: 1,
-    borderColor: BORDER2,
+    borderColor: BORDER,
     overflow: 'hidden',
   },
   visitRow: {
@@ -759,7 +695,7 @@ const s = StyleSheet.create({
     paddingHorizontal: spacing.base,
     paddingVertical: spacing.md,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: BORDER2,
+    borderBottomColor: BORDER,
   },
   visitRowLast: { borderBottomWidth: 0 },
   visitRowMain: { flex: 1, gap: 3 },
@@ -778,49 +714,12 @@ const s = StyleSheet.create({
     padding: spacing.lg,
     borderRadius: radius.cardLg,
     borderWidth: 1,
-    borderColor: BORDER,
+    borderColor: BORDER_SUBTLE,
     backgroundColor: CARD,
     alignItems: 'center',
   },
   emptyVisitsText: { color: 'rgba(255,255,255,0.4)', fontSize: 13 },
 
-  // ── Bottom tab bar
-  tabBarSafe: { backgroundColor: CARD },
-  tabBar: {
-    flexDirection: 'row',
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: BORDER2,
-    backgroundColor: CARD,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.xs,
-  },
-  tabItem: {
-    flex: 1,
-    alignItems: 'center',
-    gap: 3,
-    paddingVertical: spacing.xs,
-    position: 'relative',
-  },
-  tabIcon: {
-    fontSize: 20,
-    color: 'rgba(255,255,255,0.3)',
-  },
-  tabIconActive: { color: BRAND_LIGHT },
-  tabLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: 'rgba(255,255,255,0.3)',
-    letterSpacing: 0.4,
-  },
-  tabLabelActive: { color: BRAND_LIGHT },
-  tabDot: {
-    position: 'absolute',
-    bottom: -4,
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: BRAND,
-  },
 
   // ── Logout
   logoutBtn: {
@@ -828,7 +727,7 @@ const s = StyleSheet.create({
     padding: spacing.base,
     borderRadius: radius.cardLg,
     borderWidth: 1,
-    borderColor: BORDER2,
+    borderColor: BORDER,
     alignItems: 'center',
   },
   logoutBtnText: { color: 'rgba(255,255,255,0.45)', fontSize: 14, fontWeight: '600' },
@@ -861,7 +760,7 @@ const s = StyleSheet.create({
     padding: spacing.base,
     borderRadius: radius.cardLg,
     borderWidth: 1,
-    borderColor: BORDER2,
+    borderColor: BORDER,
     backgroundColor: CARD2,
   },
   metricTileWarning: {
@@ -881,7 +780,7 @@ const s = StyleSheet.create({
     padding: spacing.base,
     borderRadius: radius.cardLg,
     borderWidth: 1,
-    borderColor: BORDER2,
+    borderColor: BORDER,
     backgroundColor: CARD,
   },
   quickActionIcon: {
@@ -907,7 +806,7 @@ const s = StyleSheet.create({
     padding: spacing.base,
     borderRadius: radius.cardLg,
     borderWidth: 1,
-    borderColor: BORDER2,
+    borderColor: BORDER,
     backgroundColor: CARD,
   },
   staffApptCardFeatured: {

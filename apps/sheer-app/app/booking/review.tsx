@@ -1,14 +1,15 @@
 import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Redirect, router } from 'expo-router';
 import { useStripe } from '@stripe/stripe-react-native';
 import type { PublicBookingServiceSummary } from '@sheer/domain';
-import { palette, spacing } from '@sheer/design-tokens';
+import { spacing } from '@sheer/design-tokens';
 import { AppButton } from '@sheer/ui-mobile';
 import { ProtectedScreen } from '../../src/auth/ProtectedScreen';
 import { useAuth } from '../../src/auth/AuthProvider';
 import * as api from '../../src/auth/api';
+import { ScreenHeader } from '../../src/navigation/ScreenHeader';
 import {
   effectiveServices,
   totalDeposit,
@@ -27,6 +28,7 @@ import {
   STRIPE_DEFAULT_MERCHANT_COUNTRY,
   STRIPE_URL_SCHEME,
 } from '../../src/payments/stripeConfig';
+import { BG, BRAND } from '../../src/design/colors';
 
 export default function BookingReviewScreen() {
   const auth = useAuth();
@@ -132,16 +134,11 @@ export default function BookingReviewScreen() {
     <ProtectedScreen allowedRoles={['client']}>
       <SafeAreaView style={s.screen} edges={['top']}>
         {/* ── Header (matches services / date-time pages) ── */}
-        <View style={s.header}>
-          <Pressable style={({ pressed }) => [s.headerBack, pressed && s.pressed]} onPress={() => router.back()}>
-            <Text style={s.headerBackArrow}>‹</Text>
-            <Text style={s.headerBackLabel}>Back</Text>
-          </Pressable>
-          <Text style={s.headerTitle}>Complete your booking</Text>
-          <View style={s.headerStep}>
-            <Text style={s.headerStepText}>Step 4 of 5</Text>
-          </View>
-        </View>
+        <ScreenHeader
+          title="Complete your booking"
+          divider={false}
+          right={<Text style={s.headerStepText}>Step 4 of 5</Text>}
+        />
         {/* Progress underline (step 4 of 5 = 80%) */}
         <View style={s.progressTrack}>
           <View style={s.progressFill} />
@@ -347,29 +344,13 @@ function serviceEmoji(service: PublicBookingServiceSummary): string {
 
 // ── Screen styles ──────────────────────────────────────────────────────────────
 
-const BG = '#18141F';
 const BORDER_MED = 'rgba(255,255,255,0.11)';
-const BRAND = palette.brand[500];
-const BRAND_LIGHT = palette.brand[300];
 
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: BG },
   pressed: { opacity: 0.72 },
 
   // ── Header
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.base,
-    paddingVertical: spacing.md,
-    backgroundColor: BG,
-  },
-  headerBack: { flexDirection: 'row', alignItems: 'center', gap: 1, minWidth: 84 },
-  headerBackArrow: { color: BRAND_LIGHT, fontSize: 28, lineHeight: 30, fontWeight: '300', marginTop: -2 },
-  headerBackLabel: { color: BRAND_LIGHT, fontSize: 15, fontWeight: '600' },
-  headerTitle: { color: palette.white, fontSize: 17, fontWeight: '700', letterSpacing: -0.3 },
-  headerStep: { minWidth: 84, alignItems: 'flex-end' },
   headerStepText: { color: 'rgba(255,255,255,0.4)', fontSize: 13, fontWeight: '700' },
 
   // ── Progress underline (step 4 of 5 = 80%)

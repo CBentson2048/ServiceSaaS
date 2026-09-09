@@ -8,6 +8,8 @@ import { AppButton, EmptyState } from '@sheer/ui-mobile';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
+import { ScreenHeader } from '../src/navigation/ScreenHeader';
+import { BG, BRAND, BRAND_LIGHT } from '../src/design/colors';
 
 // How far ahead we offer slots when rebooking. A rolling window keeps the request
 // bounded; the server still owns the slot logic (rota, capability, granularity).
@@ -110,14 +112,7 @@ export default function RescheduleScreen() {
   return (
     <ProtectedScreen allowedRoles={['client']}>
       <SafeAreaView style={s.screen} edges={['top']}>
-        <View style={s.header}>
-          <Pressable style={({ pressed }) => [s.headerBack, pressed && s.pressed]} onPress={() => router.back()}>
-            <Text style={s.headerBackArrow}>‹</Text>
-            <Text style={s.headerBackLabel}>Back</Text>
-          </Pressable>
-          <Text style={s.headerTitle}>Pick a new time</Text>
-          <View style={s.headerSpacer} />
-        </View>
+        <ScreenHeader title="Pick a new time" />
 
         <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
           {params.label ? <Text style={s.subhead}>{params.label}</Text> : null}
@@ -249,28 +244,13 @@ function pad(value: number): string {
 
 // ── Styles ──────────────────────────────────────────────────────────────────────
 
-const BG = '#18141F';
 const BORDER_MED = 'rgba(255,255,255,0.11)';
 const CARD_BG = 'rgba(255,255,255,0.05)';
-const BRAND = palette.brand[500];
-const BRAND_LIGHT = palette.brand[300];
 
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: BG },
   pressed: { opacity: 0.72 },
 
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.base,
-    paddingVertical: spacing.md,
-  },
-  headerBack: { flexDirection: 'row', alignItems: 'center', gap: 1, minWidth: 84 },
-  headerBackArrow: { color: BRAND_LIGHT, fontSize: 28, lineHeight: 30, fontWeight: '300', marginTop: -2 },
-  headerBackLabel: { color: BRAND_LIGHT, fontSize: 15, fontWeight: '600' },
-  headerTitle: { color: palette.white, fontSize: 17, fontWeight: '700', letterSpacing: -0.3 },
-  headerSpacer: { minWidth: 84 },
 
   scroll: { gap: spacing.lg, padding: spacing.lg, paddingBottom: spacing.xl },
   subhead: { color: 'rgba(255,255,255,0.8)', fontSize: 15, fontWeight: '600' },

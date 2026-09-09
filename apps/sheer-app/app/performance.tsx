@@ -11,9 +11,10 @@ import type {
 } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
-import { StylistTabBar } from '../src/navigation/StylistTabBar';
+import { AppTabBar } from '../src/navigation/AppTabBar';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
+import { BG, BORDER, BORDER_SUBTLE, BRAND, BRAND_LIGHT, CARD } from '../src/design/colors';
 
 const PERIODS: { id: KpiPeriod; label: string }[] = [
   { id: 'today', label: 'Today' },
@@ -151,7 +152,7 @@ export default function PerformanceScreen() {
           ) : null}
         </ScrollView>
 
-        <StylistTabBar />
+        <AppTabBar />
       </SafeAreaView>
     </ProtectedScreen>
   );
@@ -587,13 +588,7 @@ function withAlpha(hex: string, alpha: number): string {
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
-const BG = palette.ink[950];
-const CARD = palette.ink[700];
 const CARD_ELEVATED = '#271F38';
-const BORDER = 'rgba(255,255,255,0.13)';
-const BORDER_SOFT = 'rgba(255,255,255,0.08)';
-const BRAND = palette.brand[500];
-const BRAND_LIGHT = palette.brand[300];
 
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: BG },
@@ -654,10 +649,10 @@ const s = StyleSheet.create({
     overflow: 'hidden',
   },
   menuItem: { paddingVertical: spacing.sm, paddingHorizontal: spacing.base },
-  menuItemPressed: { backgroundColor: BORDER_SOFT },
+  menuItemPressed: { backgroundColor: BORDER_SUBTLE },
   menuItemText: { color: palette.white, fontSize: 15, fontWeight: '600' },
   menuItemDanger: { color: palette.danger[300] },
-  menuDivider: { height: 1, backgroundColor: BORDER_SOFT, marginHorizontal: spacing.base },
+  menuDivider: { height: 1, backgroundColor: BORDER_SUBTLE, marginHorizontal: spacing.base },
 
   // ── Period selector
   periodRow: {
@@ -827,7 +822,7 @@ const s = StyleSheet.create({
     padding: spacing.base,
     borderRadius: radius.cardLg,
     borderWidth: 1,
-    borderColor: BORDER_SOFT,
+    borderColor: BORDER_SUBTLE,
     backgroundColor: CARD,
   },
   moneyCardAccent: {
@@ -845,7 +840,7 @@ const s = StyleSheet.create({
     padding: spacing.base,
     borderRadius: radius.cardLg,
     borderWidth: 1,
-    borderColor: BORDER_SOFT,
+    borderColor: BORDER_SUBTLE,
     backgroundColor: CARD_ELEVATED,
   },
   unlockHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
@@ -861,7 +856,7 @@ const s = StyleSheet.create({
     padding: spacing.base,
     borderRadius: radius.cardLg,
     borderWidth: 1,
-    borderColor: BORDER_SOFT,
+    borderColor: BORDER_SUBTLE,
     backgroundColor: 'rgba(255,255,255,0.03)',
   },
   noteText: { color: 'rgba(255,255,255,0.5)', fontSize: 12 },

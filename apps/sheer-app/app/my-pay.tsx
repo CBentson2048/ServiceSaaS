@@ -8,12 +8,15 @@ import { palette, radius, spacing } from '@sheer/design-tokens';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
+import { AppTabBar } from '../src/navigation/AppTabBar';
+import { ScreenHeader } from '../src/navigation/ScreenHeader';
 import {
   PAY_STATUS_LABELS,
   formatHours,
   formatMoney,
   periodWindowLabel,
 } from '../src/payroll/format';
+import { BG, BORDER, BORDER_SUBTLE, BRAND_LIGHT, CARD } from '../src/design/colors';
 
 /**
  * My pay — the stylist's own statements, newest first.
@@ -56,18 +59,7 @@ export default function MyPayScreen() {
   return (
     <ProtectedScreen allowedRoles={['owner', 'manager', 'stylist']}>
       <SafeAreaView style={s.screen} edges={['top']}>
-        {/* ── Header ── */}
-        <View style={s.header}>
-          <Pressable
-            style={({ pressed }) => [s.backBtn, pressed && s.pressed]}
-            onPress={() => router.back()}
-          >
-            <Text style={s.backArrow}>‹</Text>
-            <Text style={s.backLabel}>Back</Text>
-          </Pressable>
-          <Text style={s.headerTitle}>My pay</Text>
-          <View style={s.headerSpacer} />
-        </View>
+        <ScreenHeader title="My pay" />
 
         <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
           {!hasSelfView ? (
@@ -123,6 +115,8 @@ export default function MyPayScreen() {
             </>
           )}
         </ScrollView>
+
+        <AppTabBar />
       </SafeAreaView>
     </ProtectedScreen>
   );
@@ -217,31 +211,12 @@ function StatusPill({ status }: { status: PayPeriodStatus }) {
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
-const BG = palette.ink[950];
-const CARD = palette.ink[700];
-const BORDER = 'rgba(255,255,255,0.13)';
-const BORDER_SOFT = 'rgba(255,255,255,0.08)';
-const BRAND_LIGHT = palette.brand[300];
 
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: BG },
   pressed: { opacity: 0.74 },
 
   // ── Header
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.base,
-    paddingVertical: spacing.md,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: BORDER,
-  },
-  backBtn: { flexDirection: 'row', alignItems: 'center', gap: 2, minWidth: 90 },
-  backArrow: { color: BRAND_LIGHT, fontSize: 28, lineHeight: 30, fontWeight: '300', marginTop: -2 },
-  backLabel: { color: BRAND_LIGHT, fontSize: 15, fontWeight: '600' },
-  headerTitle: { color: palette.white, fontSize: 17, fontWeight: '700', letterSpacing: -0.3 },
-  headerSpacer: { minWidth: 90 },
 
   scroll: { padding: spacing.base, gap: spacing.sm, paddingBottom: spacing['4xl'] },
 
@@ -349,7 +324,7 @@ const s = StyleSheet.create({
     borderRadius: radius.cardLg,
     backgroundColor: CARD,
     borderWidth: 1,
-    borderColor: BORDER_SOFT,
+    borderColor: BORDER_SUBTLE,
   },
   rowBody: { flex: 1, gap: 5 },
   rowPeriod: { color: palette.white, fontSize: 14, fontWeight: '700' },
