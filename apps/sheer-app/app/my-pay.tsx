@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import type { MyPaySummaryListItem, PayPeriodStatus } from '@sheer/domain';
 import { userHasPermission } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
@@ -165,7 +166,10 @@ function HeroStatement({ item }: { item: MyPaySummaryListItem }) {
       {item.isStale ? (
         <Text style={s.staleNote}>Figures are being rechecked by your salon.</Text>
       ) : null}
-      <Text style={s.heroCta}>View breakdown ›</Text>
+      <View style={s.heroCtaRow}>
+        <Text style={s.heroCta}>View breakdown</Text>
+        <Ionicons name="chevron-forward" size={13} color={BRAND_LIGHT} />
+      </View>
     </Pressable>
   );
 }
@@ -192,7 +196,7 @@ function StatementCard({ item }: { item: MyPaySummaryListItem }) {
         <Text style={[s.rowAmount, owesSalon && s.rowAmountOwed]}>
           {formatMoney(item.grossPayableCents, item.currencyCode)}
         </Text>
-        <Text style={s.rowChevron}>›</Text>
+        <Ionicons name="chevron-forward" size={18} color={BRAND_LIGHT} />
       </View>
     </Pressable>
   );
@@ -313,7 +317,8 @@ const s = StyleSheet.create({
   heroValueOwed: { color: palette.warning[300] },
   heroMeta: { color: 'rgba(255,255,255,0.55)', fontSize: 12, fontWeight: '600' },
   staleNote: { color: palette.warning[300], fontSize: 12, fontWeight: '600' },
-  heroCta: { color: BRAND_LIGHT, fontSize: 13, fontWeight: '700', marginTop: spacing.xs },
+  heroCtaRow: { flexDirection: 'row', alignItems: 'center', gap: 2, marginTop: spacing.xs },
+  heroCta: { color: BRAND_LIGHT, fontSize: 13, fontWeight: '700' },
 
   // ── Earlier statements
   rowCard: {
@@ -333,7 +338,6 @@ const s = StyleSheet.create({
   rowRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   rowAmount: { color: 'rgba(255,255,255,0.88)', fontSize: 16, fontWeight: '800' },
   rowAmountOwed: { color: palette.warning[300] },
-  rowChevron: { color: BRAND_LIGHT, fontSize: 22, fontWeight: '300' },
 
   // ── Status pill
   statusPill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill, borderWidth: 1 },

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import type { PayPeriodStatus, PaySummaryBreakdown, PaySummaryHours } from '@sheer/domain';
 import { HOUR_CATEGORY_LABELS } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
@@ -16,7 +17,7 @@ import {
   formatMoney,
   periodWindowLabel,
 } from '../src/payroll/format';
-import { BG, BORDER, BRAND_LIGHT, CARD } from '../src/design/colors';
+import { BG, BORDER, BRAND_LIGHT, CARD, DANGER, SUCCESS } from '../src/design/colors';
 
 /**
  * One pay statement, fully explained. The breakdown comes from
@@ -276,10 +277,16 @@ function StatementBody({
                 : 'Accelerator could not be evaluated'}
           </Text>
           {breakdown.accelerator.conditions.map((condition, index) => (
-            <Text key={index} style={s.infoBody}>
-              {condition.passed === true ? '✓' : condition.passed === false ? '✕' : '–'}{' '}
-              {conditionLabel(condition.metric)}
-            </Text>
+            <View key={index} style={s.conditionRow}>
+              {condition.passed === true ? (
+                <Ionicons name="checkmark-circle" size={14} color={SUCCESS} />
+              ) : condition.passed === false ? (
+                <Ionicons name="close-circle" size={14} color={DANGER} />
+              ) : (
+                <Text style={s.infoBody}>–</Text>
+              )}
+              <Text style={s.infoBody}>{conditionLabel(condition.metric)}</Text>
+            </View>
           ))}
         </View>
       ) : null}
@@ -523,6 +530,7 @@ const s = StyleSheet.create({
   },
   infoTitle: { color: palette.white, fontSize: 14, fontWeight: '800' },
   infoBody: { color: 'rgba(255,255,255,0.6)', fontSize: 12, lineHeight: 17 },
+  conditionRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
 
   footNote: { color: 'rgba(255,255,255,0.32)', fontSize: 11, lineHeight: 16, textAlign: 'center' },
 });

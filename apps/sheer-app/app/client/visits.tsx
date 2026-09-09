@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import type { CrmVisitSummary } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { ProtectedScreen } from '../../src/auth/ProtectedScreen';
@@ -94,8 +95,13 @@ export default function VisitHistoryScreen() {
             clearButtonMode="while-editing"
           />
           {search.length > 0 ? (
-            <Pressable onPress={() => setSearch('')} style={s.clearBtn}>
-              <Text style={s.clearBtnText}>✕</Text>
+            <Pressable
+              onPress={() => setSearch('')}
+              accessibilityRole="button"
+              accessibilityLabel="Clear search"
+              style={s.clearBtn}
+            >
+              <Ionicons name="close-circle" size={16} color="rgba(255,255,255,0.35)" />
             </Pressable>
           ) : null}
         </View>
@@ -178,7 +184,14 @@ export default function VisitHistoryScreen() {
                   disabled={page === 1}
                   style={({ pressed }) => [s.pageBtn, page === 1 && s.pageBtnDisabled, pressed && s.pressed]}
                 >
-                  <Text style={[s.pageBtnText, page === 1 && s.pageBtnTextDisabled]}>‹ Prev</Text>
+                  <View style={s.pageBtnRow}>
+                    <Ionicons
+                      name="chevron-back"
+                      size={13}
+                      color={page === 1 ? 'rgba(255,255,255,0.3)' : BRAND_LIGHT}
+                    />
+                    <Text style={[s.pageBtnText, page === 1 && s.pageBtnTextDisabled]}>Prev</Text>
+                  </View>
                 </Pressable>
 
                 <View style={s.pageNumbers}>
@@ -204,7 +217,14 @@ export default function VisitHistoryScreen() {
                   disabled={page === totalPages}
                   style={({ pressed }) => [s.pageBtn, page === totalPages && s.pageBtnDisabled, pressed && s.pressed]}
                 >
-                  <Text style={[s.pageBtnText, page === totalPages && s.pageBtnTextDisabled]}>Next ›</Text>
+                  <View style={s.pageBtnRow}>
+                    <Text style={[s.pageBtnText, page === totalPages && s.pageBtnTextDisabled]}>Next</Text>
+                    <Ionicons
+                      name="chevron-forward"
+                      size={13}
+                      color={page === totalPages ? 'rgba(255,255,255,0.3)' : BRAND_LIGHT}
+                    />
+                  </View>
                 </Pressable>
               </View>
             ) : null}
@@ -272,12 +292,13 @@ function VisitCard({
         {/* Rebooking badge */}
         {visit.rebooked ? (
           <View style={s.rebookedBadge}>
-            <Text style={s.rebookedText}>✓ Rebooked</Text>
+            <Ionicons name="checkmark" size={11} color={palette.success[300]} />
+            <Text style={s.rebookedText}>Rebooked</Text>
           </View>
         ) : null}
       </View>
 
-      <Text style={s.visitChevron}>›</Text>
+      <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.22)" style={s.visitChevron} />
     </Pressable>
   );
 }
@@ -362,7 +383,6 @@ const s = StyleSheet.create({
   },
   searchInputFocused: { color: palette.white },
   clearBtn: { padding: spacing.xs },
-  clearBtnText: { color: 'rgba(255,255,255,0.35)', fontSize: 14 },
 
   // ── Stats bar
   statsBar: {
@@ -491,6 +511,9 @@ const s = StyleSheet.create({
   visitMetaDot: { width: 3, height: 3, borderRadius: 1.5, backgroundColor: 'rgba(255,255,255,0.2)' },
   visitMetaPrice: { color: BRAND_LIGHT, fontSize: 12, fontWeight: '700' },
   rebookedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
     alignSelf: 'flex-start',
     paddingHorizontal: 8,
     paddingVertical: 2,
@@ -501,11 +524,7 @@ const s = StyleSheet.create({
     marginTop: 2,
   },
   rebookedText: { color: palette.success[300], fontSize: 10, fontWeight: '700' },
-  visitChevron: {
-    color: 'rgba(255,255,255,0.22)',
-    fontSize: 20,
-    paddingRight: spacing.md,
-  },
+  visitChevron: { marginRight: spacing.md },
 
   // ── Pagination
   pagination: {
@@ -524,6 +543,7 @@ const s = StyleSheet.create({
     backgroundColor: CARD,
   },
   pageBtnDisabled: { opacity: 0.3 },
+  pageBtnRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   pageBtnText: { color: BRAND_LIGHT, fontSize: 13, fontWeight: '700' },
   pageBtnTextDisabled: { color: 'rgba(255,255,255,0.3)' },
   pageNumbers: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },

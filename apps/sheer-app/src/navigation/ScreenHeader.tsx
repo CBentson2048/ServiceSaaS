@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { spacing } from '@sheer/design-tokens';
 import { BORDER, BRAND_LIGHT, TEXT } from '../design/colors';
@@ -56,7 +57,7 @@ export function ScreenHeader({
             style={({ pressed }) => [s.backBtn, pressed && s.pressed]}
             onPress={onBack ?? (() => router.back())}
           >
-            <Text style={s.backArrow}>‹</Text>
+            <Ionicons name="chevron-back" size={26} color={BRAND_LIGHT} style={s.backArrow} />
             <Text style={s.backLabel} numberOfLines={1}>
               {backLabel}
             </Text>
@@ -88,15 +89,9 @@ const s = StyleSheet.create({
   // minWidths only worked while every screen agreed on the number.
   side: { flex: 1, flexDirection: 'row', alignItems: 'center' },
   sideRight: { justifyContent: 'flex-end' },
-  backBtn: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  backBtn: { flexDirection: 'row', alignItems: 'center', gap: 0, marginLeft: -6 },
   pressed: { opacity: 0.6 },
-  backArrow: {
-    color: BRAND_LIGHT,
-    fontSize: 28,
-    lineHeight: 30,
-    fontWeight: '300',
-    marginTop: -2,
-  },
+  backArrow: { marginRight: -2 },
   backLabel: { color: BRAND_LIGHT, fontSize: 15, fontWeight: '600' },
   title: {
     flex: 2,

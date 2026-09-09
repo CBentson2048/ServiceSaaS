@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import type { PublicBookingLocationSummary, PublicSalonSummary } from '@sheer/domain';
 import { palette, spacing } from '@sheer/design-tokens';
 import { AppButton, Card, EmptyState, SectionHeader } from '../../src/design';
@@ -347,7 +348,9 @@ function SalonCard({
         <View style={styles.contactGroup}>
           {addressLine ? (
             <View style={styles.contactLine}>
-              <Text style={styles.contactGlyph}>◉</Text>
+              <View style={styles.contactGlyph}>
+                <Ionicons name="location" size={14} color={BRAND_LIGHT} />
+              </View>
               <Text style={styles.contactText}>{addressLine}</Text>
             </View>
           ) : null}
@@ -357,7 +360,9 @@ function SalonCard({
               onPress={callSalon}
               style={({ pressed }) => [styles.contactLine, pressed && styles.pressed]}
             >
-              <Text style={styles.contactGlyph}>✆</Text>
+              <View style={styles.contactGlyph}>
+                <Ionicons name="call" size={14} color={BRAND_LIGHT} />
+              </View>
               <Text style={styles.contactLink}>{location.phone}</Text>
             </Pressable>
           ) : null}

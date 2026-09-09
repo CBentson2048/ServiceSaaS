@@ -2,14 +2,17 @@ import { useState } from 'react';
 import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Redirect, router } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import { useStripe } from '@stripe/stripe-react-native';
 import type { PublicBookingServiceSummary } from '@sheer/domain';
-import { spacing } from '@sheer/design-tokens';
+import { palette, spacing } from '@sheer/design-tokens';
 import { AppButton } from '../../src/design';
 import { ProtectedScreen } from '../../src/auth/ProtectedScreen';
 import { useAuth } from '../../src/auth/AuthProvider';
 import * as api from '../../src/auth/api';
 import { ScreenHeader } from '../../src/navigation/ScreenHeader';
+import { serviceIcon } from '../../src/booking/serviceIcon';
+import { BRAND_LIGHT, DANGER, WARNING } from '../../src/design/colors';
 import {
   effectiveServices,
   totalDeposit,
@@ -152,7 +155,7 @@ export default function BookingReviewScreen() {
           {/* ── Action-needed / deposit notice ── */}
           {error ? (
             <View style={[styles.noticeBanner, styles.noticeBannerDanger]}>
-              <Text style={styles.noticeGlyph}>⚠️</Text>
+              <Ionicons name="warning" size={18} color={DANGER} style={styles.noticeGlyph} />
               <View style={styles.noticeTextWrap}>
                 <Text style={styles.noticeTitle}>Action needed</Text>
                 <Text style={styles.noticeBody}>{error}</Text>
@@ -160,7 +163,7 @@ export default function BookingReviewScreen() {
             </View>
           ) : deposit > 0 ? (
             <View style={styles.noticeBanner}>
-              <Text style={styles.noticeGlyph}>🔒</Text>
+              <Ionicons name="lock-closed" size={18} color={WARNING} style={styles.noticeGlyph} />
               <View style={styles.noticeTextWrap}>
                 <Text style={styles.noticeTitle}>Deposit required</Text>
                 <Text style={styles.noticeBody}>
@@ -189,10 +192,10 @@ export default function BookingReviewScreen() {
           <View style={s.sectionGap}>
             <Text style={styles.groupLabel}>Appointment details</Text>
             <View style={styles.selectionCard}>
-              <DetailRow glyph="📍" label="Location" value={location.name} divider={false} />
-              <DetailRow glyph="✂️" label="Stylist" value={slot.stylistName} />
-              <DetailRow glyph="🗓" label="When" value={formatDateTime(slot.startAt)} />
-              <DetailRow glyph="🔔" label="Confirmations" value={preference} />
+              <DetailRow icon="location" label="Location" value={location.name} divider={false} />
+              <DetailRow icon="cut" label="Stylist" value={slot.stylistName} />
+              <DetailRow icon="calendar" label="When" value={formatDateTime(slot.startAt)} />
+              <DetailRow icon="notifications" label="Confirmations" value={preference} />
             </View>
           </View>
 
@@ -234,8 +237,11 @@ export default function BookingReviewScreen() {
               submitting
                 ? 'Confirming...'
                 : deposit > 0
-                  ? 'Pay deposit & confirm  →'
-                  : 'Confirm booking  →'
+                  ? 'Pay deposit & confirm'
+                  : 'Confirm booking'
+            }
+            trailingIcon={
+              submitting ? undefined : <Ionicons name="arrow-forward" size={16} color={palette.white} />
             }
             disabled={submitting}
             onPress={() => void confirm()}
@@ -252,7 +258,7 @@ function ServiceLine({ service }: { service: PublicBookingServiceSummary }) {
   return (
     <View style={styles.selectionRow}>
       <View style={styles.selectionIcon}>
-        <Text style={styles.selectionEmoji}>{serviceEmoji(service)}</Text>
+        <Ionicons name={serviceIcon(service)} size={20} color={BRAND_LIGHT} />
       </View>
       <View style={styles.flex}>
         <Text style={styles.selectionName} numberOfLines={2}>
@@ -268,12 +274,12 @@ function ServiceLine({ service }: { service: PublicBookingServiceSummary }) {
 // ── Appointment detail row ──────────────────────────────────────────────────────
 
 function DetailRow({
-  glyph,
+  icon,
   label,
   value,
   divider = true,
 }: {
-  glyph: string;
+  icon: React.ComponentProps<typeof Ionicons>['name'];
   label: string;
   value: string;
   divider?: boolean;
@@ -282,7 +288,9 @@ function DetailRow({
     <View>
       {divider ? <View style={styles.divider} /> : null}
       <View style={styles.reviewDetailRow}>
-        <Text style={styles.reviewDetailGlyph}>{glyph}</Text>
+        <View style={styles.reviewDetailGlyph}>
+          <Ionicons name={icon} size={16} color={palette.brand[300]} />
+        </View>
         <View style={styles.flex}>
           <Text style={styles.reviewDetailLabel}>{label}</Text>
           <Text style={styles.reviewDetailValue}>{value}</Text>
@@ -318,28 +326,6 @@ function formatPreference(value: string): string {
     .split('_')
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ');
-}
-
-// ── Service emoji (mirrors the services page) ──────────────────────────────────────
-
-const SERVICE_EMOJI: { keywords: string[]; emoji: string }[] = [
-  { keywords: ['colour', 'color', 'tint', 'highlight', 'balayage', 'toner'], emoji: '🎨' },
-  { keywords: ['cut', 'style', 'trim', 'fringe'], emoji: '✂️' },
-  { keywords: ['blow', 'dry', 'wave', 'curl'], emoji: '💨' },
-  { keywords: ['treatment', 'condition', 'mask', 'keratin', 'olaplex'], emoji: '✨' },
-  { keywords: ['wash', 'shampoo'], emoji: '🧴' },
-  { keywords: ['perm', 'relax', 'smooth'], emoji: '🌀' },
-  { keywords: ['braid', 'updo', 'extension'], emoji: '💇' },
-  { keywords: ['beard', 'shave', 'barber'], emoji: '🪒' },
-  { keywords: ['nail', 'manicure', 'pedicure'], emoji: '💅' },
-];
-
-function serviceEmoji(service: PublicBookingServiceSummary): string {
-  const haystack = `${service.name} ${service.category ?? ''}`.toLowerCase();
-  for (const entry of SERVICE_EMOJI) {
-    if (entry.keywords.some((keyword) => haystack.includes(keyword))) return entry.emoji;
-  }
-  return '💇';
 }
 
 // ── Screen styles ──────────────────────────────────────────────────────────────

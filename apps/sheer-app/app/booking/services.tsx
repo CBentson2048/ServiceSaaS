@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Redirect, router } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import type {
   PublicBookingAvailabilitySlot,
   PublicBookingServiceSummary,
@@ -14,6 +15,7 @@ import { ProtectedScreen } from '../../src/auth/ProtectedScreen';
 import { useAuth } from '../../src/auth/AuthProvider';
 import * as api from '../../src/auth/api';
 import { effectiveServices, totalDuration, totalPrice, useBookingFlow } from '../../src/booking/BookingFlowProvider';
+import { serviceIcon } from '../../src/booking/serviceIcon';
 import { bookingStyles as styles, formatDateTime, formatDuration, formatMoney } from '../../src/booking/bookingStyles';
 import { ScreenHeader } from '../../src/navigation/ScreenHeader';
 import { BG, BRAND, BRAND_LIGHT } from '../../src/design/colors';
@@ -337,7 +339,10 @@ export default function BookingServicesScreen() {
             <Text style={s.footerHintMuted}>Pick at least one service to continue</Text>
           )}
           <AppButton
-            label={resolving ? 'Finding next available…' : 'Continue  →'}
+            label={resolving ? 'Finding next available…' : 'Continue'}
+            trailingIcon={
+              resolving ? undefined : <Ionicons name="arrow-forward" size={16} color={palette.white} />
+            }
             disabled={!canContinue || resolving}
             onPress={() => void continueFromServices()}
           />
@@ -386,10 +391,12 @@ function ServiceCard({
       style={({ pressed }) => [styles.serviceCard, selected && styles.serviceCardSelected, pressed && styles.pressed]}
     >
       <View style={styles.serviceCardHead}>
-        <Text style={styles.serviceEmoji}>{serviceEmoji(service)}</Text>
+        <View style={styles.serviceIconWrap}>
+          <Ionicons name={serviceIcon(service)} size={18} color={BRAND_LIGHT} />
+        </View>
         {selected ? (
           <View style={styles.serviceCheck}>
-            <Text style={styles.serviceCheckMark}>✓</Text>
+            <Ionicons name="checkmark" size={13} color={palette.white} />
           </View>
         ) : null}
       </View>
@@ -519,26 +526,6 @@ function initials(name: string): string {
   if (parts.length === 0) return '?';
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
-
-const SERVICE_EMOJI: { keywords: string[]; emoji: string }[] = [
-  { keywords: ['colour', 'color', 'tint', 'highlight', 'balayage', 'toner'], emoji: '🎨' },
-  { keywords: ['cut', 'style', 'trim', 'fringe'], emoji: '✂️' },
-  { keywords: ['blow', 'dry', 'wave', 'curl'], emoji: '💨' },
-  { keywords: ['treatment', 'condition', 'mask', 'keratin', 'olaplex'], emoji: '✨' },
-  { keywords: ['wash', 'shampoo'], emoji: '🧴' },
-  { keywords: ['perm', 'relax', 'smooth'], emoji: '🌀' },
-  { keywords: ['braid', 'updo', 'extension'], emoji: '💇' },
-  { keywords: ['beard', 'shave', 'barber'], emoji: '🪒' },
-  { keywords: ['nail', 'manicure', 'pedicure'], emoji: '💅' },
-];
-
-function serviceEmoji(service: PublicBookingServiceSummary): string {
-  const haystack = `${service.name} ${service.category ?? ''}`.toLowerCase();
-  for (const entry of SERVICE_EMOJI) {
-    if (entry.keywords.some((keyword) => haystack.includes(keyword))) return entry.emoji;
-  }
-  return '💇';
 }
 
 // ── Category grouping ─────────────────────────────────────────────────────────────

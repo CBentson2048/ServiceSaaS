@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import type {
   CommissionResult,
   CommissionTier,
@@ -252,10 +253,8 @@ function HeroCard({ stylist }: { stylist: StylistKpiResult }) {
 function MeterMark({ label, met, position }: { label: string; met: boolean; position: number }) {
   return (
     <View style={[s.meterMark, { left: `${position}%` }]}>
-      <Text style={[s.meterScaleText, met && s.meterScaleMet]}>
-        {met ? '✓ ' : ''}
-        {label}
-      </Text>
+      {met ? <Ionicons name="checkmark" size={9} color={palette.success[300]} /> : null}
+      <Text style={[s.meterScaleText, met && s.meterScaleMet]}>{label}</Text>
     </View>
   );
 }
@@ -388,8 +387,11 @@ function TargetCard({
       <Text style={[s.targetValue, { color }]}>{value}</Text>
       <Text style={s.targetLabel}>{label}</Text>
       <View style={[s.targetStatus, { backgroundColor: withAlpha(color, 0.14) }]}>
+        {!neutral ? (
+          <Ionicons name={met ? 'checkmark-circle' : 'close-circle'} size={11} color={color} />
+        ) : null}
         <Text style={[s.targetStatusText, { color }]} numberOfLines={1} adjustsFontSizeToFit>
-          {neutral ? status : `${met ? '✓' : '✕'} ${status}`}
+          {status}
         </Text>
       </View>
     </View>
@@ -752,7 +754,13 @@ const s = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.35)',
   },
   meterScale: { height: 16, position: 'relative', marginTop: 2 },
-  meterMark: { position: 'absolute', transform: [{ translateX: -14 }] },
+  meterMark: {
+    position: 'absolute',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    transform: [{ translateX: -14 }],
+  },
   meterScaleText: { color: 'rgba(255,255,255,0.4)', fontSize: 10, fontWeight: '700' },
   meterScaleEnd: { position: 'absolute', right: 0, top: 0 },
   meterScaleMet: { color: palette.success[300] },
@@ -805,8 +813,11 @@ const s = StyleSheet.create({
   targetValue: { fontSize: 22, fontWeight: '800', letterSpacing: -0.5 },
   targetLabel: { color: 'rgba(255,255,255,0.6)', fontSize: 12, fontWeight: '600' },
   targetStatus: {
+    flexDirection: 'row',
     alignSelf: 'stretch',
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
     borderRadius: radius.pill,
     paddingVertical: 4,
     paddingHorizontal: 6,

@@ -48,7 +48,7 @@ export default function BookingSuccessScreen() {
           {/* ── Confirmation hero ── */}
           <View style={s.heroBlock}>
             <View style={s.successMark}>
-              <Text style={s.successMarkText}>✓</Text>
+              <Ionicons name="checkmark" size={34} color={palette.success[300]} />
             </View>
             <Text style={s.heroTitle}>Booking Confirmed!</Text>
             <Text style={s.heroBody}>Your appointment is all set.</Text>
@@ -201,11 +201,6 @@ const s = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(74,222,128,0.42)',
     marginBottom: spacing.xs,
-  },
-  successMarkText: {
-    color: palette.success[300],
-    fontSize: 30,
-    fontWeight: '800',
   },
   heroTitle: {
     color: palette.white,

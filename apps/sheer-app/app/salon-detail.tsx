@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import type {
   ClientLabFormulaSummary,
   CrmVisitSummary,
@@ -173,7 +174,7 @@ function VisitRow({ visit, isLast }: { visit: CrmVisitSummary; isLast: boolean }
           ) : null}
         </View>
       </View>
-      <Text style={s.recordChevron}>›</Text>
+      <Ionicons name="chevron-forward" size={15} color="rgba(255,255,255,0.28)" />
     </Pressable>
   );
 }
@@ -359,7 +360,6 @@ const s = StyleSheet.create({
   recordMeta: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   recordMetaText: { color: 'rgba(255,255,255,0.48)', fontSize: 12 },
   recordMetaDot: { width: 3, height: 3, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.3)' },
-  recordChevron: { color: 'rgba(255,255,255,0.28)', fontSize: 18 },
 
   // Formula cards
   labList: { gap: spacing.sm },

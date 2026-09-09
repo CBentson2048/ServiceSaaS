@@ -9,6 +9,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import type { RotaLeaveRequest, RotaShift, StylistMyWeekResponse } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { AppButton, EmptyState, Screen } from '../src/design';
@@ -140,7 +141,7 @@ export default function RotaScreen() {
             onPress={openLeaveModal}
             style={({ pressed }) => [styles.requestBtn, pressed && styles.pressed]}
           >
-            <Text style={styles.requestBtnIcon}>＋</Text>
+            <Ionicons name="add" size={16} color={palette.white} />
             <Text style={styles.requestBtnText}>Request leave</Text>
             {pendingLeaveCount > 0 ? (
               <View style={styles.requestBtnBadge}>
@@ -266,7 +267,7 @@ function WeekStrip({
             onPress={() => onShiftWeek(-7)}
             style={({ pressed }) => [styles.calendarNavButton, pressed && styles.pressed]}
           >
-            <Text style={styles.calendarNavText}>‹</Text>
+            <Ionicons name="chevron-back" size={17} color={palette.white} />
           </Pressable>
           <Pressable
             accessibilityRole="button"
@@ -274,7 +275,7 @@ function WeekStrip({
             onPress={() => onShiftWeek(7)}
             style={({ pressed }) => [styles.calendarNavButton, pressed && styles.pressed]}
           >
-            <Text style={styles.calendarNavText}>›</Text>
+            <Ionicons name="chevron-forward" size={17} color={palette.white} />
           </Pressable>
         </View>
       </View>
@@ -365,7 +366,7 @@ function LeaveModal({
               onPress={onClose}
               style={({ pressed }) => [styles.modalClose, pressed && styles.pressed]}
             >
-              <Text style={styles.modalCloseText}>✕</Text>
+              <Ionicons name="close" size={16} color={palette.white} />
             </Pressable>
           </View>
 
@@ -703,7 +704,6 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 4,
   },
-  requestBtnIcon: { color: palette.white, fontSize: 15, fontWeight: '400', marginTop: -1 },
   requestBtnText: { color: palette.white, fontSize: 13, fontWeight: '800' },
   requestBtnBadge: {
     minWidth: 18,
@@ -749,12 +749,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.06)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.14)',
-  },
-  calendarNavText: {
-    color: palette.white,
-    fontSize: 18,
-    fontWeight: '900',
-    lineHeight: 20,
   },
   calendarWeek: {
     flexDirection: 'row',
@@ -1019,7 +1013,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.14)',
   },
-  modalCloseText: { color: palette.white, fontSize: 14, fontWeight: '800' },
   modalScroll: {
     gap: spacing.sm,
     paddingBottom: spacing['4xl'],

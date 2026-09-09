@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Redirect, router } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import type {
   CrmVisitSummary,
   MobileClientDashboardResponse,
@@ -141,7 +142,7 @@ function ClientDashboard({ dashboard }: { dashboard: MobileClientDashboardRespon
       ) : (
         <View style={s.emptyApptCard}>
           <Text style={s.emptyApptTitle}>No upcoming appointments</Text>
-          <Text style={s.emptyApptBody}>Book your next visit whenever you're ready.</Text>
+          <Text style={s.emptyApptBody}>Book your next visit whenever you&apos;re ready.</Text>
         </View>
       )}
 
@@ -150,7 +151,7 @@ function ClientDashboard({ dashboard }: { dashboard: MobileClientDashboardRespon
         onPress={() => router.push('/booking/location')}
         style={({ pressed }) => [s.bookBtn, pressed && s.pressed]}
       >
-        <Text style={s.bookBtnIcon}>＋</Text>
+        <Ionicons name="add" size={18} color={palette.white} />
         <Text style={s.bookBtnText}>Book an appointment</Text>
       </Pressable>
 
@@ -162,7 +163,7 @@ function ClientDashboard({ dashboard }: { dashboard: MobileClientDashboardRespon
           style={({ pressed }) => [s.viewAllBtn, pressed && s.pressed]}
         >
           <Text style={s.viewAllText}>View all</Text>
-          <Text style={s.viewAllChevron}>›</Text>
+          <Ionicons name="chevron-forward" size={13} color={BRAND_LIGHT} style={s.viewAllChevron} />
         </Pressable>
       </View>
 
@@ -237,7 +238,7 @@ function VisitRow({ visit, isLast }: { visit: CrmVisitSummary; isLast: boolean }
       </View>
       <View style={s.visitRowRight}>
         <Text style={s.visitRowLocation}>Pinner</Text>
-        <Text style={s.visitRowChevron}>›</Text>
+        <Ionicons name="chevron-forward" size={15} color="rgba(255,255,255,0.28)" />
       </View>
     </View>
   );
@@ -253,7 +254,7 @@ function ManagerDashboard({ dashboard }: { dashboard: MobileManagerDashboardResp
       <View style={s.accentPanel}>
         <Text style={s.accentPanelEyebrow}>LOCATION OPERATIONS</Text>
         <Text style={s.accentPanelTitle}>{dashboard.location.name}</Text>
-        <Text style={s.accentPanelBody}>Today's live location summary.</Text>
+        <Text style={s.accentPanelBody}>Today&apos;s live location summary.</Text>
       </View>
 
       <View style={s.metricRow}>
@@ -278,11 +279,11 @@ function ManagerDashboard({ dashboard }: { dashboard: MobileManagerDashboardResp
       <SectionRow title="Quick actions" />
       <View style={s.quickGrid}>
         {showZac ? (
-          <QuickAction icon="Z" title="ZAC" subtitle="AI business assistant" onPress={() => router.push('/zac')} />
+          <QuickAction icon="sparkles" title="ZAC" subtitle="AI business assistant" onPress={() => router.push('/zac')} />
         ) : null}
-        <QuickAction icon="P" title="Profile" subtitle="Your details" onPress={() => router.push('/profile')} />
-        <QuickAction icon="B" title="Bookings" subtitle="Today's diary" onPress={() => router.push('/bookings')} />
-        <QuickAction icon="R" title="Rota" subtitle="Team cover" onPress={() => router.push('/rota')} />
+        <QuickAction icon="person" title="Profile" subtitle="Your details" onPress={() => router.push('/profile')} />
+        <QuickAction icon="calendar" title="Bookings" subtitle="Today's diary" onPress={() => router.push('/bookings')} />
+        <QuickAction icon="time" title="Rota" subtitle="Team cover" onPress={() => router.push('/rota')} />
       </View>
     </>
   );
@@ -306,10 +307,10 @@ function OwnerDashboard({ dashboard }: { dashboard: MobileOwnerDashboardResponse
       <SectionRow title="Quick actions" />
       <View style={s.quickGrid}>
         {showZac ? (
-          <QuickAction icon="Z" title="ZAC" subtitle="AI business assistant" onPress={() => router.push('/zac')} />
+          <QuickAction icon="sparkles" title="ZAC" subtitle="AI business assistant" onPress={() => router.push('/zac')} />
         ) : null}
-        <QuickAction icon="P" title="Profile" subtitle="Your details" onPress={() => router.push('/profile')} />
-        <QuickAction icon="D" title="Dashboard" subtitle="Mobile overview" onPress={() => router.push('/dashboard')} />
+        <QuickAction icon="person" title="Profile" subtitle="Your details" onPress={() => router.push('/profile')} />
+        <QuickAction icon="grid" title="Dashboard" subtitle="Mobile overview" onPress={() => router.push('/dashboard')} />
       </View>
     </>
   );
@@ -348,7 +349,7 @@ function QuickAction({
   subtitle,
   onPress,
 }: {
-  icon: string;
+  icon: React.ComponentProps<typeof Ionicons>['name'];
   title: string;
   subtitle: string;
   onPress: () => void;
@@ -360,13 +361,13 @@ function QuickAction({
       style={({ pressed }) => [s.quickAction, pressed && s.pressed]}
     >
       <View style={s.quickActionIcon}>
-        <Text style={s.quickActionIconText}>{icon}</Text>
+        <Ionicons name={icon} size={18} color={palette.white} />
       </View>
       <View style={s.quickActionInfo}>
         <Text style={s.quickActionTitle}>{title}</Text>
         <Text style={s.quickActionSub}>{subtitle}</Text>
       </View>
-      <Text style={s.quickActionChevron}>›</Text>
+      <Ionicons name="chevron-forward" size={18} color={BRAND_LIGHT} />
     </Pressable>
   );
 }
@@ -647,7 +648,6 @@ const s = StyleSheet.create({
     shadowRadius: 12,
     elevation: 5,
   },
-  bookBtnIcon: { color: palette.white, fontSize: 18, fontWeight: '300', marginTop: -1 },
   bookBtnText: { color: palette.white, fontSize: 15, fontWeight: '800', letterSpacing: 0.2 },
 
   // ── Section header with View all
@@ -678,7 +678,7 @@ const s = StyleSheet.create({
     backgroundColor: 'rgba(166,124,245,0.08)',
   },
   viewAllText: { color: BRAND_LIGHT, fontSize: 12, fontWeight: '700' },
-  viewAllChevron: { color: BRAND_LIGHT, fontSize: 16, lineHeight: 18 },
+  viewAllChevron: { marginLeft: -2 },
 
   // ── Visit list
   visitList: {
@@ -707,7 +707,6 @@ const s = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
-  visitRowChevron: { color: 'rgba(255,255,255,0.28)', fontSize: 18 },
 
   // ── Empty visits
   emptyVisits: {
@@ -793,11 +792,9 @@ const s = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(196,160,245,0.3)',
   },
-  quickActionIconText: { color: palette.white, fontSize: 15, fontWeight: '800' },
   quickActionInfo: { flex: 1, gap: 2 },
   quickActionTitle: { color: palette.white, fontSize: 14, fontWeight: '700' },
   quickActionSub: { color: 'rgba(255,255,255,0.45)', fontSize: 12 },
-  quickActionChevron: { color: BRAND_LIGHT, fontSize: 22, fontWeight: '300' },
 
   // ── Staff appointment cards
   staffApptList: { gap: spacing.sm },

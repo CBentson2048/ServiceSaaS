@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Redirect, router } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import type { PublicBookingAvailabilitySlot, PublicBookingStylistSummary } from '@sheer/domain';
 import { palette, spacing } from '@sheer/design-tokens';
 import { AppButton, Card, EmptyState } from '../../src/design';
@@ -190,7 +191,7 @@ export default function BookingDateTimeScreen() {
                       pressed && canGoPrevMonth && s.pressed,
                     ]}
                   >
-                    <Text style={styles.calNavArrow}>‹</Text>
+                    <Ionicons name="chevron-back" size={19} color={palette.white} />
                   </Pressable>
                   <Pressable
                     accessibilityRole="button"
@@ -199,7 +200,7 @@ export default function BookingDateTimeScreen() {
                     style={({ pressed }) => [styles.calMonthBtn, pressed && s.pressed]}
                   >
                     <Text style={styles.monthLabel}>{monthLabel}</Text>
-                    <Text style={styles.calMonthCaret}>▾</Text>
+                    <Ionicons name="chevron-down" size={13} color={palette.brand[300]} />
                   </Pressable>
                   <Pressable
                     accessibilityRole="button"
@@ -207,7 +208,7 @@ export default function BookingDateTimeScreen() {
                     onPress={goNextMonth}
                     style={({ pressed }) => [styles.calNavBtn, pressed && s.pressed]}
                   >
-                    <Text style={styles.calNavArrow}>›</Text>
+                    <Ionicons name="chevron-forward" size={19} color={palette.white} />
                   </Pressable>
                 </View>
 
@@ -409,7 +410,7 @@ function CalendarModal({
                 pressed && canGoPrev && styles.pressed,
               ]}
             >
-              <Text style={styles.calNavArrow}>‹</Text>
+              <Ionicons name="chevron-back" size={19} color={palette.white} />
             </Pressable>
             <Text style={styles.calSheetTitle}>{title}</Text>
             <Pressable
@@ -418,7 +419,7 @@ function CalendarModal({
               onPress={onNext}
               style={({ pressed }) => [styles.calNavBtn, pressed && styles.pressed]}
             >
-              <Text style={styles.calNavArrow}>›</Text>
+              <Ionicons name="chevron-forward" size={19} color={palette.white} />
             </Pressable>
           </View>
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import type {
   CreateStaffBookingResponse,
   CrmClientSummary,
@@ -12,7 +13,7 @@ import type {
 } from '@sheer/domain';
 import { applyStylistServicePrices } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
-import { AppButton, Card, EmptyState, Screen, SectionHeader } from '../src/design';
+import { AppButton, Card, Screen, SectionHeader } from '../src/design';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
 import { AppTabBar } from '../src/navigation/AppTabBar';
 import { useAuth } from '../src/auth/AuthProvider';
@@ -487,7 +488,7 @@ export default function NewBookingScreen() {
                       </Text>
                     </View>
                     <View style={[s.checkbox, active && s.checkboxActive]}>
-                      {active ? <Text style={s.checkboxTick}>✓</Text> : null}
+                      {active ? <Ionicons name="checkmark" size={13} color={palette.white} /> : null}
                     </View>
                   </Pressable>
                 );
@@ -620,7 +621,7 @@ export default function NewBookingScreen() {
           </ChipRow>
           <Pressable onPress={() => setSendConfirmation((v) => !v)} style={s.toggleRow}>
             <View style={[s.checkbox, sendConfirmation && s.checkboxActive]}>
-              {sendConfirmation ? <Text style={s.checkboxTick}>✓</Text> : null}
+              {sendConfirmation ? <Ionicons name="checkmark" size={13} color={palette.white} /> : null}
             </View>
             <Text style={s.toggleLabel}>Send client confirmation</Text>
           </Pressable>
@@ -809,7 +810,6 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
   checkboxActive: { backgroundColor: palette.brand[500], borderColor: palette.brand[500] },
-  checkboxTick: { color: palette.white, fontSize: 13, fontWeight: '900' },
   totals: { color: palette.brand[300], fontSize: 13, fontWeight: '800', marginTop: spacing.xs },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.xs },
   chip: {

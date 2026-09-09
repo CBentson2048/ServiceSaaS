@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import type { AppointmentCompletionResponse, CreateStylistRebookingRequest, StaffBookingSummary } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { AppButton, Card, EmptyState, Screen, SectionHeader } from '../src/design';
@@ -139,7 +140,11 @@ export default function BookingsScreen() {
   return (
     <ProtectedScreen allowedRoles={['manager', 'stylist']}>
       <Screen header={<ScreenHeader title="Bookings" back={false} />}>
-        <AppButton label="+ New booking" onPress={() => router.push('/new-booking')} />
+        <AppButton
+          label="New booking"
+          leadingIcon={<Ionicons name="add" size={16} color={palette.white} />}
+          onPress={() => router.push('/new-booking')}
+        />
 
         {error ? (
           <Card>
@@ -211,7 +216,7 @@ export default function BookingsScreen() {
               >
                 <View style={styles.checkoutHeaderRow}>
                   {checkoutReady.checkout.status === 'paid' ? (
-                    <Text style={styles.checkoutCheck}>✓</Text>
+                    <Ionicons name="checkmark-circle" size={16} color={palette.success[300]} />
                   ) : null}
                   <Text style={styles.detailTitle}>
                     {checkoutReady.checkout.status === 'paid' ? 'Payment confirmed' : 'Awaiting payment'}
@@ -339,7 +344,7 @@ function CompletionStatusBanner({ status: _status }: { status: StaffBookingSumma
   const label = 'Paid';
   return (
     <View style={styles.statusBanner}>
-      <Text style={styles.statusBannerCheck}>✓</Text>
+      <Ionicons name="checkmark-circle" size={16} color={palette.success[300]} />
       <Text style={styles.statusBannerText}>{label}</Text>
     </View>
   );
@@ -391,7 +396,8 @@ function BillingBreakdown({
         </View>
       ) : (
         <View style={styles.paidRow}>
-          <Text style={styles.paidText}>✓ Paid in full</Text>
+          <Ionicons name="checkmark-circle" size={14} color={palette.success[300]} />
+          <Text style={styles.paidText}>Paid in full</Text>
         </View>
       )}
     </View>
@@ -542,7 +548,7 @@ function WeekCalendar({
             onPress={() => setWeekStart((current) => addDays(current, -7))}
             style={({ pressed }) => [styles.calendarNavButton, pressed && styles.pressed]}
           >
-            <Text style={styles.calendarNavText}>‹</Text>
+            <Ionicons name="chevron-back" size={17} color={palette.white} />
           </Pressable>
           <Pressable
             accessibilityRole="button"
@@ -550,7 +556,7 @@ function WeekCalendar({
             onPress={() => setWeekStart((current) => addDays(current, 7))}
             style={({ pressed }) => [styles.calendarNavButton, pressed && styles.pressed]}
           >
-            <Text style={styles.calendarNavText}>›</Text>
+            <Ionicons name="chevron-forward" size={17} color={palette.white} />
           </Pressable>
         </View>
       </View>
@@ -837,11 +843,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.sm,
   },
-  checkoutCheck: {
-    color: palette.success[300],
-    fontSize: 15,
-    fontWeight: '900',
-  },
   billingBreakdown: {
     gap: spacing.xs,
   },
@@ -904,7 +905,10 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   paidRow: {
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
     paddingVertical: spacing.xs,
   },
   paidText: {
@@ -998,12 +1002,6 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(255,255,255,0.16)',
   },
-  calendarNavText: {
-    color: palette.white,
-    fontSize: 18,
-    fontWeight: '900',
-    lineHeight: 20,
-  },
   calendarWeek: {
     flexDirection: 'row',
     gap: spacing.xs,
@@ -1095,11 +1093,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(74,222,128,0.12)',
     borderWidth: 1,
     borderColor: 'rgba(74,222,128,0.30)',
-  },
-  statusBannerCheck: {
-    color: palette.success[300],
-    fontSize: 15,
-    fontWeight: '900',
   },
   statusBannerText: {
     color: palette.success[300],

@@ -207,7 +207,8 @@ export default function ProfileScreen() {
         {/* ── Success toast ── */}
         {saveSuccess ? (
           <Animated.View style={[s.toast, { opacity: successOpacity }]}>
-            <Text style={s.toastText}>✓  Profile saved successfully</Text>
+            <Ionicons name="checkmark-circle" size={15} color={palette.success[300]} />
+            <Text style={s.toastText}>Profile saved successfully</Text>
           </Animated.View>
         ) : null}
 
@@ -359,7 +360,7 @@ function CustomerProfileBody({
           <Text style={s.sectionLabel}>MY DETAILS</Text>
           {!editing ? (
             <Pressable onPress={onStartEdit} style={({ pressed }) => [s.editBtn, pressed && s.pressed]}>
-              <Text style={s.editBtnIcon}>✎</Text>
+              <Ionicons name="create-outline" size={13} color={BRAND_LIGHT} />
               <Text style={s.editBtnText}>Edit</Text>
             </Pressable>
           ) : (
@@ -451,7 +452,7 @@ function MyPaySection() {
           <Text style={s.salonTileName}>My pay</Text>
           <Text style={s.salonTileMeta}>Confirmed pay statements and full breakdowns</Text>
         </View>
-        <Text style={s.salonTileChevron}>›</Text>
+        <Ionicons name="chevron-forward" size={18} color={BRAND_LIGHT} />
       </Pressable>
     </View>
   );
@@ -541,7 +542,7 @@ function SalonTile({ salon }: { salon: CustomerSalonSummary }) {
           </Text>
         </View>
       </View>
-      <Text style={s.salonTileChevron}>›</Text>
+      <Ionicons name="chevron-forward" size={18} color={BRAND_LIGHT} />
     </Pressable>
   );
 }
@@ -586,7 +587,7 @@ function ContactSection({
               onPress={onStartEdit}
               style={({ pressed }) => [s.editBtn, pressed && s.pressed]}
             >
-              <Text style={s.editBtnIcon}>✎</Text>
+              <Ionicons name="create-outline" size={13} color={BRAND_LIGHT} />
               <Text style={s.editBtnText}>Edit</Text>
             </Pressable>
           ) : null}
@@ -734,11 +735,17 @@ function ContactSection({
           <Text style={s.sectionLabel}>ALLERGY &amp; PATCH TEST</Text>
           <View style={[s.allergyCard, hasPatchAlert && s.allergyCardAlert]}>
             <View style={s.allergyCardHeader}>
-              <Text style={[s.allergyCardTitle, hasPatchAlert && s.allergyCardTitleAlert]}>
-                {hasPatchAlert ? '⚠ Allergy record' : 'Allergy record'}
-              </Text>
-              <Pressable style={({ pressed }) => [pressed && s.pressed]}>
-                <Text style={s.allergyEditLink}>+ Add / edit</Text>
+              <View style={s.allergyCardTitleRow}>
+                {hasPatchAlert ? (
+                  <Ionicons name="warning" size={14} color={palette.warning[300]} />
+                ) : null}
+                <Text style={[s.allergyCardTitle, hasPatchAlert && s.allergyCardTitleAlert]}>
+                  Allergy record
+                </Text>
+              </View>
+              <Pressable style={({ pressed }) => [s.allergyEditRow, pressed && s.pressed]}>
+                <Ionicons name="add" size={13} color={BRAND_LIGHT} />
+                <Text style={s.allergyEditLink}>Add / edit</Text>
               </Pressable>
             </View>
             <AllergyRow
@@ -968,6 +975,9 @@ const s = StyleSheet.create({
     left: spacing.base,
     right: spacing.base,
     zIndex: 99,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: spacing.xs,
     backgroundColor: 'rgba(34,197,94,0.18)',
     borderWidth: 1,
     borderColor: 'rgba(74,222,128,0.4)',
@@ -1143,7 +1153,6 @@ const s = StyleSheet.create({
   salonTileCode: { color: BRAND_LIGHT, fontSize: 12, fontWeight: '700', letterSpacing: 0.3 },
   salonTileDot: { color: 'rgba(255,255,255,0.3)', fontSize: 12 },
   salonTileStat: { color: 'rgba(255,255,255,0.5)', fontSize: 12 },
-  salonTileChevron: { color: BRAND_LIGHT, fontSize: 22, fontWeight: '300' },
   salonEmpty: {
     padding: spacing.lg,
     borderRadius: radius.cardLg,
@@ -1176,7 +1185,6 @@ const s = StyleSheet.create({
     borderColor: 'rgba(196,160,245,0.3)',
     backgroundColor: 'rgba(166,124,245,0.1)',
   },
-  editBtnIcon: { color: BRAND_LIGHT, fontSize: 12 },
   editBtnText: { color: BRAND_LIGHT, fontSize: 12, fontWeight: '700' },
   cancelBtn: {
     paddingHorizontal: spacing.md,
@@ -1316,8 +1324,10 @@ const s = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: 'rgba(245,158,11,0.18)',
   },
+  allergyCardTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   allergyCardTitle: { color: palette.white, fontSize: 14, fontWeight: '800' },
   allergyCardTitleAlert: { color: palette.warning[300] },
+  allergyEditRow: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   allergyEditLink: { color: BRAND_LIGHT, fontSize: 12, fontWeight: '700' },
   allergyRow: {
     flexDirection: 'row',
