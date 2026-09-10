@@ -4,10 +4,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { Redirect, router } from 'expo-router';
 import type { PublicBookingLocationSummary } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
-import { AppButton } from '@sheer/ui-mobile';
+import { AppButton } from '../../src/design';
 import { ProtectedScreen } from '../../src/auth/ProtectedScreen';
 import { useBookingFlow } from '../../src/booking/BookingFlowProvider';
 import { bookingStyles, formatDuration, formatMoney } from '../../src/booking/bookingStyles';
+import { BG } from '../../src/design/colors';
 
 export default function BookingSuccessScreen() {
   const { draft, resetDraft } = useBookingFlow();
@@ -47,7 +48,7 @@ export default function BookingSuccessScreen() {
           {/* ── Confirmation hero ── */}
           <View style={s.heroBlock}>
             <View style={s.successMark}>
-              <Text style={s.successMarkText}>✓</Text>
+              <Ionicons name="checkmark" size={34} color={palette.success[300]} />
             </View>
             <Text style={s.heroTitle}>Booking Confirmed!</Text>
             <Text style={s.heroBody}>Your appointment is all set.</Text>
@@ -172,7 +173,6 @@ function formatAddress(location: PublicBookingLocationSummary): string {
     .join(', ');
 }
 
-const BG = palette.ink[950];
 const BORDER_MED = 'rgba(255,255,255,0.11)';
 
 const s = StyleSheet.create({
@@ -201,11 +201,6 @@ const s = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(74,222,128,0.42)',
     marginBottom: spacing.xs,
-  },
-  successMarkText: {
-    color: palette.success[300],
-    fontSize: 30,
-    fontWeight: '800',
   },
   heroTitle: {
     color: palette.white,

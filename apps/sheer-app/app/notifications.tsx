@@ -3,11 +3,12 @@ import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'r
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import type { NotificationDto } from '@sheer/domain';
-import { palette, radius, spacing } from '@sheer/design-tokens';
-import { EmptyState, Screen, SectionHeader } from '@sheer/ui-mobile';
+import { radius, spacing } from '@sheer/design-tokens';
+import { EmptyState, Screen } from '../src/design';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
-import { StylistTabBar } from '../src/navigation/StylistTabBar';
 import { useNotifications } from '../src/notifications/NotificationsProvider';
+import { BORDER, BRAND_LIGHT, CARD } from '../src/design/colors';
+import { ScreenHeader } from '../src/navigation/ScreenHeader';
 
 /**
  * The stylist's alerts (Wrike 4507284172).
@@ -46,15 +47,14 @@ export default function NotificationsScreen() {
 
   return (
     <ProtectedScreen allowedRoles={['manager', 'stylist']}>
-      <Screen>
+      <Screen header={<ScreenHeader title="Alerts" back={false} />}>
         <ScrollView
           contentContainerStyle={s.content}
           refreshControl={
-            <RefreshControl refreshing={loading} onRefresh={() => void refresh()} tintColor={BRAND} />
+            <RefreshControl refreshing={loading} onRefresh={() => void refresh()} tintColor={BRAND_LIGHT} />
           }
         >
           <View style={s.header}>
-            <SectionHeader title="Alerts" />
             {unreadCount > 0 ? (
               <Pressable
                 accessibilityRole="button"
@@ -84,7 +84,6 @@ export default function NotificationsScreen() {
             />
           ))}
         </ScrollView>
-        <StylistTabBar />
       </Screen>
     </ProtectedScreen>
   );
@@ -111,7 +110,7 @@ function NotificationRow({
         <Ionicons
           name={notification.type === 'client_arrived' ? 'person-circle-outline' : 'notifications-outline'}
           size={22}
-          color={unread ? BRAND : INACTIVE}
+          color={unread ? BRAND_LIGHT : INACTIVE}
         />
       </View>
       <View style={s.rowBody}>
@@ -143,16 +142,13 @@ function formatWhen(iso: string): string {
   return new Date(iso).toLocaleDateString();
 }
 
-const CARD = '#211A2E';
-const BORDER = 'rgba(255,255,255,0.13)';
-const BRAND = palette.brand[300];
 const INACTIVE = 'rgba(255,255,255,0.4)';
 
 const s = StyleSheet.create({
   content: { padding: spacing.md, gap: spacing.sm, paddingBottom: spacing.xl },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   markAll: { paddingVertical: spacing.xs, paddingHorizontal: spacing.sm, borderRadius: radius.input },
-  markAllLabel: { color: BRAND, fontSize: 13, fontWeight: '700' },
+  markAllLabel: { color: BRAND_LIGHT, fontSize: 13, fontWeight: '700' },
   pressed: { opacity: 0.6 },
   error: { color: '#FF9C9C', fontSize: 13, paddingVertical: spacing.xs },
   row: {
@@ -165,12 +161,12 @@ const s = StyleSheet.create({
     borderColor: BORDER,
     padding: spacing.md,
   },
-  rowUnread: { borderColor: BRAND },
+  rowUnread: { borderColor: BRAND_LIGHT },
   iconWrap: { width: 30, alignItems: 'center' },
   rowBody: { flex: 1, gap: 2 },
   title: { color: 'rgba(255,255,255,0.82)', fontSize: 14, fontWeight: '600' },
   titleUnread: { color: '#FFFFFF', fontWeight: '800' },
   body: { color: 'rgba(255,255,255,0.66)', fontSize: 13 },
   time: { color: INACTIVE, fontSize: 11, marginTop: 2 },
-  dot: { width: 9, height: 9, borderRadius: 5, backgroundColor: BRAND },
+  dot: { width: 9, height: 9, borderRadius: 5, backgroundColor: BRAND_LIGHT },
 });

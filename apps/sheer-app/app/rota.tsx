@@ -9,14 +9,15 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import type { RotaLeaveRequest, RotaShift, StylistMyWeekResponse } from '@sheer/domain';
-import { userHasRole } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
-import { AppButton, EmptyState, Screen } from '@sheer/ui-mobile';
+import { ActionButton, AppButton, EmptyState, Screen } from '../src/design';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
-import { StylistTabBar } from '../src/navigation/StylistTabBar';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
+import { BG, BORDER, BRAND, BRAND_LIGHT, CARD } from '../src/design/colors';
+import { ScreenHeader } from '../src/navigation/ScreenHeader';
 
 export default function RotaScreen() {
   const auth = useAuth();
@@ -126,30 +127,23 @@ export default function RotaScreen() {
   }
 
   const pendingLeaveCount = leaveRequests.filter((request) => request.status === 'pending').length;
-  const showStylistTabs = userHasRole(auth.user, 'stylist');
 
   return (
     <ProtectedScreen allowedRoles={['manager', 'stylist']}>
-      <Screen>
-        {/* ── Header with primary action ── */}
-        <View style={styles.header}>
-          <View style={styles.flex}>
-            <Text style={styles.headerTitle}>My week</Text>
-          </View>
-          <Pressable
-            accessibilityRole="button"
-            onPress={openLeaveModal}
-            style={({ pressed }) => [styles.requestBtn, pressed && styles.pressed]}
-          >
-            <Text style={styles.requestBtnIcon}>＋</Text>
-            <Text style={styles.requestBtnText}>Request leave</Text>
-            {pendingLeaveCount > 0 ? (
-              <View style={styles.requestBtnBadge}>
-                <Text style={styles.requestBtnBadgeText}>{pendingLeaveCount}</Text>
-              </View>
-            ) : null}
-          </Pressable>
-        </View>
+      <Screen header={<ScreenHeader title="Rota" back={false} />}>
+        {/* ── Primary action. The screen's title lives in ScreenHeader; a
+             "My week" heading here as well was the double header, and the
+             spacer row that right-aligned this button went with it —
+             ActionButton right-aligns itself. ── */}
+        <ActionButton
+          label="Request leave"
+          icon="add"
+          count={pendingLeaveCount}
+          accessibilityLabel={
+            pendingLeaveCount > 0 ? `Request leave, ${pendingLeaveCount} pending` : 'Request leave'
+          }
+          onPress={openLeaveModal}
+        />
 
         {/* ── Professional calendar week strip ── */}
         <WeekStrip
@@ -234,8 +228,6 @@ export default function RotaScreen() {
         onSubmit={() => void submitLeaveRequest()}
         onCancelRequest={(id) => void cancelLeaveRequest(id)}
       />
-
-      {showStylistTabs ? <StylistTabBar /> : null}
     </ProtectedScreen>
   );
 }
@@ -267,7 +259,7 @@ function WeekStrip({
             onPress={() => onShiftWeek(-7)}
             style={({ pressed }) => [styles.calendarNavButton, pressed && styles.pressed]}
           >
-            <Text style={styles.calendarNavText}>‹</Text>
+            <Ionicons name="chevron-back" size={17} color={palette.white} />
           </Pressable>
           <Pressable
             accessibilityRole="button"
@@ -275,7 +267,7 @@ function WeekStrip({
             onPress={() => onShiftWeek(7)}
             style={({ pressed }) => [styles.calendarNavButton, pressed && styles.pressed]}
           >
-            <Text style={styles.calendarNavText}>›</Text>
+            <Ionicons name="chevron-forward" size={17} color={palette.white} />
           </Pressable>
         </View>
       </View>
@@ -366,7 +358,7 @@ function LeaveModal({
               onPress={onClose}
               style={({ pressed }) => [styles.modalClose, pressed && styles.pressed]}
             >
-              <Text style={styles.modalCloseText}>✕</Text>
+              <Ionicons name="close" size={16} color={palette.white} />
             </Pressable>
           </View>
 
@@ -669,64 +661,12 @@ function countLeaveDays(leave: StylistMyWeekResponse['leave'], weekDays: Date[])
   }).length;
 }
 
-const CARD = palette.ink[700];
-const BG = palette.ink[950];
-const BORDER = 'rgba(255,255,255,0.12)';
-const BRAND = palette.brand[500];
-const BRAND_LIGHT = palette.brand[300];
 
 const styles = StyleSheet.create({
   flex: {
     flex: 1,
     gap: spacing.xs,
   },
-
-  // ── Header
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.md,
-  },
-  eyebrow: {
-    color: BRAND_LIGHT,
-    fontSize: 12,
-    fontWeight: '800',
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-  },
-  headerTitle: {
-    color: palette.white,
-    fontSize: 28,
-    fontWeight: '800',
-    letterSpacing: -0.5,
-  },
-  requestBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    paddingHorizontal: spacing.base,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.pill,
-    backgroundColor: BRAND,
-    shadowColor: BRAND,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  requestBtnIcon: { color: palette.white, fontSize: 15, fontWeight: '400', marginTop: -1 },
-  requestBtnText: { color: palette.white, fontSize: 13, fontWeight: '800' },
-  requestBtnBadge: {
-    minWidth: 18,
-    height: 18,
-    paddingHorizontal: 5,
-    borderRadius: radius.full,
-    backgroundColor: palette.white,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  requestBtnBadgeText: { color: BRAND, fontSize: 10, fontWeight: '900' },
 
   // ── Calendar week strip
   calendar: {
@@ -761,12 +701,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.06)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.14)',
-  },
-  calendarNavText: {
-    color: palette.white,
-    fontSize: 18,
-    fontWeight: '900',
-    lineHeight: 20,
   },
   calendarWeek: {
     flexDirection: 'row',
@@ -1031,7 +965,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.14)',
   },
-  modalCloseText: { color: palette.white, fontSize: 14, fontWeight: '800' },
   modalScroll: {
     gap: spacing.sm,
     paddingBottom: spacing['4xl'],

@@ -2,18 +2,21 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import type { MyPaySummaryListItem, PayPeriodStatus } from '@sheer/domain';
 import { userHasPermission } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
+import { ScreenHeader } from '../src/navigation/ScreenHeader';
 import {
   PAY_STATUS_LABELS,
   formatHours,
   formatMoney,
   periodWindowLabel,
 } from '../src/payroll/format';
+import { BG, BORDER, BORDER_SUBTLE, BRAND_LIGHT, CARD } from '../src/design/colors';
 
 /**
  * My pay — the stylist's own statements, newest first.
@@ -56,18 +59,7 @@ export default function MyPayScreen() {
   return (
     <ProtectedScreen allowedRoles={['owner', 'manager', 'stylist']}>
       <SafeAreaView style={s.screen} edges={['top']}>
-        {/* ── Header ── */}
-        <View style={s.header}>
-          <Pressable
-            style={({ pressed }) => [s.backBtn, pressed && s.pressed]}
-            onPress={() => router.back()}
-          >
-            <Text style={s.backArrow}>‹</Text>
-            <Text style={s.backLabel}>Back</Text>
-          </Pressable>
-          <Text style={s.headerTitle}>My pay</Text>
-          <View style={s.headerSpacer} />
-        </View>
+        <ScreenHeader title="My pay" />
 
         <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
           {!hasSelfView ? (
@@ -171,7 +163,10 @@ function HeroStatement({ item }: { item: MyPaySummaryListItem }) {
       {item.isStale ? (
         <Text style={s.staleNote}>Figures are being rechecked by your salon.</Text>
       ) : null}
-      <Text style={s.heroCta}>View breakdown ›</Text>
+      <View style={s.heroCtaRow}>
+        <Text style={s.heroCta}>View breakdown</Text>
+        <Ionicons name="chevron-forward" size={13} color={BRAND_LIGHT} />
+      </View>
     </Pressable>
   );
 }
@@ -198,7 +193,7 @@ function StatementCard({ item }: { item: MyPaySummaryListItem }) {
         <Text style={[s.rowAmount, owesSalon && s.rowAmountOwed]}>
           {formatMoney(item.grossPayableCents, item.currencyCode)}
         </Text>
-        <Text style={s.rowChevron}>›</Text>
+        <Ionicons name="chevron-forward" size={18} color={BRAND_LIGHT} />
       </View>
     </Pressable>
   );
@@ -217,31 +212,12 @@ function StatusPill({ status }: { status: PayPeriodStatus }) {
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
-const BG = palette.ink[950];
-const CARD = palette.ink[700];
-const BORDER = 'rgba(255,255,255,0.13)';
-const BORDER_SOFT = 'rgba(255,255,255,0.08)';
-const BRAND_LIGHT = palette.brand[300];
 
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: BG },
   pressed: { opacity: 0.74 },
 
   // ── Header
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.base,
-    paddingVertical: spacing.md,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: BORDER,
-  },
-  backBtn: { flexDirection: 'row', alignItems: 'center', gap: 2, minWidth: 90 },
-  backArrow: { color: BRAND_LIGHT, fontSize: 28, lineHeight: 30, fontWeight: '300', marginTop: -2 },
-  backLabel: { color: BRAND_LIGHT, fontSize: 15, fontWeight: '600' },
-  headerTitle: { color: palette.white, fontSize: 17, fontWeight: '700', letterSpacing: -0.3 },
-  headerSpacer: { minWidth: 90 },
 
   scroll: { padding: spacing.base, gap: spacing.sm, paddingBottom: spacing['4xl'] },
 
@@ -338,7 +314,8 @@ const s = StyleSheet.create({
   heroValueOwed: { color: palette.warning[300] },
   heroMeta: { color: 'rgba(255,255,255,0.55)', fontSize: 12, fontWeight: '600' },
   staleNote: { color: palette.warning[300], fontSize: 12, fontWeight: '600' },
-  heroCta: { color: BRAND_LIGHT, fontSize: 13, fontWeight: '700', marginTop: spacing.xs },
+  heroCtaRow: { flexDirection: 'row', alignItems: 'center', gap: 2, marginTop: spacing.xs },
+  heroCta: { color: BRAND_LIGHT, fontSize: 13, fontWeight: '700' },
 
   // ── Earlier statements
   rowCard: {
@@ -349,7 +326,7 @@ const s = StyleSheet.create({
     borderRadius: radius.cardLg,
     backgroundColor: CARD,
     borderWidth: 1,
-    borderColor: BORDER_SOFT,
+    borderColor: BORDER_SUBTLE,
   },
   rowBody: { flex: 1, gap: 5 },
   rowPeriod: { color: palette.white, fontSize: 14, fontWeight: '700' },
@@ -358,7 +335,6 @@ const s = StyleSheet.create({
   rowRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   rowAmount: { color: 'rgba(255,255,255,0.88)', fontSize: 16, fontWeight: '800' },
   rowAmountOwed: { color: palette.warning[300] },
-  rowChevron: { color: BRAND_LIGHT, fontSize: 22, fontWeight: '300' },
 
   // ── Status pill
   statusPill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill, borderWidth: 1 },

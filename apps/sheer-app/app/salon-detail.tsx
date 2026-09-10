@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import type {
   ClientLabFormulaSummary,
   CrmVisitSummary,
@@ -18,6 +19,8 @@ import { palette, radius, spacing } from '@sheer/design-tokens';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
+import { ScreenHeader } from '../src/navigation/ScreenHeader';
+import { BG, BORDER_SUBTLE, BRAND_LIGHT, CARD } from '../src/design/colors';
 
 export default function SalonDetailScreen() {
   const auth = useAuth();
@@ -57,17 +60,7 @@ export default function SalonDetailScreen() {
   return (
     <ProtectedScreen allowedRoles={['owner', 'manager', 'stylist', 'client']}>
       <SafeAreaView style={s.screen} edges={['top']}>
-        <View style={s.header}>
-          <Pressable
-            style={({ pressed }) => [s.headerBack, pressed && s.pressed]}
-            onPress={() => router.back()}
-          >
-            <Text style={s.headerBackArrow}>‹</Text>
-            <Text style={s.headerBackLabel}>Profile</Text>
-          </Pressable>
-          <Text style={s.headerTitle}>Salon</Text>
-          <View style={s.headerSpacer} />
-        </View>
+        <ScreenHeader title="Salon" backLabel="Profile" />
 
         <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
           {loading ? (
@@ -181,7 +174,7 @@ function VisitRow({ visit, isLast }: { visit: CrmVisitSummary; isLast: boolean }
           ) : null}
         </View>
       </View>
-      <Text style={s.recordChevron}>›</Text>
+      <Ionicons name="chevron-forward" size={15} color="rgba(255,255,255,0.28)" />
     </Pressable>
   );
 }
@@ -248,29 +241,13 @@ function formatDateTime(iso: string): string {
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
-const BG = '#18141F';
-const CARD_BG = '#211A2E';
-const BORDER = 'rgba(255,255,255,0.07)';
 const BORDER_MED = 'rgba(255,255,255,0.11)';
-const BRAND_LIGHT = palette.brand[300];
 
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: BG },
   pressed: { opacity: 0.74 },
   mutedSm: { color: 'rgba(255,255,255,0.5)', fontSize: 13 },
 
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.base,
-    paddingVertical: spacing.sm,
-  },
-  headerBack: { flexDirection: 'row', alignItems: 'center', minWidth: 80 },
-  headerBackArrow: { color: BRAND_LIGHT, fontSize: 26, marginTop: -2 },
-  headerBackLabel: { color: BRAND_LIGHT, fontSize: 15, fontWeight: '600', marginLeft: 2 },
-  headerTitle: { color: palette.white, fontSize: 16, fontWeight: '800' },
-  headerSpacer: { minWidth: 80 },
 
   scroll: { paddingHorizontal: spacing.base, paddingBottom: spacing['4xl'], gap: spacing.base },
 
@@ -280,7 +257,7 @@ const s = StyleSheet.create({
     gap: spacing.md,
     padding: spacing.lg,
     borderRadius: radius.cardLg,
-    backgroundColor: CARD_BG,
+    backgroundColor: CARD,
     borderWidth: 1,
     borderColor: BORDER_MED,
   },
@@ -351,16 +328,16 @@ const s = StyleSheet.create({
   emptyCard: {
     padding: spacing.lg,
     borderRadius: radius.cardLg,
-    backgroundColor: CARD_BG,
+    backgroundColor: CARD,
     borderWidth: 1,
-    borderColor: BORDER,
+    borderColor: BORDER_SUBTLE,
     alignItems: 'center',
   },
 
   // Visit rows
   list: {
     borderRadius: radius.cardLg,
-    backgroundColor: CARD_BG,
+    backgroundColor: CARD,
     borderWidth: 1,
     borderColor: BORDER_MED,
     overflow: 'hidden',
@@ -383,14 +360,13 @@ const s = StyleSheet.create({
   recordMeta: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   recordMetaText: { color: 'rgba(255,255,255,0.48)', fontSize: 12 },
   recordMetaDot: { width: 3, height: 3, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.3)' },
-  recordChevron: { color: 'rgba(255,255,255,0.28)', fontSize: 18 },
 
   // Formula cards
   labList: { gap: spacing.sm },
   labCard: {
     padding: spacing.base,
     borderRadius: radius.cardLg,
-    backgroundColor: CARD_BG,
+    backgroundColor: CARD,
     borderWidth: 1,
     borderColor: BORDER_MED,
     gap: spacing.xs,

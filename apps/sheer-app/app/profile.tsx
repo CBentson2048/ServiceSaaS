@@ -17,9 +17,10 @@ import type { CustomerSalonSummary, UserProfileResponse } from '@sheer/domain';
 import { userHasPermission, userHasRole } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
-import { StylistTabBar } from '../src/navigation/StylistTabBar';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
+import { ScreenHeader } from '../src/navigation/ScreenHeader';
+import { BG, BORDER_SUBTLE, BRAND, BRAND_LIGHT, CARD } from '../src/design/colors';
 
 type CommPref = 'email' | 'sms' | 'whatsapp';
 
@@ -200,29 +201,13 @@ export default function ProfileScreen() {
     <ProtectedScreen allowedRoles={['owner', 'manager', 'stylist', 'client']}>
       <SafeAreaView style={s.screen} edges={['top']}>
 
-        {/* ── Header ── */}
-        <View style={s.header}>
-          {showStylistTabs ? (
-            <View style={s.headerSpacer} />
-          ) : (
-            <Pressable
-              style={({ pressed }) => [s.headerBack, pressed && s.pressed]}
-              onPress={() => router.back()}
-            >
-              <Text style={s.headerBackArrow}>‹</Text>
-              <Text style={s.headerBackLabel}>Back</Text>
-            </Pressable>
-          )}
-
-          <Text style={s.headerTitle}>Profile</Text>
-
-          <View style={s.headerSpacer} />
-        </View>
+        <ScreenHeader title="Profile" back={!showStylistTabs} />
 
         {/* ── Success toast ── */}
         {saveSuccess ? (
           <Animated.View style={[s.toast, { opacity: successOpacity }]}>
-            <Text style={s.toastText}>✓  Profile saved successfully</Text>
+            <Ionicons name="checkmark-circle" size={15} color={palette.success[300]} />
+            <Text style={s.toastText}>Profile saved successfully</Text>
           </Animated.View>
         ) : null}
 
@@ -333,8 +318,6 @@ export default function ProfileScreen() {
             </>
           )}
         </ScrollView>
-
-        {showStylistTabs ? <StylistTabBar /> : null}
       </SafeAreaView>
     </ProtectedScreen>
   );
@@ -374,7 +357,7 @@ function CustomerProfileBody({
           <Text style={s.sectionLabel}>MY DETAILS</Text>
           {!editing ? (
             <Pressable onPress={onStartEdit} style={({ pressed }) => [s.editBtn, pressed && s.pressed]}>
-              <Text style={s.editBtnIcon}>✎</Text>
+              <Ionicons name="create-outline" size={13} color={BRAND_LIGHT} />
               <Text style={s.editBtnText}>Edit</Text>
             </Pressable>
           ) : (
@@ -466,7 +449,7 @@ function MyPaySection() {
           <Text style={s.salonTileName}>My pay</Text>
           <Text style={s.salonTileMeta}>Confirmed pay statements and full breakdowns</Text>
         </View>
-        <Text style={s.salonTileChevron}>›</Text>
+        <Ionicons name="chevron-forward" size={18} color={BRAND_LIGHT} />
       </Pressable>
     </View>
   );
@@ -556,7 +539,7 @@ function SalonTile({ salon }: { salon: CustomerSalonSummary }) {
           </Text>
         </View>
       </View>
-      <Text style={s.salonTileChevron}>›</Text>
+      <Ionicons name="chevron-forward" size={18} color={BRAND_LIGHT} />
     </Pressable>
   );
 }
@@ -601,7 +584,7 @@ function ContactSection({
               onPress={onStartEdit}
               style={({ pressed }) => [s.editBtn, pressed && s.pressed]}
             >
-              <Text style={s.editBtnIcon}>✎</Text>
+              <Ionicons name="create-outline" size={13} color={BRAND_LIGHT} />
               <Text style={s.editBtnText}>Edit</Text>
             </Pressable>
           ) : null}
@@ -749,11 +732,17 @@ function ContactSection({
           <Text style={s.sectionLabel}>ALLERGY &amp; PATCH TEST</Text>
           <View style={[s.allergyCard, hasPatchAlert && s.allergyCardAlert]}>
             <View style={s.allergyCardHeader}>
-              <Text style={[s.allergyCardTitle, hasPatchAlert && s.allergyCardTitleAlert]}>
-                {hasPatchAlert ? '⚠ Allergy record' : 'Allergy record'}
-              </Text>
-              <Pressable style={({ pressed }) => [pressed && s.pressed]}>
-                <Text style={s.allergyEditLink}>+ Add / edit</Text>
+              <View style={s.allergyCardTitleRow}>
+                {hasPatchAlert ? (
+                  <Ionicons name="warning" size={14} color={palette.warning[300]} />
+                ) : null}
+                <Text style={[s.allergyCardTitle, hasPatchAlert && s.allergyCardTitleAlert]}>
+                  Allergy record
+                </Text>
+              </View>
+              <Pressable style={({ pressed }) => [s.allergyEditRow, pressed && s.pressed]}>
+                <Ionicons name="add" size={13} color={BRAND_LIGHT} />
+                <Text style={s.allergyEditLink}>Add / edit</Text>
               </Pressable>
             </View>
             <AllergyRow
@@ -967,54 +956,14 @@ function formatMoney(amount: number, currency: string): string {
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
-const BG = '#18141F';
-const CARD_BG = '#211A2E';
 const CARD_BG_ELEVATED = '#271F38';
-const BORDER = 'rgba(255,255,255,0.07)';
 const BORDER_MED = 'rgba(255,255,255,0.11)';
-const BRAND = palette.brand[500];
-const BRAND_LIGHT = palette.brand[300];
 
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: BG },
   pressed: { opacity: 0.72 },
 
   // ── Header
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.base,
-    paddingVertical: spacing.md,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: BORDER_MED,
-    backgroundColor: BG,
-  },
-  headerBack: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 1,
-    minWidth: 90,
-  },
-  headerBackArrow: {
-    color: BRAND_LIGHT,
-    fontSize: 28,
-    lineHeight: 30,
-    fontWeight: '300',
-    marginTop: -2,
-  },
-  headerBackLabel: {
-    color: BRAND_LIGHT,
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  headerTitle: {
-    color: palette.white,
-    fontSize: 17,
-    fontWeight: '700',
-    letterSpacing: -0.3,
-  },
-  headerSpacer: { minWidth: 90 },
 
   // ── Toast
   toast: {
@@ -1023,6 +972,9 @@ const s = StyleSheet.create({
     left: spacing.base,
     right: spacing.base,
     zIndex: 99,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: spacing.xs,
     backgroundColor: 'rgba(34,197,94,0.18)',
     borderWidth: 1,
     borderColor: 'rgba(74,222,128,0.4)',
@@ -1049,9 +1001,9 @@ const s = StyleSheet.create({
     margin: spacing.base,
     padding: spacing.lg,
     borderRadius: radius.cardLg,
-    backgroundColor: CARD_BG,
+    backgroundColor: CARD,
     borderWidth: 1,
-    borderColor: BORDER,
+    borderColor: BORDER_SUBTLE,
   },
   errorBanner: {
     marginHorizontal: spacing.base,
@@ -1162,7 +1114,7 @@ const s = StyleSheet.create({
   },
   sectionCard: {
     borderRadius: radius.cardLg,
-    backgroundColor: CARD_BG,
+    backgroundColor: CARD,
     borderWidth: 1,
     borderColor: BORDER_MED,
     overflow: 'hidden',
@@ -1176,7 +1128,7 @@ const s = StyleSheet.create({
     gap: spacing.md,
     padding: spacing.base,
     borderRadius: radius.cardLg,
-    backgroundColor: CARD_BG,
+    backgroundColor: CARD,
     borderWidth: 1,
     borderColor: BORDER_MED,
   },
@@ -1198,13 +1150,12 @@ const s = StyleSheet.create({
   salonTileCode: { color: BRAND_LIGHT, fontSize: 12, fontWeight: '700', letterSpacing: 0.3 },
   salonTileDot: { color: 'rgba(255,255,255,0.3)', fontSize: 12 },
   salonTileStat: { color: 'rgba(255,255,255,0.5)', fontSize: 12 },
-  salonTileChevron: { color: BRAND_LIGHT, fontSize: 22, fontWeight: '300' },
   salonEmpty: {
     padding: spacing.lg,
     borderRadius: radius.cardLg,
-    backgroundColor: CARD_BG,
+    backgroundColor: CARD,
     borderWidth: 1,
-    borderColor: BORDER,
+    borderColor: BORDER_SUBTLE,
     alignItems: 'center',
     gap: spacing.sm,
   },
@@ -1231,7 +1182,6 @@ const s = StyleSheet.create({
     borderColor: 'rgba(196,160,245,0.3)',
     backgroundColor: 'rgba(166,124,245,0.1)',
   },
-  editBtnIcon: { color: BRAND_LIGHT, fontSize: 12 },
   editBtnText: { color: BRAND_LIGHT, fontSize: 12, fontWeight: '700' },
   cancelBtn: {
     paddingHorizontal: spacing.md,
@@ -1371,8 +1321,10 @@ const s = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: 'rgba(245,158,11,0.18)',
   },
+  allergyCardTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   allergyCardTitle: { color: palette.white, fontSize: 14, fontWeight: '800' },
   allergyCardTitleAlert: { color: palette.warning[300] },
+  allergyEditRow: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   allergyEditLink: { color: BRAND_LIGHT, fontSize: 12, fontWeight: '700' },
   allergyRow: {
     flexDirection: 'row',
@@ -1406,8 +1358,8 @@ const s = StyleSheet.create({
     marginHorizontal: spacing.base,
     borderRadius: radius.cardLg,
     borderWidth: 1,
-    borderColor: BORDER,
-    backgroundColor: CARD_BG,
+    borderColor: BORDER_SUBTLE,
+    backgroundColor: CARD,
     alignItems: 'center',
   },
   emptyTabIcon: { fontSize: 28, marginBottom: spacing.xs },
@@ -1422,9 +1374,9 @@ const s = StyleSheet.create({
     marginHorizontal: spacing.base,
     padding: spacing.lg,
     borderRadius: radius.cardLg,
-    backgroundColor: CARD_BG,
+    backgroundColor: CARD,
     borderWidth: 1,
-    borderColor: BORDER,
+    borderColor: BORDER_SUBTLE,
   },
   tabErrorCard: {
     gap: spacing.sm,
@@ -1450,7 +1402,7 @@ const s = StyleSheet.create({
   tabList: {
     marginHorizontal: spacing.base,
     borderRadius: radius.cardLg,
-    backgroundColor: CARD_BG,
+    backgroundColor: CARD,
     borderWidth: 1,
     borderColor: BORDER_MED,
     overflow: 'hidden',
@@ -1491,7 +1443,7 @@ const s = StyleSheet.create({
   labList: { marginHorizontal: spacing.base, gap: spacing.sm },
   labCard: {
     borderRadius: radius.cardLg,
-    backgroundColor: CARD_BG,
+    backgroundColor: CARD,
     borderWidth: 1,
     borderColor: BORDER_MED,
     padding: spacing.base,

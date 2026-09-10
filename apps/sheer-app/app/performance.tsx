@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import type {
   CommissionResult,
   CommissionTier,
@@ -11,9 +12,9 @@ import type {
 } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
-import { StylistTabBar } from '../src/navigation/StylistTabBar';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
+import { BG, BORDER, BORDER_SUBTLE, BRAND, BRAND_LIGHT, CARD } from '../src/design/colors';
 
 const PERIODS: { id: KpiPeriod; label: string }[] = [
   { id: 'today', label: 'Today' },
@@ -150,8 +151,6 @@ export default function PerformanceScreen() {
             <KpiContent stylist={stylist} />
           ) : null}
         </ScrollView>
-
-        <StylistTabBar />
       </SafeAreaView>
     </ProtectedScreen>
   );
@@ -251,10 +250,8 @@ function HeroCard({ stylist }: { stylist: StylistKpiResult }) {
 function MeterMark({ label, met, position }: { label: string; met: boolean; position: number }) {
   return (
     <View style={[s.meterMark, { left: `${position}%` }]}>
-      <Text style={[s.meterScaleText, met && s.meterScaleMet]}>
-        {met ? '✓ ' : ''}
-        {label}
-      </Text>
+      {met ? <Ionicons name="checkmark" size={9} color={palette.success[300]} /> : null}
+      <Text style={[s.meterScaleText, met && s.meterScaleMet]}>{label}</Text>
     </View>
   );
 }
@@ -387,8 +384,11 @@ function TargetCard({
       <Text style={[s.targetValue, { color }]}>{value}</Text>
       <Text style={s.targetLabel}>{label}</Text>
       <View style={[s.targetStatus, { backgroundColor: withAlpha(color, 0.14) }]}>
+        {!neutral ? (
+          <Ionicons name={met ? 'checkmark-circle' : 'close-circle'} size={11} color={color} />
+        ) : null}
         <Text style={[s.targetStatusText, { color }]} numberOfLines={1} adjustsFontSizeToFit>
-          {neutral ? status : `${met ? '✓' : '✕'} ${status}`}
+          {status}
         </Text>
       </View>
     </View>
@@ -587,13 +587,7 @@ function withAlpha(hex: string, alpha: number): string {
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
-const BG = palette.ink[950];
-const CARD = palette.ink[700];
 const CARD_ELEVATED = '#271F38';
-const BORDER = 'rgba(255,255,255,0.13)';
-const BORDER_SOFT = 'rgba(255,255,255,0.08)';
-const BRAND = palette.brand[500];
-const BRAND_LIGHT = palette.brand[300];
 
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: BG },
@@ -654,10 +648,10 @@ const s = StyleSheet.create({
     overflow: 'hidden',
   },
   menuItem: { paddingVertical: spacing.sm, paddingHorizontal: spacing.base },
-  menuItemPressed: { backgroundColor: BORDER_SOFT },
+  menuItemPressed: { backgroundColor: BORDER_SUBTLE },
   menuItemText: { color: palette.white, fontSize: 15, fontWeight: '600' },
   menuItemDanger: { color: palette.danger[300] },
-  menuDivider: { height: 1, backgroundColor: BORDER_SOFT, marginHorizontal: spacing.base },
+  menuDivider: { height: 1, backgroundColor: BORDER_SUBTLE, marginHorizontal: spacing.base },
 
   // ── Period selector
   periodRow: {
@@ -757,7 +751,13 @@ const s = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.35)',
   },
   meterScale: { height: 16, position: 'relative', marginTop: 2 },
-  meterMark: { position: 'absolute', transform: [{ translateX: -14 }] },
+  meterMark: {
+    position: 'absolute',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    transform: [{ translateX: -14 }],
+  },
   meterScaleText: { color: 'rgba(255,255,255,0.4)', fontSize: 10, fontWeight: '700' },
   meterScaleEnd: { position: 'absolute', right: 0, top: 0 },
   meterScaleMet: { color: palette.success[300] },
@@ -810,8 +810,11 @@ const s = StyleSheet.create({
   targetValue: { fontSize: 22, fontWeight: '800', letterSpacing: -0.5 },
   targetLabel: { color: 'rgba(255,255,255,0.6)', fontSize: 12, fontWeight: '600' },
   targetStatus: {
+    flexDirection: 'row',
     alignSelf: 'stretch',
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
     borderRadius: radius.pill,
     paddingVertical: 4,
     paddingHorizontal: 6,
@@ -827,7 +830,7 @@ const s = StyleSheet.create({
     padding: spacing.base,
     borderRadius: radius.cardLg,
     borderWidth: 1,
-    borderColor: BORDER_SOFT,
+    borderColor: BORDER_SUBTLE,
     backgroundColor: CARD,
   },
   moneyCardAccent: {
@@ -845,7 +848,7 @@ const s = StyleSheet.create({
     padding: spacing.base,
     borderRadius: radius.cardLg,
     borderWidth: 1,
-    borderColor: BORDER_SOFT,
+    borderColor: BORDER_SUBTLE,
     backgroundColor: CARD_ELEVATED,
   },
   unlockHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
@@ -861,7 +864,7 @@ const s = StyleSheet.create({
     padding: spacing.base,
     borderRadius: radius.cardLg,
     borderWidth: 1,
-    borderColor: BORDER_SOFT,
+    borderColor: BORDER_SUBTLE,
     backgroundColor: 'rgba(255,255,255,0.03)',
   },
   noteText: { color: 'rgba(255,255,255,0.5)', fontSize: 12 },

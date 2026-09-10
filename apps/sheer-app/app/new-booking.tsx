@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import type {
   CreateStaffBookingResponse,
   CrmClientSummary,
@@ -10,13 +11,13 @@ import type {
   StaffBookingPaymentMode,
   StaffBookingSource,
 } from '@sheer/domain';
-import { applyStylistServicePrices, userHasRole } from '@sheer/domain';
+import { applyStylistServicePrices } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
-import { AppButton, Card, EmptyState, Screen, SectionHeader } from '@sheer/ui-mobile';
+import { AppButton, Card, Screen, SectionHeader } from '../src/design';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
-import { StylistTabBar } from '../src/navigation/StylistTabBar';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
+import { ScreenHeader } from '../src/navigation/ScreenHeader';
 
 type CommPreference = 'whatsapp' | 'sms' | 'email';
 const ANY_STYLIST = 'any';
@@ -336,8 +337,6 @@ export default function NewBookingScreen() {
     setSendConfirmation(true);
     setError(null);
   }
-
-  const showTabs = userHasRole(auth.user, 'stylist');
   // Whether every required field is present. Used only to hint the user (the
   // button stays pressable so an invalid press always surfaces a clear message).
   const isComplete =
@@ -347,7 +346,7 @@ export default function NewBookingScreen() {
   if (created) {
     return (
       <ProtectedScreen allowedRoles={['owner', 'manager', 'stylist']}>
-        <Screen>
+        <Screen header={<ScreenHeader title="New booking" />}>
           <SectionHeader title="Appointment booked" subtitle={created.appointment.clientDisplayName} />
           <Card>
             <Text style={s.confirmTitle}>{created.appointment.serviceNames.join(', ')}</Text>
@@ -364,14 +363,13 @@ export default function NewBookingScreen() {
           <AppButton label="Book another" onPress={resetForAnother} />
           <AppButton label="Back to schedule" variant="secondary" onPress={() => router.replace('/bookings')} />
         </Screen>
-        {showTabs ? <StylistTabBar /> : null}
       </ProtectedScreen>
     );
   }
 
   return (
     <ProtectedScreen allowedRoles={['owner', 'manager', 'stylist']}>
-      <Screen>
+      <Screen header={<ScreenHeader title="New booking" />}>
         {locations.length > 1 ? (
           <Card>
             <Text style={s.label}>Location</Text>
@@ -488,7 +486,7 @@ export default function NewBookingScreen() {
                       </Text>
                     </View>
                     <View style={[s.checkbox, active && s.checkboxActive]}>
-                      {active ? <Text style={s.checkboxTick}>✓</Text> : null}
+                      {active ? <Ionicons name="checkmark" size={13} color={palette.white} /> : null}
                     </View>
                   </Pressable>
                 );
@@ -621,7 +619,7 @@ export default function NewBookingScreen() {
           </ChipRow>
           <Pressable onPress={() => setSendConfirmation((v) => !v)} style={s.toggleRow}>
             <View style={[s.checkbox, sendConfirmation && s.checkboxActive]}>
-              {sendConfirmation ? <Text style={s.checkboxTick}>✓</Text> : null}
+              {sendConfirmation ? <Ionicons name="checkmark" size={13} color={palette.white} /> : null}
             </View>
             <Text style={s.toggleLabel}>Send client confirmation</Text>
           </Pressable>
@@ -645,7 +643,6 @@ export default function NewBookingScreen() {
           />
         </Card>
       </Screen>
-      {showTabs ? <StylistTabBar /> : null}
     </ProtectedScreen>
   );
 }
@@ -810,7 +807,6 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
   checkboxActive: { backgroundColor: palette.brand[500], borderColor: palette.brand[500] },
-  checkboxTick: { color: palette.white, fontSize: 13, fontWeight: '900' },
   totals: { color: palette.brand[300], fontSize: 13, fontWeight: '800', marginTop: spacing.xs },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.xs },
   chip: {

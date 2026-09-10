@@ -1,19 +1,22 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router, useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import type { PayPeriodStatus, PaySummaryBreakdown, PaySummaryHours } from '@sheer/domain';
 import { HOUR_CATEGORY_LABELS } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
+import { ScreenHeader } from '../src/navigation/ScreenHeader';
 import {
   PAY_STATUS_LABELS,
   formatHours,
   formatMoney,
   periodWindowLabel,
 } from '../src/payroll/format';
+import { BG, BORDER, BRAND_LIGHT, CARD, DANGER, SUCCESS } from '../src/design/colors';
 
 /**
  * One pay statement, fully explained. The breakdown comes from
@@ -57,18 +60,7 @@ export default function PaySummaryScreen() {
   return (
     <ProtectedScreen allowedRoles={['owner', 'manager', 'stylist']}>
       <SafeAreaView style={s.screen} edges={['top']}>
-        {/* ── Header ── */}
-        <View style={s.header}>
-          <Pressable
-            style={({ pressed }) => [s.backBtn, pressed && s.pressed]}
-            onPress={() => router.back()}
-          >
-            <Text style={s.backArrow}>‹</Text>
-            <Text style={s.backLabel}>Back</Text>
-          </Pressable>
-          <Text style={s.headerTitle}>Pay statement</Text>
-          <View style={s.headerSpacer} />
-        </View>
+        <ScreenHeader title="Pay statement" />
 
         {loading ? (
           <View style={s.loadingCard}>
@@ -282,10 +274,16 @@ function StatementBody({
                 : 'Accelerator could not be evaluated'}
           </Text>
           {breakdown.accelerator.conditions.map((condition, index) => (
-            <Text key={index} style={s.infoBody}>
-              {condition.passed === true ? '✓' : condition.passed === false ? '✕' : '–'}{' '}
-              {conditionLabel(condition.metric)}
-            </Text>
+            <View key={index} style={s.conditionRow}>
+              {condition.passed === true ? (
+                <Ionicons name="checkmark-circle" size={14} color={SUCCESS} />
+              ) : condition.passed === false ? (
+                <Ionicons name="close-circle" size={14} color={DANGER} />
+              ) : (
+                <Text style={s.infoBody}>–</Text>
+              )}
+              <Text style={s.infoBody}>{conditionLabel(condition.metric)}</Text>
+            </View>
           ))}
         </View>
       ) : null}
@@ -395,30 +393,12 @@ function conditionLabel(metric: string): string {
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
-const BG = palette.ink[950];
-const CARD = palette.ink[700];
-const BORDER = 'rgba(255,255,255,0.13)';
-const BRAND_LIGHT = palette.brand[300];
 
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: BG },
   pressed: { opacity: 0.72 },
 
   // ── Header
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.base,
-    paddingVertical: spacing.md,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: BORDER,
-  },
-  backBtn: { flexDirection: 'row', alignItems: 'center', gap: 2, minWidth: 90 },
-  backArrow: { color: BRAND_LIGHT, fontSize: 28, lineHeight: 30, fontWeight: '300', marginTop: -2 },
-  backLabel: { color: BRAND_LIGHT, fontSize: 15, fontWeight: '600' },
-  headerTitle: { color: palette.white, fontSize: 17, fontWeight: '700', letterSpacing: -0.3 },
-  headerSpacer: { minWidth: 90 },
 
   // ── Loading / error
   loadingCard: {
@@ -547,6 +527,7 @@ const s = StyleSheet.create({
   },
   infoTitle: { color: palette.white, fontSize: 14, fontWeight: '800' },
   infoBody: { color: 'rgba(255,255,255,0.6)', fontSize: 12, lineHeight: 17 },
+  conditionRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
 
   footNote: { color: 'rgba(255,255,255,0.32)', fontSize: 11, lineHeight: 16, textAlign: 'center' },
 });

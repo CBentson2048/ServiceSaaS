@@ -11,14 +11,17 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import type { PublicBookingLocationSummary, PublicSalonSummary } from '@sheer/domain';
 import { palette, spacing } from '@sheer/design-tokens';
-import { AppButton, Card, EmptyState, SectionHeader } from '@sheer/ui-mobile';
+import { AppButton, Card, EmptyState, SectionHeader } from '../../src/design';
 import { ProtectedScreen } from '../../src/auth/ProtectedScreen';
 import { useAuth } from '../../src/auth/AuthProvider';
 import * as api from '../../src/auth/api';
 import { useBookingFlow } from '../../src/booking/BookingFlowProvider';
 import { bookingStyles as styles } from '../../src/booking/bookingStyles';
+import { ScreenHeader } from '../../src/navigation/ScreenHeader';
+import { BG, BRAND_LIGHT } from '../../src/design/colors';
 
 export default function BookingLocationScreen() {
   const auth = useAuth();
@@ -119,21 +122,11 @@ export default function BookingLocationScreen() {
     <ProtectedScreen allowedRoles={['client']}>
       <SafeAreaView style={s.screen} edges={['top']}>
         {/* ── Header (matches client profile page) ── */}
-        <View style={s.header}>
-          <Pressable
-            style={({ pressed }) => [s.headerBack, pressed && s.pressed]}
-            onPress={() => router.back()}
-          >
-            <Text style={s.headerBackArrow}>‹</Text>
-            <Text style={s.headerBackLabel}>Back</Text>
-          </Pressable>
-
-          <Text style={s.headerTitle}>Book appointment</Text>
-
-          <View style={s.headerStep}>
-            <Text style={s.headerStepText}>Step 1 of 5</Text>
-          </View>
-        </View>
+        <ScreenHeader
+          title="Book appointment"
+          divider={false}
+          right={<Text style={s.headerStepText}>Step 1 of 5</Text>}
+        />
 
         {/* ── Scrollable content ── */}
         <ScrollView
@@ -355,7 +348,9 @@ function SalonCard({
         <View style={styles.contactGroup}>
           {addressLine ? (
             <View style={styles.contactLine}>
-              <Text style={styles.contactGlyph}>◉</Text>
+              <View style={styles.contactGlyph}>
+                <Ionicons name="location" size={14} color={BRAND_LIGHT} />
+              </View>
               <Text style={styles.contactText}>{addressLine}</Text>
             </View>
           ) : null}
@@ -365,7 +360,9 @@ function SalonCard({
               onPress={callSalon}
               style={({ pressed }) => [styles.contactLine, pressed && styles.pressed]}
             >
-              <Text style={styles.contactGlyph}>✆</Text>
+              <View style={styles.contactGlyph}>
+                <Ionicons name="call" size={14} color={BRAND_LIGHT} />
+              </View>
               <Text style={styles.contactLink}>{location.phone}</Text>
             </Pressable>
           ) : null}
@@ -408,49 +405,13 @@ function formatAddress(location: PublicBookingLocationSummary): string {
     .join(', ');
 }
 
-const BG = '#18141F';
 const BORDER_MED = 'rgba(255,255,255,0.11)';
-const BRAND_LIGHT = palette.brand[300];
 
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: BG },
   pressed: { opacity: 0.72 },
 
   // ── Header
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.base,
-    paddingVertical: spacing.md,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: BORDER_MED,
-    backgroundColor: BG,
-  },
-  headerBack: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 1,
-    minWidth: 90,
-  },
-  headerBackArrow: {
-    color: BRAND_LIGHT,
-    fontSize: 28,
-    lineHeight: 30,
-    fontWeight: '300',
-    marginTop: -2,
-  },
-  headerBackLabel: {
-    color: BRAND_LIGHT,
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  headerTitle: {
-    color: palette.white,
-    fontSize: 17,
-    fontWeight: '700',
-    letterSpacing: -0.3,
-  },
   headerStep: {
     minWidth: 90,
     alignItems: 'flex-end',

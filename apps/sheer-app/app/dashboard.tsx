@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Redirect, router } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import type {
   CrmVisitSummary,
   MobileClientDashboardResponse,
@@ -21,8 +22,8 @@ import { palette, radius, spacing } from '@sheer/design-tokens';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
+import { BG, BORDER, BORDER_SUBTLE, BRAND, BRAND_LIGHT, CARD } from '../src/design/colors';
 
-type BottomTab = 'home' | 'visits' | 'profile';
 
 // ── Root screen ───────────────────────────────────────────────────────────────
 
@@ -35,7 +36,6 @@ export default function DashboardScreen() {
   const [dashboard, setDashboard] = useState<api.MobileDashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<BottomTab>('home');
 
   const load = useCallback(async () => {
     if (!accessToken || !user || !isMobileDashboardRole(user.primaryRole)) return;
@@ -52,13 +52,6 @@ export default function DashboardScreen() {
   }, [accessToken, user]);
 
   useEffect(() => { void load(); }, [load]);
-
-  // Tab navigation — visits tab pushes to dedicated page for non-clients too
-  function handleTabPress(tab: BottomTab) {
-    if (tab === 'profile') { router.push('/profile'); return; }
-    if (tab === 'visits') { router.push('/client/visits'); return; }
-    setActiveTab('home');
-  }
 
   const name = firstName(user?.profile.fullName);
 
@@ -127,62 +120,8 @@ export default function DashboardScreen() {
             </Pressable>
           ) : null}
         </ScrollView>
-
-        {/* ── Bottom tab bar (client only) ── */}
-        {isClient ? (
-          <SafeAreaView edges={['bottom']} style={s.tabBarSafe}>
-            <View style={s.tabBar}>
-              <TabBarItem
-                icon="⊞"
-                label="Home"
-                active={activeTab === 'home'}
-                onPress={() => handleTabPress('home')}
-              />
-              <TabBarItem
-                icon="◷"
-                label="Visits"
-                active={activeTab === 'visits'}
-                onPress={() => handleTabPress('visits')}
-              />
-              <TabBarItem
-                icon="◉"
-                label="Profile"
-                active={activeTab === 'profile'}
-                onPress={() => handleTabPress('profile')}
-              />
-            </View>
-          </SafeAreaView>
-        ) : null}
-
       </SafeAreaView>
     </ProtectedScreen>
-  );
-}
-
-// ── Tab bar item ──────────────────────────────────────────────────────────────
-
-function TabBarItem({
-  icon,
-  label,
-  active,
-  onPress,
-}: {
-  icon: string;
-  label: string;
-  active: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [s.tabItem, pressed && s.pressed]}
-      accessibilityRole="tab"
-      accessibilityState={{ selected: active }}
-    >
-      <Text style={[s.tabIcon, active && s.tabIconActive]}>{icon}</Text>
-      <Text style={[s.tabLabel, active && s.tabLabelActive]}>{label}</Text>
-      {active ? <View style={s.tabDot} /> : null}
-    </Pressable>
   );
 }
 
@@ -199,7 +138,7 @@ function ClientDashboard({ dashboard }: { dashboard: MobileClientDashboardRespon
       ) : (
         <View style={s.emptyApptCard}>
           <Text style={s.emptyApptTitle}>No upcoming appointments</Text>
-          <Text style={s.emptyApptBody}>Book your next visit whenever you're ready.</Text>
+          <Text style={s.emptyApptBody}>Book your next visit whenever you&apos;re ready.</Text>
         </View>
       )}
 
@@ -208,7 +147,7 @@ function ClientDashboard({ dashboard }: { dashboard: MobileClientDashboardRespon
         onPress={() => router.push('/booking/location')}
         style={({ pressed }) => [s.bookBtn, pressed && s.pressed]}
       >
-        <Text style={s.bookBtnIcon}>＋</Text>
+        <Ionicons name="add" size={18} color={palette.white} />
         <Text style={s.bookBtnText}>Book an appointment</Text>
       </Pressable>
 
@@ -220,7 +159,7 @@ function ClientDashboard({ dashboard }: { dashboard: MobileClientDashboardRespon
           style={({ pressed }) => [s.viewAllBtn, pressed && s.pressed]}
         >
           <Text style={s.viewAllText}>View all</Text>
-          <Text style={s.viewAllChevron}>›</Text>
+          <Ionicons name="chevron-forward" size={13} color={BRAND_LIGHT} style={s.viewAllChevron} />
         </Pressable>
       </View>
 
@@ -295,7 +234,7 @@ function VisitRow({ visit, isLast }: { visit: CrmVisitSummary; isLast: boolean }
       </View>
       <View style={s.visitRowRight}>
         <Text style={s.visitRowLocation}>Pinner</Text>
-        <Text style={s.visitRowChevron}>›</Text>
+        <Ionicons name="chevron-forward" size={15} color="rgba(255,255,255,0.28)" />
       </View>
     </View>
   );
@@ -311,7 +250,7 @@ function ManagerDashboard({ dashboard }: { dashboard: MobileManagerDashboardResp
       <View style={s.accentPanel}>
         <Text style={s.accentPanelEyebrow}>LOCATION OPERATIONS</Text>
         <Text style={s.accentPanelTitle}>{dashboard.location.name}</Text>
-        <Text style={s.accentPanelBody}>Today's live location summary.</Text>
+        <Text style={s.accentPanelBody}>Today&apos;s live location summary.</Text>
       </View>
 
       <View style={s.metricRow}>
@@ -336,11 +275,11 @@ function ManagerDashboard({ dashboard }: { dashboard: MobileManagerDashboardResp
       <SectionRow title="Quick actions" />
       <View style={s.quickGrid}>
         {showZac ? (
-          <QuickAction icon="Z" title="ZAC" subtitle="AI business assistant" onPress={() => router.push('/zac')} />
+          <QuickAction icon="sparkles" title="ZAC" subtitle="AI business assistant" onPress={() => router.push('/zac')} />
         ) : null}
-        <QuickAction icon="P" title="Profile" subtitle="Your details" onPress={() => router.push('/profile')} />
-        <QuickAction icon="B" title="Bookings" subtitle="Today's diary" onPress={() => router.push('/bookings')} />
-        <QuickAction icon="R" title="Rota" subtitle="Team cover" onPress={() => router.push('/rota')} />
+        <QuickAction icon="person" title="Profile" subtitle="Your details" onPress={() => router.push('/profile')} />
+        <QuickAction icon="calendar" title="Bookings" subtitle="Today's diary" onPress={() => router.push('/bookings')} />
+        <QuickAction icon="time" title="Rota" subtitle="Team cover" onPress={() => router.push('/rota')} />
       </View>
     </>
   );
@@ -364,10 +303,10 @@ function OwnerDashboard({ dashboard }: { dashboard: MobileOwnerDashboardResponse
       <SectionRow title="Quick actions" />
       <View style={s.quickGrid}>
         {showZac ? (
-          <QuickAction icon="Z" title="ZAC" subtitle="AI business assistant" onPress={() => router.push('/zac')} />
+          <QuickAction icon="sparkles" title="ZAC" subtitle="AI business assistant" onPress={() => router.push('/zac')} />
         ) : null}
-        <QuickAction icon="P" title="Profile" subtitle="Your details" onPress={() => router.push('/profile')} />
-        <QuickAction icon="D" title="Dashboard" subtitle="Mobile overview" onPress={() => router.push('/dashboard')} />
+        <QuickAction icon="person" title="Profile" subtitle="Your details" onPress={() => router.push('/profile')} />
+        <QuickAction icon="grid" title="Dashboard" subtitle="Mobile overview" onPress={() => router.push('/dashboard')} />
       </View>
     </>
   );
@@ -406,7 +345,7 @@ function QuickAction({
   subtitle,
   onPress,
 }: {
-  icon: string;
+  icon: React.ComponentProps<typeof Ionicons>['name'];
   title: string;
   subtitle: string;
   onPress: () => void;
@@ -418,13 +357,13 @@ function QuickAction({
       style={({ pressed }) => [s.quickAction, pressed && s.pressed]}
     >
       <View style={s.quickActionIcon}>
-        <Text style={s.quickActionIconText}>{icon}</Text>
+        <Ionicons name={icon} size={18} color={palette.white} />
       </View>
       <View style={s.quickActionInfo}>
         <Text style={s.quickActionTitle}>{title}</Text>
         <Text style={s.quickActionSub}>{subtitle}</Text>
       </View>
-      <Text style={s.quickActionChevron}>›</Text>
+      <Ionicons name="chevron-forward" size={18} color={BRAND_LIGHT} />
     </Pressable>
   );
 }
@@ -533,13 +472,7 @@ function formatStatus(value: string): string {
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
-const BG = '#18141F';
-const CARD = '#211A2E';
 const CARD2 = '#271F38';
-const BORDER = 'rgba(255,255,255,0.08)';
-const BORDER2 = 'rgba(255,255,255,0.13)';
-const BRAND = palette.brand[500];
-const BRAND_LIGHT = palette.brand[300];
 
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: BG },
@@ -597,7 +530,7 @@ const s = StyleSheet.create({
     borderRadius: radius.cardLg,
     backgroundColor: CARD,
     borderWidth: 1,
-    borderColor: BORDER2,
+    borderColor: BORDER,
   },
   loadingText: {
     color: 'rgba(255,255,255,0.55)',
@@ -663,7 +596,7 @@ const s = StyleSheet.create({
     borderRadius: radius.pill,
     backgroundColor: 'rgba(255,255,255,0.07)',
     borderWidth: 1,
-    borderColor: BORDER2,
+    borderColor: BORDER,
   },
   apptLocationText: { color: 'rgba(255,255,255,0.6)', fontSize: 12, fontWeight: '600' },
   apptActions: { flexDirection: 'row', gap: spacing.sm },
@@ -672,7 +605,7 @@ const s = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: radius.pill,
     borderWidth: 1,
-    borderColor: BORDER2,
+    borderColor: BORDER,
   },
   apptActionBtnText: { color: 'rgba(255,255,255,0.72)', fontSize: 12, fontWeight: '700' },
   apptManageBtn: {
@@ -688,7 +621,7 @@ const s = StyleSheet.create({
     padding: spacing.xl,
     borderRadius: radius.cardLg,
     borderWidth: 1,
-    borderColor: BORDER,
+    borderColor: BORDER_SUBTLE,
     backgroundColor: CARD,
     alignItems: 'center',
     gap: spacing.xs,
@@ -711,7 +644,6 @@ const s = StyleSheet.create({
     shadowRadius: 12,
     elevation: 5,
   },
-  bookBtnIcon: { color: palette.white, fontSize: 18, fontWeight: '300', marginTop: -1 },
   bookBtnText: { color: palette.white, fontSize: 15, fontWeight: '800', letterSpacing: 0.2 },
 
   // ── Section header with View all
@@ -742,14 +674,14 @@ const s = StyleSheet.create({
     backgroundColor: 'rgba(166,124,245,0.08)',
   },
   viewAllText: { color: BRAND_LIGHT, fontSize: 12, fontWeight: '700' },
-  viewAllChevron: { color: BRAND_LIGHT, fontSize: 16, lineHeight: 18 },
+  viewAllChevron: { marginLeft: -2 },
 
   // ── Visit list
   visitList: {
     borderRadius: radius.cardLg,
     backgroundColor: CARD,
     borderWidth: 1,
-    borderColor: BORDER2,
+    borderColor: BORDER,
     overflow: 'hidden',
   },
   visitRow: {
@@ -759,7 +691,7 @@ const s = StyleSheet.create({
     paddingHorizontal: spacing.base,
     paddingVertical: spacing.md,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: BORDER2,
+    borderBottomColor: BORDER,
   },
   visitRowLast: { borderBottomWidth: 0 },
   visitRowMain: { flex: 1, gap: 3 },
@@ -771,56 +703,18 @@ const s = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
-  visitRowChevron: { color: 'rgba(255,255,255,0.28)', fontSize: 18 },
 
   // ── Empty visits
   emptyVisits: {
     padding: spacing.lg,
     borderRadius: radius.cardLg,
     borderWidth: 1,
-    borderColor: BORDER,
+    borderColor: BORDER_SUBTLE,
     backgroundColor: CARD,
     alignItems: 'center',
   },
   emptyVisitsText: { color: 'rgba(255,255,255,0.4)', fontSize: 13 },
 
-  // ── Bottom tab bar
-  tabBarSafe: { backgroundColor: CARD },
-  tabBar: {
-    flexDirection: 'row',
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: BORDER2,
-    backgroundColor: CARD,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.xs,
-  },
-  tabItem: {
-    flex: 1,
-    alignItems: 'center',
-    gap: 3,
-    paddingVertical: spacing.xs,
-    position: 'relative',
-  },
-  tabIcon: {
-    fontSize: 20,
-    color: 'rgba(255,255,255,0.3)',
-  },
-  tabIconActive: { color: BRAND_LIGHT },
-  tabLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: 'rgba(255,255,255,0.3)',
-    letterSpacing: 0.4,
-  },
-  tabLabelActive: { color: BRAND_LIGHT },
-  tabDot: {
-    position: 'absolute',
-    bottom: -4,
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: BRAND,
-  },
 
   // ── Logout
   logoutBtn: {
@@ -828,7 +722,7 @@ const s = StyleSheet.create({
     padding: spacing.base,
     borderRadius: radius.cardLg,
     borderWidth: 1,
-    borderColor: BORDER2,
+    borderColor: BORDER,
     alignItems: 'center',
   },
   logoutBtnText: { color: 'rgba(255,255,255,0.45)', fontSize: 14, fontWeight: '600' },
@@ -861,7 +755,7 @@ const s = StyleSheet.create({
     padding: spacing.base,
     borderRadius: radius.cardLg,
     borderWidth: 1,
-    borderColor: BORDER2,
+    borderColor: BORDER,
     backgroundColor: CARD2,
   },
   metricTileWarning: {
@@ -881,7 +775,7 @@ const s = StyleSheet.create({
     padding: spacing.base,
     borderRadius: radius.cardLg,
     borderWidth: 1,
-    borderColor: BORDER2,
+    borderColor: BORDER,
     backgroundColor: CARD,
   },
   quickActionIcon: {
@@ -894,11 +788,9 @@ const s = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(196,160,245,0.3)',
   },
-  quickActionIconText: { color: palette.white, fontSize: 15, fontWeight: '800' },
   quickActionInfo: { flex: 1, gap: 2 },
   quickActionTitle: { color: palette.white, fontSize: 14, fontWeight: '700' },
   quickActionSub: { color: 'rgba(255,255,255,0.45)', fontSize: 12 },
-  quickActionChevron: { color: BRAND_LIGHT, fontSize: 22, fontWeight: '300' },
 
   // ── Staff appointment cards
   staffApptList: { gap: spacing.sm },
@@ -907,7 +799,7 @@ const s = StyleSheet.create({
     padding: spacing.base,
     borderRadius: radius.cardLg,
     borderWidth: 1,
-    borderColor: BORDER2,
+    borderColor: BORDER,
     backgroundColor: CARD,
   },
   staffApptCardFeatured: {

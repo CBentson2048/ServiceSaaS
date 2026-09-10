@@ -104,10 +104,8 @@ export const bookingStyles = StyleSheet.create({
   },
   contactGlyph: {
     width: 22,
-    fontSize: 13,
-    lineHeight: 19,
-    textAlign: 'center',
-    color: palette.brand[300],
+    alignItems: 'center',
+    marginTop: 2,
   },
   contactText: {
     flex: 1,
@@ -255,9 +253,13 @@ export const bookingStyles = StyleSheet.create({
     alignItems: 'flex-start',
     justifyContent: 'space-between',
   },
-  serviceEmoji: {
-    fontSize: 26,
-    lineHeight: 32,
+  serviceIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: radius.input,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(166,124,245,0.16)',
   },
   serviceCheck: {
     width: 22,
@@ -396,13 +398,6 @@ export const bookingStyles = StyleSheet.create({
   calNavBtnDisabled: {
     opacity: 0.3,
   },
-  calNavArrow: {
-    color: palette.white,
-    fontSize: 24,
-    lineHeight: 26,
-    fontWeight: '700',
-    marginTop: -2,
-  },
   calMonthBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -410,12 +405,6 @@ export const bookingStyles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderRadius: radius.pill,
-  },
-  calMonthCaret: {
-    color: palette.brand[300],
-    fontSize: 12,
-    fontWeight: '800',
-    marginTop: 2,
   },
 
   // Mon–Sun week strip
@@ -679,8 +668,7 @@ export const bookingStyles = StyleSheet.create({
     backgroundColor: 'rgba(248,113,113,0.1)',
   },
   noticeGlyph: {
-    fontSize: 16,
-    lineHeight: 20,
+    marginTop: 1,
   },
   noticeTextWrap: {
     flex: 1,
@@ -721,10 +709,6 @@ export const bookingStyles = StyleSheet.create({
     borderColor: 'rgba(196,160,245,0.3)',
     backgroundColor: 'rgba(196,160,245,0.16)',
   },
-  selectionEmoji: {
-    fontSize: 20,
-    lineHeight: 24,
-  },
   selectionName: {
     color: palette.white,
     fontSize: 15,
@@ -752,10 +736,7 @@ export const bookingStyles = StyleSheet.create({
   },
   reviewDetailGlyph: {
     width: 22,
-    fontSize: 14,
-    lineHeight: 20,
-    textAlign: 'center',
-    color: palette.brand[300],
+    alignItems: 'center',
   },
   reviewDetailLabel: {
     color: 'rgba(255,255,255,0.5)',

@@ -2,14 +2,17 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Redirect, router } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import type { PublicBookingAvailabilitySlot, PublicBookingStylistSummary } from '@sheer/domain';
 import { palette, spacing } from '@sheer/design-tokens';
-import { AppButton, Card, EmptyState } from '@sheer/ui-mobile';
+import { AppButton, Card, EmptyState } from '../../src/design';
 import { ProtectedScreen } from '../../src/auth/ProtectedScreen';
 import { useAuth } from '../../src/auth/AuthProvider';
 import * as api from '../../src/auth/api';
 import { effectiveServices, totalPrice, useBookingFlow } from '../../src/booking/BookingFlowProvider';
 import { bookingStyles as styles, formatDuration, formatMoney } from '../../src/booking/bookingStyles';
+import { ScreenHeader } from '../../src/navigation/ScreenHeader';
+import { BG, BRAND } from '../../src/design/colors';
 
 export default function BookingDateTimeScreen() {
   const auth = useAuth();
@@ -148,16 +151,11 @@ export default function BookingDateTimeScreen() {
     <ProtectedScreen allowedRoles={['client']}>
       <SafeAreaView style={s.screen} edges={['top']}>
         {/* ── Header (matches services / profile pages) ── */}
-        <View style={s.header}>
-          <Pressable style={({ pressed }) => [s.headerBack, pressed && s.pressed]} onPress={() => router.back()}>
-            <Text style={s.headerBackArrow}>‹</Text>
-            <Text style={s.headerBackLabel}>Back</Text>
-          </Pressable>
-          <Text style={s.headerTitle}>Select a time</Text>
-          <View style={s.headerStep}>
-            <Text style={s.headerStepText}>Step 3 of 5</Text>
-          </View>
-        </View>
+        <ScreenHeader
+          title="Select a time"
+          divider={false}
+          right={<Text style={s.headerStepText}>Step 3 of 5</Text>}
+        />
         {/* Progress underline (step 3 of 5 = 60%) */}
         <View style={s.progressTrack}>
           <View style={s.progressFill} />
@@ -193,7 +191,7 @@ export default function BookingDateTimeScreen() {
                       pressed && canGoPrevMonth && s.pressed,
                     ]}
                   >
-                    <Text style={styles.calNavArrow}>‹</Text>
+                    <Ionicons name="chevron-back" size={19} color={palette.white} />
                   </Pressable>
                   <Pressable
                     accessibilityRole="button"
@@ -202,7 +200,7 @@ export default function BookingDateTimeScreen() {
                     style={({ pressed }) => [styles.calMonthBtn, pressed && s.pressed]}
                   >
                     <Text style={styles.monthLabel}>{monthLabel}</Text>
-                    <Text style={styles.calMonthCaret}>▾</Text>
+                    <Ionicons name="chevron-down" size={13} color={palette.brand[300]} />
                   </Pressable>
                   <Pressable
                     accessibilityRole="button"
@@ -210,7 +208,7 @@ export default function BookingDateTimeScreen() {
                     onPress={goNextMonth}
                     style={({ pressed }) => [styles.calNavBtn, pressed && s.pressed]}
                   >
-                    <Text style={styles.calNavArrow}>›</Text>
+                    <Ionicons name="chevron-forward" size={19} color={palette.white} />
                   </Pressable>
                 </View>
 
@@ -412,7 +410,7 @@ function CalendarModal({
                 pressed && canGoPrev && styles.pressed,
               ]}
             >
-              <Text style={styles.calNavArrow}>‹</Text>
+              <Ionicons name="chevron-back" size={19} color={palette.white} />
             </Pressable>
             <Text style={styles.calSheetTitle}>{title}</Text>
             <Pressable
@@ -421,7 +419,7 @@ function CalendarModal({
               onPress={onNext}
               style={({ pressed }) => [styles.calNavBtn, pressed && styles.pressed]}
             >
-              <Text style={styles.calNavArrow}>›</Text>
+              <Ionicons name="chevron-forward" size={19} color={palette.white} />
             </Pressable>
           </View>
 
@@ -697,29 +695,13 @@ function pad(value: number): string {
 
 // ── Screen styles ──────────────────────────────────────────────────────────────
 
-const BG = '#18141F';
 const BORDER_MED = 'rgba(255,255,255,0.11)';
-const BRAND = palette.brand[500];
-const BRAND_LIGHT = palette.brand[300];
 
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: BG },
   pressed: { opacity: 0.72 },
 
   // ── Header
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.base,
-    paddingVertical: spacing.md,
-    backgroundColor: BG,
-  },
-  headerBack: { flexDirection: 'row', alignItems: 'center', gap: 1, minWidth: 84 },
-  headerBackArrow: { color: BRAND_LIGHT, fontSize: 28, lineHeight: 30, fontWeight: '300', marginTop: -2 },
-  headerBackLabel: { color: BRAND_LIGHT, fontSize: 15, fontWeight: '600' },
-  headerTitle: { color: palette.white, fontSize: 17, fontWeight: '700', letterSpacing: -0.3 },
-  headerStep: { minWidth: 84, alignItems: 'flex-end' },
   headerStepText: { color: 'rgba(255,255,255,0.4)', fontSize: 13, fontWeight: '700' },
 
   // ── Progress underline (step 3 of 5 = 60%)

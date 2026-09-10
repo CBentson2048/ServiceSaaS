@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import type { StaffBookingSummary } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
-import { AppButton } from '@sheer/ui-mobile';
+import { AppButton } from '../src/design';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
 import { formatDuration } from '../src/booking/bookingStyles';
+import { BG, BRAND_LIGHT } from '../src/design/colors';
+import { ScreenHeader } from '../src/navigation/ScreenHeader';
 
 // Statuses the customer can still act on online; once they've arrived
 // (checked_in) the salon owns the booking. Mirrors the API guards.
@@ -117,14 +119,7 @@ export default function ManageAppointmentScreen() {
   return (
     <ProtectedScreen allowedRoles={['client']}>
       <SafeAreaView style={s.screen} edges={['top']}>
-        <View style={s.header}>
-          <Pressable style={({ pressed }) => [s.headerBack, pressed && s.pressed]} onPress={() => router.back()}>
-            <Text style={s.headerBackArrow}>‹</Text>
-            <Text style={s.headerBackLabel}>Back</Text>
-          </Pressable>
-          <Text style={s.headerTitle}>Manage appointment</Text>
-          <View style={s.headerSpacer} />
-        </View>
+        <ScreenHeader title="Manage appointment" />
 
         <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
           {loading ? (
@@ -225,27 +220,13 @@ function formatDateTime(date: Date): string {
 
 // ── Styles ──────────────────────────────────────────────────────────────────────
 
-const BG = '#18141F';
 const BORDER_MED = 'rgba(255,255,255,0.11)';
 const CARD_BG = 'rgba(255,255,255,0.05)';
-const BRAND_LIGHT = palette.brand[300];
 
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: BG },
   pressed: { opacity: 0.72 },
 
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.base,
-    paddingVertical: spacing.md,
-  },
-  headerBack: { flexDirection: 'row', alignItems: 'center', gap: 1, minWidth: 84 },
-  headerBackArrow: { color: BRAND_LIGHT, fontSize: 28, lineHeight: 30, fontWeight: '300', marginTop: -2 },
-  headerBackLabel: { color: BRAND_LIGHT, fontSize: 15, fontWeight: '600' },
-  headerTitle: { color: palette.white, fontSize: 17, fontWeight: '700', letterSpacing: -0.3 },
-  headerSpacer: { minWidth: 84 },
 
   scroll: { gap: spacing.lg, padding: spacing.lg, paddingBottom: spacing.xl },
 

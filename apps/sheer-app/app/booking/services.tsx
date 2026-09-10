@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Redirect, router } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import type {
   PublicBookingAvailabilitySlot,
   PublicBookingServiceSummary,
@@ -9,12 +10,15 @@ import type {
   PublicBookingUpgradeSuggestion,
 } from '@sheer/domain';
 import { palette, spacing } from '@sheer/design-tokens';
-import { AppButton, Card, EmptyState } from '@sheer/ui-mobile';
+import { AppButton, Card, EmptyState } from '../../src/design';
 import { ProtectedScreen } from '../../src/auth/ProtectedScreen';
 import { useAuth } from '../../src/auth/AuthProvider';
 import * as api from '../../src/auth/api';
 import { effectiveServices, totalDuration, totalPrice, useBookingFlow } from '../../src/booking/BookingFlowProvider';
+import { serviceIcon } from '../../src/booking/serviceIcon';
 import { bookingStyles as styles, formatDateTime, formatDuration, formatMoney } from '../../src/booking/bookingStyles';
+import { ScreenHeader } from '../../src/navigation/ScreenHeader';
+import { BG, BRAND, BRAND_LIGHT } from '../../src/design/colors';
 
 export default function BookingServicesScreen() {
   const auth = useAuth();
@@ -188,16 +192,11 @@ export default function BookingServicesScreen() {
     <ProtectedScreen allowedRoles={['client']}>
       <SafeAreaView style={s.screen} edges={['top']}>
         {/* ── Header (matches client profile page) ── */}
-        <View style={s.header}>
-          <Pressable style={({ pressed }) => [s.headerBack, pressed && s.pressed]} onPress={() => router.back()}>
-            <Text style={s.headerBackArrow}>‹</Text>
-            <Text style={s.headerBackLabel}>Back</Text>
-          </Pressable>
-          <Text style={s.headerTitle}>Choose a service</Text>
-          <View style={s.headerStep}>
-            <Text style={s.headerStepText}>Step 2 of 5</Text>
-          </View>
-        </View>
+        <ScreenHeader
+          title="Choose a service"
+          divider={false}
+          right={<Text style={s.headerStepText}>Step 2 of 5</Text>}
+        />
         {/* Progress underline */}
         <View style={s.progressTrack}>
           <View style={s.progressFill} />
@@ -340,7 +339,10 @@ export default function BookingServicesScreen() {
             <Text style={s.footerHintMuted}>Pick at least one service to continue</Text>
           )}
           <AppButton
-            label={resolving ? 'Finding next available…' : 'Continue  →'}
+            label={resolving ? 'Finding next available…' : 'Continue'}
+            trailingIcon={
+              resolving ? undefined : <Ionicons name="arrow-forward" size={16} color={palette.white} />
+            }
             disabled={!canContinue || resolving}
             onPress={() => void continueFromServices()}
           />
@@ -389,10 +391,12 @@ function ServiceCard({
       style={({ pressed }) => [styles.serviceCard, selected && styles.serviceCardSelected, pressed && styles.pressed]}
     >
       <View style={styles.serviceCardHead}>
-        <Text style={styles.serviceEmoji}>{serviceEmoji(service)}</Text>
+        <View style={styles.serviceIconWrap}>
+          <Ionicons name={serviceIcon(service)} size={18} color={BRAND_LIGHT} />
+        </View>
         {selected ? (
           <View style={styles.serviceCheck}>
-            <Text style={styles.serviceCheckMark}>✓</Text>
+            <Ionicons name="checkmark" size={13} color={palette.white} />
           </View>
         ) : null}
       </View>
@@ -524,26 +528,6 @@ function initials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-const SERVICE_EMOJI: { keywords: string[]; emoji: string }[] = [
-  { keywords: ['colour', 'color', 'tint', 'highlight', 'balayage', 'toner'], emoji: '🎨' },
-  { keywords: ['cut', 'style', 'trim', 'fringe'], emoji: '✂️' },
-  { keywords: ['blow', 'dry', 'wave', 'curl'], emoji: '💨' },
-  { keywords: ['treatment', 'condition', 'mask', 'keratin', 'olaplex'], emoji: '✨' },
-  { keywords: ['wash', 'shampoo'], emoji: '🧴' },
-  { keywords: ['perm', 'relax', 'smooth'], emoji: '🌀' },
-  { keywords: ['braid', 'updo', 'extension'], emoji: '💇' },
-  { keywords: ['beard', 'shave', 'barber'], emoji: '🪒' },
-  { keywords: ['nail', 'manicure', 'pedicure'], emoji: '💅' },
-];
-
-function serviceEmoji(service: PublicBookingServiceSummary): string {
-  const haystack = `${service.name} ${service.category ?? ''}`.toLowerCase();
-  for (const entry of SERVICE_EMOJI) {
-    if (entry.keywords.some((keyword) => haystack.includes(keyword))) return entry.emoji;
-  }
-  return '💇';
-}
-
 // ── Category grouping ─────────────────────────────────────────────────────────────
 
 const UNCATEGORISED_KEY = '__uncategorised';
@@ -583,29 +567,13 @@ function groupServicesByCategory(services: PublicBookingServiceSummary[]): Servi
 
 // ── Screen styles ──────────────────────────────────────────────────────────────
 
-const BG = '#18141F';
 const BORDER_MED = 'rgba(255,255,255,0.11)';
-const BRAND = palette.brand[500];
-const BRAND_LIGHT = palette.brand[300];
 
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: BG },
   pressed: { opacity: 0.72 },
 
   // ── Header
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.base,
-    paddingVertical: spacing.md,
-    backgroundColor: BG,
-  },
-  headerBack: { flexDirection: 'row', alignItems: 'center', gap: 1, minWidth: 84 },
-  headerBackArrow: { color: BRAND_LIGHT, fontSize: 28, lineHeight: 30, fontWeight: '300', marginTop: -2 },
-  headerBackLabel: { color: BRAND_LIGHT, fontSize: 15, fontWeight: '600' },
-  headerTitle: { color: palette.white, fontSize: 17, fontWeight: '700', letterSpacing: -0.3 },
-  headerStep: { minWidth: 84, alignItems: 'flex-end' },
   headerStepText: { color: 'rgba(255,255,255,0.4)', fontSize: 13, fontWeight: '700' },
 
   // ── Progress underline (step 2 of 5 ≈ 40%)

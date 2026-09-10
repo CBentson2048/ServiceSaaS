@@ -1,7 +1,12 @@
+import { StyleSheet, View } from 'react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { StripeProvider } from '@stripe/stripe-react-native';
 import { AuthProvider } from '../src/auth/AuthProvider';
+import { AppTabBar } from '../src/navigation/AppTabBar';
+import { BG } from '../src/design/colors';
+import { ThemeProvider } from '../src/design/ThemeProvider';
+import { sheerAppTheme } from '../src/design/appTheme';
 import { BookingFlowProvider } from '../src/booking/BookingFlowProvider';
 import { NotificationsProvider } from '../src/notifications/NotificationsProvider';
 import {
@@ -17,7 +22,16 @@ export default function RootLayout() {
       urlScheme={STRIPE_URL_SCHEME}
       merchantIdentifier={STRIPE_MERCHANT_IDENTIFIER}
     >
-      <AuthProvider>
+      {/*
+        Mounts THE theme. Every design component reads it through useTheme(),
+        and src/design/colors.ts derives its named constants from the same
+        object, so a component and a screen's StyleSheet cannot disagree about
+        what a border is. Until this was mounted, src/design/components was
+        unusable dead code — which is why the screens hand-rolled raw
+        StyleSheets and grew a second component library in @sheer/ui-mobile.
+      */}
+      <ThemeProvider value={sheerAppTheme}>
+        <AuthProvider>
         {/*
           Inside AuthProvider because it reads the session, and outside the
           navigator because the alerts badge renders on every screen's tab bar.
@@ -25,6 +39,25 @@ export default function RootLayout() {
         <NotificationsProvider>
           <BookingFlowProvider>
           <StatusBar style="light" />
+          {/*
+            THE APP SHELL: routed content and the ONE shared bottom navigation,
+            as flex siblings in a column. <AppTabBar /> is mounted here and
+            nowhere else — app-shell.spec.ts enforces that, and the reasons the
+            position matters, which are invisible from the code:
+
+              - inside AuthProvider: useAuth() THROWS outside it, and there is
+                no error boundary above the root layout.
+              - inside NotificationsProvider: useNotifications() does NOT throw
+                outside it, it returns a dormant { unreadCount: 0 }. The Alerts
+                badge would just stop, with a green typecheck.
+              - a plain View, never a SafeAreaView and no `edges` prop:
+                AppTabBar takes its own bottom inset, so an inset here would
+                double-count it.
+
+            Being a flex sibling (rather than an overlay) is also what keeps
+            content clear of the bar without any screen adding bottom padding.
+          */}
+          <View style={s.shell}>
           <Stack
             screenOptions={{
               headerStyle: { backgroundColor: '#1C1628' },
@@ -42,6 +75,13 @@ export default function RootLayout() {
               contentStyle: { backgroundColor: '#18141F' },
             }}
           >
+            {/*
+              EVERY route hides the native header and draws `ScreenHeader`
+              instead. Mixing the two is what gave Rota a native "Rota" bar
+              stacked on top of its own "My week" heading while Alerts had
+              neither and Profile had only the custom one — three title
+              treatments across three screens.
+            */}
             <Stack.Screen name="index" options={{ headerShown: false }} />
             {/* Auth screens own their immersive, branded canvas + back control. */}
             <Stack.Screen name="login" options={{ headerShown: false }} />
@@ -56,9 +96,9 @@ export default function RootLayout() {
             <Stack.Screen name="salon-detail" options={{ headerShown: false }} />
             <Stack.Screen name="manage-appointment" options={{ headerShown: false }} />
             <Stack.Screen name="reschedule" options={{ headerShown: false }} />
-            <Stack.Screen name="bookings" options={{ title: 'Bookings' }} />
-            <Stack.Screen name="new-booking" options={{ title: 'New booking' }} />
-            <Stack.Screen name="rota" options={{ title: 'Rota' }} />
+            <Stack.Screen name="bookings" options={{ headerShown: false }} />
+            <Stack.Screen name="new-booking" options={{ headerShown: false }} />
+            <Stack.Screen name="rota" options={{ headerShown: false }} />
             <Stack.Screen name="performance" options={{ headerShown: false }} />
             <Stack.Screen name="notifications" options={{ headerShown: false }} />
             <Stack.Screen name="booking/location" options={{ headerShown: false }} />
@@ -77,9 +117,16 @@ export default function RootLayout() {
               options={{ headerShown: false, gestureEnabled: false }}
             />
           </Stack>
+            <AppTabBar />
+          </View>
           </BookingFlowProvider>
-        </NotificationsProvider>
-      </AuthProvider>
+          </NotificationsProvider>
+        </AuthProvider>
+      </ThemeProvider>
     </StripeProvider>
   );
 }
+
+const s = StyleSheet.create({
+  shell: { flex: 1, backgroundColor: BG },
+});
