@@ -44,6 +44,8 @@ import { ZacResponseBuilderService } from './responses/zac-response-builder.serv
 import { ZacRequestModeClassifierService } from './routing/zac-request-mode-classifier.service';
 import { ZacSemanticRouterService } from './routing/zac-semantic-router.service';
 import { ZacRoleProfileService } from './roles/zac-role-profile.service';
+import type { PayrollService } from '../payroll/payroll.service';
+import type { OwnerLocationSettingsService } from '../owner-location-settings/owner-location-settings.service';
 import { ZacToolRegistryService } from './tools/zac-tool-registry.service';
 import { ZacRolloutService } from './zac-rollout.service';
 import { ZacAiProviderResolver } from './ai/zac-ai-provider.resolver';
@@ -171,6 +173,8 @@ function makeActor(overrides: Partial<AuthUser> = {}): AuthUser {
       // gap for a fully-permissioned owner.
       'report.financials.view',
       'crm.view',
+      // report.profitability is enabled and gated on payroll.view.
+      'payroll.view',
     ],
     ...overrides,
   } as AuthUser;
@@ -327,7 +331,14 @@ function makeService(
     utilisation as UtilisationService,
     retailSales as RetailSalesService,
     clientIntelligence as ClientIntelligenceService,
-  );
+      {
+        listPeriods: jest.fn().mockResolvedValue({ periods: [] }),
+        listSummaries: jest.fn(),
+      } as unknown as PayrollService,
+      {
+        getSettings: jest.fn().mockResolvedValue({ rebookRateBenchmarkPercent: 50 }),
+      } as unknown as OwnerLocationSettingsService,
+    );
   const service = new ZacService(
     new ZacRolloutService(config),
     new ZacContextService(),
@@ -759,17 +770,17 @@ describe('ZacService', () => {
         expect(response.tool_calls[0].tool).toBe('report.kpi_summary');
       });
 
-      it('answers a profit question honestly instead of substituting revenue', async () => {
+      it('answers a profit question from payroll rather than substituting revenue', async () => {
+        // The registry's payroll stub reports no generated pay period, so the
+        // honest answer is that there is nothing recorded to subtract — never
+        // an estimate, and never a revenue figure dressed up as profit.
         const { service } = makeService();
 
         const response = await service.ask(makeActor(), { question: 'What is my profit margin?' });
 
-        expect(response.response_type).toBe('Refusal / Insufficient Data');
-        expect(response.answer).toContain('no profitability calculation');
-        // The honest reason: the capability does not exist, which is neither a
-        // permission problem nor a temporary data outage.
-        expect(response.technical_details.blocking_reason).toBe('unsupported_capability');
+        expect(response.answer).toMatch(/will not estimate one/i);
         expect(response.answer).not.toMatch(/£\d/);
+        expect(response.technical_details.blocking_reason).toBe('unsupported_capability');
       });
     });
 
@@ -881,6 +892,37 @@ describe('ZacService', () => {
       expect(response.limitations.join(' ')).toMatch(/not a capability ZAC has in Phase 1/i);
       expect(typeof response.suggested_next_step).toBe('string');
       expect(response.technical_details.detected_intent).toBe('staff.members');
+    });
+
+    // ---- The profitability answer, end to end -----------------------------
+    // ZAC now reports what remains after RECORDED PAYROLL, and says plainly
+    // that it is not net profit. These pin the wording, because the wrong
+    // label here would be contradicted by the owner's accountant.
+    it('never estimates when there is no generated payroll to subtract', async () => {
+      const { service } = makeService();
+
+      const response = await service.ask(makeActor(), { question: 'What is my profit margin?' });
+
+      expect(response.answer).toMatch(/no pay period|not been generated/i);
+      expect(response.answer).toMatch(/will not estimate one/i);
+      // Falling through to "here's what I can do" reads as evasion.
+      expect(response.answer).not.toMatch(/what I can help with right now/i);
+    });
+
+    it('never offers a money figure as profit, however the question is pressed', async () => {
+      const { service } = makeService();
+
+      for (const question of [
+        'What was my profit last month?',
+        'Just give me a rough profit figure',
+        'What are my margins?',
+      ]) {
+        const response = await service.ask(makeActor(), { question });
+        // The single most damaging outcome: a number that reads as the profit
+        // that was asked for.
+        expect(response.answer).not.toMatch(/your profit (is|was) [£$]/i);
+        expect(response.answer).not.toMatch(/net profit (is|was) [£$]/i);
+      }
     });
 
     it('never dispatches any tool or service for staff questions', async () => {
@@ -1216,6 +1258,49 @@ describe('ZacService', () => {
       'What appointments do I have today?',
     ];
 
+    it('points a stylist at the Performance screen for their OWN pay', async () => {
+      // Their own money is theirs; ZAC is simply not where it is published.
+      // The restricted answer used to claim pay "belongs to owner and manager
+      // roles", which is false about their own earnings and reads as
+      // stonewalling.
+      const { service } = makeService();
+
+      for (const question of [
+        'How much did I earn?',
+        'What is my commission?',
+        'What is my pay this month?',
+        'How much am I paid?',
+      ]) {
+        const response = await service.ask(makeStylist(), { question });
+        expect(response.answer).toMatch(/performance screen/i);
+        expect(response.answer).not.toMatch(/not available at your access level/i);
+        // Never a figure, and never an estimate.
+        expect(response.answer).not.toMatch(/[£$]\d/);
+        expect(response.technical_details.detected_intent).toBe('stylist.own_pay');
+      }
+    });
+
+    it("still refuses another person's pay at the access boundary", async () => {
+      const { service } = makeService();
+
+      for (const question of ['What does the team earn?', 'How much do other stylists earn?']) {
+        const response = await service.ask(makeStylist(), { question });
+        expect(response.answer).toMatch(/not available at your access level/i);
+        expect(response.technical_details.detected_intent).not.toBe('stylist.own_pay');
+      }
+    });
+
+    it('makes no foundation-mode claim to a stylist with connected sources', async () => {
+      // Same defect as the owner copy: the sentence sat directly below a list
+      // of live capabilities and contradicted it.
+      const { service } = makeService();
+
+      const { answer } = await service.ask(makeStylist(), { question: 'What can you help me with?' });
+      expect(answer).toContain('For stylists');
+      expect(answer).not.toMatch(/foundation mode/i);
+      expect(answer).toMatch(/comes from QLOOQO's own records/i);
+    });
+
     it('serves a stylist holding zac.access through the normal gates', async () => {
       const { service } = makeService();
 
@@ -1533,7 +1618,9 @@ describe('ZacService', () => {
         // report.financials.view, so they can see that the capability exists
         // and is not connected — which is the honest state, and exactly why
         // the tool is registered disabled rather than omitted.
-        disabled_tools: ['report.profitability'],
+        // Nothing is disabled for a fully-permissioned owner any more:
+        // report.profitability is live and gated on payroll.view instead.
+        disabled_tools: [],
         provider: 'stub',
         model: 'zac-stub-1',
         request_mode: 'qlooqo_data',

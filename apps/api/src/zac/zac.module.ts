@@ -5,6 +5,8 @@ import { ClientIntelligenceModule } from '../client-intelligence/client-intellig
 import { DashboardModule } from '../dashboard/dashboard.module';
 import { KpiModule } from '../kpi/kpi.module';
 import { LabAppointmentsModule } from '../lab-appointments/lab-appointments.module';
+import { OwnerLocationSettingsModule } from '../owner-location-settings/owner-location-settings.module';
+import { PayrollModule } from '../payroll/payroll.module';
 import { RetailSalesModule } from '../retail-sales/retail-sales.module';
 import { ZacContextService } from './context/zac-context.service';
 import { ZacConversationService } from './conversation/zac-conversation.service';
@@ -65,6 +67,12 @@ import { ZacService } from './zac.service';
     // guarded services, exactly as their HTTP endpoints do.
     RetailSalesModule,
     ClientIntelligenceModule,
+    // Payroll backs the "what is left after payroll" figure. Read-only, and
+    // the tool still requires payroll.view on top of module access.
+    PayrollModule,
+    // The scorecard reads the owner's configured rebooking benchmark so it
+    // never judges a business against a number they did not choose.
+    OwnerLocationSettingsModule,
   ],
   controllers: [ZacController],
   providers: [

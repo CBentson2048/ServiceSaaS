@@ -6,6 +6,8 @@ import type { UtilisationService } from '../../kpi/utilisation.service';
 import type { LabAppointmentsService } from '../../lab-appointments/lab-appointments.service';
 import type { RetailSalesService } from '../../retail-sales/retail-sales.service';
 import type { ZacActingContext } from '../context/zac-context.types';
+import type { PayrollService } from '../../payroll/payroll.service';
+import type { OwnerLocationSettingsService } from '../../owner-location-settings/owner-location-settings.service';
 import { ZacToolRegistryService } from './zac-tool-registry.service';
 import type { ZacToolName } from './zac-tool.types';
 
@@ -25,6 +27,8 @@ const LIVE_TOOLS: ZacToolName[] = [
   'report.service_mix',
   'report.retail_performance',
   'report.client_retention',
+  'report.profitability',
+  'report.scorecard',
 ];
 
 const STYLIST_PERF_FIXTURE = {
@@ -265,7 +269,14 @@ function makeRegistry(
     utilisationFake as UtilisationService,
     RETAIL_SALES_FAKE as RetailSalesService,
     CLIENT_INTELLIGENCE_FAKE as ClientIntelligenceService,
-  );
+      {
+        listPeriods: jest.fn().mockResolvedValue({ periods: [] }),
+        listSummaries: jest.fn(),
+      } as unknown as PayrollService,
+      {
+        getSettings: jest.fn().mockResolvedValue({ rebookRateBenchmarkPercent: 50 }),
+      } as unknown as OwnerLocationSettingsService,
+    );
 }
 
 function actorWith(roles: UserRole[], permissions: Permission[]): AuthUser {
@@ -325,6 +336,10 @@ const OWNER_ALL = actorWith(
     'inventory.manage',
     'report.financials.view',
     'crm.view',
+    // report.profitability is gated on payroll.view; without it this actor is
+    // not actually "fully permissioned" and the live-tools test stops covering
+    // that tool entirely.
+    'payroll.view',
   ],
 );
 

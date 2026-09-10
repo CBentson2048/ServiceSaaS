@@ -196,7 +196,11 @@ export class ZacCapabilitySummaryTool implements ZacReadOnlyTool {
       connectedLines.length > 0
         ? `For stylists, I can already help with:\n${connectedLines.join('\n')}`
         : "For stylists, I'm here to help with your own workday: your appointments, personal coaching, rebooking habits, retail opportunities and service improvement — wherever those read-only tools are connected.",
-      "I'm still in foundation mode, so some stylist data may not be connected yet. I'll always tell you when something is not connected or not available at your access level.",
+      // Same correction as the business copy: "foundation mode" contradicted
+      // the list of live capabilities printed directly above it.
+      connectedLines.length > 0
+        ? "Every figure I give you comes from QLOOQO's own records, and I'll always say plainly when something isn't connected or isn't available at your access level."
+        : "I'm still in foundation mode, so some stylist data may not be connected yet. I'll always tell you when something is not connected or not available at your access level.",
       'You can ask things like:\n• What should I focus on today?\n• Is there a scheduled appointment from today to tomorrow?\n• How can I improve this week?',
       "I can't show owner-level business reports, payroll, other staff performance or restricted client information.",
     ].join('\n\n');

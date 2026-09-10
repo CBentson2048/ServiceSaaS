@@ -5,6 +5,8 @@ import { ZacOrchestratorService } from '../analysis/zac-orchestrator.service';
 import { ZacPriorityService } from '../analysis/zac-priority.service';
 import { ZacToolPlannerService } from '../analysis/zac-tool-planner.service';
 import type { ZacActingContext } from '../context/zac-context.types';
+import type { PayrollService } from '../../payroll/payroll.service';
+import type { OwnerLocationSettingsService } from '../../owner-location-settings/owner-location-settings.service';
 import { ZacToolRegistryService } from '../tools/zac-tool-registry.service';
 import type { ClientIntelligenceService } from '../../client-intelligence/client-intelligence.service';
 import type { DashboardService } from '../../dashboard/dashboard.service';
@@ -132,7 +134,14 @@ function makeRegistry(): ZacToolRegistryService {
     utilisation,
     retailSales,
     clientIntelligence,
-  );
+      {
+        listPeriods: jest.fn().mockResolvedValue({ periods: [] }),
+        listSummaries: jest.fn(),
+      } as unknown as PayrollService,
+      {
+        getSettings: jest.fn().mockResolvedValue({ rebookRateBenchmarkPercent: 50 }),
+      } as unknown as OwnerLocationSettingsService,
+    );
 }
 
 const PLAN: ZacAnalysisPlanOutcome = {

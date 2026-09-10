@@ -16,6 +16,8 @@ import type { RetailSalesService } from '../../retail-sales/retail-sales.service
 import type { ZacActingContext } from '../context/zac-context.types';
 import { ZacEvidenceService } from '../analysis/zac-evidence.service';
 import { ZacPriorityService } from '../analysis/zac-priority.service';
+import type { PayrollService } from '../../payroll/payroll.service';
+import type { OwnerLocationSettingsService } from '../../owner-location-settings/owner-location-settings.service';
 import { ZacToolRegistryService } from './zac-tool-registry.service';
 import type { ZacToolResult } from './zac-tool.types';
 
@@ -127,6 +129,9 @@ const ALL_PERMISSIONS: Permission[] = [
   'crm.view',
 ];
 
+/** ALL_PERMISSIONS deliberately excludes payroll.view — see the profitability tests. */
+const WITH_PAYROLL: Permission[] = [...ALL_PERMISSIONS, 'payroll.view'];
+
 function actorWith(roles: UserRole[], permissions: Permission[]): AuthUser {
   return {
     id: 'user-1',
@@ -168,6 +173,10 @@ function makeRegistry(
     dashboard?: Partial<DashboardService>;
     retailSales?: Partial<RetailSalesService>;
     clientIntelligence?: Partial<ClientIntelligenceService>;
+    payroll?: Partial<PayrollService>;
+    kpi?: Partial<KpiService>;
+    utilisation?: Partial<UtilisationService>;
+    locationSettings?: Partial<OwnerLocationSettingsService>;
   } = {},
 ): ZacToolRegistryService {
   const dashboard = overrides.dashboard ?? {
@@ -180,12 +189,19 @@ function makeRegistry(
   };
   return new ZacToolRegistryService(
     dashboard as DashboardService,
-    { myKpi: jest.fn(), stylistList: jest.fn() } as unknown as KpiService,
+    (overrides.kpi ?? { myKpi: jest.fn(), stylistList: jest.fn() }) as KpiService,
     { today: jest.fn(), list: jest.fn() } as unknown as LabAppointmentsService,
-    { summary: jest.fn() } as unknown as UtilisationService,
+    (overrides.utilisation ?? { summary: jest.fn() }) as UtilisationService,
     retailSales as RetailSalesService,
     clientIntelligence as ClientIntelligenceService,
-  );
+      (overrides.payroll ?? {
+        listPeriods: jest.fn().mockResolvedValue({ periods: [] }),
+        listSummaries: jest.fn(),
+      }) as PayrollService,
+      (overrides.locationSettings ?? {
+        getSettings: jest.fn().mockResolvedValue({ rebookRateBenchmarkPercent: 50 }),
+      }) as OwnerLocationSettingsService,
+    );
 }
 
 describe('period is read from the question, not hardcoded', () => {
@@ -663,32 +679,294 @@ describe('ZAC Workstream 1 — Expanded Intelligence', () => {
     });
   });
 
-  describe('report.profitability', () => {
-    it('is registered but not connected, and says why without guessing a number', async () => {
-      const registry = makeRegistry();
+  describe('report.profitability — what remains after recorded payroll', () => {
+    const PERIOD = {
+      period: { id: 'pp-1', periodStart: '2026-08-01', periodEnd: '2026-08-31', label: 'August 2026', status: 'approved' },
+      totals: { staffCount: 2, totalGrossPayableCents: 444000, totalBasePayCents: 0, totalCommissionCents: 0, staleCount: 0, currencyCode: 'GBP' },
+    };
+    const SUMMARIES = {
+      period: PERIOD.period,
+      periodWarnings: [],
+      summaries: [
+        { serviceRevenueCents: 600000, retailRevenueCents: 0, grossPayableCents: 266400, isStale: false, currencyCode: 'GBP' },
+        { serviceRevenueCents: 400000, retailRevenueCents: 0, grossPayableCents: 177600, isStale: false, currencyCode: 'GBP' },
+      ],
+    };
+    const payrollStub = () => ({
+      listPeriods: jest.fn().mockResolvedValue({ periods: [PERIOD] }),
+      listSummaries: jest.fn().mockResolvedValue(SUMMARIES),
+    });
+
+    it('is denied to an owner without payroll.view', async () => {
+      // The figure exposes the wage bill, so report.financials.view is not
+      // enough — it sits behind the permission that guards payroll itself.
+      const registry = makeRegistry({ payroll: payrollStub() });
       const { result } = await registry.dispatch(
         actorWith(['owner'], ALL_PERMISSIONS),
         context(),
         'report.profitability',
         {},
       );
-
-      expect(result.status).toBe('not_connected');
+      expect(result.status).toBe('permission_denied');
       expect(result.data).toBeNull();
-      // The tool's OWN reason reaches the answer, not the generic
-      // "not connected yet" — which would promise a figure that is coming.
-      expect(result.explanation).toContain('no profitability calculation');
-      expect(result.explanation).toContain('will not estimate one');
     });
 
-    it('appears in the catalogue as a disabled capability, not an absent one', () => {
-      const registry = makeRegistry();
-      const profitability = registry
-        .allTools()
-        .find((tool) => tool.name === 'report.profitability');
+    it('reports revenue, recorded payroll and what remains — and states it is NOT net profit', async () => {
+      const registry = makeRegistry({ payroll: payrollStub() });
+      const { result } = await registry.dispatch(
+        actorWith(['owner'], WITH_PAYROLL),
+        context(),
+        'report.profitability',
+        {},
+      );
 
-      expect(profitability).toBeDefined();
-      expect(profitability?.enabled).toBe(false);
+      expect(result.status).toBe('ok');
+      // £10,000 revenue - £4,440 payroll = £5,560 (55.6%)
+      expect(result.data).toMatchObject({
+        revenue_cents: 1000000,
+        recorded_payroll_cents: 444000,
+        remaining_after_payroll_cents: 556000,
+        remaining_after_payroll_percent: 55.6,
+      });
+      const answer = result.presentation?.answer ?? '';
+      expect(answer).toContain('£5560.00');
+      expect(answer).toContain('55.6%');
+      // The single most important sentence in this tool.
+      expect(answer).toMatch(/not your net profit/i);
+      expect(answer).toMatch(/rent, products, utilities, software, insurance, taxes/i);
+    });
+
+    it('never calls the figure profit, contribution or a margin', async () => {
+      // "Profit" means net profit; "contribution margin" means revenue less
+      // VARIABLE costs. Payroll alone is neither, and an accountant would catch
+      // either label immediately — which would discredit every other figure.
+      const registry = makeRegistry({ payroll: payrollStub() });
+      const { result } = await registry.dispatch(
+        actorWith(['owner'], WITH_PAYROLL),
+        context(),
+        'report.profitability',
+        {},
+      );
+      const answer = (result.presentation?.answer ?? '').toLowerCase();
+      expect(answer).not.toMatch(/profit margin|gross profit|operating profit|contribution/);
+      expect(answer).not.toMatch(/retained earnings|available to (withdraw|take)/);
+      // It may only say the literal thing it did.
+      expect(answer).toMatch(/after recorded payroll/);
+    });
+
+    it('refuses to estimate when payroll has not been generated for the window', async () => {
+      const registry = makeRegistry({
+        payroll: {
+          listPeriods: jest.fn().mockResolvedValue({ periods: [{ ...PERIOD, totals: null }] }),
+          listSummaries: jest.fn(),
+        },
+      });
+      const { result } = await registry.dispatch(
+        actorWith(['owner'], WITH_PAYROLL),
+        context(),
+        'report.profitability',
+        {},
+      );
+      // Treating an ungenerated period as zero payroll would overstate what
+      // remains — the direction that flatters.
+      expect(result.status).toBe('not_connected');
+      expect(result.explanation).toMatch(/not been generated/i);
+      expect(result.explanation).toMatch(/will not estimate/i);
+    });
+
+    it('flags stale statements rather than presenting them as settled', async () => {
+      const stale = {
+        ...SUMMARIES,
+        summaries: [{ ...SUMMARIES.summaries[0], isStale: true }, SUMMARIES.summaries[1]],
+      };
+      const registry = makeRegistry({
+        payroll: {
+          listPeriods: jest.fn().mockResolvedValue({ periods: [PERIOD] }),
+          listSummaries: jest.fn().mockResolvedValue(stale),
+        },
+      });
+      const { result } = await registry.dispatch(
+        actorWith(['owner'], WITH_PAYROLL),
+        context(),
+        'report.profitability',
+        {},
+      );
+      expect(result.presentation?.confidence).toBe('medium');
+      expect(result.presentation?.limitations.join(' ')).toMatch(/out of date/i);
+    });
+
+    it('is a live capability in the catalogue', () => {
+      const registry = makeRegistry({ payroll: payrollStub() });
+      const tool = registry.allTools().find((t) => t.name === 'report.profitability');
+      expect(tool).toBeDefined();
+      expect(tool?.enabled).toBe(true);
+      expect(tool?.requiredPermissions).toContain('payroll.view');
+    });
+  });
+
+  describe('report.scorecard — the important KPIs, judged only against real targets', () => {
+    const UTIL = {
+      overall: { utilisationPercent: 71, availableMinutes: 9000, bookedMinutes: 6390 },
+      warningThresholdPercent: 65,
+      byStaffDay: [],
+      weekdayPattern: [],
+      gaps: [],
+    };
+    const KPI_LIST = { stylists: [{}, {}, {}], commissionReadyCount: 2, periodStart: '', periodEnd: '' };
+    const services = () => ({
+      dashboard: { kpis: jest.fn().mockResolvedValue(KPIS), topServices: jest.fn() },
+      kpi: { stylistList: jest.fn().mockResolvedValue(KPI_LIST), myKpi: jest.fn() },
+      utilisation: { summary: jest.fn().mockResolvedValue(UTIL) },
+    });
+
+    it('marks each measure against the target QLOOQO actually holds', async () => {
+      const registry = makeRegistry(services());
+      const { result } = await registry.dispatch(
+        actorWith(['owner'], WITH_PAYROLL),
+        context(),
+        'report.scorecard',
+        {},
+      );
+
+      expect(result.status).toBe('ok');
+      const byKey = Object.fromEntries(
+        (result.data?.measures as Array<Record<string, unknown>>).map((m) => [m.key, m]),
+      );
+      // Rebooking: judged against the KPI engine's canonical 50% threshold.
+      expect(byKey.rebooking_rate).toMatchObject({ target_source: 'canonical_threshold' });
+      // Utilisation: judged against the owner-configured warning threshold.
+      expect(byKey.utilisation_rate).toMatchObject({
+        status: 'on_target',
+        target_source: 'location_setting',
+      });
+      // Team: the KPI engine's own per-stylist verdict, 2 of 3 -> behind.
+      expect(byKey.team_kpis).toMatchObject({ status: 'below_target', target_source: 'kpi_engine' });
+    });
+
+    it("uses the owner's configured rebook benchmark, not the shipped default", async () => {
+      // The defect this pins: judging 58% as "on target" against the shipped
+      // 50% while the owner had typed 60% into Record settings. ZAC
+      // contradicting a number the owner set themselves is the worst outcome
+      // this feature has.
+      const svc = services();
+      const registry = makeRegistry({
+        ...svc,
+        locationSettings: { getSettings: jest.fn().mockResolvedValue({ rebookRateBenchmarkPercent: 60 }) },
+      });
+      const { result } = await registry.dispatch(
+        actorWith(['owner'], WITH_PAYROLL),
+        context({ locationId: 'loc-1' }),
+        'report.scorecard',
+        {},
+      );
+      const byKey = Object.fromEntries(
+        (result.data?.measures as Array<Record<string, unknown>>).map((m) => [m.key, m]),
+      );
+      // 58% against a configured 60% is BELOW target, not on it.
+      expect(byKey.rebooking_rate).toMatchObject({
+        status: 'below_target',
+        target: '60%',
+        target_source: 'location_setting',
+      });
+    });
+
+    it('falls back to the shipped benchmark and says so when the setting is unreadable', async () => {
+      const svc = services();
+      const registry = makeRegistry({
+        ...svc,
+        locationSettings: { getSettings: jest.fn().mockRejectedValue(new Error('denied')) },
+      });
+      const { result } = await registry.dispatch(
+        actorWith(['owner'], WITH_PAYROLL),
+        context({ locationId: 'loc-1' }),
+        'report.scorecard',
+        {},
+      );
+      const byKey = Object.fromEntries(
+        (result.data?.measures as Array<Record<string, unknown>>).map((m) => [m.key, m]),
+      );
+      // "On target" means something different depending on the number it was
+      // measured against, so the fallback is reported, not silent.
+      expect(byKey.rebooking_rate).toMatchObject({
+        target: '50%',
+        target_source: 'canonical_threshold',
+      });
+      expect(result.presentation?.answer).toContain('58%');
+    });
+
+    it('shows revenue as context and never invents a target for it', async () => {
+      const registry = makeRegistry(services());
+      const { result } = await registry.dispatch(
+        actorWith(['owner'], WITH_PAYROLL),
+        context(),
+        'report.scorecard',
+        {},
+      );
+      const byKey = Object.fromEntries(
+        (result.data?.measures as Array<Record<string, unknown>>).map((m) => [m.key, m]),
+      );
+      // "Good revenue" is not a fact QLOOQO holds. Inventing one would be
+      // ZAC's opinion wearing QLOOQO's clothes.
+      expect(byKey.revenue).toMatchObject({ status: 'no_target', target: null });
+      expect(byKey.cancellation_rate).toMatchObject({ status: 'no_target', target: null });
+    });
+
+    it('gives a COUNT of measures on target, never a composite score', async () => {
+      const registry = makeRegistry(services());
+      const { result } = await registry.dispatch(
+        actorWith(['owner'], WITH_PAYROLL),
+        context(),
+        'report.scorecard',
+        {},
+      );
+      const answer = result.presentation?.answer ?? '';
+      expect(result.data).toMatchObject({ measures_with_target: 3, measures_on_target: 2 });
+      expect(answer).toMatch(/2 of 3 measures with a target/i);
+      // A 0-100 index would need an invented weighting and could not be
+      // checked against any QLOOQO report.
+      expect(answer).not.toMatch(/\bscore of\b|\b\d{1,3}\s*\/\s*100\b|health score/i);
+      expect(result.presentation?.limitations.join(' ')).toMatch(/no single health score/i);
+    });
+
+    it('says "no target set" rather than passing an unconfigured threshold as healthy', async () => {
+      const svc = services();
+      svc.utilisation.summary = jest.fn().mockResolvedValue({ ...UTIL, warningThresholdPercent: null });
+      const registry = makeRegistry(svc);
+      const { result } = await registry.dispatch(
+        actorWith(['owner'], WITH_PAYROLL),
+        context(),
+        'report.scorecard',
+        {},
+      );
+      const byKey = Object.fromEntries(
+        (result.data?.measures as Array<Record<string, unknown>>).map((m) => [m.key, m]),
+      );
+      expect(byKey.utilisation_rate).toMatchObject({ status: 'no_target' });
+      expect(result.data).toMatchObject({ measures_with_target: 2 });
+    });
+
+    it('degrades one section at a time and never presents a partial view as complete', async () => {
+      const svc = services();
+      svc.utilisation.summary = jest.fn().mockRejectedValue(new Error('denied'));
+      const registry = makeRegistry(svc);
+      const { result } = await registry.dispatch(
+        actorWith(['owner'], WITH_PAYROLL),
+        context(),
+        'report.scorecard',
+        {},
+      );
+
+      expect(result.status).toBe('ok');
+      const answer = result.presentation?.answer ?? '';
+      expect(answer).toMatch(/rebooking rate/i);
+      expect(answer).toMatch(/not a complete picture/i);
+      expect(result.presentation?.confidence).toBe('medium');
+    });
+
+    it('is hidden from a stylist entirely', () => {
+      const registry = makeRegistry(services());
+      const visible = registry.buildFor(actorWith(['stylist'], WITH_PAYROLL)).map((t) => t.name);
+      expect(visible).not.toContain('report.scorecard');
     });
   });
 

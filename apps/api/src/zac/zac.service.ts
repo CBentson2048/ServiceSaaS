@@ -136,6 +136,7 @@ const PERIOD_AWARE_TOOLS: Partial<Record<ZacToolName, number>> = {
   'report.appointment_summary': 7,
   'report.service_mix': 30,
   'report.retail_performance': 30,
+  'report.scorecard': 30,
   // Phase 1 reports. Their 7-day defaults are UNCHANGED, so a question that
   // names no period behaves exactly as it always has; naming one now works
   // here too. Without these three, "last month" was honoured by the newer
@@ -2032,6 +2033,36 @@ export class ZacService {
         q,
       );
 
+    // A stylist asking about their OWN pay. Checked BEFORE `isRestricted`,
+    // which already matches `pay`/`commission`/`wages` and would otherwise tell
+    // them their own money "belongs to owner and manager roles" — false, and it
+    // reads as stonewalling. Someone ELSE's pay still falls through to
+    // restricted, which is why the team/colleague guard is here.
+    const isOwnPay =
+      /\b(my (pay|payslip|wages?|salary|commissions?|earnings|take[- ]home)|how much (did|do|have) i (earn|make|take home|get paid)|what (did|do) i (earn|make)|how much am i (paid|earning)|am i paid)\b/.test(
+        q,
+      ) && !/\b(team|staff|colleagues?|others?|everyone|stylists|salon|business)\b/.test(q);
+
+    if (isOwnPay && !this.isCapabilityQuestion(q)) {
+      this.telemetry.recordSpineEvent('source_used', {
+        trace_id: traceId,
+        business_id: context.businessId,
+        actor_user_id: context.actorUserId,
+        role_context: context.roleContext,
+        tool: 'stylist.own_pay',
+        status: 'not_connected',
+        latency_ms: 0,
+      });
+      return {
+        response: this.responseBuilder.buildStylistOwnPayResponse(memoryBase),
+        liveCompletion: null,
+        liveLatencyMs: 0,
+        // ZAC not publishing pay is a PRODUCT decision, not an access level the
+        // stylist could be granted and not a broken connection.
+        executionReason: 'unsupported_capability',
+      };
+    }
+
     if (isPersonal && !this.isCapabilityQuestion(q)) {
       // Schedule-shaped vs coaching-shaped: appointments/diary go to the
       // self-scoped schedule tool; focus/improve/performance go to coaching.
@@ -2304,6 +2335,18 @@ export class ZacService {
       )
     ) {
       return 'report.appointment_summary';
+    }
+    // The scorecard sits IMMEDIATELY before business health, and its patterns
+    // are deliberately narrow. "How is my business doing?" is pinned,
+    // client-accepted behaviour that must keep returning the health snapshot —
+    // so only phrasings asking for the round-up, or naming a scorecard
+    // outright, land here.
+    if (
+      /\bscore\s?card\b|\bat a glance\b|\bkey (numbers|figures|metrics|kpis)\b|\bheadline (numbers|figures)\b|\ball (my|our) kpis\b|\bkpi (overview|summary|dashboard)\b|\bhow are we doing overall\b|\boverall (health|picture)\b|\bdoing well or badly\b|\bquick (overview|summary|rundown)\b/.test(
+        q,
+      )
+    ) {
+      return 'report.scorecard';
     }
     if (
       /how('s| is| are| was| were| did)?\s+(my|the|our)\s+(business|salon)|business health|\bhow healthy\b|\bdoing\b|performing|revenue|\bbookings?\b/.test(

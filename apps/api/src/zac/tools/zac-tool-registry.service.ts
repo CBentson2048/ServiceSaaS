@@ -11,6 +11,8 @@ import { DashboardService } from '../../dashboard/dashboard.service';
 import { KpiService } from '../../kpi/kpi.service';
 import { UtilisationService } from '../../kpi/utilisation.service';
 import { LabAppointmentsService } from '../../lab-appointments/lab-appointments.service';
+import { OwnerLocationSettingsService } from '../../owner-location-settings/owner-location-settings.service';
+import { PayrollService } from '../../payroll/payroll.service';
 import { RetailSalesService } from '../../retail-sales/retail-sales.service';
 import type { ZacActingContext } from '../context/zac-context.types';
 import { AppointmentSummaryTool } from './tools/appointment-summary.tool';
@@ -25,6 +27,7 @@ import { PersonalStylistCoachingTool } from './tools/personal-stylist-coaching.t
 import { ProfitabilityTool } from './tools/profitability.tool';
 import { QlabColourAnalyticsTool } from './tools/qlab-colour-analytics.tool';
 import { RebookingSummaryTool } from './tools/rebooking-summary.tool';
+import { ScorecardTool } from './tools/scorecard.tool';
 import { RetailPerformanceTool } from './tools/retail-performance.tool';
 import { ServiceMixTool } from './tools/service-mix.tool';
 import { StylistPerformanceTool } from './tools/stylist-performance.tool';
@@ -49,6 +52,8 @@ export class ZacToolRegistryService {
     utilisation: UtilisationService,
     retailSales: RetailSalesService,
     clientIntelligence: ClientIntelligenceService,
+    payroll: PayrollService,
+    locationSettings: OwnerLocationSettingsService,
   ) {
     const tools: ZacReadOnlyTool[] = [
       // Live tools. Context tools read only the guard-resolved acting context;
@@ -78,7 +83,9 @@ export class ZacToolRegistryService {
       // Optional/deferred skeletons — registered but disabled. Registering
       // them is what lets ZAC answer "not connected yet" honestly instead of
       // falling through to generic capability copy.
-      new ProfitabilityTool(),
+      new ProfitabilityTool(payroll),
+      // The scorecard composes the tools above; it holds no maths of its own.
+      new ScorecardTool(dashboard, kpi, utilisation, locationSettings),
       new QlabColourAnalyticsTool(),
       new InventoryStockStatusTool(),
     ];

@@ -25,6 +25,7 @@ export type ZacToolName =
   | 'report.retail_performance'
   | 'report.client_retention'
   | 'report.profitability'
+  | 'report.scorecard'
   | 'kpi.personal_coaching'
   | 'schedule.my_appointments'
   | 'qlab.colour_analytics'

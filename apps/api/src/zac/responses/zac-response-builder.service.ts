@@ -402,6 +402,59 @@ export class ZacResponseBuilderService {
    * dispatched for this answer and no restricted data of any kind exists in it;
    * the evidence references the permission boundary, never live data.
    */
+  /**
+   * A stylist asked about their OWN pay — earnings, commission, wages.
+   *
+   * The restricted answer was wrong for this: it tells them pay information
+   * "belongs to owner and manager roles", which is false about their own
+   * money and reads as stonewalling. Their pay IS theirs; ZAC simply is not
+   * the place it is published.
+   *
+   * ZAC deliberately does not repeat pay figures (see
+   * PersonalStylistCoachingTool: commission and hourly rate are excluded, and
+   * anything ZAC says could later flow into its own persistence). So this
+   * points at the screen that owns the number instead of quoting it.
+   */
+  buildStylistOwnPayResponse(input: MemoryResponseBaseInput): ZacResponse {
+    const { context, profile, visibleTools, completion, traceId } = input;
+
+    return {
+      conversation_id: input.conversationId,
+      answer: [
+        "Your own pay is yours to see — but I'm not where it's published.",
+        'Your pay detail, including commission, is on your Performance screen in QLOOQO. I deliberately do not repeat pay figures, so I will not quote or estimate a number here.',
+        'I can help with the things that move it: your rebooking and retail habits, your targets, and where your best opportunity is this week.',
+      ].join('\n\n'),
+      role_context: context.roleContext,
+      response_type: 'Explanation',
+      evidence: [
+        {
+          source_type: 'zac.access_boundary',
+          source_ref: 'stylist-own-pay:not-published-here',
+          as_of: null,
+          entities_used: [],
+        },
+      ],
+      confidence: 'high',
+      limitations: [
+        'ZAC does not report pay figures for any role — this is a product decision, not a permission problem and not a data gap.',
+        'No pay, commission or payroll data was read for this answer.',
+        `Your ZAC scope: ${profile.scopeDescription}`,
+      ],
+      suggested_next_step: 'Ask "What should I focus on today?" for coaching from your own numbers.',
+      measurement_hook: null,
+      attribution_seed: null,
+      memory_updates: [],
+      tool_calls: [],
+      cost_metadata: this.costMetadata(completion),
+      technical_details: {
+        ...this.technicalDetails(visibleTools, completion),
+        detected_intent: 'stylist.own_pay',
+      },
+      trace_id: traceId,
+    };
+  }
+
   buildStylistRestrictedResponse(input: MemoryResponseBaseInput): ZacResponse {
     const { context, profile, visibleTools, completion, traceId } = input;
 
