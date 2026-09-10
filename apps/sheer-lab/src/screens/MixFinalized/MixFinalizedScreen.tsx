@@ -2,7 +2,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { PinUnlockResponse } from '@sheer/domain';
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View, type TextStyle } from 'react-native';
 
 import type { RootStackParamList } from '../../app/navigation/routes';
 import { useBleScale } from '../../features/ble/hooks/useBleScale';
@@ -21,6 +21,9 @@ import { LabShell } from '../shared/LabShell';
 
 const T = labTheme;
 const C = T.colors;
+
+/** Progress reads muted, success reads green, failure reads red. */
+type NoticeTone = 'progress' | 'success' | 'danger';
 
 type MixFinalizedScreenProps = NativeStackScreenProps<RootStackParamList, 'MixFinalized'>;
 
@@ -48,7 +51,18 @@ export function MixFinalizedScreen({ navigation }: MixFinalizedScreenProps): Rea
 
   const [busy, setBusy] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
-  const [message, setMessage] = useState<string | undefined>();
+  /**
+   * The engine notice, WITH A TONE. See the same change in FormulaScreen.
+   *
+   * "Sending billing and reconciling inventory…", "Draft saved to salon
+   * records" and "Could not send the mix to the front desk." all rendered in
+   * one muted 12pt grey line — so on the screen that actually moves money and
+   * stock, a failed send was indistinguishable from a completed one.
+   */
+  const [notice, setNotice] = useState<{ text: string; tone: NoticeTone } | undefined>();
+  const say = useCallback((text: string, tone: NoticeTone = 'progress') => {
+    setNotice({ text, tone });
+  }, []);
   const [completed, setCompleted] = useState<{ totalCents: number; ref: string } | undefined>();
 
   useEffect(() => {
@@ -90,7 +104,7 @@ export function MixFinalizedScreen({ navigation }: MixFinalizedScreenProps): Rea
   const handleSaveDraft = useCallback(async () => {
     if (savingDraft) return;
     setSavingDraft(true);
-    setMessage('Saving draft…');
+    say('Saving draft…');
     try {
       const saved = saveDraft();
       // Persist to the salon record whenever the draft belongs to a real
@@ -99,19 +113,19 @@ export function MixFinalizedScreen({ navigation }: MixFinalizedScreenProps): Rea
         const active = await getActiveLabSession();
         if (active) {
           await saveDraftFormulaForLabSession(active.sessionId, toSavePayload());
-          setMessage(`Draft saved to salon records ${formatTime(saved.savedAt)} · no billing applied yet`);
+          say(`Draft saved to salon records ${formatTime(saved.savedAt)} · no billing applied yet`, 'success');
           return;
         }
       }
-      setMessage(`Draft saved on this station only ${formatTime(saved.savedAt)} · no billing applied yet`);
+      say(`Draft saved on this station only ${formatTime(saved.savedAt)} · no billing applied yet`, 'success');
     } catch (err: unknown) {
       // The local save already succeeded — only the salon-record sync failed.
       const reason = err instanceof Error ? err.message : 'network error';
-      setMessage(`Draft kept on this station — could not sync to salon records (${reason})`);
+      say(`Draft kept on this station — could not sync to salon records (${reason})`, 'danger');
     } finally {
       setSavingDraft(false);
     }
-  }, [saveDraft, savingDraft, toSavePayload]);
+  }, [say, saveDraft, savingDraft, toSavePayload]);
 
   const handleEdit = useCallback(() => {
     navigation.goBack();
@@ -120,11 +134,11 @@ export function MixFinalizedScreen({ navigation }: MixFinalizedScreenProps): Rea
   const handleComplete = useCallback(async () => {
     if (busy) return;
     setBusy(true);
-    setMessage('Sending billing and reconciling inventory…');
+    say('Sending billing and reconciling inventory…');
     try {
       const active = await refreshActiveLabSession();
       if (!active) {
-        setMessage('Qlooqo Lab session expired. Unlock Qlooqo Lab again, then send to desk.');
+        say('Qlooqo Lab session expired. Unlock Qlooqo Lab again, then send to desk.', 'danger');
         return;
       }
       const payload = {
@@ -146,11 +160,11 @@ export function MixFinalizedScreen({ navigation }: MixFinalizedScreenProps): Rea
         ref: reportRef,
       });
     } catch (err: unknown) {
-      setMessage(err instanceof Error ? err.message : 'Could not send the mix to the front desk.');
+      say(err instanceof Error ? err.message : 'Could not send the mix to the front desk.', 'danger');
     } finally {
       setBusy(false);
     }
-  }, [busy, draft.billableChargeCents, markFinalized, reportRef, toFinalSavePayload]);
+  }, [say, busy, draft.billableChargeCents, markFinalized, reportRef, toFinalSavePayload]);
 
   const sessionLabReport = (
     <SessionLabReport
@@ -178,7 +192,7 @@ export function MixFinalizedScreen({ navigation }: MixFinalizedScreenProps): Rea
       hasMissingCost={draft.hasMissingCost}
       busy={busy}
       savingDraft={savingDraft}
-      message={message}
+      notice={notice}
       onComplete={() => void handleComplete()}
       onSaveDraft={() => void handleSaveDraft()}
       onEdit={handleEdit}
@@ -419,7 +433,7 @@ function SendToDeskActions({
   hasMissingCost,
   busy,
   savingDraft,
-  message,
+  notice,
   onComplete,
   onSaveDraft,
   onEdit,
@@ -427,7 +441,7 @@ function SendToDeskActions({
   hasMissingCost: boolean;
   busy: boolean;
   savingDraft: boolean;
-  message?: string;
+  notice?: { text: string; tone: NoticeTone };
   onComplete: () => void;
   onSaveDraft: () => void;
   onEdit: () => void;
@@ -476,7 +490,9 @@ function SendToDeskActions({
         </View>
       </Pressable>
 
-      {message ? <Text style={styles.engineMessage}>{message}</Text> : null}
+      {notice ? (
+        <Text style={[styles.engineMessage, NOTICE_TONE_STYLE[notice.tone]]}>{notice.text}</Text>
+      ) : null}
     </View>
   );
 }
@@ -770,6 +786,8 @@ const styles = StyleSheet.create({
   textButtonText: { color: C.textSecondary, fontSize: 13, fontWeight: '700' },
   textButtonContent: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   engineMessage: { color: C.textMuted, fontSize: 12, fontWeight: '600', textAlign: 'center' },
+  engineSuccess: { color: C.successText },
+  engineDanger: { color: C.dangerText },
 
   // Completed panel
   completedCard: {
@@ -829,3 +847,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
 });
+
+const NOTICE_TONE_STYLE: Record<NoticeTone, TextStyle | undefined> = {
+  progress: undefined,
+  success: styles.engineSuccess,
+  danger: styles.engineDanger,
+};

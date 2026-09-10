@@ -25,6 +25,7 @@ import {
   updateManagedProduct,
 } from '../../features/inventory/inventoryManagementApi';
 import { getActiveLabSession } from '../../features/sheer-lab/labSession';
+import { confirmDestructive } from '../../lib/confirm';
 import { Icon } from '../../ui/icons/Icon';
 import { LabShell, Pill, t, c, useLabLayout } from '../shared/LabShell';
 import { formatGrams, formatMoney, formatRelativeTime, getInventoryTier, stockFill } from '../Home/dashboardHelpers';
@@ -55,6 +56,14 @@ export function InventoryScreen({ navigation }: InventoryScreenProps): React.JSX
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  /**
+   * A failure from a save/adjust/archive request, shown INSIDE the modal that
+   * caused it. `error` renders in the screen's banner, which sits behind the
+   * modal — so a rejected save used to be completely invisible: the button went
+   * "Saving…", came back, and the reason was on a surface the operator could
+   * not see. Repeated taps then repeated the failing request.
+   */
+  const [submitError, setSubmitError] = useState<string | undefined>();
   const [notice, setNotice] = useState<string | undefined>();
   const [forbidden, setForbidden] = useState(false);
 
@@ -99,10 +108,30 @@ export function InventoryScreen({ navigation }: InventoryScreenProps): React.JSX
       if (categoryRes.status === 'fulfilled') setCategories(categoryRes.value.categories);
       if (lowStockRes.status === 'fulfilled') setLowStockCount(lowStockRes.value.alerts.length);
 
-      const failed = [productRes, stockRes].some((result) => result.status === 'rejected');
+      // Was `[productRes, stockRes]` — so a failed movements, categories or
+      // low-stock call left the screen looking fully loaded and healthy. The
+      // worst of those is low-stock: "Low-stock alerts 0" after a failed alerts
+      // call is the number the owner opens this screen to read.
+      const sources = [
+        ['products', productRes],
+        ['stock levels', stockRes],
+        ['stock movements', movementRes],
+        ['categories', categoryRes],
+        ['low-stock alerts', lowStockRes],
+      ] as const;
+      const failedNames = sources
+        .filter(([, result]) => result.status === 'rejected')
+        .map(([name]) => name);
+      const failed = failedNames.length > 0;
       if (failed) {
-        const reason = [productRes, stockRes].find((r) => r.status === 'rejected') as PromiseRejectedResult | undefined;
-        setError(reason?.reason instanceof Error ? reason.reason.message : 'Could not load inventory. Pull to refresh.');
+        // Name what is stale. "Could not load inventory" over a screen showing
+        // a full product table and "0 alerts" tells the operator nothing about
+        // which number they should not trust.
+        const reason = sources.find(([, r]) => r.status === 'rejected')?.[1] as
+          | PromiseRejectedResult
+          | undefined;
+        const detail = reason?.reason instanceof Error ? `${reason.reason.message} ` : '';
+        setError(`${detail}Could not load ${failedNames.join(', ')}. Pull to refresh.`);
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not load inventory');
@@ -157,6 +186,7 @@ export function InventoryScreen({ navigation }: InventoryScreenProps): React.JSX
       if (!session) return;
       setSaving(true);
       setError(undefined);
+      setSubmitError(undefined);
       setNotice(undefined);
       try {
         const body = {
@@ -187,7 +217,7 @@ export function InventoryScreen({ navigation }: InventoryScreenProps): React.JSX
         setEditing(undefined);
         await load();
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : 'Could not save product');
+        setSubmitError(err instanceof Error ? err.message : 'Could not save product');
       } finally {
         setSaving(false);
       }
@@ -205,6 +235,7 @@ export function InventoryScreen({ navigation }: InventoryScreenProps): React.JSX
       }
       setSaving(true);
       setError(undefined);
+      setSubmitError(undefined);
       setNotice(undefined);
       try {
         if (!adjustTarget.isStocked) {
@@ -229,7 +260,7 @@ export function InventoryScreen({ navigation }: InventoryScreenProps): React.JSX
         setAdjustTarget(undefined);
         await load();
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : 'Could not update stock');
+        setSubmitError(err instanceof Error ? err.message : 'Could not update stock');
       } finally {
         setSaving(false);
       }
@@ -240,8 +271,18 @@ export function InventoryScreen({ navigation }: InventoryScreenProps): React.JSX
   const handleArchive = useCallback(
     async (product: InventoryProduct) => {
       if (!session) return;
+      // Archiving removes the product from every picker at every station. It
+      // used to fire from one tap on a ghost button beside Save.
+      const confirmed = await confirmDestructive({
+        title: `Archive ${product.name}?`,
+        message:
+          'It will stop appearing in product pickers at every station. Existing formulas that used it are unaffected.',
+        confirmLabel: 'Archive',
+      });
+      if (!confirmed) return;
       setSaving(true);
       setError(undefined);
+      setSubmitError(undefined);
       try {
         await archiveManagedProduct(session.sessionId, product.id);
         setNotice(`${product.name} archived.`);
@@ -249,7 +290,7 @@ export function InventoryScreen({ navigation }: InventoryScreenProps): React.JSX
         setEditing(undefined);
         await load();
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : 'Could not archive product');
+        setSubmitError(err instanceof Error ? err.message : 'Could not archive product');
       } finally {
         setSaving(false);
       }
@@ -403,10 +444,12 @@ export function InventoryScreen({ navigation }: InventoryScreenProps): React.JSX
         categories={categories}
         currentOnHandGrams={editing ? stockByProduct.get(editing.id)?.quantityOnHandGrams : undefined}
         saving={saving}
+        submitError={submitError}
         onArchive={editing && session?.role === 'owner' ? () => void handleArchive(editing) : undefined}
         onClose={() => {
           setShowProductForm(false);
           setEditing(undefined);
+          setSubmitError(undefined);
         }}
         onSave={handleSaveProduct}
       />
@@ -414,9 +457,11 @@ export function InventoryScreen({ navigation }: InventoryScreenProps): React.JSX
         visible={showAdjust}
         item={adjustTarget}
         saving={saving}
+        submitError={submitError}
         onClose={() => {
           setShowAdjust(false);
           setAdjustTarget(undefined);
+          setSubmitError(undefined);
         }}
         onSubmit={handleAdjust}
       />

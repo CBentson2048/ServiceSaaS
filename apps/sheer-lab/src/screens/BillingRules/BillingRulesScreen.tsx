@@ -18,6 +18,7 @@ import {
   updateServiceBillingRules,
 } from '../../features/billing/serviceBillingRulesApi';
 import { getActiveLabSession } from '../../features/sheer-lab/labSession';
+import { confirmDestructive } from '../../lib/confirm';
 import { labPalette } from '../../theme/labTheme';
 import { Icon } from '../../ui/icons/Icon';
 import type { IconName } from '../../ui/icons/paths';
@@ -152,6 +153,16 @@ export function BillingRulesScreen({ navigation }: BillingRulesScreenProps): Rea
 
   const handleReset = useCallback(async () => {
     if (!session || saving) return;
+    // Replaces every service's pricing with defaults, server-side, and
+    // discards any unsaved edits on this screen. It used to fire from one tap
+    // on a ghost button sitting next to Save.
+    const confirmed = await confirmDestructive({
+      title: 'Restore standard defaults?',
+      message:
+        'Every service’s billing rules will be replaced with the standard industry defaults, and any unsaved changes here will be lost. This cannot be undone.',
+      confirmLabel: 'Restore defaults',
+    });
+    if (!confirmed) return;
     setSaving(true);
     setError(undefined);
     setNotice(undefined);

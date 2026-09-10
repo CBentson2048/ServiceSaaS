@@ -23,6 +23,7 @@ import { listTodaysLabAppointmentsForSession } from '../../features/appointments
 import { useBleScale } from '../../features/ble/hooks/useBleScale';
 import { listLabInventoryStockForSession } from '../../features/inventory/productsApi';
 import { getActiveLabSession } from '../../features/sheer-lab/labSession';
+import { confirmDestructive } from '../../lib/confirm';
 import { labTheme } from '../../theme/labTheme';
 import { Icon } from '../../ui/icons/Icon';
 import type { IconName } from '../../ui/icons/paths';
@@ -200,8 +201,23 @@ export function HomeScreen({ navigation }: HomeScreenProps): React.JSX.Element {
   );
 
   const openFormulaForBooking = useCallback(
-    (booking: StaffBookingSummary) => {
+    async (booking: StaffBookingSummary) => {
       if (!session) return;
+      // "Completed Today" reads as a RECORD view, and tapping a row here used
+      // to start a brand-new blank draft against an appointment that had
+      // already been mixed and billed — silently, with no indication that this
+      // was a second mix rather than a look at the first. Remixing may be
+      // legitimate (a correction), so the affordance stays; it just cannot
+      // happen by accident any more.
+      if (isCompletedBooking(booking)) {
+        const confirmed = await confirmDestructive({
+          title: `Start a new mix for ${booking.clientDisplayName}?`,
+          message:
+            'This appointment is already completed. Opening it here starts a NEW, empty formula rather than showing the one that was billed — use Formula History to review the existing record.',
+          confirmLabel: 'Start a new mix',
+        });
+        if (!confirmed) return;
+      }
       navigation.navigate('Formula', {
         entryContext: {
           labSessionId: session.sessionId,
@@ -245,14 +261,24 @@ export function HomeScreen({ navigation }: HomeScreenProps): React.JSX.Element {
     <>
       <ScalePanel scale={scale} onPair={() => goToRoute('DevicePairing')} />
       <ManagerInsights insights={insights} canSee={Boolean(canSeeInsights)} horizontal={insightsRow} />
-      <InventoryStatusPanel items={displayStock} hasStock={stock.length > 0} failed={stockFailed} />
+      <InventoryStatusPanel
+        items={displayStock}
+        hasStock={stock.length > 0}
+        failed={stockFailed}
+        loading={loading}
+      />
     </>
   );
 
   const main = (
     <>
-      <ActiveSessionsPanel bookings={activeBookings} onOpen={openFormulaForBooking} />
-      <CompletedTodayPanel bookings={completedBookings} isWide={isWide} onOpen={openFormulaForBooking} />
+      <ActiveSessionsPanel bookings={activeBookings} loading={loading} onOpen={(booking) => void openFormulaForBooking(booking)} />
+      <CompletedTodayPanel
+        bookings={completedBookings}
+        isWide={isWide}
+        loading={loading}
+        onOpen={(booking) => void openFormulaForBooking(booking)}
+      />
       <QuickToolsPanel fixedTiles={showSidebar} tools={quickTools} onSelect={handleNav} />
     </>
   );
@@ -452,15 +478,22 @@ function InventoryStatusPanel({
   items,
   hasStock,
   failed,
+  loading,
 }: {
   items: InventoryLocationStock[];
   hasStock: boolean;
   failed: boolean;
+  loading: boolean;
 }): React.JSX.Element {
   return (
     <View style={styles.card}>
       <Text style={styles.eyebrow}>Inventory Status</Text>
-      {failed ? (
+      {/* This panel already separated failure from empty, which the two booking
+          panels did not. It still could not say "not known yet", so a cold open
+          announced that no stock was configured at this location. */}
+      {loading && !hasStock && !failed ? (
+        <Text style={styles.mutedText}>Loading stock levels…</Text>
+      ) : failed ? (
         <Text style={styles.mutedText}>Stock levels could not be loaded. Pull to refresh to try again.</Text>
       ) : !hasStock ? (
         <Text style={styles.mutedText}>No stock has been initialised for this location yet.</Text>
@@ -498,15 +531,24 @@ function InventoryStatusPanel({
 
 function ActiveSessionsPanel({
   bookings,
+  loading,
   onOpen,
 }: {
   bookings: StaffBookingSummary[];
+  /** UNKNOWN IS NOT NONE — see the empty-state note below. */
+  loading: boolean;
   onOpen: (booking: StaffBookingSummary) => void;
 }): React.JSX.Element {
   return (
     <View style={styles.card}>
       <SectionHeading title="Active Sessions" count={bookings.length} />
-      {bookings.length === 0 ? (
+      {/* The empty state used to be `bookings.length === 0` alone. `bookings`
+          starts as [], so on every cold open the dashboard stated as fact that
+          nobody was in the chair — while the request that would say otherwise
+          was still in flight. Distinguish "we do not know yet" from "none". */}
+      {loading && bookings.length === 0 ? (
+        <Text style={styles.mutedText}>Loading sessions…</Text>
+      ) : bookings.length === 0 ? (
         <Text style={styles.mutedText}>No clients are in the chair right now.</Text>
       ) : (
         <View style={styles.sessionList}>
@@ -543,16 +585,20 @@ function ActiveSessionsPanel({
 function CompletedTodayPanel({
   bookings,
   isWide,
+  loading,
   onOpen,
 }: {
   bookings: StaffBookingSummary[];
   isWide: boolean;
+  loading: boolean;
   onOpen: (booking: StaffBookingSummary) => void;
 }): React.JSX.Element {
   return (
     <View style={styles.card}>
       <SectionHeading title="Completed Today" count={bookings.length} />
-      {bookings.length === 0 ? (
+      {loading && bookings.length === 0 ? (
+        <Text style={styles.mutedText}>Loading today’s appointments…</Text>
+      ) : bookings.length === 0 ? (
         <Text style={styles.mutedText}>No appointments have been completed yet today.</Text>
       ) : (
         <View>

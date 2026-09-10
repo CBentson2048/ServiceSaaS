@@ -1,5 +1,5 @@
 import type React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Linking, StyleSheet, Text, View } from 'react-native';
 
 import { ConnectionStatusBar } from '../../features/ble/components/ConnectionStatusBar';
 import { useBleScale } from '../../features/ble/hooks/useBleScale';
@@ -29,7 +29,16 @@ export function DevicePairingScreen(): React.JSX.Element {
       <StatusRow label="Bluetooth" value={ble.bluetoothPoweredOn ? 'powered on' : 'off or unavailable'} />
       {ble.permission.message ? <PlaceholderText>{ble.permission.message}</PlaceholderText> : null}
       <View style={styles.actions}>
-        <LabButton label="Request permission" onPress={ble.requestPermissions} />
+        {/* Once iOS Bluetooth permission is denied it cannot be re-granted
+            in-app: requestPermissions returns denied again immediately. The
+            app's only response was a sentence of advice telling the operator to
+            go to Settings, with no way to get there — and the scale is the
+            reason this app exists. */}
+        {ble.permission.status === 'denied' ? (
+          <LabButton label="Open iOS Settings" onPress={() => void Linking.openSettings()} />
+        ) : (
+          <LabButton label="Request permission" onPress={ble.requestPermissions} />
+        )}
         <LabButton
           label={scanning ? 'Stop scan' : 'Scan for scales'}
           variant="secondary"

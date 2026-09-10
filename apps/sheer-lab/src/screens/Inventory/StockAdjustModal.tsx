@@ -25,6 +25,8 @@ interface StockAdjustModalProps {
   visible: boolean;
   item?: StockAdjustTarget;
   saving: boolean;
+  /** A failure from the adjust request — see ProductFormModal.submitError. */
+  submitError?: string;
   onClose: () => void;
   onSubmit: (values: StockAdjustValues) => void;
 }
@@ -32,7 +34,14 @@ interface StockAdjustModalProps {
 // Records an auditable stock movement against one product at the station's
 // location — inbound restock (+) or loss/correction (−). Every adjustment is
 // written to the movement log by the API.
-export function StockAdjustModal({ visible, item, saving, onClose, onSubmit }: StockAdjustModalProps): React.JSX.Element {
+export function StockAdjustModal({
+  visible,
+  item,
+  saving,
+  submitError,
+  onClose,
+  onSubmit,
+}: StockAdjustModalProps): React.JSX.Element {
   const [direction, setDirection] = useState<'inbound' | 'loss'>('inbound');
   const [quantity, setQuantity] = useState('');
   const [reason, setReason] = useState('');
@@ -52,6 +61,14 @@ export function StockAdjustModal({ visible, item, saving, onClose, onSubmit }: S
     const magnitude = Number(quantity.trim());
     if (!Number.isFinite(magnitude) || magnitude <= 0) {
       setError('Enter a quantity greater than zero.');
+      return;
+    }
+    // A loss larger than what is on hand drove the stock record negative and
+    // corrupted the valuation (quantity x cost), while telling the operator it
+    // had worked. The on-hand figure is displayed two lines above this field,
+    // so the check has the number it needs.
+    if (direction === 'loss' && item && magnitude > item.currentQuantityGrams) {
+      setError(`Only ${formatGrams(item.currentQuantityGrams)} on hand — a loss cannot exceed it.`);
       return;
     }
     onSubmit({ direction, quantityGrams: magnitude, reason: reason.trim() || null });
@@ -86,7 +103,9 @@ export function StockAdjustModal({ visible, item, saving, onClose, onSubmit }: S
               </Text>
             ) : null}
 
-            {error ? <Text style={styles.error}>{error}</Text> : null}
+            {error ?? submitError ? (
+              <Text style={styles.error}>{error ?? submitError}</Text>
+            ) : null}
 
             {canReduce ? (
               <View style={styles.toggleRow}>

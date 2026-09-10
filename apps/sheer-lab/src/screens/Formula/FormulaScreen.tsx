@@ -2,7 +2,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { InventoryProduct, LocationProductBillingSettings, PinUnlockResponse } from '@sheer/domain';
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { StyleProp, ViewStyle } from 'react-native';
+import type { StyleProp, TextStyle, ViewStyle } from 'react-native';
 import {
   Modal,
   Pressable,
@@ -34,12 +34,16 @@ import { formatClock } from '../Home/dashboardHelpers';
 import { labTheme } from '../../theme/labTheme';
 import { Icon } from '../../ui/icons/Icon';
 import type { IconName } from '../../ui/icons/paths';
+import { confirmDestructive } from '../../lib/confirm';
 import { DecimalInput } from '../shared/DecimalInput';
 import type { LayoutMode } from '../shared/LabShell';
 import { LabShell, useLabLayout } from '../shared/LabShell';
 
 const T = labTheme;
 const C = T.colors;
+
+/** Progress reads muted, success reads green, failure reads red. */
+type NoticeTone = 'progress' | 'success' | 'danger';
 
 type ManualInputState = Record<string, string>;
 type FormulaScreenProps = NativeStackScreenProps<RootStackParamList, 'Formula'>;
@@ -107,7 +111,23 @@ export function FormulaScreen({ navigation, route }: FormulaScreenProps): React.
 
   const [session, setSession] = useState<PinUnlockResponse | undefined>();
   const [manualInputs, setManualInputs] = useState<ManualInputState>({});
-  const [draftMessage, setDraftMessage] = useState('Local draft not saved yet');
+  /**
+   * The console notice, WITH A TONE.
+   *
+   * One muted 12pt grey line used to carry nine different outcomes: progress
+   * ("Saving draft..."), success ("Draft saved to salon records"), and hard
+   * failure ("Could not send the mix to the front desk"). The operator is
+   * trained to ignore that strip, because it is where "Saving…" appears — so a
+   * failed send-to-desk looked exactly like a completed one, on the screen that
+   * moves money. Failure now reads as failure.
+   */
+  const [notice, setNotice] = useState<{ text: string; tone: NoticeTone }>({
+    text: 'Local draft not saved yet',
+    tone: 'progress',
+  });
+  const say = useCallback((text: string, tone: NoticeTone = 'progress') => {
+    setNotice({ text, tone });
+  }, []);
   const [savingDraft, setSavingDraft] = useState(false);
   const [previousFormula, setPreviousFormula] = useState<SavedFormulaRecord | undefined>();
   const [productSearch, setProductSearch] = useState('');
@@ -342,7 +362,7 @@ export function FormulaScreen({ navigation, route }: FormulaScreenProps): React.
 
   async function handleSaveDraft(): Promise<void> {
     setSavingDraft(true);
-    setDraftMessage('Saving draft...');
+    say('Saving draft...');
     try {
       const saved = saveDraft();
       // Persist to the salon record whenever the draft belongs to a real
@@ -351,19 +371,21 @@ export function FormulaScreen({ navigation, route }: FormulaScreenProps): React.
         const active = await getActiveLabSession();
         if (active) {
           await saveDraftFormulaForLabSession(active.sessionId, toSavePayload());
-          setDraftMessage(
+          say(
             `Draft saved to salon records ${formatTime(saved.savedAt)} · ${saved.rows.length} rows · no billing or inventory changes yet`,
+            'success',
           );
           return;
         }
       }
-      setDraftMessage(
+      say(
         `Draft saved on this station only ${formatTime(saved.savedAt)} · ${saved.rows.length} rows · no billing or inventory changes yet`,
+        'success',
       );
     } catch (err: unknown) {
       // The local save above already succeeded — only the salon-record sync failed.
       const reason = err instanceof Error ? err.message : 'network error';
-      setDraftMessage(`Draft kept on this station — could not sync to salon records (${reason})`);
+      say(`Draft kept on this station — could not sync to salon records (${reason})`, 'danger');
     } finally {
       setSavingDraft(false);
     }
@@ -371,7 +393,7 @@ export function FormulaScreen({ navigation, route }: FormulaScreenProps): React.
 
   function handleReviewAndBill(): void {
     if (!hasCapturedWeight) {
-      setDraftMessage('Weigh at least one ingredient before reviewing the bill.');
+      say('Weigh at least one ingredient before reviewing the bill.', 'danger');
       return;
     }
     // Hand off to the Mix Finalized review screen, which owns billing and the
@@ -379,26 +401,48 @@ export function FormulaScreen({ navigation, route }: FormulaScreenProps): React.
     navigation.navigate('MixFinalized');
   }
 
-  function handleLoadDraft(): void {
+  async function handleLoadDraft(): Promise<void> {
+    // `loadDraft` replaces the live draft wholesale, so every gram captured
+    // since the last manual save is gone — and this button sits immediately
+    // beside "Save draft" on a four-button row. Captured weights are the one
+    // irreversible thing on this screen, so ask first, and only when there is
+    // in-flight work to lose.
+    const capturedNow = draft.rows.filter((row) => row.capturedGrams != null).length;
+    if (capturedNow > 0) {
+      const confirmed = await confirmDestructive({
+        title: 'Reopen the saved draft?',
+        message:
+          capturedNow === 1
+            ? 'The 1 weight captured since the last save will be discarded and replaced by the saved draft.'
+            : `The ${capturedNow} weights captured since the last save will be discarded and replaced by the saved draft.`,
+        confirmLabel: 'Discard and reopen',
+      });
+      if (!confirmed) return;
+    }
     const loaded = loadDraft();
-    setDraftMessage(loaded ? `Draft reopened ${formatTime(loaded.savedAt)}` : 'No saved draft in this session');
+    say(
+      loaded ? `Draft reopened ${formatTime(loaded.savedAt)}` : 'No saved draft in this session',
+      loaded ? 'success' : 'danger',
+    );
   }
 
   function handleLastFormula(): void {
     const latest = getLatestFormulaForClient();
     setPreviousFormula(latest);
-    setDraftMessage(
+    say(
       latest
         ? `Loaded latest formula from ${new Date(latest.savedAt).toLocaleDateString()}`
         : 'No previous formula saved for this client yet',
+      latest ? 'success' : 'progress',
     );
   }
 
   function handleDuplicatePreviousFormula(): void {
     if (!previousFormula) return;
     const duplicated = duplicateFormula(previousFormula.id);
-    setDraftMessage(
+    say(
       duplicated ? 'Duplicated previous formula into editable draft' : 'Could not duplicate that formula in this session',
+      duplicated ? 'success' : 'danger',
     );
   }
 
@@ -466,8 +510,8 @@ export function FormulaScreen({ navigation, route }: FormulaScreenProps): React.
   const pinnedBar = (
     <>
       <View style={styles.noticeBar}>
-        <Text style={styles.noticeText} numberOfLines={2}>
-          {draftMessage}
+        <Text style={[styles.noticeText, NOTICE_TONE_STYLE[notice.tone]]} numberOfLines={2}>
+          {notice.text}
         </Text>
       </View>
 
@@ -481,7 +525,7 @@ export function FormulaScreen({ navigation, route }: FormulaScreenProps): React.
         finalized={isFinalized}
         onAddProduct={handleAddProduct}
         onSaveDraft={() => void handleSaveDraft()}
-        onReopenDraft={handleLoadDraft}
+        onReopenDraft={() => void handleLoadDraft()}
         onReview={handleReviewAndBill}
       />
 
@@ -662,7 +706,11 @@ function ScaleConsoleCard({
         <View style={styles.consoleFooterItem}>
           {savedAt ? <Icon name="check" size="xs" tone="muted" /> : null}
           <Text style={styles.consoleFooterText}>
-            {savedAt ? `Saved automatically ${formatTime(savedAt)}` : 'Auto-save ready'}
+            {/* NOT automatic. `saveDraft()` has exactly two call sites in the
+                app and both are explicit button handlers, so this said "Saved
+                automatically" over work that was only in memory — on the one
+                screen where the operator's captured grams are irreversible. */}
+            {savedAt ? `Draft saved ${formatTime(savedAt)}` : 'Not saved yet — use Save draft'}
           </Text>
         </View>
         <View style={styles.consoleFooterItem}>
@@ -869,17 +917,27 @@ function ActiveIngredientCard({
                 value={row.brand ?? ''}
               />
             </Field>
-            <Field label="Cost / g (pence)" style={styles.fieldNarrow}>
+            {/* POUNDS, not pence. This field used to take pence while the
+                inventory product form takes pounds behind a £ prefix — both
+                writing the same `costPerGramCents`. An operator who had just
+                typed 0.12 there (twelve pence) and typed 0.12 here priced the
+                ingredient at 0.12 PENCE per gram: a 100x under-charge, accepted
+                in silence. One convention, and it is the one with the £ on it. */}
+            <Field label="Cost / g (£)" style={styles.fieldNarrow}>
               <DecimalInput
-                accessibilityLabel="Cost per gram in pence"
+                accessibilityLabel="Cost per gram in pounds"
                 style={styles.input}
-                value={row.costBasis.source === 'manual_cost' ? row.costBasis.costPerGramCents : undefined}
-                onChangeNumber={(costPerGramCents) =>
+                value={
+                  row.costBasis.source === 'manual_cost' && row.costBasis.costPerGramCents != null
+                    ? row.costBasis.costPerGramCents / 100
+                    : undefined
+                }
+                onChangeNumber={(pounds) =>
                   onMetadataChange({
                     ...row,
                     costBasis: {
-                      source: costPerGramCents == null ? 'missing' : 'manual_cost',
-                      costPerGramCents,
+                      source: pounds == null ? 'missing' : 'manual_cost',
+                      costPerGramCents: pounds == null ? undefined : Math.round(pounds * 100),
                       currencyCode: row.costBasis.currencyCode,
                     },
                   })
@@ -1741,6 +1799,10 @@ const styles = StyleSheet.create({
     borderTopColor: C.border,
   },
   noticeText: { color: C.textMuted, fontSize: 12, fontWeight: '600' },
+  // Only the colour changes: the strip keeps its size and position, so nothing
+  // reflows as the tone changes mid-action.
+  noticeSuccess: { color: C.successText },
+  noticeDanger: { color: C.dangerText },
 
   // Bottom bar
   bottomBar: {
@@ -1887,3 +1949,9 @@ const styles = StyleSheet.create({
   outlineButtonDisabled: { opacity: 0.45 },
   outlineButtonText: { color: C.textPrimary, fontSize: 13, fontWeight: '800' },
 });
+
+const NOTICE_TONE_STYLE: Record<NoticeTone, TextStyle | undefined> = {
+  progress: undefined,
+  success: styles.noticeSuccess,
+  danger: styles.noticeDanger,
+};

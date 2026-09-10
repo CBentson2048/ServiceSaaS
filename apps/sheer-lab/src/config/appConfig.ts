@@ -52,7 +52,18 @@ export const appConfig = {
   // production and the App Store review build) to avoid confusing a reviewer
   // with a "staging" label; the .env override only applies in development. The
   // actual backend is chosen by RELEASE_API_BASE_URL above.
-  environment: __DEV__ ? readEnvironment(readEnv(SHEER_LAB_ENV)) : 'production',
+  // DERIVED from the URL that was actually selected, not asserted. This read
+  // `: 'production'` unconditionally, while RELEASE_API_BASE_URL above points at
+  // DEVELOP whenever REVIEW_MODE_ENABLED is on — so the one control whose entire
+  // job is to say which environment you are in said "PRODUCTION" in exactly the
+  // build where that was false. It is rendered on seven surfaces and is the only
+  // environment signal in the UI, so anyone triaging a support report from a
+  // review build was reading a lie.
+  environment: __DEV__
+    ? readEnvironment(readEnv(SHEER_LAB_ENV))
+    : RELEASE_API_BASE_URL === PRODUCTION_API_BASE_URL
+      ? 'production'
+      : 'develop',
   apiBaseUrl: normalizeApiBaseUrl(
     __DEV__ ? (readEnv(SHEER_LAB_API_URL) ?? DEV_API_BASE_URL) : RELEASE_API_BASE_URL,
   ),

@@ -139,6 +139,17 @@ export function FormulaHistoryScreen({ navigation }: FormulaHistoryScreenProps):
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const [period, setPeriod] = useState<LabPeriod>('today');
+  /**
+   * The period the DATA on screen was fetched for — not the one selected.
+   *
+   * Every heading and metric label used to derive from `period`, which flips
+   * synchronously the instant a chip is tapped, while the numbers underneath
+   * kept the previous period's values until the refetch landed. Tapping "Month"
+   * therefore produced a table headed "Completed this month" containing today's
+   * three sessions, and "Billed this month" showing today's revenue. On a slow
+   * connection an owner could read, and act on, a figure whose label was wrong.
+   */
+  const [loadedPeriod, setLoadedPeriod] = useState<LabPeriod>('today');
   const [customRange, setCustomRange] = useState<LabCustomRange>({ from: '', to: '' });
   const [selectedId, setSelectedId] = useState<string | undefined>();
   const [now, setNow] = useState<Date>(() => new Date());
@@ -151,11 +162,12 @@ export function FormulaHistoryScreen({ navigation }: FormulaHistoryScreenProps):
 
   // Period-aware copy ("today" / "this week" / …) and a flag for the in-between
   // state where Custom is picked but both dates aren't chosen yet.
-  const suffix = periodSuffix(period);
+  const suffix = periodSuffix(loadedPeriod);
   const awaitingCustom = period === 'custom' && !resolveLabCustomWindow(customRange);
 
   const load = useCallback(async () => {
     setError(undefined);
+    setLoading(true);
     try {
       const activeSession = await getActiveLabSession();
       if (!activeSession) {
@@ -170,6 +182,7 @@ export function FormulaHistoryScreen({ navigation }: FormulaHistoryScreenProps):
       if (period === 'custom' && !customWindow) {
         setBookings([]);
         setAnalytics(undefined);
+        setLoadedPeriod(period);
         return;
       }
 
@@ -180,6 +193,7 @@ export function FormulaHistoryScreen({ navigation }: FormulaHistoryScreenProps):
 
       setBookings(appointments.status === 'fulfilled' ? appointments.value.bookings : []);
       setAnalytics(analyticsResult.status === 'fulfilled' ? analyticsResult.value : undefined);
+      setLoadedPeriod(period);
 
       if (appointments.status === 'rejected') {
         setError('Could not load sessions for this period. Pull to refresh to try again.');
@@ -991,10 +1005,15 @@ function buildMetrics(
       icon: 'note',
     });
   } else {
+    // This `else` covers three unrelated causes — not loaded yet, load failed,
+    // and a genuine 403 — and it used to hardcode "Managers only" with no role
+    // check. An owner was therefore told a metric was restricted to managers,
+    // which they are, and would reasonably conclude their role was wrong rather
+    // than that a request had failed. Mirrors the `billed` tile below.
     metrics.push({
       key: 'grams',
       label: 'Product used',
-      value: 'Managers only',
+      value: canSeeFinance ? 'Unavailable' : 'Managers only',
       icon: 'flask',
       locked: true,
     });
