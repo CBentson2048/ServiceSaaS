@@ -4,7 +4,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import type { AppointmentCompletionResponse, CreateStylistRebookingRequest, StaffBookingSummary } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
-import { AppButton, Card, EmptyState, Screen, SectionHeader } from '../src/design';
+import { ActionButton, AppButton, Card, EmptyState, Screen, SectionHeader } from '../src/design';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
@@ -139,9 +139,9 @@ export default function BookingsScreen() {
   return (
     <ProtectedScreen allowedRoles={['manager', 'stylist']}>
       <Screen header={<ScreenHeader title="Bookings" back={false} />}>
-        <AppButton
+        <ActionButton
           label="New booking"
-          leadingIcon={<Ionicons name="add" size={16} color={palette.white} />}
+          icon="add"
           onPress={() => router.push('/new-booking')}
         />
 

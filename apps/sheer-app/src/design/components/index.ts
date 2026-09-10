@@ -1,5 +1,6 @@
 export * from './AppText';
 export * from './AppButton';
+export * from './ActionButton';
 export * from './AppCard';
 export * from './Pill';
 export * from './StatusBadge';

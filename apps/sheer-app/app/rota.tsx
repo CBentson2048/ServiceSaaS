@@ -12,7 +12,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import type { RotaLeaveRequest, RotaShift, StylistMyWeekResponse } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
-import { AppButton, EmptyState, Screen } from '../src/design';
+import { ActionButton, AppButton, EmptyState, Screen } from '../src/design';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
@@ -135,19 +135,17 @@ export default function RotaScreen() {
              "My week" heading here as well was the double header. ── */}
         <View style={styles.header}>
           <View style={styles.flex} />
-          <Pressable
-            accessibilityRole="button"
+          <ActionButton
+            label="Request leave"
+            icon="add"
+            count={pendingLeaveCount}
+            accessibilityLabel={
+              pendingLeaveCount > 0
+                ? `Request leave, ${pendingLeaveCount} pending`
+                : 'Request leave'
+            }
             onPress={openLeaveModal}
-            style={({ pressed }) => [styles.requestBtn, pressed && styles.pressed]}
-          >
-            <Ionicons name="add" size={16} color={palette.white} />
-            <Text style={styles.requestBtnText}>Request leave</Text>
-            {pendingLeaveCount > 0 ? (
-              <View style={styles.requestBtnBadge}>
-                <Text style={styles.requestBtnBadgeText}>{pendingLeaveCount}</Text>
-              </View>
-            ) : null}
-          </Pressable>
+          />
         </View>
 
         {/* ── Professional calendar week strip ── */}
@@ -687,31 +685,6 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
     textTransform: 'uppercase',
   },
-  requestBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    paddingHorizontal: spacing.base,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.pill,
-    backgroundColor: BRAND,
-    shadowColor: BRAND,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  requestBtnText: { color: palette.white, fontSize: 13, fontWeight: '800' },
-  requestBtnBadge: {
-    minWidth: 18,
-    height: 18,
-    paddingHorizontal: 5,
-    borderRadius: radius.full,
-    backgroundColor: palette.white,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  requestBtnBadgeText: { color: BRAND, fontSize: 10, fontWeight: '900' },
 
   // ── Calendar week strip
   calendar: {
