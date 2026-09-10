@@ -23,6 +23,12 @@ const code = (p: string) =>
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/^\s*\/\/.*$/gm, '');
 
+/** The `<ActionButton … />` element itself. Neither call site nests one. */
+const element = (src: string) => src.slice(src.indexOf('<ActionButton'), src.indexOf('/>', src.indexOf('<ActionButton')) + 2);
+/** Everything between `<Screen>`'s opening tag and the button. */
+const beforeAction = (src: string) =>
+  src.slice(src.indexOf('>', src.indexOf('<Screen ')) + 1, src.indexOf('<ActionButton'));
+
 const BOOKINGS = code('app/bookings.tsx');
 const ROTA = code('app/rota.tsx');
 const COMPONENT = code('src/design/components/ActionButton.tsx');
@@ -44,6 +50,25 @@ describe('the two screen primary actions share one definition', () => {
         file: name,
         requestBtn: false,
       });
+    }
+  });
+
+  it('puts the action in the same position on both screens', () => {
+    // Rota's button was right-aligned by a `flex: 1` spacer inside a wrapper
+    // row — left over from a heading that has since gone — while Bookings had
+    // none, so the two sat on opposite sides. Both now render the button as
+    // the first thing in Screen's content column, unwrapped, and neither
+    // passes a style: the alignment lives in ActionButton, which is what
+    // stops them drifting apart again.
+    for (const [name, src] of [
+      ['bookings.tsx', BOOKINGS],
+      ['rota.tsx', ROTA],
+    ] as const) {
+      expect({
+        file: name,
+        wrapped: /<View\b/.test(beforeAction(src)),
+        overridesStyle: /\bstyle=/.test(element(src)),
+      }).toEqual({ file: name, wrapped: false, overridesStyle: false });
     }
   });
 
@@ -75,9 +100,12 @@ describe('ActionButton keeps the treatment it was extracted from', () => {
     expect(COMPONENT).toMatch(/elevation:\s*4/);
   });
 
-  it('keeps alignSelf flex-start, or the pill runs full width inside Screen', () => {
-    // Screen's content container is a column whose children stretch by default.
-    expect(COMPONENT).toMatch(/alignSelf:\s*'flex-start'/);
+  it('right-aligns itself, or the pill runs full width inside Screen', () => {
+    // Screen's content container is a column whose children stretch by
+    // default, so an alignSelf is required either way. It is flex-end because
+    // that is where Rota's button already sat, and owning it here is what let
+    // both screens drop the wrapper row that used to put it there.
+    expect(COMPONENT).toMatch(/alignSelf:\s*'flex-end'/);
   });
 
   it('owns the icon size and colour so a call site cannot mismatch them', () => {

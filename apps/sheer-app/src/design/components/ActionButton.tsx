@@ -35,9 +35,13 @@ export interface ActionButtonProps {
  * this. The two are different jobs, and a compact glowing pill is not a size
  * variant of a form button.
  *
- * `alignSelf: 'flex-start'` is load-bearing: these sit inside `Screen`'s
- * content column, whose children stretch by default, so without it the pill
- * would run the full width. It is inert inside Rota's flex row.
+ * `alignSelf` is load-bearing: these sit inside `Screen`'s content column,
+ * whose children stretch by default, so without one the pill would run the
+ * full width. It is `flex-end` because that is where Rota's button already
+ * sat — right-aligned by a `flex: 1` spacer in a wrapper row, left over from
+ * a "My week" heading that no longer exists. Owning the alignment here puts
+ * both screens' primary action in the same place by construction, and let
+ * that spacer go.
  */
 export function ActionButton({
   label,
@@ -74,7 +78,7 @@ const s = StyleSheet.create({
   button: {
     flexDirection: 'row',
     alignItems: 'center',
-    alignSelf: 'flex-start',
+    alignSelf: 'flex-end',
     gap: spacing.xs,
     paddingHorizontal: spacing.base,
     paddingVertical: spacing.sm,

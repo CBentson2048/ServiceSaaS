@@ -132,21 +132,18 @@ export default function RotaScreen() {
     <ProtectedScreen allowedRoles={['manager', 'stylist']}>
       <Screen header={<ScreenHeader title="Rota" back={false} />}>
         {/* ── Primary action. The screen's title lives in ScreenHeader; a
-             "My week" heading here as well was the double header. ── */}
-        <View style={styles.header}>
-          <View style={styles.flex} />
-          <ActionButton
-            label="Request leave"
-            icon="add"
-            count={pendingLeaveCount}
-            accessibilityLabel={
-              pendingLeaveCount > 0
-                ? `Request leave, ${pendingLeaveCount} pending`
-                : 'Request leave'
-            }
-            onPress={openLeaveModal}
-          />
-        </View>
+             "My week" heading here as well was the double header, and the
+             spacer row that right-aligned this button went with it —
+             ActionButton right-aligns itself. ── */}
+        <ActionButton
+          label="Request leave"
+          icon="add"
+          count={pendingLeaveCount}
+          accessibilityLabel={
+            pendingLeaveCount > 0 ? `Request leave, ${pendingLeaveCount} pending` : 'Request leave'
+          }
+          onPress={openLeaveModal}
+        />
 
         {/* ── Professional calendar week strip ── */}
         <WeekStrip
@@ -669,21 +666,6 @@ const styles = StyleSheet.create({
   flex: {
     flex: 1,
     gap: spacing.xs,
-  },
-
-  // ── Header
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.md,
-  },
-  eyebrow: {
-    color: BRAND_LIGHT,
-    fontSize: 12,
-    fontWeight: '800',
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
   },
 
   // ── Calendar week strip
