@@ -24,7 +24,7 @@ import { useBleScale } from '../../features/ble/hooks/useBleScale';
 import { listLabInventoryStockForSession } from '../../features/inventory/productsApi';
 import { getActiveLabSession } from '../../features/sheer-lab/labSession';
 import { confirmDestructive } from '../../lib/confirm';
-import { labTheme } from '../../theme/labTheme';
+import { labTheme, tone as resolveTone, type ToneTriple } from '../../theme/labTheme';
 import { Icon } from '../../ui/icons/Icon';
 import type { IconName } from '../../ui/icons/paths';
 import { LabShell, useLabLayout } from '../shared/LabShell';
@@ -792,19 +792,11 @@ function Pill({
   );
 }
 
-function toneStyle(tone: StatusTone): { text: string; bg: string; border: string } {
-  switch (tone) {
-    case 'success':
-      return { text: c.successText, bg: c.successBg, border: c.successBorder };
-    case 'warning':
-      return { text: c.warningText, bg: c.warningBg, border: c.warningBorder };
-    case 'danger':
-      return { text: c.dangerText, bg: c.dangerBg, border: c.dangerBorder };
-    case 'brand':
-      return { text: c.primary, bg: c.primarySoft, border: c.primarySoft };
-    default:
-      return { text: c.textSecondary, bg: c.surfaceAlt, border: c.border };
-  }
+function toneStyle(tone: StatusTone): ToneTriple {
+  // Delegates to the ONE implementation in src/theme/labTheme.ts. This was a
+  // five-case switch, and it existed in four copies that had drifted apart on
+  // `brand` and `neutral`.
+  return resolveTone(tone);
 }
 
 function tierBarStyle(tone: StatusTone): { backgroundColor: string } {

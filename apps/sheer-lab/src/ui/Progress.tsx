@@ -2,7 +2,7 @@ import type React from 'react';
 import { useEffect, useRef } from 'react';
 import { Animated, Easing, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 
-import { theme, tone as resolveTone, type Tone } from '../theme/theme';
+import { labTheme as theme, tone as resolveTone, type Tone } from '../theme/labTheme';
 import { Text } from './Text';
 
 export interface ProgressBarProps {

@@ -11,40 +11,29 @@
  * ```
  *
  * ---------------------------------------------------------------------------
- * STATUS: UNADOPTED, EXCEPT FOR THE ICONS. READ THIS BEFORE USING OR DELETING.
+ * STATUS: LIVE, PARTLY ADOPTED.
  * ---------------------------------------------------------------------------
- * As of 2026-09-10 no screen imports anything from this barrel. The twelve
- * components below have zero consumers, and the screens still hand-roll their
- * equivalents. That is not because the kit is bad — it is the better-engineered
- * of the two, and it is the only code in the app that observes the
- * `touchTarget` token (44/52/60, sized for gloved hands at a colour bar).
+ * This kit had zero importers until 2026-09-10, for one reason: every component
+ * imported `src/theme/theme.ts` — a second, parallel semantic theme that
+ * nothing outside this directory used, while every screen ran on
+ * `src/theme/labTheme.ts`. Dead code depending on dead code.
  *
- * It is unadopted because it also depends on a SECOND, parallel design system:
- * `src/theme/theme.ts` + `src/theme/tokens.ts` (573 lines: a type ramp,
- * durations, easing, elevation, hit slops, stroke weights). Those two files
- * likewise have no importers outside this directory — dead code depending on
- * dead code — while every screen runs on `src/theme/labTheme.ts`.
+ * That is resolved. There is now ONE semantic theme (`labTheme`) over ONE token
+ * layer (`tokens.ts`), and this kit runs on it. `theme.ts` and the duplicate
+ * `useLabLayout` beside it are deleted; `labTheme` absorbed the seven semantic
+ * keys and twelve primitive scales they contributed, so nothing was lost.
  *
- * So there is a real, open architectural choice, and it is too big to make as a
- * side effect of a refactor:
+ * ADOPTION IS INCREMENTAL, ON PURPOSE. The screens still carry ~1,180
+ * hand-rolled style rules, and porting all nineteen of them in one sweep would
+ * be a large unreviewable visual change. `Banner` is adopted (Inventory and
+ * Billing Rules, replacing a recipe that had been hand-copied byte-for-byte
+ * into both) and `Icon` is adopted app-wide. The rest are ready to use: prefer
+ * them when you next touch a screen, rather than re-deriving a card, pill,
+ * table or field.
  *
- *   A. MIGRATE TO THIS KIT. Merge tokens.ts into labTheme, port the ~1,180
- *      hand-rolled style rules across 19 screens to these primitives. Weeks of
- *      work, and the right end state — one kit, one token system, and the
- *      touch-target and type ramps actually observed.
- *
- *   B. DELETE IT. Removes the trap of two kits and two token systems at the
- *      cost of throwing away finished design work that nothing yet replaces.
- *
- * Until someone decides, do not add a thirteenth component here, and do not
- * assume a screen can safely import one of these — check whether its theme
- * dependency still resolves to something live.
- *
- * WHAT WAS SALVAGED. `src/ui/icons` IS now live: `Icon.tsx` was rewired from
- * the dead `theme.ts` to `labTheme`, and `src/navigation/labNav.ts` renders the
- * station nav with it. That set existed, finished, with a docblock naming the
- * exact emoji it was written to replace, while the app drew its whole
- * iconography in emoji. It only needed one import changed.
+ * Two things this kit still has that the screens do not, and which are reasons
+ * to prefer it: it observes the `touchTarget` scale (44/52/60, sized for gloved
+ * hands at a colour bar) and the `type` ramp. No screen does either.
  */
 export { Banner } from './Banner';
 export type { BannerProps } from './Banner';
@@ -85,6 +74,11 @@ export type { TextFieldProps } from './TextField';
 export { Icon } from './icons';
 export type { IconName, IconProps, IconTone } from './icons';
 
-export { theme, tone, resolveLayout } from '../theme/theme';
-export type { LabAppTheme, LabLayout, LayoutMode, Tone, ToneTriple } from '../theme/theme';
-export { useLabLayout } from '../theme/useLabLayout';
+export { labTheme as theme, tone } from '../theme/labTheme';
+export type { LabTheme as LabAppTheme, Tone, ToneTriple } from '../theme/labTheme';
+// The layout resolver lives in `src/screens/shared/LabShell.tsx`, which is the
+// only thing that renders a sidebar. `src/theme/theme.ts` carried a SECOND copy
+// (with a `useLabLayout` wrapper beside it) that nothing but this barrel ever
+// referenced; both are deleted.
+export { useLabLayout } from '../screens/shared/LabShell';
+export type { LabLayout, LayoutMode } from '../screens/shared/LabShell';

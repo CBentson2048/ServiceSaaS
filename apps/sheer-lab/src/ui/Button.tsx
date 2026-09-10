@@ -11,7 +11,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 
-import { theme } from '../theme/theme';
+import { labTheme as theme } from '../theme/labTheme';
 import { Icon, type IconName } from './icons';
 import { Text } from './Text';
 

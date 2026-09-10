@@ -19,6 +19,7 @@ import {
 } from '../../features/billing/serviceBillingRulesApi';
 import { getActiveLabSession } from '../../features/sheer-lab/labSession';
 import { confirmDestructive } from '../../lib/confirm';
+import { Banner } from '../../ui';
 import { labPalette } from '../../theme/labTheme';
 import { Icon } from '../../ui/icons/Icon';
 import type { IconName } from '../../ui/icons/paths';
@@ -242,8 +243,16 @@ export function BillingRulesScreen({ navigation }: BillingRulesScreenProps): Rea
         ) : null}
       </View>
 
-      {notice ? <Text style={styles.notice}>{notice}</Text> : null}
-      {error ? <Text style={styles.errorBanner}>{error}</Text> : null}
+      {/* THE first adoption of src/ui. This recipe — tone-coloured fill, tone
+          border, 1px, input radius, md/sm padding — was hand-copied
+          byte-for-byte into this screen and Billing Rules, and again (as
+          `error`) into both Inventory modals, while five other screens rendered
+          a bare coloured line in four different size/weight pairs. `Banner`
+          renders the same block from the same tone triple and adds the tone
+          icon, and a dismiss for the success notice, which previously stayed on
+          screen after the state it described had been refetched. */}
+      {notice ? <Banner message={notice} tone="success" onDismiss={() => setNotice(undefined)} /> : null}
+      {error ? <Banner message={error} tone="danger" /> : null}
 
       {/* Tabs */}
       <View style={styles.tabBar}>
@@ -618,26 +627,6 @@ const styles = StyleSheet.create({
   saveBtnLabel: { color: c.textOnPrimary, fontWeight: '800', fontSize: t.typography.fontSize.small },
   btnDisabled: { opacity: 0.5 },
 
-  notice: {
-    color: c.successText,
-    backgroundColor: c.successBg,
-    borderColor: c.successBorder,
-    borderWidth: 1,
-    borderRadius: t.radius.input,
-    paddingHorizontal: t.spacing.md,
-    paddingVertical: t.spacing.sm,
-    fontSize: t.typography.fontSize.small,
-  },
-  errorBanner: {
-    color: c.dangerText,
-    backgroundColor: c.dangerBg,
-    borderColor: c.dangerBorder,
-    borderWidth: 1,
-    borderRadius: t.radius.input,
-    paddingHorizontal: t.spacing.md,
-    paddingVertical: t.spacing.sm,
-    fontSize: t.typography.fontSize.small,
-  },
 
   tabBar: {
     flexDirection: 'row',

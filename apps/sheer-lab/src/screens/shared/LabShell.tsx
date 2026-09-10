@@ -24,7 +24,7 @@ import {
   visibleNavItems,
   type NavSpec,
 } from '../../navigation/labNav';
-import { labTheme } from '../../theme/labTheme';
+import { labTheme, tone as resolveTone, type ToneTriple } from '../../theme/labTheme';
 import { Icon } from '../../ui/icons/Icon';
 import { BrandMark } from './BrandMark';
 import { BrandWordmark } from './BrandWordmark';
@@ -475,19 +475,11 @@ export function bleBadge(status: BleConnectionStatus): { label: string; tone: St
   }
 }
 
-export function toneStyle(tone: StatusTone): { text: string; bg: string; border: string } {
-  switch (tone) {
-    case 'success':
-      return { text: c.successText, bg: c.successBg, border: c.successBorder };
-    case 'warning':
-      return { text: c.warningText, bg: c.warningBg, border: c.warningBorder };
-    case 'danger':
-      return { text: c.dangerText, bg: c.dangerBg, border: c.dangerBorder };
-    case 'brand':
-      return { text: c.primary, bg: c.primarySoft, border: c.primarySoft };
-    default:
-      return { text: c.textSecondary, bg: c.surfaceAlt, border: c.border };
-  }
+export function toneStyle(tone: StatusTone): ToneTriple {
+  // Delegates to the ONE implementation in src/theme/labTheme.ts. This was a
+  // five-case switch, and it existed in four copies that had drifted apart on
+  // `brand` and `neutral`.
+  return resolveTone(tone);
 }
 
 export function initials(displayName: string): string {

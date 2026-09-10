@@ -12,10 +12,10 @@
  * contrast rule is arithmetic rather than a comment someone can contradict.
  */
 
-import { readFileSync } from 'fs';
+import { readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 
-import { labPalette, labTheme } from './labTheme';
+import { labPalette, labTheme, tone } from './labTheme';
 
 // --- WCAG 2.1 relative luminance / contrast ratio --------------------------
 
@@ -158,5 +158,103 @@ describe('both status-tone shapes stay available', () => {
     );
     const flat = labTheme.colors[`${tone}Text` as 'successText' | 'warningText' | 'dangerText'];
     expect(flat).toBe(nested.text);
+  });
+});
+
+describe('there is one semantic theme and one token layer', () => {
+  const themeDir = readdirSync(__dirname).sort();
+
+  it('has no second semantic theme file', () => {
+    // `src/theme/theme.ts` was a 288-line parallel semantic theme, imported by
+    // nothing except the `src/ui` kit — which was itself imported by nothing.
+    // Dead code depending on dead code, while every screen ran on labTheme.
+    // `tokens.ts` stays: raw scales are a legitimate layer BENEATH a theme.
+    expect(themeDir).toEqual(['labTheme.spec.ts', 'labTheme.ts', 'tokens.ts']);
+  });
+
+  it('is the only theme the component kit imports', () => {
+    const uiDir = join(__dirname, '..', 'ui');
+    const files = readdirSync(uiDir)
+      .filter((f) => f.endsWith('.tsx') || f.endsWith('.ts'))
+      .map((f) => ({ file: f, src: readFileSync(join(uiDir, f), 'utf8') }));
+    expect(files.length).toBeGreaterThan(10);
+    for (const { file, src } of files) {
+      expect({ file, importsDeadTheme: /theme\/theme'/.test(src) }).toEqual({
+        file,
+        importsDeadTheme: false,
+      });
+    }
+  });
+
+  it('carries the primitive scales the kit needs, so it can run on this theme', () => {
+    for (const key of [
+      'type',
+      'weight',
+      'elevation',
+      'duration',
+      'easing',
+      'iconSize',
+      'strokeWidth',
+      'touchTarget',
+      'hitSlop',
+      'hairline',
+      'breakpoint',
+      'maxContentWidth',
+      'numericStyle',
+      'pressedOpacity',
+      'disabledOpacity',
+    ]) {
+      expect(labTheme).toHaveProperty(key);
+    }
+  });
+});
+
+describe('the tone switch has one implementation', () => {
+  it('resolves every tone to a complete triple', () => {
+    for (const name of ['success', 'warning', 'danger', 'neutral', 'brand'] as const) {
+      expect(tone(name)).toEqual(
+        expect.objectContaining({
+          text: expect.any(String),
+          bg: expect.any(String),
+          border: expect.any(String),
+        }),
+      );
+    }
+  });
+
+  it('gives the brand chip a border you can actually see', () => {
+    // The divergence this settled: two of the four copies set the brand border
+    // to `primarySoft`, the same colour as the fill — a chip with no edge.
+    const brand = tone('brand');
+    expect(brand.border).not.toBe(brand.bg);
+  });
+
+  it('gives the neutral chip the opaque raised step, not an input recess', () => {
+    expect(tone('neutral').bg).toBe(labPalette.surfaceRaised);
+  });
+
+  it('has no screen re-implementing the switch', () => {
+    // Four live copies: LabShell (exported), HomeScreen, and `chipToneStyle` in
+    // FormulaScreen and FormulaHistoryScreen. Each now delegates.
+    const screens = join(__dirname, '..', 'screens');
+    for (const rel of [
+      ['shared', 'LabShell.tsx'],
+      ['Home', 'HomeScreen.tsx'],
+      ['Formula', 'FormulaScreen.tsx'],
+      ['FormulaHistory', 'FormulaHistoryScreen.tsx'],
+    ]) {
+      const src = readFileSync(join(screens, ...rel), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/.*$/gm, '');
+      // Target the TRIPLE, not `switch (tone)` generally: HomeScreen's
+      // `tierBarStyle` legitimately switches on a tone to pick one saturated
+      // bar fill, which is a different job and not a fourth copy of this one.
+      const buildsTriple = /\{\s*text:[^{}]*bg:[^{}]*border:[^{}]*\}/.test(src);
+      expect({ file: rel.join('/'), buildsTriple }).toEqual({
+        file: rel.join('/'),
+        buildsTriple: false,
+      });
+      expect(src).toMatch(/resolveTone\(tone\)/);
+    }
   });
 });

@@ -49,7 +49,7 @@ import {
   sumProductUsageGrams,
   type StatusTone,
 } from '../Home/dashboardHelpers';
-import { labTheme } from '../../theme/labTheme';
+import { labTheme, tone as resolveTone, type ToneTriple } from '../../theme/labTheme';
 import { Icon } from '../../ui/icons/Icon';
 import type { IconName } from '../../ui/icons/paths';
 import { useBleScale } from '../../features/ble/hooks/useBleScale';
@@ -1119,19 +1119,11 @@ function humanize(value: string): string {
 // Shared primitives
 // ---------------------------------------------------------------------------
 
-function chipToneStyle(tone: ChipTone): { text: string; bg: string; border: string } {
-  switch (tone) {
-    case 'brand':
-      return { text: C.primary, bg: C.primarySoft, border: C.primary };
-    case 'success':
-      return { text: C.success.text, bg: C.success.bg, border: C.success.border };
-    case 'warning':
-      return { text: C.warning.text, bg: C.warning.bg, border: C.warning.border };
-    case 'danger':
-      return { text: C.danger.text, bg: C.danger.bg, border: C.danger.border };
-    default:
-      return { text: C.textSecondary, bg: C.inputBg, border: C.borderStrong };
-  }
+function chipToneStyle(tone: ChipTone): ToneTriple {
+  // Delegates to the ONE implementation in src/theme/labTheme.ts. This was a
+  // five-case switch, and it existed in four copies that had drifted apart on
+  // `brand` and `neutral`.
+  return resolveTone(tone);
 }
 
 function deltaColor(tone?: ChipTone): string {

@@ -1,6 +1,22 @@
 import { palette, radius, spacing, staffTheme, typography } from '@sheer/design-tokens';
 
-import { iconSize, strokeWidth, touchTarget } from './tokens';
+import {
+  breakpoint,
+  disabledOpacity,
+  duration,
+  easing,
+  elevation,
+  hairline,
+  hitSlop,
+  iconSize,
+  maxContentWidth,
+  numericStyle,
+  pressedOpacity,
+  strokeWidth,
+  touchTarget,
+  type,
+  weight,
+} from './tokens';
 
 /**
  * Lab-only palette for the QLAB rebrand (purple flask + infinity mark).
@@ -23,6 +39,8 @@ export const labPalette = {
   accentDeep: '#7A0F9C',
   accentSoft: '#3A1548',
   hero: '#431956',
+  /** Sheets and popovers floating above everything — the fourth surface step. */
+  surfaceOverlay: '#342941',
 } as const;
 
 /**
@@ -121,6 +139,55 @@ export const labTheme = {
 
     border: palette.alpha.whiteLine,
     borderStrong: palette.alpha.whiteMuted,
+    /** Hairline between rows inside one card — softer than a card border. */
+    divider: palette.alpha.whiteSoft,
+    inputBorderFocus: labPalette.accent,
+
+    /**
+     * The DEEP accent, for a fill that must carry white text. `primary` is the
+     * pale accent and cannot (3.16:1); this is 6.51:1 with white. Anything that
+     * needs a white label fills with this — see the contrast note above.
+     */
+    primaryStrong: labPalette.accentSolid,
+    onPrimaryStrong: palette.white,
+
+    /** Explicit alias of the raised step, for callers naming the ladder. */
+    surfaceRaised: labPalette.surfaceRaised,
+    surfaceOverlay: labPalette.surfaceOverlay,
+
+    /** Below `textMuted` — timestamps, row hints, unit suffixes. */
+    textFaint: palette.alpha.whiteMuted,
+
+    /**
+     * Tone triples for the two tones `staffTheme` does not define. `success`,
+     * `warning` and `danger` arrive nested from the spread above; these complete
+     * the set so `tone()` is a plain lookup rather than a switch.
+     *
+     * Both values below settle a real divergence. The tone switch existed in
+     * FOUR live copies — LabShell (exported, and used by Inventory and Billing
+     * Rules through `Pill`), HomeScreen, and as `chipToneStyle` in FormulaScreen
+     * and FormulaHistoryScreen — and they disagreed on exactly these two:
+     *
+     *   brand border:  primarySoft (LabShell, Home) vs primary (the other two)
+     *   neutral bg:    surfaceAlt  (LabShell, Home) vs inputBg
+     *   neutral border: border     (LabShell, Home) vs borderStrong
+     *
+     * `brand` takes the VISIBLE border: primarySoft is the same colour as the
+     * fill, so that variant drew a chip with no edge at all — a bug rather than
+     * a style. `neutral` takes the opaque raised step from the documented
+     * surface ladder, rather than a translucent input recess, because this is a
+     * chip sitting on a card and not a field.
+     */
+    brand: {
+      text: labPalette.accent,
+      bg: labPalette.accentSoft,
+      border: labPalette.accent,
+    },
+    neutral: {
+      text: palette.alpha.whiteHi,
+      bg: labPalette.surfaceRaised,
+      border: palette.alpha.whiteLine,
+    },
 
     // Flat aliases for the nested `success`/`warning`/`danger` tones above.
     successText: staffTheme.colors.success.text,
@@ -149,6 +216,28 @@ export const labTheme = {
    * the screens predate the token and use their own numbers.
    */
   touchTarget,
+  /**
+   * The remaining primitive scales, from `src/theme/tokens.ts`.
+   *
+   * These arrived with `src/theme/theme.ts` — a SECOND semantic theme that
+   * duplicated this file's job and was imported by nothing except the `src/ui`
+   * kit, which in turn was imported by nothing. Dead code depending on dead
+   * code, while every screen ran on this file. theme.ts is deleted; tokens.ts
+   * stays, because raw scales are a legitimate layer beneath a semantic theme.
+   * The kit now runs on this theme, so there is one of each.
+   */
+  type,
+  weight,
+  elevation,
+  duration,
+  easing,
+  breakpoint,
+  hairline,
+  hitSlop,
+  maxContentWidth,
+  numericStyle,
+  pressedOpacity,
+  disabledOpacity,
   // Elevation reads as a soft black drop on the dark surfaces; cards still lean
   // on their `border` for separation.
   cardShadow: {
@@ -162,3 +251,22 @@ export const labTheme = {
 
 export type LabTheme = typeof labTheme;
 export type { IconSizeToken } from './tokens';
+
+/** The status tones a chip, pill or banner can take. */
+export type Tone = 'success' | 'warning' | 'danger' | 'neutral' | 'brand';
+
+export interface ToneTriple {
+  text: string;
+  bg: string;
+  border: string;
+}
+
+/**
+ * Resolves a tone to its `{ text, bg, border }` triple — THE one implementation.
+ *
+ * Replaces four copies of the same switch that had drifted apart on `brand` and
+ * `neutral` (see the note beside those keys above).
+ */
+export function tone(name: Tone): ToneTriple {
+  return labTheme.colors[name];
+}

@@ -2,7 +2,7 @@ import type React from 'react';
 import { useEffect, useRef } from 'react';
 import { Animated, Easing, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 
-import { theme } from '../theme/theme';
+import { labTheme as theme } from '../theme/labTheme';
 
 export interface SkeletonProps {
   width?: number | `${number}%`;
