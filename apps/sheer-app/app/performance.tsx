@@ -12,7 +12,6 @@ import type {
 } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
-import { AppTabBar } from '../src/navigation/AppTabBar';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
 import { BG, BORDER, BORDER_SUBTLE, BRAND, BRAND_LIGHT, CARD } from '../src/design/colors';
@@ -152,8 +151,6 @@ export default function PerformanceScreen() {
             <KpiContent stylist={stylist} />
           ) : null}
         </ScrollView>
-
-        <AppTabBar />
       </SafeAreaView>
     </ProtectedScreen>
   );

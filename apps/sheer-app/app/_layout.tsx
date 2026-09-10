@@ -1,7 +1,10 @@
+import { StyleSheet, View } from 'react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { StripeProvider } from '@stripe/stripe-react-native';
 import { AuthProvider } from '../src/auth/AuthProvider';
+import { AppTabBar } from '../src/navigation/AppTabBar';
+import { BG } from '../src/design/colors';
 import { ThemeProvider } from '../src/design/ThemeProvider';
 import { sheerAppTheme } from '../src/design/appTheme';
 import { BookingFlowProvider } from '../src/booking/BookingFlowProvider';
@@ -36,6 +39,25 @@ export default function RootLayout() {
         <NotificationsProvider>
           <BookingFlowProvider>
           <StatusBar style="light" />
+          {/*
+            THE APP SHELL: routed content and the ONE shared bottom navigation,
+            as flex siblings in a column. <AppTabBar /> is mounted here and
+            nowhere else — app-shell.spec.ts enforces that, and the reasons the
+            position matters, which are invisible from the code:
+
+              - inside AuthProvider: useAuth() THROWS outside it, and there is
+                no error boundary above the root layout.
+              - inside NotificationsProvider: useNotifications() does NOT throw
+                outside it, it returns a dormant { unreadCount: 0 }. The Alerts
+                badge would just stop, with a green typecheck.
+              - a plain View, never a SafeAreaView and no `edges` prop:
+                AppTabBar takes its own bottom inset, so an inset here would
+                double-count it.
+
+            Being a flex sibling (rather than an overlay) is also what keeps
+            content clear of the bar without any screen adding bottom padding.
+          */}
+          <View style={s.shell}>
           <Stack
             screenOptions={{
               headerStyle: { backgroundColor: '#1C1628' },
@@ -95,6 +117,8 @@ export default function RootLayout() {
               options={{ headerShown: false, gestureEnabled: false }}
             />
           </Stack>
+            <AppTabBar />
+          </View>
           </BookingFlowProvider>
           </NotificationsProvider>
         </AuthProvider>
@@ -102,3 +126,7 @@ export default function RootLayout() {
     </StripeProvider>
   );
 }
+
+const s = StyleSheet.create({
+  shell: { flex: 1, backgroundColor: BG },
+});

@@ -6,7 +6,6 @@ import type { NotificationDto } from '@sheer/domain';
 import { radius, spacing } from '@sheer/design-tokens';
 import { EmptyState, Screen } from '../src/design';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
-import { AppTabBar } from '../src/navigation/AppTabBar';
 import { useNotifications } from '../src/notifications/NotificationsProvider';
 import { BORDER, BRAND_LIGHT, CARD } from '../src/design/colors';
 import { ScreenHeader } from '../src/navigation/ScreenHeader';
@@ -85,7 +84,6 @@ export default function NotificationsScreen() {
             />
           ))}
         </ScrollView>
-        <AppTabBar />
       </Screen>
     </ProtectedScreen>
   );

@@ -13,6 +13,7 @@
     "web": "expo start --web",
     "lint": "eslint \"{app,src}/**/*.{ts,tsx}\"",
     "typecheck": "tsc --noEmit",
+    "test": "jest",
     "build": "echo \"Sheer App production builds use EAS: pnpm --filter @sheer/sheer-app exec eas build\""
   },
   "dependencies": {

@@ -5,22 +5,25 @@ import { router, usePathname } from 'expo-router';
 import { radius, spacing } from '@sheer/design-tokens';
 import { BORDER, BRAND, BRAND_LIGHT, CARD, TEXT_SUBTLE } from '../design/colors';
 import { useNotifications } from '../notifications/NotificationsProvider';
-import { useAppTabs } from './tabs';
+import { isTabActive } from './tabs';
+import { useAppTabs } from './useAppTabs';
 
 /** Brand tint behind the active tab's icon. */
 const ACTIVE_PILL = 'rgba(166,124,245,0.18)';
 
 /**
- * THE bottom navigation. One implementation for every role.
+ * THE bottom navigation. One implementation, one mount, every role.
  *
- * Screens render `<AppTabBar />` with NO condition around it: which tabs to
- * show, and whether to show any at all, is decided once in `tabs.ts`. That is
- * the whole point — a screen should not be able to get the answer wrong, and
- * six screens previously did (three different gate expressions, two screens
- * with no gate at all, and four stylist screens that simply forgot the bar).
+ * MOUNTED ONCE, BY THE APP SHELL — app/_layout.tsx, inside AuthProvider and
+ * NotificationsProvider. A screen must never render or import this: it is a
+ * flex sibling of <Stack>, so a second copy inside a screen would stack two
+ * bars. `app-shell.spec.ts` enforces both halves of that (exactly one render
+ * site, and no screen importing it).
  *
- * Renders nothing when the current route has no tab navigation, so it is safe
- * to place at the bottom of any screen.
+ * Returns null when the current route/role carries no bar, which is what keeps
+ * the auth screens, the booking flow and the pushed detail screens full-bleed
+ * without the shell needing to know anything about routes. All of that is
+ * decided in tabs.ts and is unit-tested there; this file only draws.
  *
  * ACTIVE STATE. The selected tab's icon sits in a filled pill. Before, active
  * was signalled by colour alone — a purple icon among grey ones — which is the
@@ -39,7 +42,7 @@ export function AppTabBar() {
     <SafeAreaView edges={['bottom']} style={s.safe}>
       <View style={s.bar} accessibilityRole="tablist">
         {tabs.map((tab) => {
-          const active = pathname === tab.href;
+          const active = isTabActive(pathname, tab);
           const badged = tab.key === 'alerts' && unreadCount > 0;
           return (
             <Pressable

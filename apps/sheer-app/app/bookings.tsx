@@ -6,7 +6,6 @@ import type { AppointmentCompletionResponse, CreateStylistRebookingRequest, Staf
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { AppButton, Card, EmptyState, Screen, SectionHeader } from '../src/design';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
-import { AppTabBar } from '../src/navigation/AppTabBar';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
 import { ScreenHeader } from '../src/navigation/ScreenHeader';
@@ -258,7 +257,6 @@ export default function BookingsScreen() {
           </Card>
         ) : null}
       </Screen>
-      <AppTabBar />
     </ProtectedScreen>
   );
 }

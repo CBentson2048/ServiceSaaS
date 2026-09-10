@@ -1,8 +1,6 @@
 import type { Ionicons } from '@expo/vector-icons';
-import { usePathname } from 'expo-router';
 import type { AuthUser, Permission } from '@sheer/domain';
 import { userHasPermission, userHasRole } from '@sheer/domain';
-import { useAuth } from '../auth/AuthProvider';
 
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 
@@ -32,7 +30,7 @@ export interface AppTab {
  * a persistent bottom bar so a stylist never returns to a separate dashboard —
  * they are redirected off `/dashboard` to `/performance` entirely.
  */
-const STYLIST_TABS: AppTab[] = [
+export const STYLIST_TABS: AppTab[] = [
   { key: 'home', label: 'Home', href: '/performance', icon: 'home-outline', activeIcon: 'home' },
   {
     key: 'schedule',
@@ -67,9 +65,12 @@ const STYLIST_TABS: AppTab[] = [
   // tabs leave ~65pt each, which the redesigned bar fits but does not flatter —
   // "Schedule" is the label that gets closest to its neighbour. Deleting this
   // entry moves ZAC out of the bar and the other five breathe; the cost is
-  // discoverability, since ZAC has no other entry point in this app (the web
-  // dashboard has a floating widget, this does not). Left in deliberately —
-  // removing a feature's only route is a product call, not a layout one.
+  // discoverability. (ZAC does have two other entry points, but only for roles
+  // that have no tab bar at all: the owner and manager dashboards each push
+  // /zac from a QuickAction — app/dashboard.tsx — and that is their ONLY route
+  // in, since resolveTabsFor returns null for both. So for a STYLIST this tab
+  // really is the only way to ZAC.) Left in deliberately — removing a feature's
+  // only route is a product call, not a layout one.
   {
     key: 'zac',
     label: 'ZAC',
@@ -86,7 +87,7 @@ const STYLIST_TABS: AppTab[] = [
  * stayed on "Home" after pushing to Profile — so the bar lied about where the
  * client was. Driving it from the route fixes that by construction.
  */
-const CLIENT_TABS: AppTab[] = [
+export const CLIENT_TABS: AppTab[] = [
   { key: 'home', label: 'Home', href: '/dashboard', icon: 'grid-outline', activeIcon: 'grid' },
   {
     key: 'visits',
@@ -115,7 +116,7 @@ const CLIENT_TABS: AppTab[] = [
  * a dead-end screen with only the back gesture out. Keeping the bar on a
  * pushed screen is standard native tab behaviour.
  */
-const TAB_BAR_ROUTES: ReadonlySet<string> = new Set([
+export const TAB_BAR_ROUTES: ReadonlySet<string> = new Set([
   '/performance',
   '/bookings',
   '/rota',
@@ -135,26 +136,62 @@ export function resolveTabsFor(user: AuthUser | null | undefined): AppTab[] | nu
   if (userHasRole(user, 'stylist')) {
     return STYLIST_TABS.filter((tab) => !tab.permission || userHasPermission(user, tab.permission));
   }
-  // Owners and managers reach this app's screens directly and have no bottom
-  // navigation of their own — they had none before either. Their home is the
-  // web dashboard.
+  // Owners and managers get NO bottom navigation — they had none before this
+  // was centralised either, and their home is the web dashboard. Worth stating
+  // now that it is one rule rather than scattered per-screen gates: a
+  // manager-only actor is authorised on /notifications, /bookings, /rota, /zac,
+  // /my-pay and /pay-summary (see each screen's ProtectedScreen) but has no
+  // in-app route to them. That is pre-existing and unchanged here; giving
+  // managers a tab set is a product decision, not a layout one.
   if (user.primaryRole === 'client') return CLIENT_TABS;
   return null;
 }
 
 /**
- * The tabs to render on the CURRENT route, or `null` for none.
+ * True when `pathname` is a route that carries the shared bottom bar.
  *
- * Screens call `<AppTabBar />` unconditionally and this decides. Before, each
- * screen carried its own gate — `showStylistTabs`, `showTabs` and `isStylist`
- * were three names for `userHasRole(user, 'stylist')` copied into six files,
- * while `/performance` and `/notifications` rendered the STYLIST bar with no
- * role check at all, showing it to clients.
+ * Exact match, so it needs a QUERY-FREE pathname. `/pay-summary` is only ever
+ * navigated to as `/pay-summary?id=…`, and this returns true for it only
+ * because `usePathname()` strips the query. AppTabBar must therefore keep using
+ * `usePathname()` — switching it to a params-carrying href would silently drop
+ * the bar on that screen. Pinned in tabs.spec.ts.
  */
-export function useAppTabs(): AppTab[] | null {
-  const pathname = usePathname();
-  const { user } = useAuth();
-  if (!TAB_BAR_ROUTES.has(pathname)) return null;
+export function isTabBarRoute(pathname: string): boolean {
+  return TAB_BAR_ROUTES.has(pathname);
+}
+
+/**
+ * THE pure core of the shared bottom navigation: the tabs to render on
+ * `pathname` for `user`, or `null` when this route/role combination carries no
+ * bar at all.
+ *
+ * `useAppTabs` (src/navigation/useAppTabs.ts) is a three-line wrapper that
+ * feeds this the live pathname and the signed-in actor. The split exists so
+ * this — every rule the bottom navigation obeys — is testable: the hook itself
+ * cannot be, because this module previously imported `usePathname` from
+ * expo-router, which drags untransformed JSX out of node_modules and makes the
+ * module unloadable in a Node test process.
+ *
+ * NOTE what is deliberately NOT checked here: whether any tab in the returned
+ * set actually matches `pathname`. `/my-pay`, `/pay-summary` and `/new-booking`
+ * are pushed screens that keep the bar without being a tab destination, so "no
+ * tab matches" is a legitimate state, not an error.
+ */
+export function resolveTabsForRoute(
+  pathname: string,
+  user: AuthUser | null | undefined,
+): AppTab[] | null {
+  if (!isTabBarRoute(pathname)) return null;
   const tabs = resolveTabsFor(user);
   return tabs && tabs.length > 0 ? tabs : null;
+}
+
+/**
+ * True when `tab` is the selected tab on `pathname`. Exact-match by design:
+ * every tab href is a distinct top-level route, and a prefix match would light
+ * two pills at once (`/client/visits` starts with nothing else, but a future
+ * `/profile/settings` would wrongly light Profile AND itself).
+ */
+export function isTabActive(pathname: string, tab: AppTab): boolean {
+  return pathname === tab.href;
 }

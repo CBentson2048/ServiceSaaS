@@ -9,7 +9,6 @@ import { palette, radius, spacing } from '@sheer/design-tokens';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
-import { AppTabBar } from '../src/navigation/AppTabBar';
 import { ScreenHeader } from '../src/navigation/ScreenHeader';
 import {
   PAY_STATUS_LABELS,
@@ -116,8 +115,6 @@ export default function MyPayScreen() {
             </>
           )}
         </ScrollView>
-
-        <AppTabBar />
       </SafeAreaView>
     </ProtectedScreen>
   );

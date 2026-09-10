@@ -14,7 +14,6 @@ import type { RotaLeaveRequest, RotaShift, StylistMyWeekResponse } from '@sheer/
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { AppButton, EmptyState, Screen } from '../src/design';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
-import { AppTabBar } from '../src/navigation/AppTabBar';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
 import { BG, BORDER, BRAND, BRAND_LIGHT, CARD } from '../src/design/colors';
@@ -234,8 +233,6 @@ export default function RotaScreen() {
         onSubmit={() => void submitLeaveRequest()}
         onCancelRequest={(id) => void cancelLeaveRequest(id)}
       />
-
-      <AppTabBar />
     </ProtectedScreen>
   );
 }

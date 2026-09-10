@@ -17,7 +17,6 @@ import type { CustomerSalonSummary, UserProfileResponse } from '@sheer/domain';
 import { userHasPermission, userHasRole } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
-import { AppTabBar } from '../src/navigation/AppTabBar';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
 import { ScreenHeader } from '../src/navigation/ScreenHeader';
@@ -319,8 +318,6 @@ export default function ProfileScreen() {
             </>
           )}
         </ScrollView>
-
-        <AppTabBar />
       </SafeAreaView>
     </ProtectedScreen>
   );

@@ -15,7 +15,6 @@ import { applyStylistServicePrices } from '@sheer/domain';
 import { palette, radius, spacing } from '@sheer/design-tokens';
 import { AppButton, Card, Screen, SectionHeader } from '../src/design';
 import { ProtectedScreen } from '../src/auth/ProtectedScreen';
-import { AppTabBar } from '../src/navigation/AppTabBar';
 import { useAuth } from '../src/auth/AuthProvider';
 import * as api from '../src/auth/api';
 import { ScreenHeader } from '../src/navigation/ScreenHeader';
@@ -364,7 +363,6 @@ export default function NewBookingScreen() {
           <AppButton label="Book another" onPress={resetForAnother} />
           <AppButton label="Back to schedule" variant="secondary" onPress={() => router.replace('/bookings')} />
         </Screen>
-        <AppTabBar />
       </ProtectedScreen>
     );
   }
@@ -645,7 +643,6 @@ export default function NewBookingScreen() {
           />
         </Card>
       </Screen>
-      <AppTabBar />
     </ProtectedScreen>
   );
 }
