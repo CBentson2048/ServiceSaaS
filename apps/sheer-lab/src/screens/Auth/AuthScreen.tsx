@@ -12,6 +12,7 @@ import { getActiveLabSession, unlockLabSession } from '../../features/sheer-lab/
 import { useDeviceSession } from '../../features/sheer-lab/DeviceSessionProvider';
 import { useApiClient } from '../../lib/api/ApiProvider';
 import { labTheme } from '../../theme/labTheme';
+import { Icon } from '../../ui/icons/Icon';
 import { BrandWordmark } from '../shared/BrandWordmark';
 
 type AuthScreenProps = NativeStackScreenProps<RootStackParamList, 'Auth'>;
@@ -242,7 +243,9 @@ function KeypadButton({
         onPress={onBackspace}
         style={({ pressed }) => [styles.actionKey, cell, pressed && styles.pressed, inactive && styles.disabled]}
       >
-        <Text style={styles.backspaceText}>⌫</Text>
+        {/* Was a '⌫' glyph. The control keeps its own accessible name, so the
+            icon is decorative and takes no label of its own. */}
+        <Icon name="backspace" size="md" tone="secondary" />
       </Pressable>
     );
   }
@@ -494,11 +497,6 @@ const styles = StyleSheet.create({
     color: labTheme.colors.textSecondary,
     fontSize: 15,
     fontWeight: '700',
-  },
-  backspaceText: {
-    color: labTheme.colors.textSecondary,
-    fontSize: 24,
-    fontWeight: '600',
   },
   pressed: {
     opacity: 0.6,

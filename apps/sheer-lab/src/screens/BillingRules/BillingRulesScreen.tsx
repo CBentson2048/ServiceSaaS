@@ -19,6 +19,8 @@ import {
 } from '../../features/billing/serviceBillingRulesApi';
 import { getActiveLabSession } from '../../features/sheer-lab/labSession';
 import { labPalette } from '../../theme/labTheme';
+import { Icon } from '../../ui/icons/Icon';
+import type { IconName } from '../../ui/icons/paths';
 import { LabShell, Pill, c, t, useLabLayout } from '../shared/LabShell';
 import { formatMoney } from '../Home/dashboardHelpers';
 
@@ -170,7 +172,7 @@ export function BillingRulesScreen({ navigation }: BillingRulesScreenProps): Rea
     return (
       <LabShell session={session} bleStatus={ble.status}>
         <View style={styles.lockCard}>
-          <Text style={styles.lockGlyph}>🔒</Text>
+          <Icon name="lock" size="xl" tone="primary" />
           <Text style={styles.lockTitle}>Billing rules are owner & manager only</Text>
           <Text style={styles.lockBody}>
             Ask an owner or manager to sign in on this station to configure charging strategies,
@@ -193,7 +195,7 @@ export function BillingRulesScreen({ navigation }: BillingRulesScreenProps): Rea
       <View style={styles.headerRow}>
         <View style={styles.headerTitleWrap}>
           <View style={styles.shieldBadge}>
-            <Text style={styles.shieldGlyph}>🛡️</Text>
+            <Icon name="shield" size={18} tone="primary" />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.h1}>Billing &amp; Revenue Rules</Text>
@@ -208,7 +210,10 @@ export function BillingRulesScreen({ navigation }: BillingRulesScreenProps): Rea
               disabled={saving}
               style={[styles.resetBtn, saving && styles.btnDisabled]}
             >
-              <Text style={styles.resetBtnLabel}>↺ Reset</Text>
+              <View style={styles.btnLabelRow}>
+                <Icon name="refresh" size="xs" tone="secondary" />
+                <Text style={styles.resetBtnLabel}>Reset</Text>
+              </View>
             </Pressable>
             <Pressable
               accessibilityRole="button"
@@ -331,7 +336,7 @@ function ServiceRuleCard({
           label="Standard Allowance (g)"
           defaultValue={String(rule.standardAllowanceGrams)}
           editable={editable}
-          prefix="⚖"
+          icon="scale"
           onChangeNumber={(n) => onChange({ standardAllowanceGrams: n })}
         />
         <NumberField
@@ -366,7 +371,7 @@ function GlobalParametersForm({
           label="Sample usage for preview (g)"
           defaultValue={String(params.sampleUsageGrams)}
           editable={editable}
-          prefix="⚖"
+          icon="scale"
           onChangeNumber={(n) => onChange({ sampleUsageGrams: n })}
         />
         <NumberField
@@ -418,7 +423,7 @@ function BillingPreviewPanel({
 
   return (
     <View style={styles.previewCard}>
-      <Text style={styles.previewEyebrow}>✦ Billing Preview</Text>
+      <Text style={styles.previewEyebrow}>Billing Preview</Text>
       <Text style={styles.previewSub}>Live simulation of rule outcomes</Text>
 
       <View style={styles.previewDivider} />
@@ -469,7 +474,7 @@ function PreviewRow({
 function SmartDefaultsCard({ onRestore, disabled }: { onRestore: () => void; disabled: boolean }): React.JSX.Element {
   return (
     <View style={styles.smartCard}>
-      <Text style={styles.smartTitle}>✦ Smart Defaults</Text>
+      <Text style={styles.smartTitle}>Smart Defaults</Text>
       <Text style={styles.smartBody}>Apply standard industry rules across all service types.</Text>
       <Pressable
         accessibilityRole="button"
@@ -487,6 +492,7 @@ function NumberField({
   label,
   defaultValue,
   editable,
+  icon,
   prefix,
   suffix,
   onChangeNumber,
@@ -494,6 +500,8 @@ function NumberField({
   label: string;
   defaultValue: string;
   editable: boolean;
+  icon?: IconName;
+  /** A textual affix such as a currency symbol. For iconography pass `icon`. */
   prefix?: string;
   suffix?: string;
   onChangeNumber: (value: number) => void;
@@ -502,6 +510,7 @@ function NumberField({
     <View style={styles.field}>
       <Text style={styles.fieldLabel}>{label}</Text>
       <View style={[styles.fieldInputWrap, !editable && styles.fieldInputWrapDisabled]}>
+        {icon ? <Icon name={icon} size="xs" tone="muted" /> : null}
         {prefix ? <Text style={styles.fieldAffix}>{prefix}</Text> : null}
         <TextInput
           defaultValue={defaultValue}
@@ -570,7 +579,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  shieldGlyph: { fontSize: 18 },
   h1: { color: c.textPrimary, fontSize: t.typography.fontSize.heading, fontWeight: '700' },
   sub: { color: c.textSecondary, fontSize: t.typography.fontSize.small, marginTop: 2 },
 
@@ -586,6 +594,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   resetBtnLabel: { color: c.textSecondary, fontWeight: '700', fontSize: t.typography.fontSize.small },
+  btnLabelRow: { flexDirection: 'row', alignItems: 'center', gap: t.spacing.xs },
   saveBtn: {
     minHeight: 42,
     minWidth: 132,
@@ -762,7 +771,6 @@ const styles = StyleSheet.create({
   smartBtnLabel: { color: c.primary, fontWeight: '800', fontSize: t.typography.fontSize.small },
 
   lockCard: { alignItems: 'center', justifyContent: 'center', gap: t.spacing.sm, padding: t.spacing['2xl'], backgroundColor: c.surface, borderRadius: t.radius.cardLg, borderWidth: 1, borderColor: c.border },
-  lockGlyph: { fontSize: 34 },
   lockTitle: { color: c.textPrimary, fontSize: t.typography.fontSize.subtitle, fontWeight: '700', textAlign: 'center' },
   lockBody: { color: c.textSecondary, fontSize: t.typography.fontSize.small, textAlign: 'center', maxWidth: 360 },
 });

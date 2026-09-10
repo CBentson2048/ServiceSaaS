@@ -32,6 +32,8 @@ import { getActiveLabSession } from '../../features/sheer-lab/labSession';
 import { appConfig } from '../../config/appConfig';
 import { formatClock } from '../Home/dashboardHelpers';
 import { labTheme } from '../../theme/labTheme';
+import { Icon } from '../../ui/icons/Icon';
+import type { IconName } from '../../ui/icons/paths';
 import { DecimalInput } from '../shared/DecimalInput';
 import type { LayoutMode } from '../shared/LabShell';
 import { LabShell, useLabLayout } from '../shared/LabShell';
@@ -652,17 +654,23 @@ function ScaleConsoleCard({
       <ScaleDial size={ringSize} accent={accent} progress={progress} weightLabel={weightLabel} caption={caption} />
 
       <View style={styles.consoleButtons}>
-        <ConsoleButton glyph="⊘" label="Tare" onPress={onTare} disabled={!hasActiveRow} />
-        <ConsoleButton glyph="↻" label="Reweigh" onPress={onReweigh} disabled={!hasActiveRow} />
+        <ConsoleButton icon="minus" label="Tare" onPress={onTare} disabled={!hasActiveRow} />
+        <ConsoleButton icon="refresh" label="Reweigh" onPress={onReweigh} disabled={!hasActiveRow} />
       </View>
 
       <View style={styles.consoleFooter}>
-        <Text style={styles.consoleFooterText}>
-          {savedAt ? `✓ Saved automatically ${formatTime(savedAt)}` : 'Auto-save ready'}
-        </Text>
-        <Text style={[styles.consoleFooterText, stable && styles.consoleFooterStable]}>
-          {stable ? '⚖ Stable weight detected' : 'Awaiting stable weight'}
-        </Text>
+        <View style={styles.consoleFooterItem}>
+          {savedAt ? <Icon name="check" size="xs" tone="muted" /> : null}
+          <Text style={styles.consoleFooterText}>
+            {savedAt ? `Saved automatically ${formatTime(savedAt)}` : 'Auto-save ready'}
+          </Text>
+        </View>
+        <View style={styles.consoleFooterItem}>
+          {stable ? <Icon name="scale" size="xs" tone="success" /> : null}
+          <Text style={[styles.consoleFooterText, stable && styles.consoleFooterStable]}>
+            {stable ? 'Stable weight detected' : 'Awaiting stable weight'}
+          </Text>
+        </View>
       </View>
     </View>
   );
@@ -776,12 +784,12 @@ function ProgressRing({
 }
 
 function ConsoleButton({
-  glyph,
+  icon,
   label,
   onPress,
   disabled,
 }: {
-  glyph: string;
+  icon: IconName;
   label: string;
   onPress: () => void;
   disabled?: boolean;
@@ -797,7 +805,7 @@ function ConsoleButton({
         disabled && styles.consoleButtonDisabled,
       ]}
     >
-      <Text style={styles.consoleButtonGlyph}>{glyph}</Text>
+      <Icon name={icon} size="sm" tone="primary" />
       <Text style={styles.consoleButtonLabel}>{label}</Text>
     </Pressable>
   );
@@ -995,7 +1003,7 @@ function FormulaQueueCard({
         ))}
       </View>
 
-      <OutlineButton glyph="🕘" label="Load last formula" onPress={onLastFormula} />
+      <OutlineButton icon="history" label="Load last formula" onPress={onLastFormula} />
     </View>
   );
 }
@@ -1014,7 +1022,7 @@ function QueueRow({
   const captured = row.captureStatus === 'captured';
   const live = active && row.captureStatus !== 'captured';
   const tone: ChipTone = captured ? 'success' : live ? 'brand' : 'neutral';
-  const icon = captured ? '✓' : live ? '◆' : String(index + 1);
+  const stepIcon: IconName | undefined = captured ? 'check' : live ? 'dot' : undefined;
   const palette = chipToneStyle(tone);
   const name = formatRowDisplayName(row);
   const sub = [row.brand, row.developer].filter(Boolean).join(' · ');
@@ -1029,7 +1037,11 @@ function QueueRow({
       style={[styles.queueRow, active && styles.queueRowActive]}
     >
       <View style={[styles.queueIcon, { backgroundColor: palette.bg, borderColor: palette.border }]}>
-        <Text style={[styles.queueIconText, { color: palette.text }]}>{icon}</Text>
+        {stepIcon ? (
+          <Icon name={stepIcon} size="xs" tone="inherit" color={palette.text} />
+        ) : (
+          <Text style={[styles.queueIconText, { color: palette.text }]}>{String(index + 1)}</Text>
+        )}
       </View>
       <View style={styles.queueInfo}>
         <Text style={styles.queueName} numberOfLines={1}>
@@ -1096,7 +1108,7 @@ function MixTipCard(): React.JSX.Element {
   return (
     <View style={styles.tipCard}>
       <View style={styles.tipHead}>
-        <Text style={styles.tipGlyph}>💡</Text>
+        <Icon name="info" size="sm" tone="primary" />
         <Text style={styles.tipTitle}>Mix tip</Text>
       </View>
       <Text style={styles.tipBody}>
@@ -1146,8 +1158,8 @@ function BottomBar({
         </Text>
       </View>
       <View style={styles.bottomActions}>
-        <BottomButton glyph="＋" label="Add product" onPress={onAddProduct} />
-        <BottomButton glyph="🖫" label={savingDraft ? 'Saving…' : 'Save draft'} onPress={onSaveDraft} disabled={savingDraft} />
+        <BottomButton icon="plus" label="Add product" onPress={onAddProduct} />
+        <BottomButton icon="archive" label={savingDraft ? 'Saving…' : 'Save draft'} onPress={onSaveDraft} disabled={savingDraft} />
         <BottomButton label="Reopen" onPress={onReopenDraft} />
         <Pressable
           accessibilityRole="button"
@@ -1159,7 +1171,8 @@ function BottomBar({
             reviewDisabled && styles.completeButtonDisabled,
           ]}
         >
-          <Text style={styles.completeButtonText}>{finalized ? 'View Bill →' : 'Review & Bill →'}</Text>
+          <Text style={styles.completeButtonText}>{finalized ? 'View Bill' : 'Review & Bill'}</Text>
+          <Icon name="arrowRight" size="xs" tone="inherit" color={C.textOnPrimary} />
         </Pressable>
       </View>
     </View>
@@ -1167,12 +1180,12 @@ function BottomBar({
 }
 
 function BottomButton({
-  glyph,
+  icon,
   label,
   onPress,
   disabled,
 }: {
-  glyph?: string;
+  icon?: IconName;
   label: string;
   onPress: () => void;
   disabled?: boolean;
@@ -1188,7 +1201,7 @@ function BottomButton({
         disabled && styles.bottomButtonDisabled,
       ]}
     >
-      {glyph ? <Text style={styles.bottomButtonGlyph}>{glyph}</Text> : null}
+      {icon ? <Icon name={icon} size="xs" tone="secondary" /> : null}
       <Text style={styles.bottomButtonLabel}>{label}</Text>
     </Pressable>
   );
@@ -1235,8 +1248,14 @@ function ProductPickerModal({
               <Text style={styles.cardEyebrow}>Select product</Text>
               <Text style={styles.modalTitle}>{row?.productName || 'Inventory catalogue'}</Text>
             </View>
-            <Pressable accessibilityRole="button" onPress={onClose} style={styles.closeButton} hitSlop={8}>
-              <Text style={styles.closeButtonText}>✕</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+              onPress={onClose}
+              style={styles.closeButton}
+              hitSlop={8}
+            >
+              <Icon name="close" size="sm" tone="secondary" />
             </Pressable>
           </View>
           <TextInput
@@ -1409,12 +1428,12 @@ function StatusChip({ label, tone }: { label: string; tone: ChipTone }): React.J
 function OutlineButton({
   label,
   onPress,
-  glyph,
+  icon,
   disabled,
 }: {
   label: string;
   onPress: () => void;
-  glyph?: string;
+  icon?: IconName;
   disabled?: boolean;
 }): React.JSX.Element {
   return (
@@ -1428,7 +1447,7 @@ function OutlineButton({
         disabled && styles.outlineButtonDisabled,
       ]}
     >
-      {glyph ? <Text style={styles.outlineButtonGlyph}>{glyph}</Text> : null}
+      {icon ? <Icon name={icon} size="xs" tone="primary" /> : null}
       <Text style={styles.outlineButtonText}>{label}</Text>
     </Pressable>
   );
@@ -1591,7 +1610,6 @@ const styles = StyleSheet.create({
   },
   consoleButtonPressed: { opacity: 0.7 },
   consoleButtonDisabled: { opacity: 0.4 },
-  consoleButtonGlyph: { color: C.textPrimary, fontSize: 16, fontWeight: '800' },
   consoleButtonLabel: { color: C.textPrimary, fontSize: 14, fontWeight: '800' },
   consoleFooter: {
     flexDirection: 'row',
@@ -1601,6 +1619,7 @@ const styles = StyleSheet.create({
     gap: T.spacing.sm,
     flexWrap: 'wrap',
   },
+  consoleFooterItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   consoleFooterText: { color: C.textMuted, fontSize: 11, fontWeight: '700' },
   consoleFooterStable: { color: C.success.text },
 
@@ -1699,7 +1718,6 @@ const styles = StyleSheet.create({
     backgroundColor: C.primarySoft,
   },
   tipHead: { flexDirection: 'row', alignItems: 'center', gap: T.spacing.sm },
-  tipGlyph: { fontSize: 16 },
   tipTitle: { color: C.textPrimary, fontSize: 14, fontWeight: '800' },
   tipBody: { color: C.textSecondary, fontSize: 13, lineHeight: 19 },
 
@@ -1753,9 +1771,10 @@ const styles = StyleSheet.create({
   },
   bottomButtonPressed: { opacity: 0.7 },
   bottomButtonDisabled: { opacity: 0.45 },
-  bottomButtonGlyph: { color: C.textSecondary, fontSize: 14 },
   bottomButtonLabel: { color: C.textPrimary, fontSize: 13, fontWeight: '800' },
   completeButton: {
+    flexDirection: 'row',
+    gap: 6,
     minHeight: 48,
     paddingHorizontal: T.spacing.xl,
     borderRadius: T.radius.inputLg,
@@ -1807,7 +1826,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  closeButtonText: { color: C.textSecondary, fontSize: 15, fontWeight: '700' },
   searchInput: {
     minHeight: 52,
     paddingHorizontal: T.spacing.md,
@@ -1867,6 +1885,5 @@ const styles = StyleSheet.create({
   },
   outlineButtonPressed: { opacity: 0.7 },
   outlineButtonDisabled: { opacity: 0.45 },
-  outlineButtonGlyph: { color: C.textSecondary, fontSize: 14 },
   outlineButtonText: { color: C.textPrimary, fontSize: 13, fontWeight: '800' },
 });

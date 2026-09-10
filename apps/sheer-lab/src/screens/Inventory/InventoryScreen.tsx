@@ -25,6 +25,7 @@ import {
   updateManagedProduct,
 } from '../../features/inventory/inventoryManagementApi';
 import { getActiveLabSession } from '../../features/sheer-lab/labSession';
+import { Icon } from '../../ui/icons/Icon';
 import { LabShell, Pill, t, c, useLabLayout } from '../shared/LabShell';
 import { formatGrams, formatMoney, formatRelativeTime, getInventoryTier, stockFill } from '../Home/dashboardHelpers';
 import { ProductFormModal, type ProductSavePayload } from './ProductFormModal';
@@ -283,7 +284,7 @@ export function InventoryScreen({ navigation }: InventoryScreenProps): React.JSX
     return (
       <LabShell session={session} bleStatus={ble.status}>
         <View style={styles.lockCard}>
-          <Text style={styles.lockGlyph}>🔒</Text>
+          <Icon name="lock" size="xl" tone="primary" />
           <Text style={styles.lockTitle}>Inventory is owner & manager only</Text>
           <Text style={styles.lockBody}>
             Ask an owner or manager to sign in on this station to manage products, stock and pricing.
@@ -307,7 +308,10 @@ export function InventoryScreen({ navigation }: InventoryScreenProps): React.JSX
         </View>
         {canManage ? (
           <Pressable accessibilityRole="button" onPress={openAdd} style={styles.addBtn}>
-            <Text style={styles.addBtnLabel}>＋ Add product</Text>
+            <View style={styles.addBtnRow}>
+              <Icon name="plus" size="xs" tone="inherit" color={c.textOnPrimary} />
+              <Text style={styles.addBtnLabel}>Add product</Text>
+            </View>
           </Pressable>
         ) : null}
       </View>
@@ -579,6 +583,7 @@ const styles = StyleSheet.create({
   h1: { color: c.textPrimary, fontSize: t.typography.fontSize.heading, fontWeight: '700' },
   sub: { color: c.textSecondary, fontSize: t.typography.fontSize.small, marginTop: 2 },
   addBtn: { backgroundColor: c.primary, paddingHorizontal: t.spacing.base, minHeight: 42, borderRadius: t.radius.full, alignItems: 'center', justifyContent: 'center' },
+  addBtnRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   addBtnLabel: { color: c.textOnPrimary, fontWeight: '800', fontSize: t.typography.fontSize.small },
 
   notice: {
@@ -701,7 +706,6 @@ const styles = StyleSheet.create({
   empty: { color: c.textMuted, fontSize: t.typography.fontSize.small, textAlign: 'center', padding: t.spacing.xl },
 
   lockCard: { alignItems: 'center', justifyContent: 'center', gap: t.spacing.sm, padding: t.spacing['2xl'], backgroundColor: c.surface, borderRadius: t.radius.cardLg, borderWidth: 1, borderColor: c.border },
-  lockGlyph: { fontSize: 34 },
   lockTitle: { color: c.textPrimary, fontSize: t.typography.fontSize.subtitle, fontWeight: '700', textAlign: 'center' },
   lockBody: { color: c.textSecondary, fontSize: t.typography.fontSize.small, textAlign: 'center', maxWidth: 320 },
 });

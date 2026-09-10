@@ -40,6 +40,7 @@ import {
   getInventoryTier,
 } from '../Home/dashboardHelpers';
 import { labTheme } from '../../theme/labTheme';
+import { Icon } from '../../ui/icons/Icon';
 import { LabShell, useLabLayout } from '../shared/LabShell';
 
 const T = labTheme;
@@ -348,10 +349,12 @@ function Header({
       </View>
       <View style={styles.headerActions}>
         <Pressable accessibilityRole="button" onPress={onViewHistory} style={styles.ghostButton}>
-          <Text style={styles.ghostButtonText}>🕘 View History</Text>
+          <Icon name="history" size="xs" tone="primary" />
+          <Text style={styles.ghostButtonText}>View History</Text>
         </Pressable>
         <Pressable accessibilityRole="button" onPress={onSaveTemplate} style={styles.ghostButton}>
-          <Text style={styles.ghostButtonText}>＋ Save Template</Text>
+          <Icon name="plus" size="xs" tone="primary" />
+          <Text style={styles.ghostButtonText}>Save Template</Text>
         </Pressable>
       </View>
     </View>
@@ -413,7 +416,7 @@ function ProductCatalogue({
     <View style={styles.catalogue}>
       <View style={styles.searchRow}>
         <View style={styles.searchBox}>
-          <Text style={styles.searchGlyph}>⌕</Text>
+          <Icon name="search" size="sm" tone="muted" />
           <TextInput
             value={search}
             onChangeText={onSearch}
@@ -500,11 +503,18 @@ function ProductCard({
         {product.name}
       </Text>
       <View style={styles.productMetaRow}>
-        <Text style={[styles.productStock, lowStock && styles.productStockLow]} numberOfLines={1}>
-          {lowStock ? '⚠ ' : ''}
-          Stock: {stock ? formatGrams(stock.quantityOnHandGrams) : '—'}
-        </Text>
-        {selected ? <Text style={styles.addedTag}>✓ Added</Text> : null}
+        <View style={styles.productStockRow}>
+          {lowStock ? <Icon name="alert" size="xs" tone="warning" /> : null}
+          <Text style={[styles.productStock, lowStock && styles.productStockLow]} numberOfLines={1}>
+            Stock: {stock ? formatGrams(stock.quantityOnHandGrams) : '—'}
+          </Text>
+        </View>
+        {selected ? (
+          <View style={styles.addedTagRow}>
+            <Icon name="check" size="xs" tone="brand" />
+            <Text style={styles.addedTag}>Added</Text>
+          </View>
+        ) : null}
       </View>
       {costLabel != null ? (
         <Text style={[styles.productCost, product.defaultCostPerGramCents == null && styles.productCostMissing]}>
@@ -552,7 +562,7 @@ function CurrentSelectionCard({
 
       {lines.length === 0 ? (
         <View style={styles.emptySelection}>
-          <Text style={styles.emptySelectionGlyph}>🧪</Text>
+          <Icon name="flask" size="lg" tone="muted" />
           <Text style={styles.muted}>Tap products on the left to build the mix.</Text>
         </View>
       ) : (
@@ -602,11 +612,12 @@ function CurrentSelectionCard({
               </Text>
               <Pressable
                 accessibilityRole="button"
+                accessibilityLabel={`Remove ${line.product.name}`}
                 onPress={() => onRemove(line.product.id)}
                 hitSlop={8}
                 style={styles.colRemove}
               >
-                <Text style={styles.removeGlyph}>✕</Text>
+                <Icon name="close" size="xs" tone="muted" />
               </Pressable>
             </View>
           ))}
@@ -707,7 +718,8 @@ function BottomBar({
           pressed && ready && styles.startButtonPressed,
         ]}
       >
-        <Text style={styles.startButtonText}>Start Weighing →</Text>
+        <Text style={styles.startButtonText}>Start Weighing</Text>
+        <Icon name="arrowRight" size="sm" tone="inherit" color={C.textOnPrimary} />
       </Pressable>
     </View>
   );
@@ -758,6 +770,9 @@ const styles = StyleSheet.create({
   title: { color: C.textPrimary, fontSize: 30, fontWeight: '900', letterSpacing: -0.5 },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: T.spacing.sm, flexWrap: 'wrap' },
   ghostButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     paddingVertical: T.spacing.sm,
     paddingHorizontal: T.spacing.md,
     borderRadius: T.radius.full,
@@ -790,7 +805,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: T.spacing.md,
     height: 46,
   },
-  searchGlyph: { color: C.textMuted, fontSize: 18 },
   searchInput: { flex: 1, color: C.textPrimary, fontSize: 15, padding: 0 },
   gridLoading: { paddingVertical: T.spacing['2xl'], alignItems: 'center', gap: T.spacing.sm },
   productGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: T.spacing.md },
@@ -819,8 +833,10 @@ const styles = StyleSheet.create({
   codeBadgeText: { color: C.primary, fontSize: 11, fontWeight: '800' },
   productName: { color: C.textPrimary, fontSize: 16, fontWeight: '800' },
   productMetaRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: T.spacing.xs },
+  productStockRow: { flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 1 },
   productStock: { color: C.textSecondary, fontSize: 12, fontWeight: '600' },
   productStockLow: { color: C.warning.text, fontWeight: '800' },
+  addedTagRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   addedTag: { color: C.primary, fontSize: 11, fontWeight: '800' },
   productCost: { color: C.primary, fontSize: 13, fontWeight: '800' },
   productCostMissing: { color: C.warning.text },
@@ -850,7 +866,6 @@ const styles = StyleSheet.create({
 
   // Empty selection
   emptySelection: { alignItems: 'center', gap: T.spacing.sm, paddingVertical: T.spacing.xl },
-  emptySelectionGlyph: { fontSize: 28 },
 
   // Selection table
   table: { gap: T.spacing.xs },
@@ -893,7 +908,6 @@ const styles = StyleSheet.create({
   td: { color: C.textSecondary, fontSize: 13, fontWeight: '600' },
   tdStrong: { color: C.textPrimary, fontSize: 13, fontWeight: '800' },
   tdMissing: { color: C.warning.text },
-  removeGlyph: { color: C.textMuted, fontSize: 14, fontWeight: '800' },
 
   // Notes
   notesInput: {
@@ -938,8 +952,10 @@ const styles = StyleSheet.create({
     minHeight: 52,
     paddingHorizontal: T.spacing.xl,
     borderRadius: T.radius.full,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: T.spacing.sm,
     backgroundColor: C.primary,
   },
   startButtonPressed: { backgroundColor: C.primaryPressed },

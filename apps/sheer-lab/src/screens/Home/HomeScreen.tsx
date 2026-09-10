@@ -24,6 +24,8 @@ import { useBleScale } from '../../features/ble/hooks/useBleScale';
 import { listLabInventoryStockForSession } from '../../features/inventory/productsApi';
 import { getActiveLabSession } from '../../features/sheer-lab/labSession';
 import { labTheme } from '../../theme/labTheme';
+import { Icon } from '../../ui/icons/Icon';
+import type { IconName } from '../../ui/icons/paths';
 import { LabShell, useLabLayout } from '../shared/LabShell';
 import {
   activeStatusBadge,
@@ -57,7 +59,7 @@ type NavTarget = { kind: 'route'; route: WorkingRoute } | { kind: 'soon' };
 interface NavEntry {
   key: string;
   label: string;
-  glyph: string;
+  icon: IconName;
   target: NavTarget;
 }
 
@@ -65,11 +67,11 @@ function buildQuickTools(canManageOps: boolean): NavEntry[] {
   const inventoryTarget: NavTarget = canManageOps ? { kind: 'route', route: 'Inventory' } : { kind: 'soon' };
   const billingTarget: NavTarget = canManageOps ? { kind: 'route', route: 'BillingRules' } : { kind: 'soon' };
   const tools: NavEntry[] = [
-    { key: 'reweigh', label: 'Reweigh Tool', glyph: '⚖️', target: { kind: 'route', route: 'DevicePairing' } },
-    { key: 'formula-search', label: 'Formula Search', glyph: '🔍', target: { kind: 'route', route: 'FormulaHistory' } },
-    { key: 'add-inventory', label: 'Add Inventory', glyph: '➕', target: inventoryTarget },
-    { key: 'billing-settings', label: 'Billing Rules', glyph: '🧾', target: billingTarget },
-    { key: 'lab-audit', label: 'Lab Audit', glyph: '🛡️', target: { kind: 'soon' } },
+    { key: 'reweigh', label: 'Reweigh Tool', icon: 'scale', target: { kind: 'route', route: 'DevicePairing' } },
+    { key: 'formula-search', label: 'Formula Search', icon: 'search', target: { kind: 'route', route: 'FormulaHistory' } },
+    { key: 'add-inventory', label: 'Add Inventory', icon: 'plus', target: inventoryTarget },
+    { key: 'billing-settings', label: 'Billing Rules', icon: 'receipt', target: billingTarget },
+    { key: 'lab-audit', label: 'Lab Audit', icon: 'shield', target: { kind: 'soon' } },
   ];
   // Billing Rules and the Lab Audit tool are hidden behind their feature flags
   // for every role until the flags are flipped on.
@@ -353,7 +355,7 @@ function WelcomeHero({
           {scaleLine} · {stockLine}. Ready for the next masterpiece.
         </Text>
         <Pressable accessibilityRole="button" onPress={onStartMix} style={styles.heroButton}>
-          <Text style={styles.heroButtonPlus}>＋</Text>
+          <Icon name="plus" size="sm" tone="inherit" color={c.onHeroButtonText} />
           <Text style={styles.heroButtonText}>Start new mix</Text>
         </Pressable>
       </View>
@@ -634,7 +636,7 @@ function QuickToolsPanel({
               onPress={() => onSelect(tool.target)}
               style={[styles.toolTile, fixedTiles ? styles.toolTileTablet : styles.toolTilePhone, soon && styles.navItemSoon]}
             >
-              <Text style={styles.toolGlyph}>{tool.glyph}</Text>
+              <Icon name={tool.icon} size={22} tone="primary" />
               <Text style={styles.toolLabel} numberOfLines={2}>
                 {tool.label}
               </Text>
@@ -840,11 +842,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: t.spacing.lg,
     borderRadius: t.radius.full,
     marginTop: t.spacing.xs,
-  },
-  heroButtonPlus: {
-    color: c.onHeroButtonText,
-    fontSize: 16,
-    fontWeight: '700',
   },
   heroButtonText: {
     color: c.onHeroButtonText,
@@ -1145,9 +1142,6 @@ const styles = StyleSheet.create({
   toolTilePhone: {
     flexBasis: '47%',
     flexGrow: 1,
-  },
-  toolGlyph: {
-    fontSize: 22,
   },
   toolLabel: {
     color: c.textPrimary,

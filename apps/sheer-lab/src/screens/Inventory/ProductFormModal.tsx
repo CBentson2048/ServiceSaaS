@@ -3,6 +3,7 @@ import type React from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { Icon } from '../../ui/icons/Icon';
 import { t, c } from '../shared/LabShell';
 import { formatMoney } from '../Home/dashboardHelpers';
 
@@ -114,8 +115,14 @@ export function ProductFormModal({
               <Text style={styles.title}>{isEdit ? 'Edit product details' : 'Add product'}</Text>
               <Text style={styles.subtitle}>Configure product specifications, financial rules, and stock thresholds.</Text>
             </View>
-            <Pressable accessibilityRole="button" onPress={onClose} hitSlop={10} style={styles.close}>
-              <Text style={styles.closeGlyph}>✕</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+              onPress={onClose}
+              hitSlop={10}
+              style={styles.close}
+            >
+              <Icon name="close" size="xs" tone="secondary" />
             </Pressable>
           </View>
 
@@ -354,7 +361,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: c.surfaceAlt,
   },
-  closeGlyph: { color: c.textSecondary, fontSize: 14, fontWeight: '700' },
   body: { maxHeight: 460 },
   bodyContent: { padding: t.spacing.lg, gap: t.spacing.base },
   error: {

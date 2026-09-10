@@ -12,6 +12,7 @@ import { getActiveLabSession } from '../../features/sheer-lab/labSession';
 import { appConfig } from '../../config/appConfig';
 import { formatClock, formatGrams } from '../Home/dashboardHelpers';
 import { labTheme } from '../../theme/labTheme';
+import { Icon } from '../../ui/icons/Icon';
 import { LabShell } from '../shared/LabShell';
 
 const T = labTheme;
@@ -186,7 +187,8 @@ export function UpdateFormulaScreen({ navigation, route }: UpdateFormulaScreenPr
             it.
           </Text>
           <Pressable accessibilityRole="button" onPress={() => navigation.goBack()} style={styles.secondaryButton}>
-            <Text style={styles.secondaryButtonText}>‹ Back to History</Text>
+            <Icon name="chevronLeft" size="xs" tone="primary" />
+            <Text style={styles.secondaryButtonText}>Back to History</Text>
           </Pressable>
         </View>
       ) : (
@@ -391,7 +393,7 @@ function CheckboxRow({
   return (
     <Pressable accessibilityRole="checkbox" accessibilityState={{ checked }} onPress={onToggle} style={styles.checkboxRow}>
       <View style={[styles.checkbox, checked && styles.checkboxChecked]}>
-        {checked ? <Text style={styles.checkboxGlyph}>✓</Text> : null}
+        {checked ? <Icon name="check" size="xs" tone="inherit" color={C.textOnPrimary} /> : null}
       </View>
       <View style={styles.checkboxText}>
         <Text style={styles.checkboxLabel}>{label}</Text>
@@ -523,7 +525,8 @@ function BottomBar({
         onPress={onStart}
         style={({ pressed }) => [styles.startButton, !ready && styles.startButtonDisabled, pressed && ready && styles.startButtonPressed]}
       >
-        <Text style={styles.startButtonText}>Start Weighing →</Text>
+        <Text style={styles.startButtonText}>Start Weighing</Text>
+        <Icon name="arrowRight" size="xs" tone="inherit" color={C.textOnPrimary} />
       </Pressable>
     </View>
   );
@@ -660,7 +663,6 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
   checkboxChecked: { backgroundColor: C.primary, borderColor: C.primary },
-  checkboxGlyph: { color: C.textOnPrimary, fontSize: 14, fontWeight: '900' },
   checkboxText: { flex: 1, gap: 2 },
   checkboxLabel: { color: C.textPrimary, fontSize: 14, fontWeight: '700' },
   checkboxHint: { color: C.textMuted, fontSize: 12, lineHeight: 17 },
@@ -706,6 +708,8 @@ const styles = StyleSheet.create({
 
   // Buttons
   secondaryButton: {
+    flexDirection: 'row',
+    gap: 6,
     minHeight: 48,
     paddingHorizontal: T.spacing.lg,
     borderRadius: T.radius.inputLg,
@@ -737,6 +741,8 @@ const styles = StyleSheet.create({
   bottomCombinedLabel: { color: C.textMuted, fontSize: 10, fontWeight: '800', letterSpacing: 1 },
   bottomCombinedValue: { color: C.textPrimary, fontSize: 22, fontWeight: '900', letterSpacing: -0.5 },
   startButton: {
+    flexDirection: 'row',
+    gap: 6,
     minHeight: 52,
     paddingHorizontal: T.spacing.xl,
     borderRadius: T.radius.full,

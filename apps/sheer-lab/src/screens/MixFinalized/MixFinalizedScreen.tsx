@@ -15,6 +15,8 @@ import { getActiveLabSession, refreshActiveLabSession } from '../../features/she
 import { appConfig } from '../../config/appConfig';
 import { formatClock, formatMoney } from '../Home/dashboardHelpers';
 import { labTheme } from '../../theme/labTheme';
+import { Icon } from '../../ui/icons/Icon';
+import type { IconName } from '../../ui/icons/paths';
 import { LabShell } from '../shared/LabShell';
 
 const T = labTheme;
@@ -220,7 +222,10 @@ function FinalizedHero(): React.JSX.Element {
   return (
     <View style={styles.hero}>
       <View style={styles.heroBadge}>
-        <Text style={styles.heroBadgeGlyph}>✓</Text>
+        {/* Was a 26pt Unicode '✓'. The badge View already draws the filled
+            success circle, so this is the bare tick rather than `checkCircle`,
+            which would stroke a second ring inside it. */}
+        <Icon name="check" size="lg" tone="success" />
       </View>
       <Text style={styles.heroTitle}>Mix Finalized</Text>
       <Text style={styles.heroSubtitle}>
@@ -341,30 +346,32 @@ function SessionLabReport({
 
       <View style={styles.statRow}>
         <StatTile
-          glyph="⚖"
+          icon="scale"
           value={formatGramsDecimal(totalWeightGrams)}
           label={remixBaseline ? 'Weighed in this remix' : 'Actual used weight'}
           caption={remixBaseline ? 'This Remix' : 'Total Weight'}
         />
         {remixBaseline ? (
           <StatTile
-            glyph="∑"
+            icon="chart"
             value={formatGramsDecimal(remixBaseline.totalGrams + totalWeightGrams)}
             label={`Incl. previous mix (${formatGramsDecimal(remixBaseline.totalGrams)})`}
             caption="Total Used"
           />
         ) : null}
         <StatTile
-          glyph="◷"
+          icon="currency"
           value={pricesReady ? formatMoney(billableChargeCents, currencyCode) : '—'}
           label="Colour charge for this mix"
           caption="Colour Charge"
         />
-        <StatTile glyph="⏱" value={durationLabel} label="Total scale active time" caption="Mix Duration" />
+        <StatTile icon="clock" value={durationLabel} label="Total scale active time" caption="Mix Duration" />
       </View>
 
       <View style={styles.auditCard}>
-        <Text style={styles.auditGlyph}>🛡️</Text>
+        {/* Was 🛡️ — a full-colour emoji that ignored the card's tint and that
+            VoiceOver announced as "shield" rather than the policy it marks. */}
+        <Icon name="shield" size="sm" tone="primary" />
         <View style={styles.auditText}>
           <Text style={styles.auditTitle}>Audit policy active</Text>
           <Text style={styles.auditBody}>
@@ -378,12 +385,12 @@ function SessionLabReport({
 }
 
 function StatTile({
-  glyph,
+  icon,
   value,
   label,
   caption,
 }: {
-  glyph: string;
+  icon: IconName;
   value: string;
   label: string;
   caption: string;
@@ -391,7 +398,7 @@ function StatTile({
   return (
     <View style={styles.statTile}>
       <View style={styles.statCaptionRow}>
-        <Text style={styles.statGlyph}>{glyph}</Text>
+        <Icon name={icon} size="xs" tone="muted" />
         <Text style={styles.statCaption}>{caption}</Text>
       </View>
       <Text style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit>
@@ -443,7 +450,14 @@ function SendToDeskActions({
           busy && styles.primaryButtonDisabled,
         ]}
       >
-        <Text style={styles.primaryButtonText}>{busy ? 'Sending…' : '✓  Complete & Send to Desk'}</Text>
+        {busy ? (
+          <Text style={styles.primaryButtonText}>Sending…</Text>
+        ) : (
+          <View style={styles.primaryButtonContent}>
+            <Icon name="check" size="sm" tone="inherit" color={C.textOnPrimary} />
+            <Text style={styles.primaryButtonText}>Complete &amp; Send to Desk</Text>
+          </View>
+        )}
       </Pressable>
 
       <Pressable
@@ -456,7 +470,10 @@ function SendToDeskActions({
       </Pressable>
 
       <Pressable accessibilityRole="button" disabled={busy} onPress={onEdit} style={styles.textButton}>
-        <Text style={styles.textButtonText}>‹ Edit Formula</Text>
+        <View style={styles.textButtonContent}>
+          <Icon name="chevronLeft" size="xs" tone="secondary" />
+          <Text style={styles.textButtonText}>Edit Formula</Text>
+        </View>
       </Pressable>
 
       {message ? <Text style={styles.engineMessage}>{message}</Text> : null}
@@ -486,7 +503,8 @@ function CompletedPanel({
   return (
     <View style={styles.completedCard}>
       <View style={styles.completedBadge}>
-        <Text style={styles.completedBadgeGlyph}>✓</Text>
+        {/* Was a 30pt Unicode '✓' — same reasoning as the hero badge. */}
+        <Icon name="check" size="lg" tone="success" />
       </View>
       <Text style={styles.completedTitle}>Sent to the front desk</Text>
       <Text style={styles.completedSubtitle}>
@@ -604,7 +622,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  heroBadgeGlyph: { color: C.success.text, fontSize: 26, fontWeight: '900' },
   heroTitle: { color: C.textPrimary, fontSize: 30, fontWeight: '900', letterSpacing: -0.5, textAlign: 'center' },
   heroSubtitle: {
     color: C.textMuted,
@@ -700,7 +717,6 @@ const styles = StyleSheet.create({
     backgroundColor: C.inputBg,
   },
   statCaptionRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  statGlyph: { color: C.textMuted, fontSize: 13 },
   statCaption: { color: C.textMuted, fontSize: 10, fontWeight: '800', letterSpacing: 0.5, textTransform: 'uppercase' },
   statValue: { color: C.textPrimary, fontSize: 20, fontWeight: '900', letterSpacing: -0.5 },
   statLabel: { color: C.textMuted, fontSize: 11, fontWeight: '600' },
@@ -715,7 +731,6 @@ const styles = StyleSheet.create({
     borderColor: C.primarySoft,
     backgroundColor: C.primarySoft,
   },
-  auditGlyph: { fontSize: 16 },
   auditText: { flex: 1, gap: 2 },
   auditTitle: { color: C.textPrimary, fontSize: 13, fontWeight: '800' },
   auditBody: { color: C.textSecondary, fontSize: 12, lineHeight: 17 },
@@ -737,6 +752,8 @@ const styles = StyleSheet.create({
   primaryButtonPressed: { backgroundColor: C.primaryPressed },
   primaryButtonDisabled: { backgroundColor: C.surfaceAlt },
   primaryButtonText: { color: C.textOnPrimary, fontSize: 15, fontWeight: '900' },
+  /** Tick + label row: an icon has no text baseline, so the label needs a row. */
+  primaryButtonContent: { flexDirection: 'row', alignItems: 'center', gap: T.spacing.sm },
   secondaryButton: {
     minHeight: 48,
     paddingHorizontal: T.spacing.lg,
@@ -751,6 +768,7 @@ const styles = StyleSheet.create({
   secondaryButtonText: { color: C.textPrimary, fontSize: 14, fontWeight: '800' },
   textButton: { alignItems: 'center', paddingVertical: T.spacing.sm },
   textButtonText: { color: C.textSecondary, fontSize: 13, fontWeight: '700' },
+  textButtonContent: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   engineMessage: { color: C.textMuted, fontSize: 12, fontWeight: '600', textAlign: 'center' },
 
   // Completed panel
@@ -776,7 +794,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  completedBadgeGlyph: { color: C.success.text, fontSize: 30, fontWeight: '900' },
   completedTitle: { color: C.textPrimary, fontSize: 22, fontWeight: '900', textAlign: 'center' },
   completedSubtitle: { color: C.textSecondary, fontSize: 14, lineHeight: 20, textAlign: 'center' },
   completedRef: { color: C.textMuted, fontSize: 12, fontWeight: '700', letterSpacing: 0.4 },

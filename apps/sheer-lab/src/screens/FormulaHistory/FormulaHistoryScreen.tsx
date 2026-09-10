@@ -50,6 +50,8 @@ import {
   type StatusTone,
 } from '../Home/dashboardHelpers';
 import { labTheme } from '../../theme/labTheme';
+import { Icon } from '../../ui/icons/Icon';
+import type { IconName } from '../../ui/icons/paths';
 import { useBleScale } from '../../features/ble/hooks/useBleScale';
 import { LabShell, useLabLayout } from '../shared/LabShell';
 
@@ -100,7 +102,7 @@ interface HistoryMetric {
   label: string;
   value: string;
   hint?: string;
-  glyph: string;
+  icon: IconName;
   tone?: ChipTone;
   locked?: boolean;
 }
@@ -454,7 +456,7 @@ function HistoryHeader({
     <View style={styles.header}>
       <View style={styles.headerTitleRow}>
         <View style={styles.headerGlyph}>
-          <Text style={styles.headerGlyphText}>🕘</Text>
+          <Icon name="history" size={18} tone="primary" />
         </View>
         <View style={styles.flexItem}>
           <Text style={styles.headerTitle}>Formula History</Text>
@@ -471,7 +473,7 @@ function HistoryHeader({
 
       <View style={styles.searchRow}>
         <View style={styles.searchField}>
-          <Text style={styles.searchGlyph}>⌕</Text>
+          <Icon name="search" size="sm" tone="muted" />
           <TextInput
             autoCapitalize="none"
             onChangeText={onSearchChange}
@@ -614,7 +616,12 @@ function SessionPagination({
           Showing {firstRow}–{lastRow} of {total}
         </Text>
         <View style={styles.pageNav}>
-          <PageNavButton label="‹" disabled={page <= 1} onPress={() => onPageChange(page - 1)} />
+          <PageNavButton
+            icon="chevronLeft"
+            accessibilityLabel="Previous page"
+            disabled={page <= 1}
+            onPress={() => onPageChange(page - 1)}
+          />
           {pages.map((entry, index) =>
             entry === 'ellipsis' ? (
               <Text key={`gap-${index}`} style={styles.pageEllipsis}>
@@ -630,7 +637,8 @@ function SessionPagination({
             ),
           )}
           <PageNavButton
-            label="›"
+            icon="chevronRight"
+            accessibilityLabel="Next page"
             disabled={page >= pageCount}
             onPress={() => onPageChange(page + 1)}
           />
@@ -640,25 +648,37 @@ function SessionPagination({
   );
 }
 
+// Either a numbered page button (`label`) or a prev/next control (`icon`), in
+// which case the Pressable carries the accessible name and the icon is hidden
+// from the accessibility tree.
 function PageNavButton({
   label,
+  icon,
+  accessibilityLabel,
   active = false,
   disabled = false,
   onPress,
 }: {
-  label: string;
+  label?: string;
+  icon?: IconName;
+  accessibilityLabel?: string;
   active?: boolean;
   disabled?: boolean;
   onPress: () => void;
 }): React.JSX.Element {
   return (
     <Pressable
+      accessibilityLabel={accessibilityLabel}
       accessibilityRole="button"
       disabled={disabled}
       onPress={onPress}
       style={[styles.pageBtn, active && styles.pageBtnActive, disabled && styles.pageBtnDisabled]}
     >
-      <Text style={[styles.pageBtnText, active && styles.pageBtnTextActive]}>{label}</Text>
+      {icon ? (
+        <Icon name={icon} size="xs" tone="inherit" color={active ? C.textOnPrimary : C.textSecondary} />
+      ) : (
+        <Text style={[styles.pageBtnText, active && styles.pageBtnTextActive]}>{label}</Text>
+      )}
     </Pressable>
   );
 }
@@ -776,7 +796,10 @@ function SessionAuditCard({
               !remixSourceId && styles.updateButtonDisabled,
             ]}
           >
-            <Text style={styles.updateButtonText}>Update Formula →</Text>
+            <View style={styles.updateButtonRow}>
+              <Text style={styles.updateButtonText}>Update Formula</Text>
+              <Icon name="arrowRight" size="xs" tone="inherit" color={C.textOnPrimary} />
+            </View>
           </Pressable>
           <Text style={styles.updateHint}>
             {remixSourceId
@@ -913,7 +936,7 @@ function MetricsRow({ metrics }: { metrics: HistoryMetric[] }): React.JSX.Elemen
       {metrics.map((metric) => (
         <View key={metric.key} style={styles.metricCard}>
           <View style={styles.metricGlyph}>
-            <Text style={styles.metricGlyphText}>{metric.glyph}</Text>
+            <Icon name={metric.icon} size={18} tone="brand" />
           </View>
           <View style={styles.flexItem}>
             <Text style={styles.metricLabel}>{metric.label}</Text>
@@ -940,8 +963,14 @@ function buildMetrics(
   suffix: string,
 ): HistoryMetric[] {
   const metrics: HistoryMetric[] = [
-    { key: 'active', label: 'In the chair', value: String(activeCount), glyph: '◷', tone: 'brand' },
-    { key: 'completed', label: `Completed ${suffix}`, value: String(completedCount), glyph: '✓', tone: 'success' },
+    { key: 'active', label: 'In the chair', value: String(activeCount), icon: 'clock', tone: 'brand' },
+    {
+      key: 'completed',
+      label: `Completed ${suffix}`,
+      value: String(completedCount),
+      icon: 'checkCircle',
+      tone: 'success',
+    },
   ];
 
   if (analytics) {
@@ -951,7 +980,7 @@ function buildMetrics(
       label: 'Product used',
       value: formatGrams(grams),
       hint: `${analytics.summary.formulasMixed} ${analytics.summary.formulasMixed === 1 ? 'mix' : 'mixes'}`,
-      glyph: '⚗',
+      icon: 'flask',
     });
     metrics.push({
       key: 'billed',
@@ -959,21 +988,21 @@ function buildMetrics(
       value: formatMoney(analytics.summary.colourRevenueCents, analytics.summary.currencyCode),
       hint: `${formatPercent(analytics.summary.grossMarginPercent)} margin`,
       tone: 'success',
-      glyph: '▤',
+      icon: 'note',
     });
   } else {
     metrics.push({
       key: 'grams',
       label: 'Product used',
       value: 'Managers only',
-      glyph: '⚗',
+      icon: 'flask',
       locked: true,
     });
     metrics.push({
       key: 'billed',
       label: `Billed ${suffix}`,
       value: canSeeFinance ? 'Unavailable' : 'Managers only',
-      glyph: '▤',
+      icon: 'note',
       locked: true,
     });
   }
@@ -1127,7 +1156,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  headerGlyphText: { fontSize: 18 },
   headerTitle: { color: C.textPrimary, fontSize: 26, fontWeight: '800', letterSpacing: -0.5 },
   headerSubtitle: { color: C.textMuted, fontSize: 13, marginTop: 2 },
 
@@ -1145,7 +1173,6 @@ const styles = StyleSheet.create({
     borderRadius: T.radius.inputLg,
     backgroundColor: C.inputBg,
   },
-  searchGlyph: { color: C.textMuted, fontSize: 16, fontWeight: '700' },
   searchInput: { flex: 1, color: C.textPrimary, fontSize: 15 },
 
   // Session list
@@ -1283,6 +1310,7 @@ const styles = StyleSheet.create({
   },
   updateButtonPressed: { backgroundColor: C.primaryPressed },
   updateButtonDisabled: { backgroundColor: C.textSecondary },
+  updateButtonRow: { flexDirection: 'row', alignItems: 'center', gap: T.spacing.xs },
   updateButtonText: { color: C.textOnPrimary, fontSize: 14, fontWeight: '800' },
   updateHint: { color: C.textMuted, fontSize: 11, lineHeight: 16 },
 
@@ -1362,7 +1390,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  metricGlyphText: { fontSize: 18, color: C.primary },
   metricLabel: { color: C.textMuted, fontSize: 11, fontWeight: '700', letterSpacing: 0.4, textTransform: 'uppercase' },
   metricValue: { color: C.textPrimary, fontSize: 22, fontWeight: '800', letterSpacing: -0.5, marginTop: 2 },
   metricValueLocked: { color: C.textMuted, fontSize: 13, fontWeight: '700', letterSpacing: 0 },

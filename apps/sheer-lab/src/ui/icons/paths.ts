@@ -73,6 +73,9 @@ export const iconPaths = {
   check: 'M4.5 12.5 9.5 17.5 19.5 6.5',
   close: 'M6 6l12 12M18 6 6 18',
   /** Reset / undo — replaces ↺. */
+  /** Keypad delete — the tag-and-cross backspace. Replaces a '⌫' glyph. */
+  backspace:
+    'M20 5H9.5L3 12l6.5 7H20a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1ZM12 9.5l5 5m0-5-5 5',
   undo: 'M3.5 8.5h6v-6M3.9 8.9a8 8 0 1 1-1.4 6.1',
   edit: 'M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3zM14.5 6.5l3 3',
   trash: 'M4 6.5h16M9.5 6.5V4h5v2.5M6.5 6.5 7.5 20a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1l1-13.5M10 10.5v6M14 10.5v6',

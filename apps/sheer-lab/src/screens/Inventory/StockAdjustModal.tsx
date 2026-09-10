@@ -2,6 +2,7 @@ import type React from 'react';
 import { useEffect, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { Icon } from '../../ui/icons/Icon';
 import { t, c } from '../shared/LabShell';
 import { formatGrams } from '../Home/dashboardHelpers';
 
@@ -67,8 +68,14 @@ export function StockAdjustModal({ visible, item, saving, onClose, onSubmit }: S
                 {item ? `${item.brand ? `${item.brand} · ` : ''}${item.productName}` : ''}
               </Text>
             </View>
-            <Pressable accessibilityRole="button" onPress={onClose} hitSlop={10} style={styles.close}>
-              <Text style={styles.closeGlyph}>✕</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+              onPress={onClose}
+              hitSlop={10}
+              style={styles.close}
+            >
+              <Icon name="close" size="xs" tone="secondary" />
             </Pressable>
           </View>
 
@@ -167,7 +174,6 @@ const styles = StyleSheet.create({
   title: { color: c.textPrimary, fontSize: t.typography.fontSize.subtitle, fontWeight: '700' },
   subtitle: { color: c.textSecondary, fontSize: t.typography.fontSize.small, marginTop: 2 },
   close: { width: 30, height: 30, borderRadius: t.radius.full, alignItems: 'center', justifyContent: 'center', backgroundColor: c.surfaceAlt },
-  closeGlyph: { color: c.textSecondary, fontSize: 14, fontWeight: '700' },
   body: { padding: t.spacing.lg, gap: t.spacing.sm },
   onHand: { color: c.textSecondary, fontSize: t.typography.fontSize.small },
   onHandValue: { color: c.textPrimary, fontWeight: '700' },
