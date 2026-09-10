@@ -10,15 +10,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
-  RefreshControl,
-  ScrollView,
-  StatusBar,
   StyleSheet,
   Text,
   useWindowDimensions,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { RootStackParamList } from '../../app/navigation/routes';
 import { featureFlags } from '../../config/featureFlags';
@@ -26,9 +22,9 @@ import { getLabAnalyticsSummaryForSession } from '../../features/analytics/analy
 import { listTodaysLabAppointmentsForSession } from '../../features/appointments/appointmentsApi';
 import { useBleScale } from '../../features/ble/hooks/useBleScale';
 import { listLabInventoryStockForSession } from '../../features/inventory/productsApi';
-import { getActiveLabSession, logoutLabSession } from '../../features/sheer-lab/labSession';
-import { labLightTheme } from '../../theme/labTheme';
-import { TopBar } from '../shared/LabShell';
+import { getActiveLabSession } from '../../features/sheer-lab/labSession';
+import { labTheme } from '../../theme/labTheme';
+import { LabShell, useLabLayout } from '../shared/LabShell';
 import {
   activeStatusBadge,
   completedStatusBadge,
@@ -49,44 +45,20 @@ import {
   type StatusTone,
 } from './dashboardHelpers';
 
-const t = labLightTheme;
+const t = labTheme;
 const c = t.colors;
 
 type HomeScreenProps = NativeStackScreenProps<RootStackParamList, 'Home'>;
 
 type WorkingRoute = 'NewMix' | 'Formula' | 'FormulaHistory' | 'Inventory' | 'BillingRules' | 'DevicePairing' | 'Settings';
 
-type NavTarget = { kind: 'route'; route: WorkingRoute } | { kind: 'soon' } | { kind: 'current' };
+type NavTarget = { kind: 'route'; route: WorkingRoute } | { kind: 'soon' };
 
 interface NavEntry {
   key: string;
   label: string;
   glyph: string;
   target: NavTarget;
-}
-
-// Inventory and Billing Rules are owner/manager-only (stylists get a lock
-// screen), so they only become live destinations for those roles — stylists
-// keep the "Soon" affordance rather than being sent to a wall.
-function buildNavItems(canManageOps: boolean): NavEntry[] {
-  const inventoryTarget: NavTarget = canManageOps ? { kind: 'route', route: 'Inventory' } : { kind: 'soon' };
-  const billingTarget: NavTarget = canManageOps ? { kind: 'route', route: 'BillingRules' } : { kind: 'soon' };
-  const items: NavEntry[] = [
-    { key: 'dashboard', label: 'Dashboard', glyph: '▦', target: { kind: 'current' } },
-    { key: 'new-mix', label: 'New Mix', glyph: '🧪', target: { kind: 'route', route: 'NewMix' } },
-    { key: 'history', label: 'History', glyph: '🕘', target: { kind: 'route', route: 'FormulaHistory' } },
-    { key: 'inventory', label: 'Inventory', glyph: '📦', target: inventoryTarget },
-    { key: 'billing', label: 'Billing Rules', glyph: '🧾', target: billingTarget },
-    { key: 'audit', label: 'Audit Trail', glyph: '🛡️', target: { kind: 'soon' } },
-  ];
-  // Billing Rules and Audit Trail are hidden from the UI behind their feature
-  // flags for every role until the flags are flipped on.
-  return items.filter(
-    (item) =>
-      (item.key !== 'inventory' || canManageOps) &&
-      (item.key !== 'billing' || featureFlags.billingRules) &&
-      (item.key !== 'audit' || featureFlags.auditTrail),
-  );
 }
 
 function buildQuickTools(canManageOps: boolean): NavEntry[] {
@@ -109,62 +81,24 @@ function buildQuickTools(canManageOps: boolean): NavEntry[] {
   );
 }
 
-type LayoutMode = 'phone' | 'tablet' | 'wide';
-
-interface DashboardLayout {
-  mode: LayoutMode;
-  sidebarWidth: number;
-  railWidth: number;
-  pad: number;
-  gap: number;
-  insightsRow: boolean;
-}
-
-/**
- * Breakpoints tuned for the device range this app runs on:
- *  - phone (<700pt): no sidebar, horizontal nav scroller, single column.
- *  - tablet (700–1023pt): iPad portrait / small tablets — slim sidebar + a
- *    single stacked content column. Insight tiles flow in a row once there is
- *    room (>=880pt).
- *  - wide (>=1024pt): iPad landscape and up — the 3-column mockup layout. The
- *    sidebar and right-rail widths scale with the viewport so it breathes from
- *    a 1024pt iPad through a 12.9"/desktop without fixed-width cramping.
- * useWindowDimensions re-renders on rotation, so the mode follows orientation.
- */
-function getDashboardLayout(width: number): DashboardLayout {
-  if (width >= 1024) {
-    const large = width >= 1280;
-    return {
-      mode: 'wide',
-      sidebarWidth: large ? 248 : 216,
-      railWidth: clampNumber(Math.round(width * 0.3), 300, 380),
-      pad: large ? t.spacing.xl : t.spacing.base,
-      gap: t.spacing.lg,
-      insightsRow: false,
-    };
-  }
-  if (width >= 700) {
-    return {
-      mode: 'tablet',
-      sidebarWidth: 208,
-      railWidth: 0,
-      pad: t.spacing.base,
-      gap: t.spacing.base,
-      insightsRow: width >= 880,
-    };
-  }
-  return { mode: 'phone', sidebarWidth: 0, railWidth: 0, pad: t.spacing.base, gap: t.spacing.base, insightsRow: false };
-}
-
 function clampNumber(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
 export function HomeScreen({ navigation }: HomeScreenProps): React.JSX.Element {
   const { width } = useWindowDimensions();
-  const layout = getDashboardLayout(width);
+  // The shell owns the breakpoints (phone <700pt, tablet 700-1023pt, wide
+  // >=1024pt) and the sidebar width and padding they imply. The two below are
+  // Home's own content layout, derived from the same width so they still
+  // follow rotation: the right rail exists only in the wide layout and scales
+  // with the viewport, so it breathes from a 1024pt iPad up to a
+  // 12.9"/desktop; the insight tiles flow into a row on a tablet with room for
+  // it (>=880pt), while the wide layout stacks them inside the narrow rail.
+  const layout = useLabLayout();
   const isWide = layout.mode === 'wide';
   const showSidebar = layout.mode !== 'phone';
+  const railWidth = isWide ? clampNumber(Math.round(width * 0.3), 300, 380) : 0;
+  const insightsRow = layout.mode === 'tablet' && width >= 880;
   const ble = useBleScale();
 
   const [session, setSession] = useState<PinUnlockResponse | undefined>();
@@ -230,23 +164,6 @@ export function HomeScreen({ navigation }: HomeScreenProps): React.JSX.Element {
     void load();
   }, [load]);
 
-  // Sign Out must ALWAYS return a shared station to the lock screen, so the
-  // logout call is best-effort and the navigation is unconditional. This was the
-  // one copy of seven that awaited the call bare: a rejected logout (offline
-  // tablet, 401, timeout) escaped the handler before navigating, leaving the
-  // operator signed in on a station they had just tried to hand over. `reset`
-  // rather than `replace` so the dashboard cannot be reached with Back.
-  const handleLogout = useCallback(async () => {
-    if (session) {
-      try {
-        await logoutLabSession(session.sessionId);
-      } catch {
-        // Best effort — always return the device to the lock screen.
-      }
-    }
-    navigation.reset({ index: 0, routes: [{ name: 'Auth' }] });
-  }, [navigation, session]);
-
   const goToRoute = useCallback(
     (route: WorkingRoute) => {
       switch (route) {
@@ -267,9 +184,6 @@ export function HomeScreen({ navigation }: HomeScreenProps): React.JSX.Element {
           break;
         case 'DevicePairing':
           navigation.navigate('DevicePairing');
-          break;
-        case 'Settings':
-          navigation.navigate('Settings');
           break;
       }
     },
@@ -308,25 +222,27 @@ export function HomeScreen({ navigation }: HomeScreenProps): React.JSX.Element {
   const scale = mapScaleState(ble);
   const canSeeInsights = session?.role === 'owner' || session?.role === 'manager';
   const canManageOps = session?.role === 'owner' || session?.role === 'manager';
-  const navItems = useMemo(() => buildNavItems(canManageOps), [canManageOps]);
   const quickTools = useMemo(() => buildQuickTools(canManageOps), [canManageOps]);
 
+  // The first load still takes over the whole screen rather than showing empty
+  // chrome. The safe area and the StatusBar are not this screen's to set — the
+  // shell owns them once there is a session, and AppProviders already declares
+  // the same light-content/background pair app-wide.
   if (loading && !session) {
     return (
-      <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
-        <StatusBar barStyle="light-content" backgroundColor={c.background} />
+      <View style={styles.screen}>
         <View style={styles.centerFill}>
           <ActivityIndicator color={c.primary} />
           <Text style={styles.mutedText}>Loading your lab…</Text>
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   const rail = (
     <>
       <ScalePanel scale={scale} onPair={() => goToRoute('DevicePairing')} />
-      <ManagerInsights insights={insights} canSee={Boolean(canSeeInsights)} horizontal={layout.insightsRow} />
+      <ManagerInsights insights={insights} canSee={Boolean(canSeeInsights)} horizontal={insightsRow} />
       <InventoryStatusPanel items={displayStock} hasStock={stock.length > 0} failed={stockFailed} />
     </>
   );
@@ -340,45 +256,29 @@ export function HomeScreen({ navigation }: HomeScreenProps): React.JSX.Element {
   );
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
-      <StatusBar barStyle="light-content" backgroundColor={c.background} />
-      <TopBar session={session} bleStatus={ble.status} onRefresh={handleRefresh} onSettings={() => goToRoute('Settings')} />
+    <LabShell
+      session={session}
+      bleStatus={ble.status}
+      refreshing={refreshing}
+      onRefresh={handleRefresh}
+      footer={<Footer session={session} now={now} bleConnected={scale.connected} />}
+    >
+      {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
-      <View style={[styles.body, showSidebar ? styles.bodyRow : styles.bodyColumn]}>
-        {showSidebar ? (
-          <Sidebar width={layout.sidebarWidth} items={navItems} onNav={handleNav} onSignOut={handleLogout} />
-        ) : null}
+      <WelcomeHero session={session} scale={scale} stockCount={stock.length} onStartMix={() => goToRoute('NewMix')} />
 
-        <ScrollView
-          style={styles.scroll}
-          contentContainerStyle={{ padding: layout.pad, paddingBottom: t.spacing['3xl'] }}
-          showsVerticalScrollIndicator={false}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={c.primary} />}
-        >
-          <View style={[styles.contentWrap, { gap: layout.gap }]}>
-            {!showSidebar ? <NavScroller items={navItems} onNav={handleNav} onSignOut={handleLogout} /> : null}
-
-            {error ? <Text style={styles.errorText}>{error}</Text> : null}
-
-            <WelcomeHero session={session} scale={scale} stockCount={stock.length} onStartMix={() => goToRoute('NewMix')} />
-
-            {isWide ? (
-              <View style={[styles.mainRow, { gap: layout.gap }]}>
-                <View style={styles.mainColumn}>{main}</View>
-                <View style={[styles.rightRail, { width: layout.railWidth }]}>{rail}</View>
-              </View>
-            ) : (
-              <View style={[styles.stack, { gap: layout.gap }]}>
-                {main}
-                {rail}
-              </View>
-            )}
-
-            <Footer session={session} now={now} bleConnected={scale.connected} />
-          </View>
-        </ScrollView>
-      </View>
-    </SafeAreaView>
+      {isWide ? (
+        <View style={[styles.mainRow, { gap: layout.gap }]}>
+          <View style={styles.mainColumn}>{main}</View>
+          <View style={[styles.rightRail, { width: railWidth }]}>{rail}</View>
+        </View>
+      ) : (
+        <View style={[styles.stack, { gap: layout.gap }]}>
+          {main}
+          {rail}
+        </View>
+      )}
+    </LabShell>
   );
 }
 
@@ -424,95 +324,6 @@ function mapScaleState(ble: ReturnType<typeof useBleScale>): ScaleView {
     stable: ble.liveWeight?.stable,
     lastSyncIso: ble.lastPacketAt ?? ble.lastConnectedAt,
   };
-}
-
-// ---------------------------------------------------------------------------
-// Chrome: top bar, sidebar, mobile nav
-// ---------------------------------------------------------------------------
-
-
-function Sidebar({
-  width,
-  items,
-  onNav,
-  onSignOut,
-}: {
-  width: number;
-  items: NavEntry[];
-  onNav: (target: NavTarget) => void;
-  onSignOut: () => void;
-}): React.JSX.Element {
-  return (
-    <View style={[styles.sidebar, { width }]}>
-      <View style={styles.sidebarNav}>
-        {items.map((item) => {
-          const active = item.target.kind === 'current';
-          const soon = item.target.kind === 'soon';
-          return (
-            <Pressable
-              key={item.key}
-              accessibilityRole="button"
-              disabled={soon}
-              onPress={() => onNav(item.target)}
-              style={[styles.navItem, active && styles.navItemActive, soon && styles.navItemSoon]}
-            >
-              <Text style={[styles.navGlyph, styles.sidebarGlyph, active && styles.sidebarGlyphActive]}>{item.glyph}</Text>
-              <Text style={[styles.navLabel, active && styles.navLabelActive]} numberOfLines={1}>
-                {item.label}
-              </Text>
-              {soon ? <Text style={styles.sidebarSoonTag}>Soon</Text> : null}
-            </Pressable>
-          );
-        })}
-      </View>
-
-      <Pressable accessibilityRole="button" onPress={onSignOut} style={styles.signOut}>
-        <Text style={styles.signOutGlyph}>⏻</Text>
-        <Text style={styles.signOutLabel}>Sign Out</Text>
-      </Pressable>
-    </View>
-  );
-}
-
-function NavScroller({
-  items,
-  onNav,
-  onSignOut,
-}: {
-  items: NavEntry[];
-  onNav: (target: NavTarget) => void;
-  onSignOut: () => void;
-}): React.JSX.Element {
-  return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={styles.navScroller}
-      style={styles.navScrollerWrap}
-    >
-      {items.map((item) => {
-        const active = item.target.kind === 'current';
-        const soon = item.target.kind === 'soon';
-        return (
-          <Pressable
-            key={item.key}
-            accessibilityRole="button"
-            disabled={soon}
-            onPress={() => onNav(item.target)}
-            style={[styles.navChip, active && styles.navChipActive, soon && styles.navItemSoon]}
-          >
-            <Text style={styles.navGlyph}>{item.glyph}</Text>
-            <Text style={[styles.navChipLabel, active && styles.navLabelActive]}>{item.label}</Text>
-            {soon ? <Text style={styles.soonTag}>Soon</Text> : null}
-          </Pressable>
-        );
-      })}
-      <Pressable accessibilityRole="button" onPress={onSignOut} style={styles.navChip}>
-        <Text style={styles.navGlyph}>⏻</Text>
-        <Text style={styles.navChipLabel}>Sign Out</Text>
-      </Pressable>
-    </ScrollView>
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -976,25 +787,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: t.spacing.sm,
   },
-  body: {
-    flex: 1,
-  },
-  bodyRow: {
-    flexDirection: 'row',
-  },
-  bodyColumn: {
-    flexDirection: 'column',
-  },
-  scroll: {
-    flex: 1,
-  },
-  // Caps content on very large displays (e.g. 12.9" iPad, desktop) and centres
-  // it so the dashboard never stretches into unreadable line lengths.
-  contentWrap: {
-    width: '100%',
-    maxWidth: 1600,
-    alignSelf: 'center',
-  },
   stack: {
     gap: t.spacing.base,
   },
@@ -1010,189 +802,10 @@ const styles = StyleSheet.create({
     gap: t.spacing.lg,
   },
 
-  // Top bar
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: t.spacing.base,
-    paddingVertical: t.spacing.md,
-    backgroundColor: c.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: c.border,
-    flexWrap: 'wrap',
-    gap: t.spacing.sm,
-  },
-  brandRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: t.spacing.sm,
-  },
-  brandText: {
-    color: c.textPrimary,
-    fontSize: t.typography.fontSize.subtitle,
-    fontWeight: '700',
-    letterSpacing: 1,
-  },
-  topActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: t.spacing.sm,
-    flexWrap: 'wrap',
-  },
-  iconButton: {
-    width: 36,
-    height: 36,
-    borderRadius: t.radius.full,
-    borderWidth: 1,
-    borderColor: c.border,
-    backgroundColor: c.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  iconButtonGlyph: {
-    fontSize: 16,
-    color: c.textSecondary,
-  },
-  userRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: t.spacing.sm,
-    maxWidth: 200,
-  },
-  avatar: {
-    width: 34,
-    height: 34,
-    borderRadius: t.radius.full,
-    backgroundColor: c.primarySoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: {
-    color: c.primary,
-    fontWeight: '700',
-    fontSize: t.typography.fontSize.caption,
-  },
-  userName: {
-    color: c.textPrimary,
-    fontWeight: '600',
-    fontSize: t.typography.fontSize.small,
-  },
-  userRole: {
-    color: c.textMuted,
-    fontSize: t.typography.fontSize.micro,
-  },
-
-  // Sidebar
-  sidebar: {
-    backgroundColor: c.sidebar,
-    borderRightWidth: 1,
-    borderRightColor: c.sidebarBorder,
-    paddingVertical: t.spacing.lg,
-    paddingHorizontal: t.spacing.md,
-    justifyContent: 'space-between',
-  },
-  sidebarNav: {
-    gap: t.spacing.xs,
-  },
-  navItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: t.spacing.md,
-    paddingVertical: t.spacing.md,
-    paddingHorizontal: t.spacing.md,
-    borderRadius: t.radius.card,
-  },
-  // Active item reads as a solid brand pill (rounded via `navItem.borderRadius`)
-  // with white text/glyph, rather than the older soft-tinted fill.
-  navItemActive: {
-    backgroundColor: c.sidebarActive,
-  },
+  // All that survives of the old private nav: it now only dims a Quick Tools
+  // tile whose destination does not exist yet.
   navItemSoon: {
     opacity: 0.55,
-  },
-  navGlyph: {
-    fontSize: 16,
-  },
-  // Lightens non-emoji glyphs (e.g. the ▦ dashboard mark) on the dark rail;
-  // colour emoji ignore the tint either way.
-  sidebarGlyph: {
-    color: c.sidebarText,
-  },
-  // On the filled active pill the ▦-style glyph flips to white to match the label.
-  sidebarGlyphActive: {
-    color: c.sidebarActiveText,
-  },
-  navLabel: {
-    flex: 1,
-    color: c.sidebarText,
-    fontSize: t.typography.fontSize.small,
-    fontWeight: '600',
-  },
-  navLabelActive: {
-    color: c.sidebarActiveText,
-    fontWeight: '700',
-  },
-  soonTag: {
-    color: c.textMuted,
-    fontSize: t.typography.fontSize.micro,
-    fontWeight: '600',
-  },
-  // Sidebar sits on the deep purple rail, so its "Soon" tag needs a light tone
-  // (the shared `soonTag` above stays dark for the mobile nav scroller chips).
-  sidebarSoonTag: {
-    color: c.sidebarTextMuted,
-    fontSize: t.typography.fontSize.micro,
-    fontWeight: '600',
-  },
-  signOut: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: t.spacing.md,
-    paddingVertical: t.spacing.md,
-    paddingHorizontal: t.spacing.md,
-    borderRadius: t.radius.card,
-    borderWidth: 1,
-    borderColor: c.sidebarBorder,
-  },
-  signOutGlyph: {
-    fontSize: 16,
-    color: c.sidebarText,
-  },
-  signOutLabel: {
-    color: c.sidebarText,
-    fontWeight: '600',
-    fontSize: t.typography.fontSize.small,
-  },
-
-  // Mobile nav scroller
-  navScrollerWrap: {
-    marginBottom: t.spacing.xs,
-  },
-  navScroller: {
-    flexDirection: 'row',
-    gap: t.spacing.sm,
-    paddingVertical: t.spacing.xs,
-  },
-  navChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: t.spacing.xs,
-    paddingVertical: t.spacing.sm,
-    paddingHorizontal: t.spacing.md,
-    borderRadius: t.radius.full,
-    borderWidth: 1,
-    borderColor: c.border,
-    backgroundColor: c.surface,
-  },
-  navChipActive: {
-    backgroundColor: c.primarySoft,
-    borderColor: c.primarySoft,
-  },
-  navChipLabel: {
-    color: c.textSecondary,
-    fontSize: t.typography.fontSize.small,
-    fontWeight: '600',
   },
 
   // Hero

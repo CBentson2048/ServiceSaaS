@@ -7,14 +7,12 @@ import {
   Modal,
   Pressable,
   ScrollView,
-  StatusBar,
   StyleSheet,
   Text,
   TextInput,
   useWindowDimensions,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { RootStackParamList } from '../../app/navigation/routes';
 import { useBleScale } from '../../features/ble/hooks/useBleScale';
@@ -30,13 +28,13 @@ import type {
 import { draftHasDurableContext, toLabCoreFormulaDraft } from '../../features/formulas/formulaDraftTypes';
 import { useFormulaDraft } from '../../features/formulas/useFormulaDraft';
 import { listLabInventoryProducts } from '../../features/inventory/productsApi';
-import { getActiveLabSession, logoutLabSession } from '../../features/sheer-lab/labSession';
+import { getActiveLabSession } from '../../features/sheer-lab/labSession';
 import { appConfig } from '../../config/appConfig';
 import { formatClock } from '../Home/dashboardHelpers';
-import { featureFlags } from '../../config/featureFlags';
 import { labTheme } from '../../theme/labTheme';
 import { DecimalInput } from '../shared/DecimalInput';
-import { TopBar } from '../shared/LabShell';
+import type { LayoutMode } from '../shared/LabShell';
+import { LabShell, useLabLayout } from '../shared/LabShell';
 
 const T = labTheme;
 const C = T.colors;
@@ -46,56 +44,30 @@ type FormulaScreenProps = NativeStackScreenProps<RootStackParamList, 'Formula'>;
 type ChipTone = 'neutral' | 'brand' | 'success' | 'warning' | 'danger';
 
 // ---------------------------------------------------------------------------
-// Responsive layout — mirrors the Build Formula / dashboard breakpoints.
+// Content metrics — the console's own numbers. Sidebar width, page padding and
+// the content gap come from LabShell's `useLabLayout()`; only the dial size,
+// the rail width and the two-column switch belong to this screen.
 // ---------------------------------------------------------------------------
 
-interface ConsoleLayout {
-  mode: 'phone' | 'tablet' | 'wide';
-  sidebarWidth: number;
+interface ConsoleMetrics {
+  /** Width of the right-hand queue/progress rail; 0 when the columns stack. */
   railWidth: number;
-  pad: number;
-  gap: number;
-  showSidebar: boolean;
   twoColumn: boolean;
   ringSize: number;
 }
 
-function getLayout(width: number): ConsoleLayout {
-  if (width >= 1024) {
-    const large = width >= 1280;
+function consoleMetrics(width: number, mode: LayoutMode): ConsoleMetrics {
+  if (mode === 'wide') {
     return {
-      mode: 'wide',
-      sidebarWidth: large ? 248 : 216,
       railWidth: clampNumber(Math.round(width * 0.3), 320, 400),
-      pad: large ? T.spacing.xl : T.spacing.base,
-      gap: T.spacing.lg,
-      showSidebar: true,
       twoColumn: true,
       ringSize: 256,
     };
   }
-  if (width >= 700) {
-    return {
-      mode: 'tablet',
-      sidebarWidth: 208,
-      railWidth: 0,
-      pad: T.spacing.base,
-      gap: T.spacing.base,
-      showSidebar: true,
-      twoColumn: false,
-      ringSize: 264,
-    };
+  if (mode === 'tablet') {
+    return { railWidth: 0, twoColumn: false, ringSize: 264 };
   }
-  return {
-    mode: 'phone',
-    sidebarWidth: 0,
-    railWidth: 0,
-    pad: T.spacing.base,
-    gap: T.spacing.base,
-    showSidebar: false,
-    twoColumn: false,
-    ringSize: Math.min(248, Math.round(width * 0.62)),
-  };
+  return { railWidth: 0, twoColumn: false, ringSize: Math.min(248, Math.round(width * 0.62)) };
 }
 
 function clampNumber(value: number, min: number, max: number): number {
@@ -103,39 +75,13 @@ function clampNumber(value: number, min: number, max: number): number {
 }
 
 // ---------------------------------------------------------------------------
-// Sidebar navigation model (dark shell)
-// ---------------------------------------------------------------------------
-
-type WorkingRoute = 'Home' | 'NewMix' | 'FormulaHistory';
-type NavTarget = { kind: 'route'; route: WorkingRoute } | { kind: 'soon' } | { kind: 'current' };
-
-interface NavEntry {
-  key: string;
-  label: string;
-  glyph: string;
-  target: NavTarget;
-}
-
-const NAV_ITEMS: NavEntry[] = ([
-  { key: 'dashboard', label: 'Dashboard', glyph: '▦', target: { kind: 'route', route: 'Home' } },
-  { key: 'new-mix', label: 'New Mix', glyph: '🧪', target: { kind: 'route', route: 'NewMix' } },
-  { key: 'history', label: 'History', glyph: '🕘', target: { kind: 'route', route: 'FormulaHistory' } },
-  { key: 'inventory', label: 'Inventory', glyph: '📦', target: { kind: 'soon' } },
-  { key: 'billing', label: 'Billing Rules', glyph: '🧾', target: { kind: 'soon' } },
-  { key: 'audit', label: 'Audit Trail', glyph: '🛡️', target: { kind: 'soon' } },
-  // Billing Rules and Audit Trail are hidden from the nav behind feature flags
-  // for every role; their entries stay so the feature can be restored later.
-] satisfies NavEntry[]).filter(
-  (item) => (item.key !== 'billing' || featureFlags.billingRules) && (item.key !== 'audit' || featureFlags.auditTrail),
-);
-
-// ---------------------------------------------------------------------------
 // Screen
 // ---------------------------------------------------------------------------
 
 export function FormulaScreen({ navigation, route }: FormulaScreenProps): React.JSX.Element {
   const { width } = useWindowDimensions();
-  const layout = getLayout(width);
+  const layout = useLabLayout();
+  const metrics = consoleMetrics(width, layout.mode);
   const ble = useBleScale();
   const scaleConnected = ble.status === 'connected';
 
@@ -454,33 +400,13 @@ export function FormulaScreen({ navigation, route }: FormulaScreenProps): React.
     );
   }
 
-  const goToRoute = useCallback(
-    (target: NavTarget) => {
-      if (target.kind !== 'route') return;
-      navigation.navigate(target.route);
-    },
-    [navigation],
-  );
-
-  const handleSignOut = useCallback(async () => {
-    const sid = entryContext?.labSessionId ?? session?.sessionId;
-    if (sid) {
-      try {
-        await logoutLabSession(sid);
-      } catch {
-        // Best effort — always return the device to the lock screen.
-      }
-    }
-    navigation.reset({ index: 0, routes: [{ name: 'Auth' }] });
-  }, [entryContext?.labSessionId, navigation, session?.sessionId]);
-
   const isFinalized = draft.status === 'saved';
   const hasCapturedWeight = draft.rows.some((row) => row.capturedGrams != null);
 
   const consoleColumn = (
     <View style={[styles.column, { gap: layout.gap }]}>
       <ScaleConsoleCard
-        ringSize={layout.ringSize}
+        ringSize={metrics.ringSize}
         weightLabel={activeWeightLabel}
         ringState={ringState}
         progress={ringProgress}
@@ -532,85 +458,30 @@ export function FormulaScreen({ navigation, route }: FormulaScreenProps): React.
     </View>
   );
 
-  return (
-    <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
-      <StatusBar barStyle="light-content" backgroundColor={C.surface} />
-      <TopBar session={session} bleStatus={ble.status} />
-
-      <View style={[styles.body, layout.showSidebar ? styles.bodyRow : styles.bodyColumn]}>
-        {layout.showSidebar ? (
-          <Sidebar
-            width={layout.sidebarWidth}
-            onNav={goToRoute}
-            onSignOut={handleSignOut}
-            canManageOps={session?.role === 'owner' || session?.role === 'manager'}
-          />
-        ) : null}
-
-        <View style={styles.mainArea}>
-          <ScrollView
-            style={styles.scroll}
-            contentContainerStyle={{ padding: layout.pad, paddingBottom: T.spacing.xl }}
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-          >
-            <View style={[styles.contentWrap, { gap: layout.gap }]}>
-              {!layout.showSidebar ? (
-                <NavScroller
-                  onNav={goToRoute}
-                  onSignOut={handleSignOut}
-                  canManageOps={session?.role === 'owner' || session?.role === 'manager'}
-                />
-              ) : null}
-
-              <ContextHeader
-                formulaId={draft.id}
-                title={activeRow ? formatRowDisplayName(activeRow) : 'Select an ingredient'}
-                detail={activeRow?.developer}
-                stepIndex={activeIndex}
-                stepCount={draft.rows.length}
-                scaleConnected={scaleConnected}
-                scaleName={ble.connectedDevice?.name}
-                scaleStatus={ble.error ?? ble.status}
-              />
-
-              {layout.twoColumn ? (
-                <View style={[styles.columns, { gap: layout.gap }]}>
-                  <View style={styles.consoleColumn}>{consoleColumn}</View>
-                  <View style={{ width: layout.railWidth }}>{railColumn}</View>
-                </View>
-              ) : (
-                <View style={[styles.column, { gap: layout.gap }]}>
-                  {consoleColumn}
-                  {railColumn}
-                </View>
-              )}
-
-              <Footer now={now} scaleConnected={scaleConnected} online={session?.status === 'active'} />
-            </View>
-          </ScrollView>
-
-          <View style={styles.noticeBar}>
-            <Text style={styles.noticeText} numberOfLines={2}>
-              {draftMessage}
-            </Text>
-          </View>
-
-          <BottomBar
-            totalCaptured={sessionTotals.totalCaptured}
-            chargeCents={draft.billableChargeCents}
-            pricesReady={billingSettings != null}
-            currencyCode={draft.currencyCode}
-            savingDraft={savingDraft}
-            reviewDisabled={savingDraft || !hasCapturedWeight}
-            finalized={isFinalized}
-            onAddProduct={handleAddProduct}
-            onSaveDraft={() => void handleSaveDraft()}
-            onReopenDraft={handleLoadDraft}
-            onReview={handleReviewAndBill}
-          />
-        </View>
+  // The notice strip and the live weighing bar both stay pinned below the
+  // scroll area. The product picker rides along: it renders as an overlay, so
+  // it belongs outside the scrolling content, exactly where it sat before.
+  const pinnedBar = (
+    <>
+      <View style={styles.noticeBar}>
+        <Text style={styles.noticeText} numberOfLines={2}>
+          {draftMessage}
+        </Text>
       </View>
+
+      <BottomBar
+        totalCaptured={sessionTotals.totalCaptured}
+        chargeCents={draft.billableChargeCents}
+        pricesReady={billingSettings != null}
+        currencyCode={draft.currencyCode}
+        savingDraft={savingDraft}
+        reviewDisabled={savingDraft || !hasCapturedWeight}
+        finalized={isFinalized}
+        onAddProduct={handleAddProduct}
+        onSaveDraft={() => void handleSaveDraft()}
+        onReopenDraft={handleLoadDraft}
+        onReview={handleReviewAndBill}
+      />
 
       <ProductPickerModal
         visible={Boolean(pickerRow)}
@@ -628,97 +499,46 @@ export function FormulaScreen({ navigation, route }: FormulaScreenProps): React.
           selectProductForRow(pickerRow.id, product);
         }}
       />
-    </SafeAreaView>
+    </>
   );
-}
 
-// ---------------------------------------------------------------------------
-// Chrome — top bar, sidebar, mobile nav, footer
-// ---------------------------------------------------------------------------
-
-
-function Sidebar({
-  width,
-  onNav,
-  onSignOut,
-  canManageOps,
-}: {
-  width: number;
-  onNav: (target: NavTarget) => void;
-  onSignOut: () => void;
-  canManageOps: boolean;
-}): React.JSX.Element {
   return (
-    <View style={[styles.sidebar, { width }]}>
-      <View style={styles.sidebarNav}>
-        {NAV_ITEMS.filter((item) => item.key !== 'inventory' || canManageOps).map((item) => {
-          const active = item.target.kind === 'current';
-          const soon = item.target.kind === 'soon';
-          return (
-            <Pressable
-              key={item.key}
-              accessibilityRole="button"
-              disabled={soon || active}
-              onPress={() => onNav(item.target)}
-              style={[styles.navItem, active && styles.navItemActive, soon && styles.navItemSoon]}
-            >
-              <Text style={styles.navGlyph}>{item.glyph}</Text>
-              <Text style={[styles.navLabel, active && styles.navLabelActive]} numberOfLines={1}>
-                {item.label}
-              </Text>
-              {soon ? <Text style={styles.soonTag}>Soon</Text> : null}
-            </Pressable>
-          );
-        })}
-      </View>
-      <Pressable accessibilityRole="button" onPress={onSignOut} style={styles.signOut}>
-        <Text style={styles.signOutGlyph}>⏻</Text>
-        <Text style={styles.signOutLabel}>Sign Out</Text>
-      </Pressable>
-    </View>
-  );
-}
-
-function NavScroller({
-  onNav,
-  onSignOut,
-  canManageOps,
-}: {
-  onNav: (target: NavTarget) => void;
-  onSignOut: () => void;
-  canManageOps: boolean;
-}): React.JSX.Element {
-  return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={styles.navScroller}
-      style={styles.navScrollerWrap}
+    <LabShell
+      session={session}
+      bleStatus={ble.status}
+      labSessionId={entryContext?.labSessionId}
+      footer={<Footer now={now} scaleConnected={scaleConnected} online={session?.status === 'active'} />}
+      bottomBar={pinnedBar}
     >
-      {NAV_ITEMS.filter((item) => item.key !== 'inventory' || canManageOps).map((item) => {
-        const active = item.target.kind === 'current';
-        const soon = item.target.kind === 'soon';
-        return (
-          <Pressable
-            key={item.key}
-            accessibilityRole="button"
-            disabled={soon || active}
-            onPress={() => onNav(item.target)}
-            style={[styles.navChip, active && styles.navChipActive, soon && styles.navItemSoon]}
-          >
-            <Text style={styles.navGlyph}>{item.glyph}</Text>
-            <Text style={[styles.navChipLabel, active && styles.navLabelActive]}>{item.label}</Text>
-            {soon ? <Text style={styles.soonTag}>Soon</Text> : null}
-          </Pressable>
-        );
-      })}
-      <Pressable accessibilityRole="button" onPress={onSignOut} style={styles.navChip}>
-        <Text style={styles.navGlyph}>⏻</Text>
-        <Text style={styles.navChipLabel}>Sign Out</Text>
-      </Pressable>
-    </ScrollView>
+      <ContextHeader
+        formulaId={draft.id}
+        title={activeRow ? formatRowDisplayName(activeRow) : 'Select an ingredient'}
+        detail={activeRow?.developer}
+        stepIndex={activeIndex}
+        stepCount={draft.rows.length}
+        scaleConnected={scaleConnected}
+        scaleName={ble.connectedDevice?.name}
+        scaleStatus={ble.error ?? ble.status}
+      />
+
+      {metrics.twoColumn ? (
+        <View style={[styles.columns, { gap: layout.gap }]}>
+          <View style={styles.consoleColumn}>{consoleColumn}</View>
+          <View style={{ width: metrics.railWidth }}>{railColumn}</View>
+        </View>
+      ) : (
+        <View style={[styles.column, { gap: layout.gap }]}>
+          {consoleColumn}
+          {railColumn}
+        </View>
+      )}
+    </LabShell>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Chrome — context header and footer (LabShell owns the top bar and nav)
+// ---------------------------------------------------------------------------
 
 function ContextHeader({
   formulaId,
@@ -1671,101 +1491,10 @@ function formatCaptureStatus(status: FormulaIngredientRow['captureStatus']): str
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: C.background },
-  body: { flex: 1 },
-  bodyRow: { flexDirection: 'row' },
-  bodyColumn: { flexDirection: 'column' },
-  mainArea: { flex: 1 },
-  scroll: { flex: 1 },
-  contentWrap: { width: '100%', maxWidth: 1600, alignSelf: 'center' },
   column: { width: '100%' },
 
   columns: { flexDirection: 'row', alignItems: 'flex-start' },
   consoleColumn: { flex: 1 },
-
-  // Top bar
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: T.spacing.base,
-    paddingVertical: T.spacing.md,
-    backgroundColor: C.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-  },
-  topSideLeft: { flex: 1, alignItems: 'flex-start' },
-  topSideRight: { flex: 1, alignItems: 'flex-end' },
-  brandRow: { flexDirection: 'row', alignItems: 'center', gap: T.spacing.sm },
-  brandText: { color: C.textPrimary, fontSize: 17, fontWeight: '800', letterSpacing: 1 },
-  userRow: { flexDirection: 'row', alignItems: 'center', gap: T.spacing.sm, maxWidth: 220 },
-  userText: { alignItems: 'flex-end' },
-  userName: { color: C.textPrimary, fontWeight: '700', fontSize: 13 },
-  userRole: { color: C.textMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 },
-  avatar: {
-    width: 36,
-    height: 36,
-    borderRadius: T.radius.full,
-    backgroundColor: C.primarySoft,
-    borderWidth: 1,
-    borderColor: C.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: { color: C.primary, fontWeight: '800', fontSize: 13 },
-
-  // Sidebar
-  sidebar: {
-    backgroundColor: C.surface,
-    borderRightWidth: 1,
-    borderRightColor: C.border,
-    paddingVertical: T.spacing.lg,
-    paddingHorizontal: T.spacing.md,
-    justifyContent: 'space-between',
-  },
-  sidebarNav: { gap: T.spacing.xs },
-  navItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: T.spacing.md,
-    paddingVertical: T.spacing.md,
-    paddingHorizontal: T.spacing.md,
-    borderRadius: T.radius.card,
-  },
-  // Active item reads as a solid brand pill with white text (was a soft fill).
-  navItemActive: { backgroundColor: C.sidebarActive },
-  navItemSoon: { opacity: 0.5 },
-  navGlyph: { fontSize: 16 },
-  navLabel: { flex: 1, color: C.textSecondary, fontSize: 13, fontWeight: '700' },
-  navLabelActive: { color: C.sidebarActiveText },
-  soonTag: { color: C.textMuted, fontSize: 11, fontWeight: '700' },
-  signOut: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: T.spacing.md,
-    paddingVertical: T.spacing.md,
-    paddingHorizontal: T.spacing.md,
-    borderRadius: T.radius.card,
-    borderWidth: 1,
-    borderColor: C.border,
-  },
-  signOutGlyph: { fontSize: 16, color: C.danger.text },
-  signOutLabel: { color: C.textPrimary, fontWeight: '700', fontSize: 13 },
-
-  navScrollerWrap: { marginBottom: T.spacing.xs },
-  navScroller: { flexDirection: 'row', gap: T.spacing.sm, paddingVertical: T.spacing.xs },
-  navChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: T.spacing.xs,
-    paddingVertical: T.spacing.sm,
-    paddingHorizontal: T.spacing.md,
-    borderRadius: T.radius.full,
-    borderWidth: 1,
-    borderColor: C.border,
-    backgroundColor: C.surface,
-  },
-  navChipActive: { backgroundColor: C.primarySoft, borderColor: C.primary },
-  navChipLabel: { color: C.textSecondary, fontSize: 13, fontWeight: '700' },
 
   // Context header
   contextHeader: {

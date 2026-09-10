@@ -281,7 +281,7 @@ export function InventoryScreen({ navigation }: InventoryScreenProps): React.JSX
 
   if (forbidden) {
     return (
-      <LabShell active="inventory" session={session} bleStatus={ble.status}>
+      <LabShell session={session} bleStatus={ble.status}>
         <View style={styles.lockCard}>
           <Text style={styles.lockGlyph}>🔒</Text>
           <Text style={styles.lockTitle}>Inventory is owner & manager only</Text>
@@ -295,7 +295,6 @@ export function InventoryScreen({ navigation }: InventoryScreenProps): React.JSX
 
   return (
     <LabShell
-      active="inventory"
       session={session}
       bleStatus={ble.status}
       refreshing={refreshing}

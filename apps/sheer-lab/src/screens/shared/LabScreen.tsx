@@ -13,6 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 
 import { labTheme } from '../../theme/labTheme';
+import { Icon } from '../../ui/icons/Icon';
 import { BrandMark } from './BrandMark';
 import { BrandWordmark } from './BrandWordmark';
 
@@ -60,7 +61,9 @@ export function LabScreen({
             hitSlop={10}
             style={styles.backButton}
           >
-            <Text style={styles.backGlyph}>‹</Text>
+            {/* Was a Unicode '‹' at 30pt — no shared stroke weight or optical
+                size with anything else, and it could not take a tint. */}
+            <Icon name="chevronLeft" size="md" tone="brand" />
           </Pressable>
         ) : null}
         <BrandMark size={26} />
@@ -107,13 +110,6 @@ const styles = StyleSheet.create({
     borderBottomColor: labTheme.colors.border,
   },
   backButton: { paddingRight: labTheme.spacing.xs },
-  backGlyph: {
-    color: labTheme.colors.primary,
-    fontSize: 30,
-    lineHeight: 30,
-    fontWeight: '300',
-    marginTop: -2,
-  },
   content: {
     flexGrow: 1,
     alignItems: 'center',

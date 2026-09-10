@@ -9,16 +9,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
-  RefreshControl,
-  ScrollView,
-  StatusBar,
   StyleSheet,
   Text,
   TextInput,
   useWindowDimensions,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { RootStackParamList } from '../../app/navigation/routes';
 import { getLabAnalyticsSummaryForSession } from '../../features/analytics/analyticsApi';
@@ -36,7 +32,7 @@ import {
   type LabSessionBillingBreakdown,
 } from '../../features/formulas/formulasApi';
 import { formulaDraftStore } from '../../features/formulas/formulaDraftStore';
-import { getActiveLabSession, logoutLabSession } from '../../features/sheer-lab/labSession';
+import { getActiveLabSession } from '../../features/sheer-lab/labSession';
 import { appConfig } from '../../config/appConfig';
 import {
   activeStatusBadge,
@@ -53,10 +49,9 @@ import {
   sumProductUsageGrams,
   type StatusTone,
 } from '../Home/dashboardHelpers';
-import { featureFlags } from '../../config/featureFlags';
 import { labTheme } from '../../theme/labTheme';
 import { useBleScale } from '../../features/ble/hooks/useBleScale';
-import { TopBar } from '../shared/LabShell';
+import { LabShell, useLabLayout } from '../shared/LabShell';
 
 const T = labTheme;
 const C = T.colors;
@@ -111,95 +106,13 @@ interface HistoryMetric {
 }
 
 // ---------------------------------------------------------------------------
-// Responsive layout — mirrors the Formula console breakpoints.
+// The one layout number this screen owns: the width of the session-audit rail,
+// a share of the viewport. Everything else about the frame — breakpoints, pad,
+// gap, sidebar — is resolved by `useLabLayout` inside the shared shell.
 // ---------------------------------------------------------------------------
-
-interface HistoryLayout {
-  mode: 'phone' | 'tablet' | 'wide';
-  sidebarWidth: number;
-  railWidth: number;
-  pad: number;
-  gap: number;
-  showSidebar: boolean;
-  showRail: boolean;
-}
-
-function getLayout(width: number): HistoryLayout {
-  if (width >= 1024) {
-    const large = width >= 1280;
-    return {
-      mode: 'wide',
-      sidebarWidth: large ? 248 : 216,
-      railWidth: clampNumber(Math.round(width * 0.32), 340, 420),
-      pad: large ? T.spacing.xl : T.spacing.base,
-      gap: T.spacing.lg,
-      showSidebar: true,
-      showRail: true,
-    };
-  }
-  if (width >= 700) {
-    return {
-      mode: 'tablet',
-      sidebarWidth: 208,
-      railWidth: 0,
-      pad: T.spacing.base,
-      gap: T.spacing.base,
-      showSidebar: true,
-      showRail: false,
-    };
-  }
-  return {
-    mode: 'phone',
-    sidebarWidth: 0,
-    railWidth: 0,
-    pad: T.spacing.base,
-    gap: T.spacing.base,
-    showSidebar: false,
-    showRail: false,
-  };
-}
 
 function clampNumber(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
-}
-
-// ---------------------------------------------------------------------------
-// Sidebar navigation model (dark shell) — History is the current screen.
-// ---------------------------------------------------------------------------
-
-type WorkingRoute = 'Home' | 'NewMix' | 'FormulaHistory' | 'Inventory';
-type NavTarget = { kind: 'route'; route: WorkingRoute } | { kind: 'soon' } | { kind: 'current' };
-
-interface NavEntry {
-  key: string;
-  label: string;
-  glyph: string;
-  target: NavTarget;
-}
-
-// Inventory management is owner/manager-only (stylists get a lock screen), so it
-// only becomes a live destination for those roles.
-function buildNavItems(canManageInventory: boolean): NavEntry[] {
-  return ([
-    { key: 'dashboard', label: 'Dashboard', glyph: '▦', target: { kind: 'route', route: 'Home' } },
-    { key: 'new-mix', label: 'New Mix', glyph: '🧪', target: { kind: 'route', route: 'NewMix' } },
-    { key: 'history', label: 'History', glyph: '🕘', target: { kind: 'current' } },
-    {
-      key: 'inventory',
-      label: 'Inventory',
-      glyph: '📦',
-      target: canManageInventory ? { kind: 'route', route: 'Inventory' } : { kind: 'soon' },
-    },
-    { key: 'billing', label: 'Billing Rules', glyph: '🧾', target: { kind: 'soon' } },
-    { key: 'audit', label: 'Audit Trail', glyph: '🛡️', target: { kind: 'soon' } },
-    // Billing Rules and Audit Trail are hidden from the nav behind feature flags
-    // for every role; their entries stay so the feature can be restored later.
-  ] satisfies NavEntry[]).filter(
-    (item) =>
-      (item.key !== 'inventory' || canManageInventory) &&
-      (item.key !== 'billing' || featureFlags.billingRules) &&
-      (item.key !== 'audit' || featureFlags.auditTrail),
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -208,7 +121,8 @@ function buildNavItems(canManageInventory: boolean): NavEntry[] {
 
 export function FormulaHistoryScreen({ navigation }: FormulaHistoryScreenProps): React.JSX.Element {
   const { width } = useWindowDimensions();
-  const layout = getLayout(width);
+  const layout = useLabLayout();
+  const railWidth = clampNumber(Math.round(width * 0.32), 340, 420);
 
   const [session, setSession] = useState<PinUnlockResponse | undefined>();
   const ble = useBleScale();
@@ -425,232 +339,103 @@ export function FormulaHistoryScreen({ navigation }: FormulaHistoryScreenProps):
     [filtered, analytics, canSeeFinance, suffix],
   );
 
-  const canManageInventory = session?.role === 'owner' || session?.role === 'manager';
-  const navItems = useMemo(() => buildNavItems(canManageInventory), [canManageInventory]);
-
-  const goToRoute = useCallback(
-    (target: NavTarget) => {
-      if (target.kind !== 'route') return;
-      navigation.navigate(target.route);
-    },
-    [navigation],
-  );
-
-  const handleSignOut = useCallback(async () => {
-    const sid = session?.sessionId;
-    if (sid) {
-      try {
-        await logoutLabSession(sid);
-      } catch {
-        // Best effort — always return the device to the lock screen.
-      }
-    }
-    navigation.reset({ index: 0, routes: [{ name: 'Auth' }] });
-  }, [navigation, session?.sessionId]);
-
   if (loading && !session) {
     return (
-      <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
-        <StatusBar barStyle="light-content" backgroundColor={C.surface} />
+      <LabShell session={session} bleStatus={ble.status}>
         <View style={styles.centerFill}>
           <ActivityIndicator color={C.primary} />
           <Text style={styles.emptyText}>Loading formula history…</Text>
         </View>
-      </SafeAreaView>
+      </LabShell>
     );
   }
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
-      <StatusBar barStyle="light-content" backgroundColor={C.surface} />
-      <TopBar session={session} bleStatus={ble.status} />
-
-      <View style={[styles.body, layout.showSidebar ? styles.bodyRow : styles.bodyColumn]}>
-        {layout.showSidebar ? (
-          <Sidebar width={layout.sidebarWidth} items={navItems} onNav={goToRoute} onSignOut={handleSignOut} />
-        ) : null}
-
-        <View style={styles.mainArea}>
-          <ScrollView
-            style={styles.scroll}
-            contentContainerStyle={{ padding: layout.pad, paddingBottom: T.spacing.xl }}
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={C.primary} />}
-          >
-            <View style={[styles.contentWrap, { gap: layout.gap }]}>
-              {!layout.showSidebar ? <NavScroller items={navItems} onNav={goToRoute} onSignOut={handleSignOut} /> : null}
-
-              <HistoryHeader
-                search={search}
-                onSearchChange={setSearch}
-                onRefresh={handleRefresh}
-                period={period}
-                onPeriodChange={setPeriod}
-                customRange={customRange}
-                onCustomRangeChange={setCustomRange}
-                subtitle={`Review ${periodPossessive(period)} mixing sessions, appointment status, and billing performance.`}
-              />
-
-              {error ? <Text style={styles.errorText}>{error}</Text> : null}
-
-              {layout.showRail ? (
-                <View style={[styles.columns, { gap: layout.gap }]}>
-                  <View style={styles.listColumn}>
-                    <SessionList
-                    groups={groups}
-                    pagination={pagination}
-                    pageSizeOptions={PAGE_SIZE_OPTIONS}
-                    onPageChange={setPage}
-                    onPageSizeChange={(size) => {
-                      setPageSize(size);
-                      setPage(1);
-                    }}
-                    selectedId={selected?.id}
-                    onSelect={setSelectedId}
-                    periodSuffix={suffix}
-                    awaitingCustom={awaitingCustom}
-                  />
-                  </View>
-                  <View style={{ width: layout.railWidth }}>
-                    <SessionAuditCard
-                      booking={selected}
-                      now={now}
-                      billing={selectedBilling}
-                      remixSourceId={remixSourceId}
-                      onUpdateFormula={handleUpdateFormula}
-                    />
-                  </View>
-                </View>
-              ) : (
-                <View style={[styles.column, { gap: layout.gap }]}>
-                  <SessionList
-                    groups={groups}
-                    pagination={pagination}
-                    pageSizeOptions={PAGE_SIZE_OPTIONS}
-                    onPageChange={setPage}
-                    onPageSizeChange={(size) => {
-                      setPageSize(size);
-                      setPage(1);
-                    }}
-                    selectedId={selected?.id}
-                    onSelect={setSelectedId}
-                    periodSuffix={suffix}
-                    awaitingCustom={awaitingCustom}
-                  />
-                  <SessionAuditCard
-                    booking={selected}
-                    now={now}
-                    billing={selectedBilling}
-                    remixSourceId={remixSourceId}
-                    onUpdateFormula={handleUpdateFormula}
-                  />
-                </View>
-              )}
-
-              <MetricsRow metrics={metrics} />
-
-              <Footer now={now} online={session?.status === 'active'} />
-            </View>
-          </ScrollView>
-        </View>
-      </View>
-    </SafeAreaView>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Chrome — top bar, sidebar, mobile nav, footer
-// ---------------------------------------------------------------------------
-
-
-function Sidebar({
-  width,
-  items,
-  onNav,
-  onSignOut,
-}: {
-  width: number;
-  items: NavEntry[];
-  onNav: (target: NavTarget) => void;
-  onSignOut: () => void;
-}): React.JSX.Element {
-  return (
-    <View style={[styles.sidebar, { width }]}>
-      <View style={styles.sidebarNav}>
-        {items.map((item) => {
-          const active = item.target.kind === 'current';
-          const soon = item.target.kind === 'soon';
-          return (
-            <Pressable
-              key={item.key}
-              accessibilityRole="button"
-              disabled={soon || active}
-              onPress={() => onNav(item.target)}
-              style={[styles.navItem, active && styles.navItemActive, soon && styles.navItemSoon]}
-            >
-              <Text style={styles.navGlyph}>{item.glyph}</Text>
-              <Text style={[styles.navLabel, active && styles.navLabelActive]} numberOfLines={1}>
-                {item.label}
-              </Text>
-              {soon ? <Text style={styles.soonTag}>Soon</Text> : null}
-            </Pressable>
-          );
-        })}
-      </View>
-      <Pressable accessibilityRole="button" onPress={onSignOut} style={styles.signOut}>
-        <Text style={styles.signOutGlyph}>⏻</Text>
-        <Text style={styles.signOutLabel}>Sign Out</Text>
-      </Pressable>
-    </View>
-  );
-}
-
-function NavScroller({
-  items,
-  onNav,
-  onSignOut,
-}: {
-  items: NavEntry[];
-  onNav: (target: NavTarget) => void;
-  onSignOut: () => void;
-}): React.JSX.Element {
-  return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={styles.navScroller}
-      style={styles.navScrollerWrap}
+    <LabShell
+      session={session}
+      bleStatus={ble.status}
+      refreshing={refreshing}
+      onRefresh={handleRefresh}
+      footer={<Footer now={now} online={session?.status === 'active'} />}
     >
-      {items.map((item) => {
-        const active = item.target.kind === 'current';
-        const soon = item.target.kind === 'soon';
-        return (
-          <Pressable
-            key={item.key}
-            accessibilityRole="button"
-            disabled={soon || active}
-            onPress={() => onNav(item.target)}
-            style={[styles.navChip, active && styles.navChipActive, soon && styles.navItemSoon]}
-          >
-            <Text style={styles.navGlyph}>{item.glyph}</Text>
-            <Text style={[styles.navChipLabel, active && styles.navLabelActive]}>{item.label}</Text>
-            {soon ? <Text style={styles.soonTag}>Soon</Text> : null}
-          </Pressable>
-        );
-      })}
-      <Pressable accessibilityRole="button" onPress={onSignOut} style={styles.navChip}>
-        <Text style={styles.navGlyph}>⏻</Text>
-        <Text style={styles.navChipLabel}>Sign Out</Text>
-      </Pressable>
-    </ScrollView>
+      <HistoryHeader
+        search={search}
+        onSearchChange={setSearch}
+        period={period}
+        onPeriodChange={setPeriod}
+        customRange={customRange}
+        onCustomRangeChange={setCustomRange}
+        subtitle={`Review ${periodPossessive(period)} mixing sessions, appointment status, and billing performance.`}
+      />
+
+      {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+      {layout.isWide ? (
+        <View style={[styles.columns, { gap: layout.gap }]}>
+          <View style={styles.listColumn}>
+            <SessionList
+              groups={groups}
+              pagination={pagination}
+              pageSizeOptions={PAGE_SIZE_OPTIONS}
+              onPageChange={setPage}
+              onPageSizeChange={(size) => {
+                setPageSize(size);
+                setPage(1);
+              }}
+              selectedId={selected?.id}
+              onSelect={setSelectedId}
+              periodSuffix={suffix}
+              awaitingCustom={awaitingCustom}
+            />
+          </View>
+          <View style={{ width: railWidth }}>
+            <SessionAuditCard
+              booking={selected}
+              now={now}
+              billing={selectedBilling}
+              remixSourceId={remixSourceId}
+              onUpdateFormula={handleUpdateFormula}
+            />
+          </View>
+        </View>
+      ) : (
+        <View style={[styles.column, { gap: layout.gap }]}>
+          <SessionList
+            groups={groups}
+            pagination={pagination}
+            pageSizeOptions={PAGE_SIZE_OPTIONS}
+            onPageChange={setPage}
+            onPageSizeChange={(size) => {
+              setPageSize(size);
+              setPage(1);
+            }}
+            selectedId={selected?.id}
+            onSelect={setSelectedId}
+            periodSuffix={suffix}
+            awaitingCustom={awaitingCustom}
+          />
+          <SessionAuditCard
+            booking={selected}
+            now={now}
+            billing={selectedBilling}
+            remixSourceId={remixSourceId}
+            onUpdateFormula={handleUpdateFormula}
+          />
+        </View>
+      )}
+
+      <MetricsRow metrics={metrics} />
+    </LabShell>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Header and footer
+// ---------------------------------------------------------------------------
 
 function HistoryHeader({
   search,
   onSearchChange,
-  onRefresh,
   period,
   onPeriodChange,
   customRange,
@@ -659,7 +444,6 @@ function HistoryHeader({
 }: {
   search: string;
   onSearchChange: (value: string) => void;
-  onRefresh: () => void;
   period: LabPeriod;
   onPeriodChange: (next: LabPeriod) => void;
   customRange: LabCustomRange;
@@ -697,7 +481,6 @@ function HistoryHeader({
             value={search}
           />
         </View>
-        <IconButton glyph="⟳" onPress={onRefresh} />
       </View>
     </View>
   );
@@ -1319,117 +1102,17 @@ function StatusChip({ label, tone }: { label: string; tone: ChipTone }): React.J
   );
 }
 
-function IconButton({ glyph, onPress }: { glyph: string; onPress: () => void }): React.JSX.Element {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={onPress}
-      style={({ pressed }) => [styles.iconButton, pressed && styles.iconButtonPressed]}
-      hitSlop={6}
-    >
-      <Text style={styles.iconButtonGlyph}>{glyph}</Text>
-    </Pressable>
-  );
-}
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: C.background },
-  centerFill: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: T.spacing.sm },
-  body: { flex: 1 },
-  bodyRow: { flexDirection: 'row' },
-  bodyColumn: { flexDirection: 'column' },
-  mainArea: { flex: 1 },
-  scroll: { flex: 1 },
-  contentWrap: { width: '100%', maxWidth: 1600, alignSelf: 'center' },
+  // The loading block now sits inside the scroll area of the shared shell,
+  // where a flex-1 child of a scroll content container collapses to zero
+  // height. Padded instead, matching the loading block on the other shell
+  // screens.
+  centerFill: { paddingVertical: T.spacing['2xl'], alignItems: 'center', justifyContent: 'center', gap: T.spacing.sm },
   column: { width: '100%' },
   columns: { flexDirection: 'row', alignItems: 'flex-start' },
   listColumn: { flex: 1 },
   flexItem: { flex: 1 },
-
-  // Top bar
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: T.spacing.base,
-    paddingVertical: T.spacing.md,
-    backgroundColor: C.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-  },
-  topSideLeft: { flex: 1, alignItems: 'flex-start' },
-  topSideRight: { flex: 1, alignItems: 'flex-end' },
-  brandRow: { flexDirection: 'row', alignItems: 'center', gap: T.spacing.sm },
-  brandText: { color: C.textPrimary, fontSize: 17, fontWeight: '800', letterSpacing: 1 },
-  userRow: { flexDirection: 'row', alignItems: 'center', gap: T.spacing.sm, maxWidth: 220 },
-  userText: { alignItems: 'flex-end' },
-  userName: { color: C.textPrimary, fontWeight: '700', fontSize: 13 },
-  userRole: { color: C.textMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 },
-  avatar: {
-    width: 36,
-    height: 36,
-    borderRadius: T.radius.full,
-    backgroundColor: C.primarySoft,
-    borderWidth: 1,
-    borderColor: C.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: { color: C.primary, fontWeight: '800', fontSize: 13 },
-
-  // Sidebar
-  sidebar: {
-    backgroundColor: C.surface,
-    borderRightWidth: 1,
-    borderRightColor: C.border,
-    paddingVertical: T.spacing.lg,
-    paddingHorizontal: T.spacing.md,
-    justifyContent: 'space-between',
-  },
-  sidebarNav: { gap: T.spacing.xs },
-  navItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: T.spacing.md,
-    paddingVertical: T.spacing.md,
-    paddingHorizontal: T.spacing.md,
-    borderRadius: T.radius.card,
-  },
-  // Active item reads as a solid brand pill (rounded via `navItem.borderRadius`)
-  // with white text, rather than the older soft-tinted fill.
-  navItemActive: { backgroundColor: C.sidebarActive },
-  navItemSoon: { opacity: 0.5 },
-  navGlyph: { fontSize: 16 },
-  navLabel: { flex: 1, color: C.textSecondary, fontSize: 13, fontWeight: '700' },
-  navLabelActive: { color: C.sidebarActiveText },
-  soonTag: { color: C.textMuted, fontSize: 11, fontWeight: '700' },
-  signOut: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: T.spacing.md,
-    paddingVertical: T.spacing.md,
-    paddingHorizontal: T.spacing.md,
-    borderRadius: T.radius.card,
-    borderWidth: 1,
-    borderColor: C.border,
-  },
-  signOutGlyph: { fontSize: 16, color: C.danger.text },
-  signOutLabel: { color: C.textPrimary, fontWeight: '700', fontSize: 13 },
-
-  navScrollerWrap: { marginBottom: T.spacing.xs },
-  navScroller: { flexDirection: 'row', gap: T.spacing.sm, paddingVertical: T.spacing.xs },
-  navChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: T.spacing.xs,
-    paddingVertical: T.spacing.sm,
-    paddingHorizontal: T.spacing.md,
-    borderRadius: T.radius.full,
-    borderWidth: 1,
-    borderColor: C.border,
-    backgroundColor: C.surface,
-  },
-  navChipActive: { backgroundColor: C.primarySoft, borderColor: C.primary },
-  navChipLabel: { color: C.textSecondary, fontSize: 13, fontWeight: '700' },
 
   // Header
   header: { gap: T.spacing.md },

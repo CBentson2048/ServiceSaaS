@@ -2,8 +2,10 @@ import type React from 'react';
 import { useMemo } from 'react';
 import Svg, { Path } from 'react-native-svg';
 
-import { theme } from '../../theme/theme';
-import type { IconSizeToken } from '../../theme/tokens';
+// The live theme. This kit used to import `src/theme/theme.ts`, which nothing
+// else does — that is the only reason a finished icon set sat unused while the
+// app drew its iconography in emoji. See src/ui/index.ts.
+import { labTheme as theme, type IconSizeToken } from '../../theme/labTheme';
 import { FILLED_ICONS, ICON_VIEWBOX, iconPaths, type IconName } from './paths';
 
 /**
@@ -52,7 +54,7 @@ function resolveTone(tone: IconTone, color?: string): string {
     case 'brand':
       return theme.colors.primary;
     case 'onBrand':
-      return theme.colors.onPrimaryStrong;
+      return theme.colors.sidebarActiveText;
     case 'success':
       return theme.colors.successText;
     case 'warning':

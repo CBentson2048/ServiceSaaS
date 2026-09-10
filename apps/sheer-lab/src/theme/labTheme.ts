@@ -1,5 +1,7 @@
 import { palette, radius, spacing, staffTheme, typography } from '@sheer/design-tokens';
 
+import { iconSize, strokeWidth, touchTarget } from './tokens';
+
 /**
  * Lab-only palette for the QLAB rebrand (purple flask + infinity mark).
  * Scoped here rather than in `@sheer/design-tokens` because the shared
@@ -8,8 +10,8 @@ import { palette, radius, spacing, staffTheme, typography } from '@sheer/design-
  *
  * The ink ramp keeps the violet hue family of the `#19131F` canvas. The
  * accent ramp is sampled from the logo's gradient (`#601890` → `#9C0CC0`):
- * `accent` is lightened for legible accent text on the canvas (5.8:1) and
- * `accentSolid` stays deep enough to carry white text (6.5:1) — no single
+ * `accent` is lightened for legible accent text on the canvas (5.75:1) and
+ * `accentSolid` stays deep enough to carry white text (6.51:1) — no single
  * purple can do both on a canvas this dark.
  */
 export const labPalette = {
@@ -23,60 +25,74 @@ export const labPalette = {
   hero: '#431956',
 } as const;
 
+/**
+ * THE Lab theme. One object, one set of values.
+ *
+ * WHY THIS FILE USED TO EXPORT TWO THEMES, AND WHY IT NO LONGER DOES.
+ *
+ * There were `labTheme` and `labLightTheme`. Both were dark (the second was
+ * misnamed — its own docblock opened "Dark theme for the QLOOQO Lab dashboard"),
+ * both were live, and they disagreed on four keys that screens actually read.
+ * Which values a screen got depended on nothing more meaningful than whether it
+ * imported the theme directly or picked up the `c` that `LabShell.tsx`
+ * re-exported. Same token name, two colours, split by import path:
+ *
+ *   key             old labTheme        old labLightTheme    resolved to
+ *   card            #2D2338             #221A2C              #2D2338
+ *   surfaceAlt      #2E1F4A (inherited) #2D2338              #2D2338
+ *   textOnPrimary   #18141F (inherited) white                #18141F
+ *   primarySoft     #2E1F4A (inherited) #3A1548              #3A1548
+ *
+ * Each resolution is either a no-op or a fix, checked against the call sites:
+ *
+ *   `card` — no screen on the labLightTheme side ever read it, so taking
+ *   #2D2338 changes nothing and keeps LabButton's secondary variant visibly
+ *   raised off the surface it sits on.
+ *
+ *   `textOnPrimary` — this is the important one. Every control that pairs it
+ *   with a `primary` fill was, on the labLightTheme side, drawing WHITE on
+ *   #C46BEA: 3.16:1, which fails WCAG AA. The dark ink is 5.73:1 on the same
+ *   fill. So the accessible value wins, and the rule the palette docblock
+ *   already implies is now explicit: fill with `primary` and text is dark ink;
+ *   fill with `accentSolid` and text is white (6.51:1). That is why
+ *   `sidebarActive` is `accentSolid` rather than `primary` — it is the one
+ *   surface here that must carry a white label.
+ *
+ *   `primarySoft` — old labTheme never declared it, so it fell through to
+ *   `staffTheme`'s `palette.brand[900]` = #2E1F4A, the PRE-REBRAND indigo. Half
+ *   the app was tinting selected states with the colour the QLAB rebrand
+ *   replaced. Now the brand's own `accentSoft`.
+ *
+ *   `surfaceAlt` — same pre-rebrand fall-through (#2E1F4A); #2D2338 is the
+ *   documented "inner tile" step and is a near-imperceptible shift.
+ *
+ * SURFACE LADDER, stated once so nothing re-decides it:
+ *   page canvas          `background`   #19131F
+ *   panels / top bar /   `surface`      #221A2C
+ *     sidebar rail
+ *   raised cards /       `card`,        #2D2338
+ *     inner tiles        `surfaceAlt`
+ *
+ * The status tones are exposed in BOTH shapes on purpose: `success.text` (from
+ * the `staffTheme` spread) and the flat `successText` alias. Screens use both,
+ * and dropping either would break a caller for no gain.
+ */
 export const labTheme = {
   ...staffTheme,
   colors: {
     ...staffTheme.colors,
+
     background: labPalette.bg,
     surface: labPalette.surface,
     card: labPalette.surfaceRaised,
-    primary: labPalette.accent,
-    primaryPressed: labPalette.accentSolid,
-    // Active sidebar item: a solid, saturated brand pill with white text/glyph
-    // (the lighter `accent` is too pale for legible white text).
-    sidebarActive: labPalette.accentSolid,
-    sidebarActiveText: palette.white,
-    textPrimary: palette.white,
-    textSecondary: palette.alpha.whiteHi,
-    textMuted: palette.alpha.whiteSubtle,
-    border: palette.alpha.whiteLine,
-  },
-  spacing,
-  radius,
-  typography,
-} as const;
-
-export type LabTheme = typeof labTheme;
-
-/**
- * Dark theme for the QLOOQO Lab dashboard. Built on the shared dark `staffTheme`
- * so the dashboard (and the `LabShell` screens that consume this theme) match the
- * dark `labTheme` used by the rest of the Lab screens (Formula History, Formula,
- * etc.). It keeps the dashboard-specific semantic keys (the `hero` and `sidebar`
- * tokens and the flat `success` / `warning` / `danger` aliases) on the dark base.
- *
- * Surfaces step up from the near-black canvas: page = `labPalette.bg`, cards /
- * top bar / sidebar = `labPalette.surface`, inner tiles = `labPalette.surfaceRaised`.
- * Accents stay on the purple brand, tuned lighter (`labPalette.accent`) so they
- * read on the dark ink.
- */
-export const labLightTheme = {
-  ...staffTheme,
-  colors: {
-    ...staffTheme.colors,
-    background: labPalette.bg,
-    surface: labPalette.surface,
     surfaceAlt: labPalette.surfaceRaised,
-    card: labPalette.surface,
 
-    // Side navigation rail: a subtly elevated dark panel with light text and a
-    // deep-purple highlight (`primarySoft`) on the active item.
+    // Side navigation rail: an elevated dark panel with light text and a solid
+    // brand pill on the active item.
     sidebar: labPalette.surface,
     sidebarBorder: palette.alpha.whiteLine,
     sidebarText: palette.alpha.whiteHi,
     sidebarTextMuted: palette.alpha.whiteSubtle,
-    // Active item: a solid, saturated brand pill with white text/glyph (the
-    // lighter `accent` primary is too pale to carry legible white text).
     sidebarActive: labPalette.accentSolid,
     sidebarActiveText: palette.white,
 
@@ -90,23 +106,23 @@ export const labLightTheme = {
     onHeroButtonBg: palette.white,
     onHeroButtonText: labPalette.bg,
 
-    // Brand purple tuned for dark surfaces: the lighter `accent` reads on
-    // near-black, and soft fills use the deep `accentSoft` for selected/active
-    // surfaces (active nav, avatars, count badges).
+    // Brand purple tuned for dark surfaces. `accent` reads on near-black;
+    // `accentSoft` fills selected/active surfaces.
     primary: labPalette.accent,
     primaryPressed: labPalette.accentSolid,
     primarySoft: labPalette.accentSoft,
+    // Dark ink, NOT white — 5.73:1 on the `primary` fill versus white's 3.16:1.
+    // See the docblock above before changing this.
+    textOnPrimary: palette.ink[950],
 
     textPrimary: palette.white,
     textSecondary: palette.alpha.whiteHi,
     textMuted: palette.alpha.whiteSubtle,
-    textOnPrimary: palette.white,
 
     border: palette.alpha.whiteLine,
     borderStrong: palette.alpha.whiteMuted,
 
-    // Status tones in their dark-surface variants (brighter text on a translucent
-    // fill) so success/warning/danger stay legible on the ink cards.
+    // Flat aliases for the nested `success`/`warning`/`danger` tones above.
     successText: staffTheme.colors.success.text,
     successBg: staffTheme.colors.success.bg,
     successBorder: staffTheme.colors.success.border,
@@ -120,6 +136,19 @@ export const labLightTheme = {
   spacing,
   radius,
   typography,
+  /**
+   * Icon geometry, re-exported from `src/theme/tokens.ts` so `src/ui/icons`
+   * can run on this theme rather than on the unadopted `src/theme/theme.ts`.
+   * See the note at the top of `src/ui/index.ts` about those two files.
+   */
+  iconSize,
+  strokeWidth,
+  /**
+   * Minimum comfortable control heights, sized for gloved hands at a colour
+   * bar. Note these are currently observed only by the icon kit and `src/ui` —
+   * the screens predate the token and use their own numbers.
+   */
+  touchTarget,
   // Elevation reads as a soft black drop on the dark surfaces; cards still lean
   // on their `border` for separation.
   cardShadow: {
@@ -131,4 +160,5 @@ export const labLightTheme = {
   },
 } as const;
 
-export type LabLightTheme = typeof labLightTheme;
+export type LabTheme = typeof labTheme;
+export type { IconSizeToken } from './tokens';
