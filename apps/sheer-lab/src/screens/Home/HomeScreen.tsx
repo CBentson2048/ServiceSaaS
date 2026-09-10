@@ -230,9 +230,21 @@ export function HomeScreen({ navigation }: HomeScreenProps): React.JSX.Element {
     void load();
   }, [load]);
 
+  // Sign Out must ALWAYS return a shared station to the lock screen, so the
+  // logout call is best-effort and the navigation is unconditional. This was the
+  // one copy of seven that awaited the call bare: a rejected logout (offline
+  // tablet, 401, timeout) escaped the handler before navigating, leaving the
+  // operator signed in on a station they had just tried to hand over. `reset`
+  // rather than `replace` so the dashboard cannot be reached with Back.
   const handleLogout = useCallback(async () => {
-    if (session) await logoutLabSession(session.sessionId);
-    navigation.replace('Auth');
+    if (session) {
+      try {
+        await logoutLabSession(session.sessionId);
+      } catch {
+        // Best effort — always return the device to the lock screen.
+      }
+    }
+    navigation.reset({ index: 0, routes: [{ name: 'Auth' }] });
   }, [navigation, session]);
 
   const goToRoute = useCallback(

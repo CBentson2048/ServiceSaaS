@@ -18,7 +18,9 @@ import type { LabDeviceResolveResponse } from '@sheer/domain';
  *      in the synthetic Kensington device context below and routes to the PIN
  *      screen (the normal "ready" device flow).
  *   3. AuthScreen unlocks against the REAL backend using the Kensington device
- *      + location ids, so a real Kensington PIN is required to proceed.
+ *      + location ids, so a real Kensington PIN is required to proceed. That is
+ *      only a real barrier while the PIN stays out of the UI — it did not, and
+ *      the copy in DeviceRegistrationScreen has been corrected.
  *
  * TO REMOVE FOR PRODUCTION:
  *   • Kill switch: set REVIEW_MODE_ENABLED = false (the button disappears and
@@ -34,8 +36,21 @@ import type { LabDeviceResolveResponse } from '@sheer/domain';
  * will reject the unlock.
  */
 
-/** Master switch. `true` while the build is in App Store review; `false`/deleted for production. */
-export const REVIEW_MODE_ENABLED = true;
+/**
+ * Master switch. `true` ONLY while a build is actually in App Store review.
+ *
+ * Turned off 2026-09-10. It had been left `true` since 2026-06-30 (commit
+ * 7ffb2fd) — ten weeks, long after any review window closed — which meant every
+ * unregistered install shipped a one-tap route into the real Kensington
+ * production location. Worse, the call site printed the demo PIN beside the
+ * button (see below), so the "a real PIN is still required" guarantee this file
+ * claims was not actually holding.
+ *
+ * If you turn it back on for a submission, turn it off again when the build is
+ * approved, and do NOT put the PIN in the on-screen copy — give it to the
+ * reviewer through App Store Connect's demo-account fields instead.
+ */
+export const REVIEW_MODE_ENABLED = false;
 
 // --- Real production identifiers for the Kensington location ----------------
 // These MUST resolve to real rows in production (core.locations,

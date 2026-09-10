@@ -35,6 +35,7 @@ import { appConfig } from '../../config/appConfig';
 import { formatClock } from '../Home/dashboardHelpers';
 import { featureFlags } from '../../config/featureFlags';
 import { labTheme } from '../../theme/labTheme';
+import { DecimalInput } from '../shared/DecimalInput';
 import { TopBar } from '../shared/LabShell';
 
 const T = labTheme;
@@ -1041,23 +1042,20 @@ function ActiveIngredientCard({
               />
             </Field>
             <Field label="Cost / g (pence)" style={styles.fieldNarrow}>
-              <TextInput
-                keyboardType="decimal-pad"
-                onChangeText={(value) => {
-                  const parsed = Number(value);
+              <DecimalInput
+                accessibilityLabel="Cost per gram in pence"
+                style={styles.input}
+                value={row.costBasis.source === 'manual_cost' ? row.costBasis.costPerGramCents : undefined}
+                onChangeNumber={(costPerGramCents) =>
                   onMetadataChange({
                     ...row,
                     costBasis: {
-                      source: value.trim().length > 0 && !Number.isNaN(parsed) ? 'manual_cost' : 'missing',
-                      costPerGramCents: value.trim().length > 0 && !Number.isNaN(parsed) ? parsed : undefined,
+                      source: costPerGramCents == null ? 'missing' : 'manual_cost',
+                      costPerGramCents,
                       currencyCode: row.costBasis.currencyCode,
                     },
-                  });
-                }}
-                placeholder="0"
-                placeholderTextColor={C.inputPlaceholder}
-                style={styles.input}
-                value={row.costBasis.source === 'manual_cost' ? row.costBasis.costPerGramCents?.toString() ?? '' : ''}
+                  })
+                }
               />
             </Field>
           </View>
@@ -1093,19 +1091,11 @@ function ActiveIngredientCard({
           />
         </Field>
         <Field label="Waste (g)" style={styles.fieldNarrow}>
-          <TextInput
-            keyboardType="decimal-pad"
-            onChangeText={(value) => {
-              const parsed = Number(value);
-              onMetadataChange({
-                ...row,
-                wasteGrams: value.trim().length > 0 && !Number.isNaN(parsed) ? parsed : undefined,
-              });
-            }}
-            placeholder="0"
-            placeholderTextColor={C.inputPlaceholder}
+          <DecimalInput
+            accessibilityLabel="Waste in grams"
             style={styles.input}
-            value={row.wasteGrams?.toString() ?? ''}
+            value={row.wasteGrams}
+            onChangeNumber={(wasteGrams) => onMetadataChange({ ...row, wasteGrams })}
           />
         </Field>
       </View>
