@@ -81,7 +81,13 @@ export type ZacDataDomain =
   // Workstream 1 — Expanded Intelligence.
   | 'services'
   | 'retail'
-  | 'client_retention';
+  | 'client_retention'
+  // Workstream 3 — QLab & stock. `colour` is the money side (what colour work
+  // costs and earns); `stock` is the shelf side (what is low, idle, or needed
+  // for work already booked). Kept separate because an owner asks them as
+  // different questions and they carry different permissions.
+  | 'colour'
+  | 'stock';
 
 /**
  * Safe planning metadata for ONE tool the actor may currently use. Contains no

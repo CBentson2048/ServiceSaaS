@@ -28,7 +28,30 @@ import { AuditService } from '../audit/audit.service';
 import { EmailService } from '../email/email.service';
 import { renderPurchaseOrderEmail } from '../email/templates/purchase-order.template';
 import { computeShortfallBase, resolveOrderPackSize, suggestOrderPacks } from './reorder-math';
+import type { ReorderPreview, ReorderPreviewLine } from './reorder-preview.types';
 import type { GenerateOrdersDto, ListOrdersQueryDto, UpdateOrderDto } from './dto';
+
+/**
+ * One suggested order line, in the snake_case shape `create_purchase_order`
+ * expects, plus the provenance fields `previewReorder` needs to EXPLAIN a
+ * suggestion. The extra fields are ignored by the write path.
+ */
+interface ReorderLineDraft {
+  product_id: string;
+  product_name: string;
+  pack_size: number;
+  stock_unit: StockUnit;
+  suggested_quantity: number;
+  ordered_quantity: number;
+  unit_cost_cents: number | null;
+  line_total_cents: number;
+  shortfall_base: number;
+  on_hand_base: number;
+  threshold_base: number;
+  outbound_base_in_window: number;
+  rounded_up_by_moq: boolean;
+  rounded_up_by_multiple: boolean;
+}
 
 interface OrderRow {
   id: string;
@@ -136,108 +159,10 @@ export class OrdersService {
     this.assertPermission(actor, 'orders.manage');
     await this.assertLocationScope(actor, dto.locationId);
 
-    const { windowWeeks, coverageWeeks } = await this.fetchReorderSettings(
+    const { linesBySupplier, unorderable, suppliers } = await this.computeReorderSuggestions(
       actor.businessId,
       dto.locationId,
     );
-    const since = new Date(Date.now() - windowWeeks * 7 * 24 * 60 * 60 * 1000).toISOString();
-
-    const { data: usageData, error: usageError } = await this.admin
-      .schema('inventory')
-      .rpc('reorder_usage', {
-        p_business_id: actor.businessId,
-        p_location_id: dto.locationId,
-        p_from: since,
-      });
-    if (usageError) {
-      this.logger.error(`reorder_usage failed: ${usageError.message}`);
-      throw new InternalServerErrorException('Unable to compute product usage');
-    }
-    const usage = new Map(
-      ((usageData ?? []) as { product_id: string; outbound_base: number | string }[]).map((row) => [
-        row.product_id,
-        Number(row.outbound_base),
-      ]),
-    );
-
-    const [stock, products, suppliers] = await Promise.all([
-      this.fetchActiveStock(actor.businessId, dto.locationId),
-      this.fetchProducts(actor.businessId),
-      this.fetchSuppliers(actor.businessId),
-    ]);
-
-    const unorderable: UnorderableProduct[] = [];
-    const linesBySupplier = new Map<
-      string,
-      {
-        product_id: string;
-        product_name: string;
-        pack_size: number;
-        stock_unit: StockUnit;
-        suggested_quantity: number;
-        ordered_quantity: number;
-        unit_cost_cents: number | null;
-        line_total_cents: number;
-      }[]
-    >();
-
-    for (const row of stock) {
-      const product = products.get(row.product_id);
-      if (!product || !product.is_active) continue;
-
-      const stockUnit = (product.stock_unit ?? 'gram') as StockUnit;
-      const inputs = {
-        onHandBase: Number(row.quantity_on_hand_grams),
-        outboundBaseInWindow: usage.get(row.product_id) ?? 0,
-        usageWindowWeeks: windowWeeks,
-        coverageWeeks,
-        lowStockThresholdBase: Number(
-          row.low_stock_threshold_grams ?? product.low_stock_threshold_grams ?? 0,
-        ),
-        packSize:
-          product.pack_size === null || product.pack_size === undefined
-            ? product.size_value === null || product.size_value === undefined
-              ? null
-              : Number(product.size_value)
-            : Number(product.pack_size),
-        stockUnit,
-        minimumOrderQuantity: Number(product.minimum_order_quantity ?? 1),
-        orderMultiple: Number(product.order_multiple ?? 1),
-      };
-
-      if (computeShortfallBase(inputs) <= 0) continue;
-
-      const supplier = product.supplier_id ? suppliers.get(product.supplier_id) : undefined;
-      if (!supplier || !supplier.is_active) {
-        unorderable.push({ productId: product.id, productName: product.name, reason: 'no_supplier' });
-        continue;
-      }
-      const packSize = resolveOrderPackSize(stockUnit, inputs.packSize);
-      if (packSize === null) {
-        unorderable.push({ productId: product.id, productName: product.name, reason: 'no_pack_size' });
-        continue;
-      }
-
-      const suggestion = suggestOrderPacks(inputs);
-      if (!suggestion) continue;
-
-      const unitCost =
-        product.default_cost_per_gram_cents === null
-          ? null
-          : Math.round(packSize * product.default_cost_per_gram_cents);
-      const lines = linesBySupplier.get(supplier.id) ?? [];
-      lines.push({
-        product_id: product.id,
-        product_name: product.name,
-        pack_size: packSize,
-        stock_unit: stockUnit,
-        suggested_quantity: suggestion.packs,
-        ordered_quantity: suggestion.packs,
-        unit_cost_cents: unitCost,
-        line_total_cents: unitCost === null ? 0 : suggestion.packs * unitCost,
-      });
-      linesBySupplier.set(supplier.id, lines);
-    }
 
     const created: PurchaseOrder[] = [];
     const skippedExistingOrder: GeneratePurchaseOrdersResponse['skippedExistingOrder'] = [];
@@ -291,9 +216,218 @@ export class OrdersService {
     };
   }
 
+  /**
+   * THE REORDER ARITHMETIC — the single implementation, shared by `generate`
+   * (which then writes) and `previewReorder` (which then does not).
+   *
+   * Extracted so there is exactly ONE place the suggestion is computed. If ZAC
+   * recomputed it independently, its advice would drift from what the Generate
+   * button actually produces, and the client plan's own rule — *"QLOOQO 10 must
+   * remain the source of truth for reporting metrics; ZAC should not introduce
+   * competing formulas"* — would be broken by construction.
+   *
+   * PURE OF SIDE EFFECTS. Reads `core.location_settings`, the `reorder_usage`
+   * SQL function (declared `stable`), stock, products and suppliers. Writes
+   * nothing, audits nothing, sends nothing. The caller decides what to do with
+   * the result.
+   *
+   * Permission and location scope are the CALLER's responsibility: `generate`
+   * requires `orders.manage`, `previewReorder` only `orders.view`, and both
+   * assert location scope before calling this.
+   */
+  private async computeReorderSuggestions(
+    businessId: string,
+    locationId: string,
+  ): Promise<{
+    windowWeeks: number;
+    coverageWeeks: number;
+    windowFromIso: string;
+    usageObserved: boolean;
+    linesBySupplier: Map<string, ReorderLineDraft[]>;
+    unorderable: UnorderableProduct[];
+    suppliers: Map<string, SupplierRow>;
+  }> {
+    const { windowWeeks, coverageWeeks } = await this.fetchReorderSettings(businessId, locationId);
+    const since = new Date(Date.now() - windowWeeks * 7 * 24 * 60 * 60 * 1000).toISOString();
+
+    const { data: usageData, error: usageError } = await this.admin
+      .schema('inventory')
+      .rpc('reorder_usage', {
+        p_business_id: businessId,
+        p_location_id: locationId,
+        p_from: since,
+      });
+    if (usageError) {
+      this.logger.error(`reorder_usage failed: ${usageError.message}`);
+      throw new InternalServerErrorException('Unable to compute product usage');
+    }
+    const usage = new Map(
+      ((usageData ?? []) as { product_id: string; outbound_base: number | string }[]).map((row) => [
+        row.product_id,
+        Number(row.outbound_base),
+      ]),
+    );
+    // Whether ANY usage was recorded at all. `reorder_usage` sums only NEGATIVE
+    // movements, so this is "what was deducted from stock", not "what was
+    // consumed" — positive reversals are not netted out. Callers state that.
+    const usageObserved = [...usage.values()].some((value) => value > 0);
+
+    const [stock, products, suppliers] = await Promise.all([
+      this.fetchActiveStock(businessId, locationId),
+      this.fetchProducts(businessId),
+      this.fetchSuppliers(businessId),
+    ]);
+
+    const unorderable: UnorderableProduct[] = [];
+    const linesBySupplier = new Map<string, ReorderLineDraft[]>();
+
+    for (const row of stock) {
+      const product = products.get(row.product_id);
+      if (!product || !product.is_active) continue;
+
+      const stockUnit = (product.stock_unit ?? 'gram') as StockUnit;
+      const inputs = {
+        onHandBase: Number(row.quantity_on_hand_grams),
+        outboundBaseInWindow: usage.get(row.product_id) ?? 0,
+        usageWindowWeeks: windowWeeks,
+        coverageWeeks,
+        lowStockThresholdBase: Number(
+          row.low_stock_threshold_grams ?? product.low_stock_threshold_grams ?? 0,
+        ),
+        packSize:
+          product.pack_size === null || product.pack_size === undefined
+            ? product.size_value === null || product.size_value === undefined
+              ? null
+              : Number(product.size_value)
+            : Number(product.pack_size),
+        stockUnit,
+        minimumOrderQuantity: Number(product.minimum_order_quantity ?? 1),
+        orderMultiple: Number(product.order_multiple ?? 1),
+      };
+
+      if (computeShortfallBase(inputs) <= 0) continue;
+
+      const supplier = product.supplier_id ? suppliers.get(product.supplier_id) : undefined;
+      if (!supplier || !supplier.is_active) {
+        unorderable.push({ productId: product.id, productName: product.name, reason: 'no_supplier' });
+        continue;
+      }
+      const packSize = resolveOrderPackSize(stockUnit, inputs.packSize);
+      if (packSize === null) {
+        unorderable.push({ productId: product.id, productName: product.name, reason: 'no_pack_size' });
+        continue;
+      }
+
+      const suggestion = suggestOrderPacks(inputs);
+      if (!suggestion) continue;
+
+      const unitCost =
+        product.default_cost_per_gram_cents === null
+          ? null
+          : Math.round(packSize * product.default_cost_per_gram_cents);
+      const lines = linesBySupplier.get(supplier.id) ?? [];
+      // Which rounding steps actually moved the number, so an explanation can
+      // cite a rule only when it applied. Both are 1 on every live product, so
+      // citing them unconditionally would be noise dressed as reasoning.
+      const barePacks = Math.ceil(suggestion.shortfallBase / packSize);
+      const moq = Math.max(1, inputs.minimumOrderQuantity);
+      lines.push({
+        product_id: product.id,
+        product_name: product.name,
+        pack_size: packSize,
+        stock_unit: stockUnit,
+        suggested_quantity: suggestion.packs,
+        ordered_quantity: suggestion.packs,
+        unit_cost_cents: unitCost,
+        line_total_cents: unitCost === null ? 0 : suggestion.packs * unitCost,
+        shortfall_base: suggestion.shortfallBase,
+        on_hand_base: inputs.onHandBase,
+        threshold_base: inputs.lowStockThresholdBase,
+        outbound_base_in_window: inputs.outboundBaseInWindow,
+        rounded_up_by_moq: moq > barePacks,
+        rounded_up_by_multiple: suggestion.packs > Math.max(barePacks, moq),
+      });
+      linesBySupplier.set(supplier.id, lines);
+    }
+
+    return {
+      windowWeeks,
+      coverageWeeks,
+      windowFromIso: since,
+      usageObserved,
+      linesBySupplier,
+      unorderable,
+      suppliers,
+    };
+  }
+
   // ---------------------------------------------------------------------------
   // Reads
   // ---------------------------------------------------------------------------
+
+  /**
+   * What `generate` WOULD order, without ordering it.
+   *
+   * Added for ZAC Phase 2 Workstream 3, whose boundary is read-only and
+   * human-led: ZAC may recommend an order and deep-link the person to the
+   * Purchase orders screen, but must never create, approve or send one.
+   *
+   * Gated on **`orders.view`**, deliberately NOT `orders.manage`. Someone
+   * trusted to look at orders can be advised about them; preparing one is a
+   * separate, higher permission, and approving/sending is higher still
+   * (migration 0094 makes `orders.approve` the spend control). Advice should
+   * not require the power to act on it.
+   *
+   * Calls the same `computeReorderSuggestions` as `generate`, so the numbers
+   * ZAC quotes are bit-identical to the draft the Generate button would create.
+   * It simply never runs the `create_purchase_order` loop, writes no audit row
+   * and sends no email.
+   */
+  async previewReorder(actor: AuthUser, locationId: string): Promise<ReorderPreview> {
+    this.assertPermission(actor, 'orders.view');
+    await this.assertLocationScope(actor, locationId);
+
+    const computation = await this.computeReorderSuggestions(actor.businessId, locationId);
+
+    const lines: ReorderPreviewLine[] = [];
+    let linesWithoutCost = 0;
+    for (const [supplierId, drafts] of computation.linesBySupplier) {
+      const supplier = computation.suppliers.get(supplierId);
+      for (const draft of drafts) {
+        if (draft.unit_cost_cents === null) linesWithoutCost += 1;
+        lines.push({
+          productId: draft.product_id,
+          productName: draft.product_name,
+          supplierId,
+          supplierName: supplier?.name ?? 'Unknown supplier',
+          packSize: draft.pack_size,
+          stockUnit: draft.stock_unit,
+          suggestedQuantity: draft.suggested_quantity,
+          shortfallBase: draft.shortfall_base,
+          onHandBase: draft.on_hand_base,
+          thresholdBase: draft.threshold_base,
+          outboundBaseInWindow: draft.outbound_base_in_window,
+          unitCostCents: draft.unit_cost_cents,
+          // NULL, not 0, when the cost is unrecorded. A cost-less line summing
+          // as zero is how a total silently under-reports what an order costs.
+          lineTotalCents: draft.unit_cost_cents === null ? null : draft.line_total_cents,
+          roundedUpByMinimumOrderQuantity: draft.rounded_up_by_moq,
+          roundedUpByOrderMultiple: draft.rounded_up_by_multiple,
+        });
+      }
+    }
+
+    return {
+      locationId,
+      windowWeeks: computation.windowWeeks,
+      coverageWeeks: computation.coverageWeeks,
+      windowFromIso: computation.windowFromIso,
+      usageObserved: computation.usageObserved,
+      lines: lines.sort((a, b) => b.shortfallBase - a.shortfallBase),
+      unorderable: computation.unorderable,
+      linesWithoutCost,
+    };
+  }
 
   async list(actor: AuthUser, query: ListOrdersQueryDto): Promise<ListPurchaseOrdersResponse> {
     this.assertPermission(actor, 'orders.view');

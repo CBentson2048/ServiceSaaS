@@ -164,7 +164,22 @@ export class ZacMeasurementService {
     if (mode === 'qlooqo_data') {
       const trace = response.tool_calls[0];
       if (!trace || trace.status !== 'ok') return false;
-      return /^(report|kpi|schedule)\./.test(trace.tool);
+      // `qlab.` and `inventory.` added for Workstream 3.
+      //
+      // Without them every colour and stock answer would persist no
+      // `zac.outputs` row, return `output_id: null`, and therefore support no
+      // feedback and no outcome attribution — making the newest and most
+      // demonstrable answers the only unmeasured ones in the system.
+      //
+      // The alternative considered and rejected was renaming the tools into the
+      // `report.*` namespace to slip past this regex. That would break the
+      // meaning of the domain segment in `ZacToolName` for the sake of a
+      // pattern match, which is worse than widening the pattern.
+      //
+      // This does not widen what is persisted in kind: the same rule still
+      // applies — a successful data answer from a real tool, never a refusal,
+      // capability answer or permission explanation.
+      return /^(report|kpi|schedule|qlab|inventory)\./.test(trace.tool);
     }
     if (mode === 'general_advice' || mode === 'hypothetical') {
       // Only real advisory answers count — the honest "can't reason right

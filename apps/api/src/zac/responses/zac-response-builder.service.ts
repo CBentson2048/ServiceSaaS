@@ -43,8 +43,14 @@ const TOOL_AREA_LABELS: Partial<Record<ZacToolName, string>> = {
   'report.client_retention': 'how many clients are active, overdue or lapsed',
   'report.client_lapse_list': 'which specific clients have lapsed, by name',
   'report.profitability': 'profit and margin reporting',
-  'qlab.colour_analytics': 'QLAB colour usage and waste analytics',
-  'inventory.stock_status': 'stock levels and low-stock alerts',
+  // Workstream 3. These describe what the user may SEE, so they must name the
+  // subject rather than the tool — and the colour line no longer promises waste
+  // analytics, because waste is not captured anywhere in the platform and
+  // advertising it would be a false claim about the product.
+  'qlab.colour_analytics': 'what colour work costs in product, and what it earns',
+  'inventory.stock_status': 'stock levels, low-stock items and stock sitting unused',
+  'inventory.colour_prep_risk': 'whether stock covers the colour appointments already booked',
+  'inventory.reorder_advisory': 'what a supplier order would contain, as advice only',
   'schedule.my_appointments': 'your own diary (today and tomorrow)',
   'kpi.personal_coaching': 'your own KPIs and personal coaching',
 };

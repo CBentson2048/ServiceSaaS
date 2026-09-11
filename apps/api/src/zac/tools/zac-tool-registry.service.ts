@@ -8,9 +8,13 @@ import {
 import type { AuthUser } from '@sheer/domain';
 import { ClientIntelligenceService } from '../../client-intelligence/client-intelligence.service';
 import { DashboardService } from '../../dashboard/dashboard.service';
+import { ColourPrepService } from '../../colour-prep/colour-prep.service';
+import { InventoryService } from '../../inventory/inventory.service';
 import { KpiService } from '../../kpi/kpi.service';
 import { UtilisationService } from '../../kpi/utilisation.service';
+import { LabAnalyticsService } from '../../lab-analytics/lab-analytics.service';
 import { LabAppointmentsService } from '../../lab-appointments/lab-appointments.service';
+import { OrdersService } from '../../orders/orders.service';
 import { OwnerLocationSettingsService } from '../../owner-location-settings/owner-location-settings.service';
 import { PayrollService } from '../../payroll/payroll.service';
 import { RetailSalesService } from '../../retail-sales/retail-sales.service';
@@ -20,6 +24,8 @@ import { BusinessContextSummaryTool } from './tools/business-context-summary.too
 import { BusinessHealthSummaryTool } from './tools/business-health.tool';
 import { ClientLapseListTool } from './tools/client-lapse-list.tool';
 import { ClientRetentionTool } from './tools/client-retention.tool';
+import { InventoryColourPrepRiskTool } from './tools/inventory-colour-prep-risk.tool';
+import { InventoryReorderAdvisoryTool } from './tools/inventory-reorder-advisory.tool';
 import { InventoryStockStatusTool } from './tools/inventory-stock-status.tool';
 import { KpiSummaryTool } from './tools/kpi-summary.tool';
 import { LocationContextSummaryTool } from './tools/location-context-summary.tool';
@@ -55,7 +61,31 @@ export class ZacToolRegistryService {
     clientIntelligence: ClientIntelligenceService,
     payroll: PayrollService,
     locationSettings: OwnerLocationSettingsService,
+    // Workstream 3 — QLab & stock. The full Nest providers arrive here and are
+    // narrowed to read-only `Pick<>` ports at the point of construction below,
+    // so this constructor is the single place the narrowing happens and the
+    // only place a reviewer has to look.
+    labAnalytics: LabAnalyticsService,
+    inventory: InventoryService,
+    colourPrep: ColourPrepService,
+    orders: OrdersService,
   ) {
+    /**
+     * Which locations may this actor look at?
+     *
+     * Colour Prep and the reorder preview are both PER-LOCATION reads, but ZAC
+     * questions are usually business-wide ("am I short for this week?"), so
+     * something has to turn one question into the right set of calls.
+     *
+     * `listStock` is used for that rather than a locations table, because it
+     * already resolves scope the way the inventory surface does — owner sees
+     * every business location, manager only their own — and it re-checks
+     * `inventory.manage` on the way. ZAC never resolves tenancy itself.
+     */
+    const locationsFor = async (actor: AuthUser): Promise<{ id: string; name: string }[]> => {
+      const result = await inventory.listStock(actor, {});
+      return result.locations.map((location) => ({ id: location.id, name: location.name }));
+    };
     const tools: ZacReadOnlyTool[] = [
       // Live tools. Context tools read only the guard-resolved acting context;
       // the rest call existing guarded QLOOQO services with the resolved actor.
@@ -90,8 +120,18 @@ export class ZacToolRegistryService {
       new ProfitabilityTool(payroll),
       // The scorecard composes the tools above; it holds no maths of its own.
       new ScorecardTool(dashboard, kpi, utilisation, locationSettings),
-      new QlabColourAnalyticsTool(),
-      new InventoryStockStatusTool(),
+      // Workstream 3 — QLab & stock, live from here. Each takes a read-only
+      // `Pick<>` PORT rather than the service itself: `labAnalytics` satisfies
+      // `ZacLabAnalyticsRead` structurally, but inside the tool only `summary`
+      // exists, so calling a mutation is a compile error rather than a code
+      // review miss. This narrowing is the boundary, and it happens here.
+      new QlabColourAnalyticsTool(labAnalytics),
+      new InventoryStockStatusTool(inventory),
+      new InventoryColourPrepRiskTool(colourPrep, locationsFor),
+      // Advisory only. Its port carries `previewReorder`, `list` and `getOrder`
+      // and nothing else, so `generate` — which writes purchase orders and
+      // emails suppliers — is not callable from it.
+      new InventoryReorderAdvisoryTool(orders, inventory, locationsFor),
     ];
 
     // Structural guarantees, enforced at boot so a mis-declared tool can never

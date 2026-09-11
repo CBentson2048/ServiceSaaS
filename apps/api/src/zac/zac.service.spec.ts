@@ -11,6 +11,10 @@ import type { DashboardService } from '../dashboard/dashboard.service';
 import type { KpiService } from '../kpi/kpi.service';
 import type { UtilisationService } from '../kpi/utilisation.service';
 import type { LabAppointmentsService } from '../lab-appointments/lab-appointments.service';
+import type { LabAnalyticsService } from '../lab-analytics/lab-analytics.service';
+import type { ColourPrepService } from '../colour-prep/colour-prep.service';
+import type { InventoryService } from '../inventory/inventory.service';
+import type { OrdersService } from '../orders/orders.service';
 import type { RetailSalesService } from '../retail-sales/retail-sales.service';
 import { ZacContextService } from './context/zac-context.service';
 import { ZacConversationService } from './conversation/zac-conversation.service';
@@ -150,6 +154,77 @@ const STYLIST_LIST_FIXTURE = {
   ],
 } as unknown as Awaited<ReturnType<KpiService['stylistList']>>;
 
+
+/** Read-only inventory fake. Empty by default; the WS3 tools have their own specs. */
+const INVENTORY_FAKE = {
+  listStock: jest.fn().mockResolvedValue({ stock: [], locations: [], scope: 'owner' }),
+  listLowStock: jest.fn().mockResolvedValue({ alerts: [] }),
+  listDeadStock: jest.fn().mockResolvedValue({ items: [], locations: [], totalEstimatedValueCents: 0 }),
+  listMovements: jest.fn().mockResolvedValue({ movements: [] }),
+  listProducts: jest.fn().mockResolvedValue({ products: [] }),
+  listSuppliers: jest.fn().mockResolvedValue({ suppliers: [] }),
+  listCategories: jest.fn().mockResolvedValue({ categories: [] }),
+};
+
+/** An empty colour-prep plan — the shape ColourPrepService.getPlan returns. */
+const EMPTY_COLOUR_PREP = {
+  locationId: 'loc-1',
+  locationName: 'Main',
+  timezone: 'Europe/London',
+  range: 'custom',
+  from: '2026-09-11T00:00:00.000Z',
+  to: '2026-09-25T00:00:00.000Z',
+  fromDate: '2026-09-11',
+  toDate: '2026-09-24',
+  wasteAllowancePercent: 10,
+  appointments: [],
+  products: [],
+  summary: {
+    appointmentCount: 0,
+    appointmentsWithoutFormula: 0,
+    productCount: 0,
+    shortfallProductCount: 0,
+    lowStockProductCount: 0,
+    unmappedProductCount: 0,
+  },
+};
+
+/** An empty reorder preview — the shape OrdersService.previewReorder returns. */
+const EMPTY_REORDER_PREVIEW = {
+  locationId: 'loc-1',
+  windowWeeks: 8,
+  coverageWeeks: 4,
+  windowFromIso: '2026-07-17T00:00:00.000Z',
+  usageObserved: false,
+  lines: [],
+  unorderable: [],
+  linesWithoutCost: 0,
+};
+
+/** A readable but empty colour summary — the shape LabAnalyticsService.summary returns. */
+const EMPTY_LAB_ANALYTICS = {
+  range: 'custom',
+  rangeStart: '2026-06-13T00:00:00.000Z',
+  rangeEnd: '2026-09-11T00:00:00.000Z',
+  scope: 'owner',
+  summary: {
+    colourRevenueCents: 0,
+    formulaCostCents: 0,
+    grossMarginCents: 0,
+    grossMarginPercent: 0,
+    wasteCostCents: 0,
+    wastePercentOfRevenue: 0,
+    formulasMixed: 0,
+    currencyCode: 'GBP',
+  },
+  byLocation: [],
+  byStylist: [],
+  averageFormulaCostByServiceType: [],
+  mostUsedProductsByWeight: [],
+  mostUsedProductsByCost: [],
+  lowStockAlerts: [],
+};
+
 function makeActor(overrides: Partial<AuthUser> = {}): AuthUser {
   return {
     id: 'user-1',
@@ -175,6 +250,12 @@ function makeActor(overrides: Partial<AuthUser> = {}): AuthUser {
       'crm.view',
       // report.profitability is enabled and gated on payroll.view.
       'payroll.view',
+      // Workstream 3 sources. qlab.colour_analytics is gated on
+      // report.lab_analytics.view and inventory tools on inventory.manage —
+      // both of which a real owner holds by default (DEFAULT_ROLE_PERMISSIONS).
+      'report.lab_analytics.view',
+      'inventory.manage',
+      'orders.view',
     ],
     ...overrides,
   } as AuthUser;
@@ -351,6 +432,23 @@ function makeService(
       {
         getSettings: jest.fn().mockResolvedValue({ rebookRateBenchmarkPercent: 50 }),
       } as unknown as OwnerLocationSettingsService,
+      {
+        // Workstream 3 — colour analytics. Empty by default: these suites
+        // cover other tools, and an empty summary exercises the colour
+        // tool's not-configured branch without asserting on it.
+        summary: jest.fn().mockResolvedValue(EMPTY_LAB_ANALYTICS),
+      } as unknown as LabAnalyticsService,
+      INVENTORY_FAKE as unknown as InventoryService,
+      {
+        // Workstream 3 — colour prep and ordering. Empty by default: these
+        // suites cover other tools, and the WS3 tools have their own specs.
+        getPlan: jest.fn().mockResolvedValue(EMPTY_COLOUR_PREP),
+      } as unknown as ColourPrepService,
+      {
+        previewReorder: jest.fn().mockResolvedValue(EMPTY_REORDER_PREVIEW),
+        list: jest.fn().mockResolvedValue({ orders: [] }),
+        getOrder: jest.fn(),
+      } as unknown as OrdersService,
     );
   const service = new ZacService(
     new ZacRolloutService(config),
@@ -666,6 +764,80 @@ describe('ZacService', () => {
     });
   });
 
+  describe('intent routing — Workstream 3 (QLab & stock)', () => {
+    /**
+     * A tool that dispatches correctly but is never CHOSEN is invisible, and
+     * nothing fails to say so. These cases pin the routing for the questions
+     * WS3 exists to answer.
+     */
+    const CASES: [string, string][] = [
+      // The one that would silently regress: `\bmargins?\b` is matched by the
+      // profit branch, which returns the DISABLED report.profitability. Colour
+      // must be tested ABOVE it or this answers "not connected".
+      ['What is my colour margin?', 'qlab.colour_analytics'],
+      ['How much is colour costing me?', 'qlab.colour_analytics'],
+      ['What is my colour waste like?', 'qlab.colour_analytics'],
+      ['Show me the QLab analytics', 'qlab.colour_analytics'],
+
+      ['What stock am I running low on?', 'inventory.stock_status'],
+      ['Which products am I about to run out of?', 'inventory.stock_status'],
+      ['Is any stock just sitting there?', 'inventory.stock_status'],
+      ['Show me dead stock', 'inventory.stock_status'],
+
+      ['Have I got enough for the colour appointments booked this week?', 'inventory.colour_prep_risk'],
+      ['Am I short for anything coming up?', 'inventory.colour_prep_risk'],
+
+      ['What do I need to order?', 'inventory.reorder_advisory'],
+      ['Should I reorder anything?', 'inventory.reorder_advisory'],
+      ['Show me my purchase orders', 'inventory.reorder_advisory'],
+    ];
+
+    it.each(CASES)('routes %s to %s', async (question, tool) => {
+      const { service } = makeService();
+
+      const response = await service.ask(makeActor(), { question });
+
+      expect(response.tool_calls[0]?.tool).toBe(tool);
+    });
+
+    it('still routes a plain profit question to profitability, not colour', async () => {
+      // The colour branch must not swallow the general margin question.
+      const { service } = makeService();
+
+      const response = await service.ask(makeActor(), { question: 'What is my profit margin?' });
+
+      expect(response.tool_calls[0]?.tool).toBe('report.profitability');
+    });
+
+    it('still routes a retail question to retail, not stock', async () => {
+      const { service } = makeService();
+
+      const response = await service.ask(makeActor(), { question: 'How is my retail doing?' });
+
+      expect(response.tool_calls[0]?.tool).toBe('report.retail_performance');
+    });
+
+    it.each([
+      'Order this stock.',
+      'Reorder the Majirel for me.',
+      'Place the order with Wella.',
+      'Adjust the stock level for SoColor.',
+    ])('refuses the imperative write request: %s', async (question) => {
+      // THE BOUNDARY, from the other side. WS3 made ordering READABLE; it must
+      // not have made it DOABLE. These are refused upstream by the request-mode
+      // classifier — `reorder`/`order`/`adjust` are write verbs against
+      // operational objects — before any tool is chosen, so the advisory tool
+      // is never even reached.
+      const { service } = makeService();
+
+      const response = await service.ask(makeActor(), { question });
+
+      expect(response.response_type).toBe('Refusal / Insufficient Data');
+      expect(response.tool_calls).toEqual([]);
+      expect(response.answer).not.toMatch(/\b(i (have )?(ordered|placed|adjusted)|order placed)\b/i);
+    });
+  });
+
   describe('intent routing to read-only tools', () => {
     it('routes a business health question to the dashboard-backed tool', async () => {
       const kpis = jest.fn().mockResolvedValue(KPI_FIXTURE);
@@ -800,8 +972,13 @@ describe('ZacService', () => {
     it('does not treat words containing "location" as location questions', async () => {
       const { service } = makeService();
 
+      // The probe used to be "stock allocation". Workstream 3 made `stock` a
+      // real routing keyword, so that phrasing now legitimately reaches the
+      // stock tool and stopped testing the substring guard this case is about.
+      // `chair allocation` keeps the "…location…" trap without naming a live
+      // domain.
       const response = await service.ask(makeActor(), {
-        question: 'How should I handle stock allocation?',
+        question: 'How should I handle chair allocation?',
       });
       expect(response.tool_calls[0].tool).toBe('context.capabilities');
     });
@@ -1577,8 +1754,15 @@ describe('ZacService', () => {
   });
 
   describe('foundation answer (user-facing product copy)', () => {
-    /** What is still genuinely unbuilt — the only areas the copy may call coming. */
-    const UNBUILT_AREAS = ['QLAB colour', 'stock', 'inventory', 'trends'];
+    /**
+     * What is still genuinely unbuilt — the only areas the copy may call coming.
+     *
+     * QLAB colour, stock and inventory left this list in Workstream 3, which
+     * connected all four of their tools. The list shrinking as workstreams land
+     * is the point: it is what stops the copy promising something ZAC already
+     * does.
+     */
+    const UNBUILT_AREAS = ['trends'];
 
     it('greets the acting user by first name when available', async () => {
       const { service } = makeService();
@@ -1651,12 +1835,22 @@ describe('ZacService', () => {
 
       const { answer } = await service.ask(makeActor(), { question: 'What can you help me with?' });
       const coming = answer.split('As I continue to develop')[1] ?? '';
-      for (const live of ['appointments', 'retention', 'retail performance', 'rebooking']) {
+      for (const live of [
+        'appointments',
+        'retention',
+        'retail performance',
+        'rebooking',
+        // Workstream 3 moved these three from "coming" to live. They are
+        // asserted here, in the NOT-contained list, for the same reason the
+        // original four are: the failure mode is copy that outlives the build.
+        'colour',
+        'stock',
+        'inventory',
+      ]) {
         expect(coming.toLowerCase()).not.toContain(live);
       }
       // Genuinely unbuilt areas are still named.
-      expect(coming).toContain('QLAB colour');
-      expect(coming).toContain('stock');
+      expect(coming).toContain('trends');
     });
 
     it('omits the health capability for users without the underlying permission', async () => {
@@ -1706,13 +1900,14 @@ describe('ZacService', () => {
           'report.business_health',
           'report.utilisation_summary',
         ]),
-        // The QLab / stock skeletons need permissions makeActor does not hold,
-        // so they stay invisible. Profitability does NOT: this owner holds
-        // report.financials.view, so they can see that the capability exists
-        // and is not connected — which is the honest state, and exactly why
-        // the tool is registered disabled rather than omitted.
-        // Nothing is disabled for a fully-permissioned owner any more:
-        // report.profitability is live and gated on payroll.view instead.
+        // A tool appears here when the actor COULD use it but it is not
+        // connected — the honest state, and exactly why a deferred capability
+        // is registered disabled rather than omitted.
+        //
+        // Empty again, and this time because there is nothing left to defer:
+        // Workstream 3 connected both QLab/stock skeletons and added two more
+        // live tools, so a fully-permissioned owner now sees no unconnected
+        // capability at all.
         disabled_tools: [],
         provider: 'stub',
         model: 'zac-stub-1',

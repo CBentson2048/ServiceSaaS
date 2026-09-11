@@ -12,6 +12,10 @@ import type { ClientIntelligenceService } from '../../client-intelligence/client
 import type { DashboardService } from '../../dashboard/dashboard.service';
 import type { KpiService } from '../../kpi/kpi.service';
 import type { LabAppointmentsService } from '../../lab-appointments/lab-appointments.service';
+import type { LabAnalyticsService } from '../../lab-analytics/lab-analytics.service';
+import type { ColourPrepService } from '../../colour-prep/colour-prep.service';
+import type { InventoryService } from '../../inventory/inventory.service';
+import type { OrdersService } from '../../orders/orders.service';
 import type { RetailSalesService } from '../../retail-sales/retail-sales.service';
 import type { UtilisationService } from '../../kpi/utilisation.service';
 import type {
@@ -55,6 +59,77 @@ const STYLIST: AuthUser = {
   primaryRole: 'stylist',
   permissions: ['zac.access'],
 } as unknown as AuthUser;
+
+
+/** Read-only inventory fake. Empty by default; the WS3 tools have their own specs. */
+const INVENTORY_FAKE = {
+  listStock: jest.fn().mockResolvedValue({ stock: [], locations: [], scope: 'owner' }),
+  listLowStock: jest.fn().mockResolvedValue({ alerts: [] }),
+  listDeadStock: jest.fn().mockResolvedValue({ items: [], locations: [], totalEstimatedValueCents: 0 }),
+  listMovements: jest.fn().mockResolvedValue({ movements: [] }),
+  listProducts: jest.fn().mockResolvedValue({ products: [] }),
+  listSuppliers: jest.fn().mockResolvedValue({ suppliers: [] }),
+  listCategories: jest.fn().mockResolvedValue({ categories: [] }),
+};
+
+/** An empty colour-prep plan — the shape ColourPrepService.getPlan returns. */
+const EMPTY_COLOUR_PREP = {
+  locationId: 'loc-1',
+  locationName: 'Main',
+  timezone: 'Europe/London',
+  range: 'custom',
+  from: '2026-09-11T00:00:00.000Z',
+  to: '2026-09-25T00:00:00.000Z',
+  fromDate: '2026-09-11',
+  toDate: '2026-09-24',
+  wasteAllowancePercent: 10,
+  appointments: [],
+  products: [],
+  summary: {
+    appointmentCount: 0,
+    appointmentsWithoutFormula: 0,
+    productCount: 0,
+    shortfallProductCount: 0,
+    lowStockProductCount: 0,
+    unmappedProductCount: 0,
+  },
+};
+
+/** An empty reorder preview — the shape OrdersService.previewReorder returns. */
+const EMPTY_REORDER_PREVIEW = {
+  locationId: 'loc-1',
+  windowWeeks: 8,
+  coverageWeeks: 4,
+  windowFromIso: '2026-07-17T00:00:00.000Z',
+  usageObserved: false,
+  lines: [],
+  unorderable: [],
+  linesWithoutCost: 0,
+};
+
+/** A readable but empty colour summary — the shape LabAnalyticsService.summary returns. */
+const EMPTY_LAB_ANALYTICS = {
+  range: 'custom',
+  rangeStart: '2026-06-13T00:00:00.000Z',
+  rangeEnd: '2026-09-11T00:00:00.000Z',
+  scope: 'owner',
+  summary: {
+    colourRevenueCents: 0,
+    formulaCostCents: 0,
+    grossMarginCents: 0,
+    grossMarginPercent: 0,
+    wasteCostCents: 0,
+    wastePercentOfRevenue: 0,
+    formulasMixed: 0,
+    currencyCode: 'GBP',
+  },
+  byLocation: [],
+  byStylist: [],
+  averageFormulaCostByServiceType: [],
+  mostUsedProductsByWeight: [],
+  mostUsedProductsByCost: [],
+  lowStockAlerts: [],
+};
 
 function context(overrides: Partial<ZacActingContext> = {}): ZacActingContext {
   return {
@@ -141,6 +216,23 @@ function makeRegistry(): ZacToolRegistryService {
       {
         getSettings: jest.fn().mockResolvedValue({ rebookRateBenchmarkPercent: 50 }),
       } as unknown as OwnerLocationSettingsService,
+      {
+        // Workstream 3 — colour analytics. Empty by default: these suites
+        // cover other tools, and an empty summary exercises the colour
+        // tool's not-configured branch without asserting on it.
+        summary: jest.fn().mockResolvedValue(EMPTY_LAB_ANALYTICS),
+      } as unknown as LabAnalyticsService,
+      INVENTORY_FAKE as unknown as InventoryService,
+      {
+        // Workstream 3 — colour prep and ordering. Empty by default: these
+        // suites cover other tools, and the WS3 tools have their own specs.
+        getPlan: jest.fn().mockResolvedValue(EMPTY_COLOUR_PREP),
+      } as unknown as ColourPrepService,
+      {
+        previewReorder: jest.fn().mockResolvedValue(EMPTY_REORDER_PREVIEW),
+        list: jest.fn().mockResolvedValue({ orders: [] }),
+        getOrder: jest.fn(),
+      } as unknown as OrdersService,
     );
 }
 

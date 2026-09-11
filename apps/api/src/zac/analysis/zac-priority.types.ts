@@ -22,6 +22,9 @@ export type ZacPriorityDomain =
   | 'services'
   | 'retail'
   | 'client_retention'
+  // Workstream 3 — QLab & stock.
+  | 'colour'
+  | 'stock'
   | 'other';
 
 export const ZAC_PRIORITY_DOMAINS: readonly ZacPriorityDomain[] = [
@@ -36,6 +39,8 @@ export const ZAC_PRIORITY_DOMAINS: readonly ZacPriorityDomain[] = [
   'services',
   'retail',
   'client_retention',
+  'colour',
+  'stock',
   'other',
 ];
 

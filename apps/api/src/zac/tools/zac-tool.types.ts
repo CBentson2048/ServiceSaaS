@@ -31,8 +31,18 @@ export type ZacToolName =
   | 'report.scorecard'
   | 'kpi.personal_coaching'
   | 'schedule.my_appointments'
+  // Workstream 3 (QLab & Stock). The first two were registered DISABLED from
+  // Phase 1 as deferred skeletons and are now connected to their guarded
+  // services; the last two are new.
   | 'qlab.colour_analytics'
-  | 'inventory.stock_status';
+  | 'inventory.stock_status'
+  // Planned appointment/stock correlation. Named under `inventory` rather than
+  // `qlab` because the question it answers is a stock one ("have I got enough
+  // for what is booked?"), and the colour side is only how the requirement is
+  // derived.
+  | 'inventory.colour_prep_risk'
+  // ADVISORY ONLY. Reports what an order WOULD contain; never places one.
+  | 'inventory.reorder_advisory';
 
 export type ZacToolDomain = 'context' | 'report' | 'kpi' | 'schedule' | 'qlab' | 'inventory';
 

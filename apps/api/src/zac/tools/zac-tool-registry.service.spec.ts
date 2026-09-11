@@ -4,6 +4,10 @@ import type { DashboardService } from '../../dashboard/dashboard.service';
 import type { KpiService } from '../../kpi/kpi.service';
 import type { UtilisationService } from '../../kpi/utilisation.service';
 import type { LabAppointmentsService } from '../../lab-appointments/lab-appointments.service';
+import type { LabAnalyticsService } from '../../lab-analytics/lab-analytics.service';
+import type { ColourPrepService } from '../../colour-prep/colour-prep.service';
+import type { InventoryService } from '../../inventory/inventory.service';
+import type { OrdersService } from '../../orders/orders.service';
 import type { RetailSalesService } from '../../retail-sales/retail-sales.service';
 import type { ZacActingContext } from '../context/zac-context.types';
 import type { PayrollService } from '../../payroll/payroll.service';
@@ -30,6 +34,15 @@ const LIVE_TOOLS: ZacToolName[] = [
   'report.client_lapse_list',
   'report.profitability',
   'report.scorecard',
+  // Workstream 3 - QLab & stock. The first two were registered DISABLED through
+  // Phase 1 and Workstream 1/2 as deferred skeletons; WS3 connects them to the
+  // guarded LabAnalyticsService and InventoryService. The last two are new.
+  // The list is deliberately exhaustive: a tool going live without a reviewer
+  // editing this line is exactly the change this assertion exists to catch.
+  'qlab.colour_analytics',
+  'inventory.stock_status',
+  'inventory.colour_prep_risk',
+  'inventory.reorder_advisory',
 ];
 
 const STYLIST_PERF_FIXTURE = {
@@ -246,6 +259,77 @@ const KPI_FIXTURE: DashboardKpisResponse = {
   byLocation: [{ locationId: 'loc-1', locationName: 'Main', ...KPI_SUMMARY }],
 };
 
+
+/** Read-only inventory fake. Empty by default; the WS3 tools have their own specs. */
+const INVENTORY_FAKE = {
+  listStock: jest.fn().mockResolvedValue({ stock: [], locations: [], scope: 'owner' }),
+  listLowStock: jest.fn().mockResolvedValue({ alerts: [] }),
+  listDeadStock: jest.fn().mockResolvedValue({ items: [], locations: [], totalEstimatedValueCents: 0 }),
+  listMovements: jest.fn().mockResolvedValue({ movements: [] }),
+  listProducts: jest.fn().mockResolvedValue({ products: [] }),
+  listSuppliers: jest.fn().mockResolvedValue({ suppliers: [] }),
+  listCategories: jest.fn().mockResolvedValue({ categories: [] }),
+};
+
+/** An empty colour-prep plan — the shape ColourPrepService.getPlan returns. */
+const EMPTY_COLOUR_PREP = {
+  locationId: 'loc-1',
+  locationName: 'Main',
+  timezone: 'Europe/London',
+  range: 'custom',
+  from: '2026-09-11T00:00:00.000Z',
+  to: '2026-09-25T00:00:00.000Z',
+  fromDate: '2026-09-11',
+  toDate: '2026-09-24',
+  wasteAllowancePercent: 10,
+  appointments: [],
+  products: [],
+  summary: {
+    appointmentCount: 0,
+    appointmentsWithoutFormula: 0,
+    productCount: 0,
+    shortfallProductCount: 0,
+    lowStockProductCount: 0,
+    unmappedProductCount: 0,
+  },
+};
+
+/** An empty reorder preview — the shape OrdersService.previewReorder returns. */
+const EMPTY_REORDER_PREVIEW = {
+  locationId: 'loc-1',
+  windowWeeks: 8,
+  coverageWeeks: 4,
+  windowFromIso: '2026-07-17T00:00:00.000Z',
+  usageObserved: false,
+  lines: [],
+  unorderable: [],
+  linesWithoutCost: 0,
+};
+
+/** A readable but empty colour summary — the shape LabAnalyticsService.summary returns. */
+const EMPTY_LAB_ANALYTICS = {
+  range: 'custom',
+  rangeStart: '2026-06-13T00:00:00.000Z',
+  rangeEnd: '2026-09-11T00:00:00.000Z',
+  scope: 'owner',
+  summary: {
+    colourRevenueCents: 0,
+    formulaCostCents: 0,
+    grossMarginCents: 0,
+    grossMarginPercent: 0,
+    wasteCostCents: 0,
+    wastePercentOfRevenue: 0,
+    formulasMixed: 0,
+    currencyCode: 'GBP',
+  },
+  byLocation: [],
+  byStylist: [],
+  averageFormulaCostByServiceType: [],
+  mostUsedProductsByWeight: [],
+  mostUsedProductsByCost: [],
+  lowStockAlerts: [],
+};
+
 function makeRegistry(
   dashboard?: Partial<DashboardService>,
   kpi?: Partial<KpiService>,
@@ -277,6 +361,23 @@ function makeRegistry(
       {
         getSettings: jest.fn().mockResolvedValue({ rebookRateBenchmarkPercent: 50 }),
       } as unknown as OwnerLocationSettingsService,
+      {
+        // Workstream 3 — colour analytics. Empty by default: these suites
+        // cover other tools, and an empty summary exercises the colour
+        // tool's not-configured branch without asserting on it.
+        summary: jest.fn().mockResolvedValue(EMPTY_LAB_ANALYTICS),
+      } as unknown as LabAnalyticsService,
+      INVENTORY_FAKE as unknown as InventoryService,
+      {
+        // Workstream 3 — colour prep and ordering. Empty by default: these
+        // suites cover other tools, and the WS3 tools have their own specs.
+        getPlan: jest.fn().mockResolvedValue(EMPTY_COLOUR_PREP),
+      } as unknown as ColourPrepService,
+      {
+        previewReorder: jest.fn().mockResolvedValue(EMPTY_REORDER_PREVIEW),
+        list: jest.fn().mockResolvedValue({ orders: [] }),
+        getOrder: jest.fn(),
+      } as unknown as OrdersService,
     );
 }
 
@@ -335,6 +436,12 @@ const OWNER_ALL = actorWith(
     'report.commission.view',
     'report.lab_analytics.view',
     'inventory.manage',
+    // inventory.reorder_advisory is gated on orders.view rather than
+    // inventory.manage, deliberately: it exposes supplier and spend context, so
+    // an inventory-only manager must not see it. Without this key the actor is
+    // not actually "fully permissioned" and the live-tools test stops covering
+    // that tool.
+    'orders.view',
     'report.financials.view',
     'crm.view',
     // report.profitability is gated on payroll.view; without it this actor is
@@ -586,16 +693,50 @@ describe('ZacToolRegistryService', () => {
     expect(result.presentation?.answer).not.toContain('business health snapshot');
   });
 
-  it('reports disabled skeletons as not_connected for a fully permitted actor', async () => {
-    const { result } = await registry.dispatch(
+  it('reports a disabled tool as not_connected rather than falling through to generic copy', async () => {
+    // Workstream 3 connected the last two registered skeletons, so there is no
+    // longer a permanently-disabled tool to point this at. The BEHAVIOUR still
+    // matters — it is what lets a future deferred capability answer honestly —
+    // so it is now exercised against a purpose-built disabled tool rather than
+    // deleted along with the last real example.
+    const execute = jest.fn();
+    const disabled = {
+      name: 'report.profitability',
+      domain: 'report',
+      description: 'A capability that is registered but not connected.',
+      allowedRoles: ['owner', 'manager'],
+      requiredPermissions: [],
+      anyOfPermissions: [],
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      outputSchema: { type: 'object' },
+      readOnly: true,
+      sensitiveFields: [],
+      errorBehavior: 'fail_closed',
+      fallbackBehavior: 'state_unavailable',
+      piiLevel: 'none',
+      cachePolicy: { ttlSeconds: 0, perTenant: true },
+      rateLimit: { perMinute: 6 },
+      requiresStaffSelf: false,
+      enabled: false,
+      execute,
+    };
+    const localRegistry = makeRegistry();
+    // The tool list is private and built in the constructor; swapping it is the
+    // only way to exercise dispatch against a deliberately disabled tool now
+    // that no permanently-disabled one remains.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (localRegistry as any).tools = [disabled];
+
+    const { result } = await localRegistry.dispatch(
       OWNER_ALL,
       contextWith({ roleContext: 'owner', roles: ['owner'] }),
-      'qlab.colour_analytics',
+      'report.profitability',
       {},
     );
 
     expect(result.status).toBe('not_connected');
     expect(result.data).toBeNull();
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it('dispatches the live utilisation tool through the guarded service', async () => {

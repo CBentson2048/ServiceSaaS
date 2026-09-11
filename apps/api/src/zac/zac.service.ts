@@ -148,6 +148,23 @@ const PERIOD_AWARE_TOOLS: Partial<Record<ZacToolName, number>> = {
   // report.client_retention is deliberately absent: it is a point-in-time
   // snapshot of who is overdue NOW, not a windowed aggregate, and the tool
   // says so rather than pretending a historical window was applied.
+  //
+  // Workstream 3. Colour is windowed; the other three are NOT, for the same
+  // reason retention is not:
+  //   - inventory.stock_status reads the shelf as it is right now;
+  //   - inventory.colour_prep_risk looks FORWARD at the diary, so a backward
+  //     window is meaningless, and its window resolves in the location's own
+  //     IANA timezone rather than UTC;
+  //   - inventory.reorder_advisory uses the usage window the LOCATION has
+  //     configured (core.location_settings.reorder_usage_window_weeks), and
+  //     overriding that from the question would make ZAC's advice diverge from
+  //     what the Generate button produces.
+  //
+  // Ninety days, not the usual thirty: the newest costed formula on the working
+  // database is 52 days old, and colour is genuinely lower-frequency than
+  // bookings or retail — a monthly window reports single-digit samples as
+  // trends. See docs/ZAC/phase-2-ws3-data-evidence.md §3.4.
+  'qlab.colour_analytics': 90,
 };
 
 @Injectable()
@@ -2324,6 +2341,49 @@ export class ZacService {
     }
     if (/rebook/.test(q)) {
       return 'report.rebooking_summary';
+    }
+    // ---- Workstream 3: QLab & stock ----------------------------------------
+    // ORDER IS LOAD-BEARING HERE, for two reasons.
+    //
+    // 1. Colour sits ABOVE the profit branch below, which matches a bare
+    //    `\bmargins?\b` and returns the DISABLED report.profitability. Without
+    //    this placement "what is my colour margin?" gets "not connected" — a
+    //    silent wrong answer, because a tool that can answer it exists.
+    // 2. Reorder and colour-prep sit ABOVE plain stock, because "what stock
+    //    should I order?" and "have I got enough for this week?" are both
+    //    stock questions with a more specific tool behind them.
+    //
+    // These patterns are read-shaped only. An IMPERATIVE ordering request
+    // ("order this stock") never reaches here: the request-mode classifier
+    // treats `reorder` as a write verb against an operational object and
+    // refuses it at the boundary before any tool is chosen.
+    if (
+      /\b(colour|color)\b[^.?!]*\b(margin|margins|cost|costs|costing|waste|revenue|spend|pricing|profitab\w*)\b|\b(margin|margins|cost|costs|costing|waste|spend)\b[^.?!]*\b(colour|color)\b|\bq\s?lab\b|\blab analytics\b/.test(
+        q,
+      )
+    ) {
+      return 'qlab.colour_analytics';
+    }
+    if (
+      /\b(colour|color)\s+prep\b|\bprep(ped|aring|aration)?\b[^.?!]*\b(colour|color)\b|\b(enough|short)\b[^.?!]*\b(booked|coming up|appointments?|diary)\b|\b(booked|coming up|this week'?s|next week'?s)\b[^.?!]*\b(enough|short|stock)\b/.test(
+        q,
+      )
+    ) {
+      return 'inventory.colour_prep_risk';
+    }
+    if (
+      /\bre-?order\w*\b|\bneed to order\b|\bshould (i|we) order\b|\bwhat\b[^.?!]{0,20}\border\b|\bpurchase orders?\b|\bsuppliers?\b|\border form\b|\brestock\w*\b/.test(
+        q,
+      )
+    ) {
+      return 'inventory.reorder_advisory';
+    }
+    if (
+      /\bstock\b|\binventory\b|\brunning low\b|\blow on\b|\bdead stock\b|\bnot (moving|been used|being used)\b|\bsitting (there|unused|on the shelf)\b|\brun(ning)? out\b|\bout of\b[^.?!]*\b(products?|colour|color|tubes?|bottles?)\b/.test(
+        q,
+      )
+    ) {
+      return 'inventory.stock_status';
     }
     // ---- Workstream 1: Expanded Intelligence -------------------------------
     // All five sit ABOVE business health, whose broad pattern (revenue,

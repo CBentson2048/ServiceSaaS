@@ -62,6 +62,26 @@ const TOOL_DESCRIPTORS: Partial<Record<ZacToolName, Omit<ZacPlanningToolDescript
     purpose: "The acting stylist's own diary for today and tomorrow.",
     domains: ['appointments'],
   },
+  // Workstream 3 — QLab & stock. WITHOUT AN ENTRY HERE A TOOL IS UNREACHABLE:
+  // `catalogueFor` filters on presence in this map, so a tool absent from it can
+  // never be chosen by the planner no matter how well it matches the question,
+  // and nothing fails loudly to say so.
+  'qlab.colour_analytics': {
+    purpose: 'What colour work costs in product, what it earns, and which products that spend goes on.',
+    domains: ['colour'],
+  },
+  'inventory.stock_status': {
+    purpose: 'What is at or below its low-stock threshold now, and what has been sitting unused.',
+    domains: ['stock'],
+  },
+  'inventory.colour_prep_risk': {
+    purpose: 'Whether current stock covers the colour appointments already booked in the diary.',
+    domains: ['stock', 'colour'],
+  },
+  'inventory.reorder_advisory': {
+    purpose: 'What an order would contain if placed today, and which products cannot be ordered. Advisory only.',
+    domains: ['stock'],
+  },
 };
 
 /**

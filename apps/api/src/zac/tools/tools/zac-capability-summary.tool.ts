@@ -37,10 +37,31 @@ const CAPABILITY_LINES: Partial<Record<ZacToolName, string>> = {
     'Client retention — how many clients are on pattern, overdue or lapsed — and, if your access covers client records, who they are.',
   'kpi.personal_coaching': 'Your own KPIs and personal coaching.',
   'schedule.my_appointments': 'Your own diary for today and tomorrow.',
+  // Workstream 3 — QLab & stock.
+  //
+  // The colour line does NOT mention waste, deliberately. No saved formula on
+  // the platform records any, so offering waste analytics here would advertise
+  // a capability the data cannot support — the tool itself explains that gap
+  // when asked, which is the honest place for it.
+  'qlab.colour_analytics':
+    'Colour costs and margin — what the product in your formulas costs, what colour earns, and which products that spend goes on.',
+  'inventory.stock_status':
+    'Stock — what is at or below its low-stock threshold right now, and what has been sitting unused.',
+  'inventory.colour_prep_risk':
+    'Colour preparation — whether what is on the shelf covers the colour appointments already in the diary.',
+  'inventory.reorder_advisory':
+    'Ordering — what a supplier order would contain if you placed one today, and what cannot be ordered yet. Advice only: I never place an order.',
 };
 
-/** Named as coming only while genuinely unbuilt. */
-const PLANNED_AREAS = 'QLAB colour usage and costs, stock and inventory, and trends over time';
+/**
+ * Named as coming only while genuinely unbuilt.
+ *
+ * QLAB colour, stock and inventory were removed here when Workstream 3
+ * connected them. Leaving them would have told an owner a capability was
+ * "coming" while ZAC was already answering questions with it — the precise
+ * failure the comment above this file's CAPABILITY_LINES warns about.
+ */
+const PLANNED_AREAS = 'trends over time';
 
 /** The full list, used only when nothing at all is connected. */
 const ALL_AREAS =

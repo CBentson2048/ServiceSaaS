@@ -499,6 +499,17 @@ const TOOL_AREA: Partial<Record<ZacToolName, string>> = {
   'report.stylist_performance': 'stylist performance',
   'kpi.personal_coaching': 'your own KPIs',
   'schedule.my_appointments': 'your diary',
+  // Workstream 1 and 3. Without an entry a failure reads "one area could not be
+  // assessed", which tells the user nothing about what is missing.
+  'report.appointment_summary': 'appointments',
+  'report.service_mix': 'service mix',
+  'report.retail_performance': 'retail',
+  'report.client_retention': 'client retention',
+  'report.scorecard': 'your scorecard',
+  'qlab.colour_analytics': 'colour cost and margin',
+  'inventory.stock_status': 'stock levels',
+  'inventory.colour_prep_risk': 'colour preparation',
+  'inventory.reorder_advisory': 'ordering',
 };
 
 function describeTool(tool: ZacToolName): string {

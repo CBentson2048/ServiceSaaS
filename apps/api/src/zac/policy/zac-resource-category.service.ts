@@ -328,9 +328,22 @@ const NON_PERSON_WORD =
 const STRONG_WRITE_VERB =
   /\b(?:cancel|reschedule|rebook|re-book|refund|void|charge|delete|approve|reorder|re-order|swap|unbook|uncancel|book)\b/;
 
-/** Verbs that are a change only when aimed at something operational. */
+/**
+ * Verbs that are a change only when aimed at something operational.
+ *
+ * `place` was added for Workstream 3. The opening-two-words test means "place
+ * the order with Wella" was reaching the clause check as `place the`, matching
+ * neither list, and so was not recognised as a write request — while "order
+ * this stock" (opening `order this`) was. Now that ZAC can DISCUSS ordering,
+ * "place the order" is a far likelier phrasing than it was, and the two must
+ * behave the same.
+ *
+ * Safe as a WEAK verb: it only counts with an operational object alongside, and
+ * the interrogative guard above already skips "where does she place…" and
+ * "what place is…" before this list is consulted.
+ */
 const WEAK_WRITE_VERB =
-  /\b(?:change|update|set|edit|add|remove|send|apply|assign|move|shift|book|order|email|text|message|push|put|stick|block|knock|discount|process|issue|amend|adjust|bump|drop|raise|lower|write off|clear)\b/;
+  /\b(?:change|update|set|edit|add|remove|send|apply|assign|move|shift|book|order|place|email|text|message|push|put|stick|block|knock|discount|process|issue|amend|adjust|bump|drop|raise|lower|write off|clear)\b/;
 
 /** Things in the salon that can be changed. */
 const OPERATIONAL_OBJECT =

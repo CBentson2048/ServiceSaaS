@@ -59,6 +59,18 @@ export class ZacEvidenceService {
         return this.fromClientRetention(data, evidence, limitations);
       case 'kpi.personal_coaching':
         return this.fromPersonalCoaching(data, evidence, limitations, memory);
+      // Workstream 3 - QLab & stock. WITHOUT A CASE HERE A TOOL RUNS PERFECTLY
+      // AND CONTRIBUTES NOTHING: `default` returns [], so a cross-domain answer
+      // would report that nothing stood out while the stock tool had just found
+      // three items at zero. Silent, and indistinguishable from "all fine".
+      case 'qlab.colour_analytics':
+        return this.fromColourAnalytics(data, evidence, limitations);
+      case 'inventory.stock_status':
+        return this.fromStockStatus(data, evidence, limitations);
+      case 'inventory.colour_prep_risk':
+        return this.fromColourPrepRisk(data, evidence, limitations);
+      case 'inventory.reorder_advisory':
+        return this.fromReorderAdvisory(data, evidence, limitations);
       default:
         return [];
     }
@@ -592,6 +604,184 @@ export class ZacEvidenceService {
   /** @see rebookingGoalFromMemory — kept as a method so the adapters read the same. */
   private rebookingGoalFromMemory(memory: ZacModelMemoryItem[]): number | null {
     return rebookingGoalFromMemory(memory);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Workstream 3 — QLab & stock.
+  //
+  // EVERY ADAPTER HERE RETURNS [] RATHER THAN A SIGNAL WHEN THE FIGURE IS NULL.
+  // That is deliberate and it is the most important rule in this section: the
+  // WS3 tools publish `null` (never 0) for anything they could not measure, and
+  // a signal built on a null would consolidate as `positive` evidence — so an
+  // unmeasured colour margin would read to the priority engine as *good news*
+  // and could silently resolve a real signal from another source.
+  //
+  // `targetValue` is left null throughout. `scoreEvidenceSignal.missesTarget()`
+  // tests `currentValue < targetValue`, i.e. higher-is-better only; a
+  // lower-is-better signal (waste, idle stock) given a target would silently
+  // lose its materiality weight. Severity is set from the tool's own
+  // probe-backed thresholds instead, which is honest about where the judgement
+  // came from.
+  // ---------------------------------------------------------------------------
+
+  private fromColourAnalytics(
+    data: Record<string, unknown>,
+    evidence: ZacEvidenceItem[],
+    limitations: string[],
+  ): ZacEvidenceSignal[] {
+    const marginPercent = numberOrNull(data['gross_margin_percent']);
+    const formulas = numberOrNull(data['formulas_mixed']);
+    // No margin means no revenue to measure it against — an unpriced Lab, not a
+    // thin one. Nothing to rank.
+    if (marginPercent === null || formulas === null || formulas === 0) return [];
+
+    return [
+      this.signal({
+        sourceTool: 'qlab.colour_analytics',
+        domain: 'colour',
+        issueKey: 'colour_margin',
+        period: periodOf(data),
+        metric: 'Gross margin on colour work',
+        currentValue: marginPercent,
+        // Colour product commonly runs at a 4-6x mark-up, so a margin in the
+        // teens means the charge barely clears the tube. Stated as the tool's
+        // own threshold, not an owner-set target — there is no configured
+        // colour-margin benchmark anywhere in QLOOQO to compare against.
+        severity: marginPercent < 25 ? 'attention' : marginPercent < 50 ? 'watch' : 'positive',
+        confidence: 0.7,
+        evidence,
+        limitations,
+        headline: `Colour is running at a ${marginPercent}% gross margin across ${formulas} saved ${formulas === 1 ? 'formula' : 'formulas'}.`,
+      }),
+    ];
+  }
+
+  private fromStockStatus(
+    data: Record<string, unknown>,
+    evidence: ZacEvidenceItem[],
+    limitations: string[],
+  ): ZacEvidenceSignal[] {
+    const signals: ZacEvidenceSignal[] = [];
+    const lowCount = numberOrNull(data['low_stock_count']);
+    const thresholds = numberOrNull(data['thresholds_configured']);
+    const deadCount = numberOrNull(data['dead_stock_count']);
+    const stockRecords = numberOrNull(data['stock_records']);
+
+    // Zero low-stock items is only good news if thresholds exist to trip. With
+    // none configured an empty list means "I cannot tell", so no signal at all.
+    if (lowCount !== null && thresholds !== null && thresholds > 0) {
+      signals.push(
+        this.signal({
+          sourceTool: 'inventory.stock_status',
+          domain: 'stock',
+          issueKey: 'stock_shortage',
+          period: null,
+          metric: 'Products at or below their low-stock threshold',
+          currentValue: lowCount,
+          severity: lowCount === 0 ? 'positive' : lowCount >= 3 ? 'attention' : 'watch',
+          confidence: 0.85,
+          evidence,
+          limitations,
+          headline:
+            lowCount === 0
+              ? `Nothing is at or below its low-stock threshold across ${thresholds} tracked ${thresholds === 1 ? 'item' : 'items'}.`
+              : `${lowCount} ${lowCount === 1 ? 'product is' : 'products are'} at or below ${lowCount === 1 ? 'its' : 'their'} low-stock threshold.`,
+        }),
+      );
+    }
+
+    if (deadCount !== null && stockRecords !== null && stockRecords > 0 && deadCount > 0) {
+      signals.push(
+        this.signal({
+          sourceTool: 'inventory.stock_status',
+          domain: 'stock',
+          issueKey: 'dead_stock',
+          period: null,
+          metric: 'Products idle past their dead-stock threshold',
+          currentValue: deadCount,
+          // Deliberately never 'attention'. On the live data every dead-stock
+          // row is a function of a threshold the location itself set, so this
+          // is something to look at, not something that is wrong.
+          severity: 'watch',
+          confidence: 0.6,
+          evidence,
+          limitations,
+          headline: `${deadCount} of ${stockRecords} stocked ${stockRecords === 1 ? 'product has' : 'products have'} had no stock leave the shelf for longer than the threshold set for ${deadCount === 1 ? 'it' : 'them'}.`,
+        }),
+      );
+    }
+
+    return signals;
+  }
+
+  private fromColourPrepRisk(
+    data: Record<string, unknown>,
+    evidence: ZacEvidenceItem[],
+    limitations: string[],
+  ): ZacEvidenceSignal[] {
+    const appointments = numberOrNull(data['appointments']);
+    const shortfalls = numberOrNull(data['shortfall_product_count']);
+    const claimable = data['sufficiency_claimable'];
+    if (appointments === null || appointments === 0 || shortfalls === null) return [];
+
+    // A clean result is only POSITIVE when the tool itself said it could see
+    // the whole picture. With a formula missing or a product unmapped, "no
+    // shortfall" means "none that I could check" — which must not rank as
+    // reassurance.
+    const severity: ZacEvidenceSignal['severity'] =
+      shortfalls > 0 ? 'attention' : claimable === true ? 'positive' : 'watch';
+
+    return [
+      this.signal({
+        sourceTool: 'inventory.colour_prep_risk',
+        domain: 'stock',
+        issueKey: 'colour_prep_shortfall',
+        period: null,
+        metric: 'Products short of what booked colour work needs',
+        currentValue: shortfalls,
+        severity,
+        confidence: claimable === true ? 0.8 : 0.55,
+        evidence,
+        limitations,
+        headline:
+          shortfalls > 0
+            ? `${shortfalls} ${shortfalls === 1 ? 'product will not cover' : 'products will not cover'} what the ${appointments} colour ${appointments === 1 ? 'appointment' : 'appointments'} already booked will need.`
+            : `Stock covers what the ${appointments} booked colour ${appointments === 1 ? 'appointment needs' : 'appointments need'}.`,
+      }),
+    ];
+  }
+
+  private fromReorderAdvisory(
+    data: Record<string, unknown>,
+    evidence: ZacEvidenceItem[],
+    limitations: string[],
+  ): ZacEvidenceSignal[] {
+    const lines = numberOrNull(data['suggested_line_count']);
+    const unorderable = numberOrNull(data['unorderable_count']);
+    if (lines === null) return [];
+    // Nothing to order and nothing blocked is genuinely quiet; it carries no
+    // information a priority answer would act on, so it emits nothing rather
+    // than a positive signal competing for a top-3 slot.
+    if (lines === 0 && (unorderable === null || unorderable === 0)) return [];
+
+    return [
+      this.signal({
+        sourceTool: 'inventory.reorder_advisory',
+        domain: 'stock',
+        issueKey: 'stock_shortage',
+        period: null,
+        metric: 'Products below their reorder point',
+        currentValue: lines,
+        severity: lines > 0 ? 'attention' : 'watch',
+        confidence: 0.75,
+        evidence,
+        limitations,
+        headline:
+          lines > 0
+            ? `${lines} ${lines === 1 ? 'product is' : 'products are'} below the stock level your own reorder settings aim to hold.`
+            : `${unorderable} ${unorderable === 1 ? 'product needs' : 'products need'} stock but cannot be ordered as set up.`,
+      }),
+    ];
   }
 
   private signal(input: {

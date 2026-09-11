@@ -23,6 +23,13 @@ const ISSUE_DOMAIN: Record<string, ZacPriorityDomain> = {
   service_concentration: 'services',
   retail_performance: 'retail',
   retail_attachment: 'retail',
+  // Workstream 3. Stock shortage and colour-prep shortfall are the SAME issue
+  // seen from two ends — the shelf and the diary — so they share a domain and
+  // consolidate into one priority rather than occupying two slots in a top-3.
+  stock_shortage: 'stock',
+  colour_prep_shortfall: 'stock',
+  dead_stock: 'stock',
+  colour_margin: 'colour',
 };
 
 /** Issue key → the title the owner sees. Never an internal identifier. */
@@ -39,6 +46,10 @@ const ISSUE_TITLE: Record<string, string> = {
   service_concentration: 'Service mix concentration',
   retail_performance: 'Retail',
   retail_attachment: 'Retail attachment',
+  stock_shortage: 'Stock running low',
+  colour_prep_shortfall: 'Stock for booked colour work',
+  dead_stock: 'Stock sitting unused',
+  colour_margin: 'Colour margin',
 };
 
 /**

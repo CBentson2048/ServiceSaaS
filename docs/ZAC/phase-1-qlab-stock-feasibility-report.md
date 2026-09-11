@@ -1,5 +1,21 @@
 # ZAC Phase 1 — QLAB / Stock Feasibility Report
 
+> ## ⚠ PARTLY SUPERSEDED — read this first (added 2026-09-11)
+>
+> **The DATA-AVAILABILITY conclusions below are obsolete.** This report states that there is "no `supplier`,
+> `purchase_order`, `reorder`, `lead_time`, or `expiry` entity anywhere". That was true when it was written in
+> July 2026. It is **false today**: migrations `0091` (stock + colour prep), `0092` (suppliers + ordering
+> metadata), `0093` (dead-stock alerts), `0094` (purchase orders + `inventory.reorder_usage`), `0095`, `0096`,
+> `0100` and `0101` have all shipped and are applied. Suppliers, lead times, purchase orders, reorder maths, a
+> dead-stock report and a Colour Prep planner all exist and are read by ZAC Phase 2 Workstream 3.
+>
+> For current data readiness see **[`phase-2-ws3-data-evidence.md`](phase-2-ws3-data-evidence.md)**.
+>
+> **The SAFETY DOCTRINE below still stands in full**, and Workstream 3 is built on it:
+> feasibility-probe every tool; never read the write-only `waste_events` table; re-check each permission
+> inside each tool because the underlying services check role and scope but not always the permission key;
+> and never report a zero confidently. Every one of those turned out to be load-bearing.
+
 > **Nature of this document.** A code-grounded feasibility analysis of QLOOQO Lab, product, stock, formula, and inventory data/services, to decide **exactly what can safely be exposed to ZAC Phase 1 as limited read-only insights**. Analysis only — it creates no source code, no migrations, no env/package changes, and stages/commits nothing. Every claim traces to a repo-relative `path:line` on the current `develop` tree. Companion to [`phase-1-backend-foundation-architecture-analysis.md`](phase-1-backend-foundation-architecture-analysis.md) (§ QLAB/Stock Feasibility) and [`phase-1-backend-foundation-technical-approach.md`](phase-1-backend-foundation-technical-approach.md) (§14).
 >
 > Date: 2026-07-24 · Phase 1 is **read-only**. No write tools, no ordering, no autonomous actions.

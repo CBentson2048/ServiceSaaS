@@ -2,8 +2,12 @@ import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AuthModule } from '../auth/auth.module';
 import { ClientIntelligenceModule } from '../client-intelligence/client-intelligence.module';
+import { ColourPrepModule } from '../colour-prep/colour-prep.module';
 import { DashboardModule } from '../dashboard/dashboard.module';
+import { InventoryModule } from '../inventory/inventory.module';
 import { KpiModule } from '../kpi/kpi.module';
+import { OrdersModule } from '../orders/orders.module';
+import { LabAnalyticsModule } from '../lab-analytics/lab-analytics.module';
 import { LabAppointmentsModule } from '../lab-appointments/lab-appointments.module';
 import { OwnerLocationSettingsModule } from '../owner-location-settings/owner-location-settings.module';
 import { PayrollModule } from '../payroll/payroll.module';
@@ -73,6 +77,15 @@ import { ZacService } from './zac.service';
     // The scorecard reads the owner's configured rebooking benchmark so it
     // never judges a business against a number they did not choose.
     OwnerLocationSettingsModule,
+    // Workstream 3 — QLab & stock. Each of these modules had to EXPORT its
+    // service for this import to resolve; listing a module in AppModule does
+    // not share its providers, and Nest refuses to construct the registry
+    // otherwise. ZAC narrows each to a read-only port at the registry
+    // constructor, so importing the module grants no write capability.
+    LabAnalyticsModule,
+    InventoryModule,
+    ColourPrepModule,
+    OrdersModule,
   ],
   controllers: [ZacController],
   providers: [
