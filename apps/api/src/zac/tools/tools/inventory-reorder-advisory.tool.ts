@@ -176,7 +176,23 @@ export class InventoryReorderAdvisoryTool implements ZacReadOnlyTool {
     const unorderable = sites.flatMap((site) =>
       site.preview.unorderable.map((product) => ({ site: site.locationName, product })),
     );
-    const anyUsageObserved = sites.some((site) => site.preview.usageObserved);
+    /**
+     * Usage behind THE LINES BEING SUGGESTED — not usage anywhere at the site.
+     *
+     * `preview.usageObserved` is a per-LOCATION flag: true when any product at
+     * that location moved in the window. That is the wrong denominator for this
+     * sentence, and on real data it produces a false claim.
+     *
+     * Salon, 2026-09-11: Kensington has genuine outbound usage (132-150g) but
+     * NO shortfall, while the two actual suggestions sit at Pinner and Primrose
+     * Hill with zero recorded usage each. Taking `some()` across sites made the
+     * answer say "at the rate you got through stock" about two lines that are
+     * pure threshold top-ups — the precise invention this flag exists to stop.
+     *
+     * Reading it off the suggested lines ties the justification to the thing
+     * being justified.
+     */
+    const anyUsageObserved = lines.some((entry) => entry.line.outboundBaseInWindow > 0);
     const windowWeeks = sites[0]?.preview.windowWeeks ?? 8;
     const coverageWeeks = sites[0]?.preview.coverageWeeks ?? 4;
 

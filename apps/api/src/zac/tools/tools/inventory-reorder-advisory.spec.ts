@@ -147,6 +147,42 @@ describe('InventoryReorderAdvisoryTool — usage honesty', () => {
     expect(result.presentation?.answer).toContain('at the rate you got through stock');
   });
 
+  it('does not borrow usage from a location that needs nothing', async () => {
+    // THE REAL SALON SHAPE, 2026-09-11. Kensington has genuine outbound usage
+    // (132-150g) but no shortfall; the two actual suggestions sit at Pinner and
+    // Primrose Hill with zero usage each.
+    //
+    // `preview.usageObserved` is a per-LOCATION flag, so taking it across sites
+    // made the answer claim "at the rate you got through stock" about lines
+    // that are pure threshold top-ups. The justification must come from the
+    // lines being justified.
+    const twoSites = async () => [
+      { id: 'loc-1', name: 'Kensington' },
+      { id: 'loc-2', name: 'Pinner' },
+    ];
+    const orders = ordersPort({
+      previewReorder: jest.fn().mockImplementation((_actor, locationId: string) =>
+        Promise.resolve(
+          locationId === 'loc-1'
+            ? // Kensington: real usage, nothing to order.
+              preview({ usageObserved: true, lines: [] })
+            : // Pinner: something to order, no usage behind it.
+              preview({ usageObserved: false, lines: [line({ outboundBaseInWindow: 0 })] }),
+        ),
+      ),
+    });
+
+    const result = await new InventoryReorderAdvisoryTool(
+      orders,
+      inventoryPort(),
+      twoSites as never,
+    ).execute(OWNER, CONTEXT, {});
+
+    expect(result.data?.['usage_observed']).toBe(false);
+    expect(result.presentation?.answer).toContain('top-ups to the');
+    expect(result.presentation?.answer).not.toContain('at the rate you got through stock');
+  });
+
   it('states that reversals are not netted out of the usage figure', async () => {
     const result = await tool().execute(OWNER, CONTEXT, {});
 
