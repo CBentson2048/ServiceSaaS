@@ -22,8 +22,13 @@ const COUNTS_ONLY_PAGE_SIZE = 1;
  *
  * It never returns a client. The endpoint can page through named individuals;
  * ZAC asks for one row and reads only the scope-wide counts, so no client name,
- * contact detail or visit history can reach an answer. `piiLevel` is 'none'
- * because that is structurally true, not because the source is harmless.
+ * contact detail or visit history can reach THIS TOOL'S answer. `piiLevel` is
+ * 'none' because that is structurally true, not because the source is harmless.
+ *
+ * That is a property of this tool, NOT a platform-wide privacy rule. Naming the
+ * clients is a separate, separately-gated capability — `report.client_lapse_list`
+ * — so that this tool's guarantee survives its existence rather than being
+ * quietly weakened to accommodate it.
  *
  * It never calls this a "retention rate". The canonical metric registry records
  * that lapse detection answers a different question from retention and produces
@@ -128,7 +133,7 @@ export class ClientRetentionTool implements ZacReadOnlyTool {
           confidence: 'high',
           limitations: [
             `A client needs at least ${lapse.settings.minCompletedVisits} completed visits before a personal return pattern can be claimed.`,
-            'No client names or contact details are ever part of this answer.',
+            'This answer is counts only. Ask "who are they?" and I can name them if your access covers client records.',
             ...(historyNote ? [historyNote] : []),
           ],
           suggestedNextStep:
@@ -166,7 +171,7 @@ export class ClientRetentionTool implements ZacReadOnlyTool {
         confidence: 'medium',
         limitations: [
           `"Overdue" is measured against each client's own usual visit gap plus your ${lapse.settings.lapsedBufferDays}-day grace period, not a fixed calendar rule.`,
-          'These are counts only — I never list or name individual clients.',
+          'These are counts. If you want to know who they are, ask — I can name them where your access covers client records.',
           ...(historyNote ? [historyNote] : []),
           lapse.truncated
             ? 'Visit history was truncated for some clients, so a few patterns rest on partial history.'

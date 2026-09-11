@@ -290,6 +290,19 @@ const LAPSE_FIXTURE = {
   pagination: { page: 1, pageSize: 1, total: 0, totalPages: 1 },
 } as unknown as Awaited<ReturnType<ClientIntelligenceService['listLapsedClients']>>;
 
+/** Named clients — used ONLY by the identity-disclosure tests below. */
+const NAMED_LAPSE_FIXTURE = {
+  clients: [
+    { clientCode: 'C-1042', firstName: 'Jane', lastName: 'Whitfield', displayName: 'Jane Whitfield', email: 'jane@example.com', phone: '07700900123' },
+    { clientCode: 'C-1188', firstName: 'Marco', lastName: 'Silva', displayName: 'Marco Silva', email: 'marco@example.com', phone: '07700900456' },
+  ],
+  counts: { active: 120, atRisk: 5, lapsed: 2, booked: 3, insufficientHistory: 8 },
+  settings: { lapsedBufferDays: 14, minCompletedVisits: 3, historyVisitLimit: 10 },
+  truncated: false,
+  evaluatedClientCount: 127,
+  pagination: { page: 1, pageSize: 25, total: 2, totalPages: 1 },
+} as unknown as Awaited<ReturnType<ClientIntelligenceService['listLapsedClients']>>;
+
 function makeService(
   env: Record<string, string | undefined> = { ZAC_ENABLED: 'true' },
   dashboard: Partial<DashboardService> = { kpis: jest.fn().mockResolvedValue(KPI_FIXTURE) },
@@ -1299,6 +1312,86 @@ describe('ZacService', () => {
       expect(answer).toContain('For stylists');
       expect(answer).not.toMatch(/foundation mode/i);
       expect(answer).toMatch(/comes from QLOOQO's own records/i);
+    });
+
+    /** makeService with the named-client fixture; clientIntelligence is its 10th parameter. */
+    const namedClientService = () =>
+      makeService(
+        undefined, undefined, undefined, undefined, undefined,
+        undefined, undefined, undefined, undefined,
+        { listLapsedClients: jest.fn().mockResolvedValue(NAMED_LAPSE_FIXTURE) },
+      );
+
+    // ---- Identity disclosure, end to end ----------------------------------
+    it('names the clients on the wire but stores an identity-free body', async () => {
+      // THE acceptance test, run as the two-turn transcript from the bug report.
+      // zac.outputs.body_redacted redacts emails, tokens and digit runs but has
+      // NO name pattern, so a naive named answer would persist a roster of real
+      // people into a table whose read path re-checks no client permission.
+      const insertOutput = jest
+        .spyOn(ZacMeasurementStore.prototype, 'insertOutput')
+        .mockResolvedValue('output-1');
+      try {
+        const { service } = namedClientService();
+
+        const first = await service.ask(makeActor(), { question: 'How many clients have lapsed?' });
+        expect(first.answer).not.toContain('Jane');
+
+        const second = await service.ask(makeActor(), {
+          question: 'could you please let me know these clients?',
+          conversationId: first.conversation_id ?? undefined,
+        });
+
+        // The user asked and is permitted, so the wire carries the names.
+        expect(second.answer).toContain('Jane Whitfield');
+        expect(second.answer).toContain('C-1042');
+        // And it is no longer the clarification prompt.
+        expect(second.answer).not.toMatch(/would you like a general answer/i);
+
+        // What was persisted must not carry them.
+        const stored = JSON.stringify(insertOutput.mock.calls.map((c) => c[0]));
+        expect(stored).not.toMatch(/Jane|Whitfield|Marco|Silva/);
+        expect(stored).not.toMatch(/C-1042|C-1188/);
+        expect(stored).not.toContain('@example.com');
+      } finally {
+        insertOutput.mockRestore();
+      }
+    });
+
+    it('keeps the storage-only field off the wire', async () => {
+      // A second copy of the answer on the response invites a consumer to
+      // render or cache the wrong one.
+      const insertOutput = jest
+        .spyOn(ZacMeasurementStore.prototype, 'insertOutput')
+        .mockResolvedValue('output-1');
+      try {
+        const { service } = namedClientService();
+        const first = await service.ask(makeActor(), { question: 'How many clients have lapsed?' });
+        const second = await service.ask(makeActor(), {
+          question: 'who are they?',
+          conversationId: first.conversation_id ?? undefined,
+        });
+        expect('answer_storage_form' in second).toBe(false);
+      } finally {
+        insertOutput.mockRestore();
+      }
+    });
+
+    it('leaves every other tool storing exactly what it always did', async () => {
+      // The ?? fallback must not change behaviour for the 18 tools that
+      // disclose nothing.
+      const insertOutput = jest
+        .spyOn(ZacMeasurementStore.prototype, 'insertOutput')
+        .mockResolvedValue('output-1');
+      try {
+        const { service } = makeService();
+        const response = await service.ask(makeActor(), { question: 'How is my business doing?' });
+        const stored = insertOutput.mock.calls[0]?.[0] as { bodyRedacted?: string } | undefined;
+        expect(stored?.bodyRedacted).toBeTruthy();
+        expect(response.answer).toContain(stored?.bodyRedacted?.slice(0, 24) ?? '@@nope@@');
+      } finally {
+        insertOutput.mockRestore();
+      }
     });
 
     it('serves a stylist holding zac.access through the normal gates', async () => {

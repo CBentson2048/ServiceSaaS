@@ -18,6 +18,7 @@ import type { ZacActingContext } from '../context/zac-context.types';
 import { AppointmentSummaryTool } from './tools/appointment-summary.tool';
 import { BusinessContextSummaryTool } from './tools/business-context-summary.tool';
 import { BusinessHealthSummaryTool } from './tools/business-health.tool';
+import { ClientLapseListTool } from './tools/client-lapse-list.tool';
 import { ClientRetentionTool } from './tools/client-retention.tool';
 import { InventoryStockStatusTool } from './tools/inventory-stock-status.tool';
 import { KpiSummaryTool } from './tools/kpi-summary.tool';
@@ -80,6 +81,9 @@ export class ZacToolRegistryService {
       new ServiceMixTool(dashboard),
       new RetailPerformanceTool(retailSales, dashboard),
       new ClientRetentionTool(clientIntelligence),
+      // Same service, same gate, bigger page — and the only tool allowed to
+      // disclose client identities.
+      new ClientLapseListTool(clientIntelligence),
       // Optional/deferred skeletons — registered but disabled. Registering
       // them is what lets ZAC answer "not connected yet" honestly instead of
       // falling through to generic capability copy.

@@ -34,7 +34,7 @@ const CAPABILITY_LINES: Partial<Record<ZacToolName, string>> = {
   'report.retail_performance':
     'Retail — takings, attachment per visit, and gross margin where product cost was recorded.',
   'report.client_retention':
-    'Client retention — how many clients are on pattern, overdue or lapsed. Counts only, never names.',
+    'Client retention — how many clients are on pattern, overdue or lapsed — and, if your access covers client records, who they are.',
   'kpi.personal_coaching': 'Your own KPIs and personal coaching.',
   'schedule.my_appointments': 'Your own diary for today and tomorrow.',
 };

@@ -281,7 +281,12 @@ export class ZacService {
       classification_source: response.technical_details.classification_source ?? null,
     });
 
-    return { ...response, output_id: measurement.outputId };
+    // `answer_storage_form` exists only to give the measurement spine an
+    // identity-free body to persist. It has served its purpose by here, and it
+    // must not reach the client — a second copy of the answer on the wire
+    // invites a consumer to render or cache the wrong one.
+    const { answer_storage_form: _storageForm, ...wire } = response;
+    return { ...wire, output_id: measurement.outputId };
   }
 
   /** Route one question to the memory paths or the tool/narration pipeline. */
@@ -560,7 +565,7 @@ export class ZacService {
     let orchestration: ZacOrchestrationResult | null = null;
 
     const resolvedIntent =
-      context.roleContext === 'stylist' ? null : this.resolveIntent(question);
+      context.roleContext === 'stylist' ? null : this.resolveIntent(question, conversation);
 
     // What KIND of analysis is this? Decided once, before the branch chain, so
     // the (possibly model-backed) decision is never made twice for one turn.
@@ -844,6 +849,24 @@ export class ZacService {
    * from the structural turn summaries — a closed marker, never transcript
    * text — so continuity costs nothing and leaks nothing.
    */
+  /**
+   * The most recent ASSISTANT turn summary, or '' when there is none.
+   *
+   * Only the last one, deliberately. A deictic ("these clients") refers to what
+   * was just said; scanning the whole window would let a retention answer two
+   * exchanges back supply an antecedent for a question that was about something
+   * else entirely.
+   *
+   * Summaries are structural by contract (D32) — a tool name, a response type,
+   * a boundary marker — so reading them here carries no user or client text.
+   */
+  private lastAssistantSummary(conversation: ZacConversationState): string {
+    for (const summary of [...conversation.recentSummaries].reverse()) {
+      if (/ via report\.|\bvia [a-z]+\./.test(summary)) return summary;
+    }
+    return '';
+  }
+
   private priorFixedBoundary(conversation: ZacConversationState): ZacBlockingReason | null {
     for (const summary of [...conversation.recentSummaries].reverse()) {
       // [a-z0-9_] — 'phase1_read_only_boundary' carries a digit, and an
@@ -2233,7 +2256,23 @@ export class ZacService {
    * through to the honest staff-not-connected refusal. Unmatched questions
    * fall back to the capability summary.
    */
-  private resolveIntent(question: string): ZacToolName | null {
+  /**
+   * "Who are they?" — a request to IDENTIFY the subjects of the previous
+   * answer. Needs both a deictic object and an identify verb, so "how many of
+   * those?" (a count question) does not qualify and neither does a bare
+   * "these". Deliberately narrow: the antecedent guard in resolveIntent is what
+   * makes it safe, and a loose matcher here would lean on that guard too hard.
+   */
+  private isDeicticIdentifyFollowUp(q: string): boolean {
+    const deictic = /\b(these|those|them|they|the ones|the list)\b/.test(q);
+    const identify =
+      /\b(let me know|who (are|is)|which (one|ones|of them)|name them|names?|list them|show (me )?(them|the list)|tell me who)\b/.test(
+        q,
+      );
+    return deictic && identify;
+  }
+
+  private resolveIntent(question: string, conversation: ZacConversationState): ZacToolName | null {
     const q = question.toLowerCase();
     if (
       /what can (you|zac|i ask)|help me with|what do you do|what can you do|capabilit|who are you\b/.test(q)
@@ -2316,6 +2355,25 @@ export class ZacService {
     ) {
       return 'report.service_mix';
     }
+    // "Who are they?" after a retention answer. Placed BEFORE the retention
+    // branch because a bare deictic carries no retention keyword of its own —
+    // its meaning comes entirely from the previous turn.
+    //
+    // Two guards, both mandatory:
+    //   A. no prior FIXED boundary in this conversation, so a deictic after a
+    //      coaching refusal cannot be used to walk around it;
+    //   B. the LAST assistant turn was the retention tool — not merely some
+    //      earlier one, so a retention answer two exchanges back is not treated
+    //      as the antecedent.
+    // When neither holds the branch simply does not fire, resolveIntent returns
+    // null, and the turn answers honestly rather than guessing a cohort.
+    if (
+      this.isDeicticIdentifyFollowUp(q) &&
+      this.priorFixedBoundary(conversation) === null &&
+      / via report\.client_retention\b/.test(this.lastAssistantSummary(conversation))
+    ) {
+      return 'report.client_lapse_list';
+    }
     // Retention: overdue, lapsed and not-coming-back questions. "Rebooking"
     // is a different question and matched above — it is about the forward
     // booking taken at the chair, not about who has stopped returning.
@@ -2368,6 +2426,15 @@ export class ZacService {
 
   /** Per-tool dispatch input, derived from the question — never from a model. */
   private toolInput(tool: ZacToolName, question: string): Record<string, unknown> {
+    if (tool === 'report.client_lapse_list') {
+      // The COHORT is read from the current question, not carried from the
+      // previous turn: turn summaries record the tool but not which cohort it
+      // answered for. Defaulting to `lapsed` is the minimum disclosure, and the
+      // tool points at the other cohort rather than guessing wider.
+      const q = question.toLowerCase();
+      const cohort = /\b(at[- ]?risk|overdue|drifting)\b/.test(q) ? 'at_risk' : 'lapsed';
+      return { cohort };
+    }
     if (tool === 'report.kpi_summary' || tool === 'report.utilisation_summary') {
       // Phase 1 contract: these take the KPI engine's own period enum, and
       // their boundaries are pinned client-accepted behaviour. Left alone.

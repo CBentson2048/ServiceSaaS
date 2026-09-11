@@ -620,6 +620,9 @@ describe('ZAC Workstream 1 — Expanded Intelligence', () => {
       });
     });
 
+    // Still true, and now load-bearing: this tool keeps its identity-free
+    // guarantee even though `report.client_lapse_list` can name the same
+    // people. The guarantee is a property of THIS tool, not of the platform.
     it('asks for one row and returns no client identity of any kind', async () => {
       const listLapsedClients = jest.fn().mockResolvedValue(LAPSE);
       const registry = makeRegistry({ clientIntelligence: { listLapsedClients } });
@@ -642,7 +645,7 @@ describe('ZAC Workstream 1 — Expanded Intelligence', () => {
         expect(serialised).not.toContain(forbidden);
       }
       expect(result.data).not.toHaveProperty('clients');
-      expect(result.presentation?.limitations.join(' ')).toContain('never list or name individual clients');
+      expect(result.presentation?.limitations.join(' ')).toContain('I can name them where your access covers client records');
     });
 
     it('says it cannot judge retention when nobody has enough history', async () => {

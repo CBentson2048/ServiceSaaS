@@ -44,6 +44,8 @@ export interface ZacOutputRecord {
   id: string;
   business_id: string;
   actor_user_id: string | null;
+  /** Needed to scope a manager to their own sites; null when business-wide. */
+  location_id: string | null;
   visibility_scope: string;
   response_type: string;
   request_mode: string | null;

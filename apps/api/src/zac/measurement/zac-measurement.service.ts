@@ -72,7 +72,12 @@ export class ZacMeasurementService {
           responseType: response.response_type,
           requestMode: (response.technical_details.request_mode ?? 'qlooqo_data') as ZacRequestMode,
           title: null,
-          bodyRedacted: redactForStorage(response.answer, 4000),
+          // The storage form when a tool disclosed identities, the answer
+          // otherwise. redactForStorage has patterns for emails, tokens and
+          // digit runs but NONE for names, so a named answer stored here would
+          // keep the names verbatim in a table whose read path re-checks no
+          // client permission.
+          bodyRedacted: redactForStorage(response.answer_storage_form ?? response.answer, 4000),
           evidence: response.evidence,
           limitations: response.limitations,
           confidence: response.confidence,

@@ -237,6 +237,17 @@ export interface ZacResponse {
    */
   conversation_id: string | null;
   /**
+   * The storable form of `answer` — identical except that client identities
+   * are absent. Set only when a tool returned `identityDisclosure`.
+   *
+   * DELIVERY AND RETENTION ARE DIFFERENT DECISIONS. The user is authorised to
+   * SEE these clients; that does not authorise ZAC to keep a named roster of
+   * them in `zac.outputs`, which is read back under different rules and
+   * re-checks no client permission. Stripped before the response leaves the
+   * service, so it never reaches the wire.
+   */
+  answer_storage_form?: string;
+  /**
    * The persisted output this answer produced — the id feedback is submitted
    * against. Null when the turn produced no meaningful output (acknowledgement,
    * refusal, meta answer) or output storage was unavailable. Stamped by the

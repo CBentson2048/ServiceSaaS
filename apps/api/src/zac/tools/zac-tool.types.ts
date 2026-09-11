@@ -24,6 +24,9 @@ export type ZacToolName =
   | 'report.service_mix'
   | 'report.retail_performance'
   | 'report.client_retention'
+  // Names the clients behind the retention counts. Separately registered and
+  // separately gated so the counts tool keeps its identity-free guarantee.
+  | 'report.client_lapse_list'
   | 'report.profitability'
   | 'report.scorecard'
   | 'kpi.personal_coaching'
@@ -43,8 +46,12 @@ export type ZacToolResultStatus =
 /**
  * Answer-first material a live tool supplies for the response builder: the
  * user-facing answer, why/evidence, honest limitations and the next useful
- * action. All text is PII-safe by construction. Skeleton/denied results omit
- * this block and the builder falls back to a safe explanation.
+ * action. Skeleton/denied results omit this block and the builder falls back to
+ * a safe explanation.
+ *
+ * `answer`, `evidence` and `limitations` are PII-safe by construction — with
+ * ONE exception, `identityDisclosure` below, which is separately gated and
+ * separately handled on every downstream path.
  */
 export interface ZacToolPresentation {
   answer: string;
@@ -53,6 +60,19 @@ export interface ZacToolPresentation {
   limitations: string[];
   suggestedNextStep: string | null;
   responseType: ZacResponseType;
+  /**
+   * Client identities, rendered deterministically by the tool.
+   *
+   * Kept OFF `answer` on purpose, because `answer` travels to two places this
+   * must never reach: the evidence pack sent to the model provider, and
+   * `zac.outputs.body_redacted`. The builder appends this block to the wire
+   * answer only, and records the identity-free prose as the storage form.
+   *
+   * `redactForStorage` has patterns for emails, tokens and digit runs but NONE
+   * for names, so a name placed in `answer` would be stored verbatim in a
+   * table whose read path re-checks no client permission.
+   */
+  identityDisclosure?: { block: string; namedCount: number; cohortTotal: number };
 }
 
 /**
@@ -97,7 +117,11 @@ export interface ZacReadOnlyTool {
   readonly inputSchema: Record<string, unknown>;
   readonly outputSchema: Record<string, unknown>;
   readonly readOnly: true;
-  /** Fields stripped from output unless the actor holds the permission noted in the tool docs. */
+  /**
+   * DECLARATIVE ONLY. Nothing reads this field — a repo-wide search finds no
+   * filter, no reader and no test. Listing a field here strips nothing; any
+   * masking must be executable code inside the tool's own execute().
+   */
   readonly sensitiveFields: readonly string[];
   readonly errorBehavior: 'fail_closed';
   readonly fallbackBehavior: 'state_unavailable';

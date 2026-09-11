@@ -223,7 +223,15 @@ export class ZacRequestModeClassifierService {
    * unavailable or unsure. Never authoritative on its own — the router
    * combines this with the safe-fallback ladder.
    */
-  classifyHeuristic(question: string, roleContext: ZacRoleContext): ZacDeterministicVerdict | null {
+  classifyHeuristic(
+    question: string,
+    roleContext: ZacRoleContext,
+    /**
+     * Conversation context, when the caller has it. Optional and defaulted so
+     * every existing two-argument call keeps its current behaviour exactly.
+     */
+    followUp?: { priorDataTurn: boolean },
+  ): ZacDeterministicVerdict | null {
     void roleContext;
     const q = normalise(question);
 
@@ -233,6 +241,19 @@ export class ZacRequestModeClassifierService {
 
     if (this.isGeneralAdviceShape(q)) {
       return heuristic('general_advice', 'general_business_advice', null);
+    }
+
+    // A deictic follow-up to a DATA turn is itself a data question. Placed
+    // after the hypothetical and general-advice shapes so "if I'd lost those
+    // clients…" stays hypothetical, and before the conversational shape so it
+    // is not mistaken for chat about the dialogue.
+    //
+    // This exists to corroborate, not to decide: without it a polite deictic
+    // ("could you please let me know these clients?") carries no own-data
+    // anchor, the semantic verdict is left uncorroborated, and the router asks
+    // a clarifying question instead of answering.
+    if (followUp?.priorDataTurn && this.isDeicticDataFollowUp(q)) {
+      return heuristic('qlooqo_data', 'real_business_analysis', null);
     }
 
     // Conversational rules yield to an own-data anchor: "why do you think MY
@@ -457,6 +478,23 @@ export class ZacRequestModeClassifierService {
    * £2000" has the same shape but is a data question, so the guards below
    * refuse the report-me lead-ins and possessive subjects.
    */
+  /**
+   * A question whose object is the previous answer's subjects, asking to
+   * identify them: "who are they?", "let me know these clients", "name them".
+   *
+   * Requires BOTH a deictic and an identify verb. A bare deictic ("what about
+   * those?") is too weak to override the ladder, and an identify verb alone
+   * ("which clients are lapsed?") already routes on its own keywords.
+   */
+  private isDeicticDataFollowUp(q: string): boolean {
+    const deictic = /\b(these|those|them|they|the ones|the list)\b/.test(q);
+    const identify =
+      /\b(let me know|who (are|is)|which (one|ones|of them)|name them|names?|list them|show (me )?(them|the list)|tell me who)\b/.test(
+        q,
+      );
+    return deictic && identify;
+  }
+
   private hasConditionalScenarioShape(q: string): boolean {
     const conditional = /\bif\b[^.?!]{0,80}\d/.test(q) || /\bif\b[^.?!]{0,60}\b(was|were)\b/.test(q);
     if (!conditional) return false;

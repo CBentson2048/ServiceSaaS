@@ -41,6 +41,7 @@ const TOOL_AREA_LABELS: Partial<Record<ZacToolName, string>> = {
   'report.service_mix': 'which services earn the most, and how concentrated that is',
   'report.retail_performance': 'retail sales, leading products and retail attachment per visit',
   'report.client_retention': 'how many clients are active, overdue or lapsed',
+  'report.client_lapse_list': 'which specific clients have lapsed, by name',
   'report.profitability': 'profit and margin reporting',
   'qlab.colour_analytics': 'QLAB colour usage and waste analytics',
   'inventory.stock_status': 'stock levels and low-stock alerts',
@@ -156,9 +157,17 @@ export class ZacResponseBuilderService {
     } satisfies Partial<ZacResponse>;
 
     if (presentation) {
+      // DELIVERY vs RETENTION. When a tool discloses client identities, the
+      // wire answer carries them and the STORAGE form does not. Both are set
+      // here, together, so the pair can never drift apart: a second place that
+      // set only `answer` would silently persist the names.
+      const disclosure = presentation.identityDisclosure;
       return {
         ...base,
-        answer: presentation.answer,
+        answer: disclosure
+          ? [presentation.answer, disclosure.block].join('\n\n')
+          : presentation.answer,
+        ...(disclosure ? { answer_storage_form: presentation.answer } : {}),
         response_type: presentation.responseType,
         evidence: presentation.evidence,
         confidence: presentation.confidence,
@@ -549,9 +558,17 @@ export class ZacResponseBuilderService {
    */
   buildNarratedResponse(input: ToolBackedResponseInput & { narratedAnswer: string }): ZacResponse {
     const response = this.buildToolBackedResponse(input);
+    // The narration replaces the prose, so the identity block has to be
+    // re-appended and the storage form re-derived from the NARRATED text —
+    // otherwise this overwrite would drop the names from the wire, or worse,
+    // leave a storage form that no longer matches what was said.
+    const disclosure = input.result.status === 'ok' ? input.result.presentation?.identityDisclosure : undefined;
     return {
       ...response,
-      answer: input.narratedAnswer,
+      answer: disclosure
+        ? [input.narratedAnswer, disclosure.block].join('\n\n')
+        : input.narratedAnswer,
+      ...(disclosure ? { answer_storage_form: input.narratedAnswer } : {}),
       technical_details: { ...response.technical_details, foundation_mode: false },
     };
   }

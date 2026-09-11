@@ -238,7 +238,17 @@ export class ZacSemanticRouterService {
     // here — but the veto below and the fallback ladder both honour it, so a
     // future Layer 1 change cannot silently let an exclusion through.
     const dataInstruction = this.deterministic.detectDataInstruction(question);
-    const heuristicVerdict = this.deterministic.classifyHeuristic(question, roleContext);
+    // Whether the conversation already contains a DATA turn. Derived here, on
+    // the server, from the structural summaries — which are name-free by
+    // contract (D32) and never leave the process. The summaries are redacted
+    // separately on the way to the model; this read is the same one
+    // `priorFixedBoundary` already performs.
+    const priorDataTurn = (input.recentTurnSummaries ?? []).some((summary) =>
+      / via report\./.test(summary),
+    );
+    const heuristicVerdict = this.deterministic.classifyHeuristic(question, roleContext, {
+      priorDataTurn,
+    });
 
     // ---- Layer 2: semantic intent classification. ---------------------------
     // Which classifier is Layer 2 depends on the routing mode: in `semantic`

@@ -27,6 +27,7 @@ const LIVE_TOOLS: ZacToolName[] = [
   'report.service_mix',
   'report.retail_performance',
   'report.client_retention',
+  'report.client_lapse_list',
   'report.profitability',
   'report.scorecard',
 ];

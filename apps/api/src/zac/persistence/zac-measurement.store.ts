@@ -145,13 +145,16 @@ export class ZacMeasurementStore {
    * roles never widen into it).
    */
   async requireAccessibleOutput(
-    context: Pick<ZacActingContext, 'actorUserId' | 'businessId' | 'roleContext'>,
+    context: Pick<
+      ZacActingContext,
+      'actorUserId' | 'businessId' | 'roleContext' | 'accessibleLocationIds'
+    >,
     outputId: string,
   ): Promise<ZacOutputRecord> {
     const { data, error } = await this.admin
       .schema('zac')
       .from('outputs')
-      .select('id, business_id, actor_user_id, visibility_scope, response_type, request_mode')
+      .select('id, business_id, actor_user_id, location_id, visibility_scope, response_type, request_mode')
       .eq('id', outputId)
       .eq('business_id', context.businessId)
       .maybeSingle<ZacOutputRecord>();
@@ -161,14 +164,56 @@ export class ZacMeasurementStore {
     }
     if (!data) throw new NotFoundException();
 
-    const isOwnOutput = data.actor_user_id === context.actorUserId;
-    const isBusinessScope =
-      data.visibility_scope === 'business_owner' || data.visibility_scope === 'manager_team_theme';
-    const hasBusinessRole = context.roleContext === 'owner' || context.roleContext === 'manager';
-    if (!isOwnOutput && !(isBusinessScope && hasBusinessRole)) {
-      throw new NotFoundException();
-    }
+    if (!this.canSeeOutput(context, data)) throw new NotFoundException();
     return data;
+  }
+
+  /**
+   * The visibility matrix for a stored output. Deny by default.
+   *
+   * This previously admitted any MANAGER to any business-scoped output on base
+   * role alone — no permission, no location predicate — which
+   * `ZacIntelligenceSignalService.canSee` documents as a Phase 1 defect and
+   * deliberately declines to replicate. It was harmless only because the SELECT
+   * above omits `body_redacted`; it stops being harmless the moment anything
+   * reads an output body back.
+   *
+   * Ported from that corrected matrix so there is ONE definition, not two.
+   */
+  private canSeeOutput(
+    context: Pick<
+      ZacActingContext,
+      'actorUserId' | 'businessId' | 'roleContext' | 'accessibleLocationIds'
+    >,
+    output: ZacOutputRecord,
+  ): boolean {
+    if (output.business_id !== context.businessId) return false;
+    // Your own output is always yours, whatever its scope.
+    if (output.actor_user_id === context.actorUserId) return true;
+
+    switch (output.visibility_scope) {
+      case 'user_private':
+      case 'stylist_private':
+        // Personal outputs belong to their subject alone; no role widens in.
+        return false;
+      case 'business_owner':
+        // Business-wide readings are owner-only: the underlying tools are
+        // location-scoped for everyone but an owner, so an output derived from
+        // them must not widen what a manager can see.
+        return context.roleContext === 'owner';
+      case 'manager_team_theme': {
+        if (context.roleContext === 'owner') return true;
+        if (context.roleContext !== 'manager') return false;
+        // Fail closed on an unresolvable location, or this broadcasts to every
+        // manager in the business.
+        return (
+          output.location_id !== null &&
+          (context.accessibleLocationIds ?? []).includes(output.location_id)
+        );
+      }
+      default:
+        return false;
+    }
   }
 
   /** Upsert the actor's single active vote on an output (idempotent). */
