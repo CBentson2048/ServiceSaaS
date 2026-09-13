@@ -236,7 +236,12 @@ import type {
   RecordProductConsumptionRequest,
   RecordProductConsumptionResponse,
   ZacRoutingDetails,
+  ReportFilter,
+  ReportKey,
+  ReportOptions,
+  ReportResult,
 } from '@sheer/domain';
+import { encodeReportFilter } from '@sheer/domain';
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL ?? 'http://localhost:3001').replace(/\/$/, '');
 
@@ -3459,4 +3464,33 @@ export interface DiarySignalsResponse {
 export interface OperationalSignalSettingsResponse {
   scopes: Array<OperationalSignalThresholds & { locationId: string | null; configured: boolean }>;
   defaults: OperationalSignalThresholds;
+}
+
+// ---------------------------------------------------------------------------
+// QLOOQO 10 reports — foundation (V1.1 Week 8 Ticket A)
+// ---------------------------------------------------------------------------
+
+/**
+ * The locations this user may report on for a report, and the business week
+ * start. Sends no selection: the options can never be refused because of one.
+ */
+export async function getReportOptions(accessToken: string, reportKey: ReportKey): Promise<ReportOptions> {
+  return request<ReportOptions>(`/reports/${encodeURIComponent(reportKey)}/options`, { accessToken });
+}
+
+/**
+ * A report for a filter. The query is written by the same encoder as the page
+ * URL, so the API receives exactly the filter the URL holds. Dates are local
+ * `YYYY-MM-DD` strings — the server resolves every location's own window.
+ */
+export async function getReportResult(
+  accessToken: string,
+  reportKey: ReportKey,
+  filter: ReportFilter,
+): Promise<ReportResult> {
+  const query = new URLSearchParams(encodeReportFilter(filter)).toString();
+  return request<ReportResult>(
+    `/reports/${encodeURIComponent(reportKey)}/result${query ? `?${query}` : ''}`,
+    { accessToken },
+  );
 }
