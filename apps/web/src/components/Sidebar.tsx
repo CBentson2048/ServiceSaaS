@@ -7,11 +7,16 @@ import { useAuth } from '../auth/AuthProvider';
 import { ALL_LOCATIONS, useLocationScope } from './LocationScopeContext';
 import { BrandLogo } from './BrandLogo';
 import { AppText } from '../design';
+import { reportsSurface } from '../config/reportsFoundationShell';
+import { buildReportNavGroup, isReportPath, type ReportNavGroup } from '../reports/reportNav';
 
 type IconComponent = (props: SVGProps<SVGSVGElement>) => ReactElement;
 
 interface NavEntry {
+  /** Pathname only — active-link matching compares it with the location. */
   to: string;
+  /** Query string the link carries (report links keep the current report filter). */
+  search?: string;
   label: string;
   icon: IconComponent;
   end?: boolean;
@@ -241,12 +246,35 @@ function filterNav(items: NavItem[], user?: AuthUser | null): NavItem[] {
   }, []);
 }
 
+// The Reports group comes from the report registry, not from NAV: whether it
+// shows is the report access decision (fail-closed, per membership), which the
+// permission-based filterNav above deliberately does not apply.
+function withReportGroup(items: NavItem[], reports: ReportNavGroup | null): NavItem[] {
+  if (!reports) return items;
+  const group: NavGroup = {
+    group: reports.label,
+    icon: ChartIcon,
+    children: reports.entries.map((entry) => ({
+      to: entry.to,
+      search: entry.search,
+      label: entry.label,
+      icon: ChartIcon,
+    })),
+  };
+  const afterDashboard = items.findIndex((item) => !isGroup(item) && item.to === '/dashboard') + 1;
+  return [...items.slice(0, afterDashboard), group, ...items.slice(afterDashboard)];
+}
+
 const STORAGE_KEY = 'sheer.web.sidebarCollapsed';
 
 export function Sidebar() {
   const { user } = useAuth();
   const location = useLocation();
-  const visible = filterNav(NAV, user);
+  const onReportPage = isReportPath(location.pathname);
+  const visible = withReportGroup(
+    filterNav(NAV, user),
+    buildReportNavGroup(user, reportsSurface(), location.pathname, location.search),
+  );
 
   const isPathActive = (to: string) =>
     location.pathname === to || location.pathname.startsWith(`${to}/`);
@@ -338,8 +366,12 @@ export function Sidebar() {
         </ul>
       </nav>
 
-      {/* Location picker, pinned to the bottom of the sidebar. */}
-      <LocationPicker collapsed={collapsed} onExpand={() => setCollapsed(false)} />
+      {/* Location picker, pinned to the bottom of the sidebar. Report pages
+          choose locations in their own control bar, so it is hidden there
+          rather than offering a second, disconnected selector. */}
+      {onReportPage ? null : (
+        <LocationPicker collapsed={collapsed} onExpand={() => setCollapsed(false)} />
+      )}
 
       {collapsed ? null : (
         <div className="border-t border-white/10 px-4 py-3">
@@ -367,7 +399,7 @@ function NavLeaf({
   return (
     <li>
       <NavLink
-        to={item.to}
+        to={item.search ? { pathname: item.to, search: item.search } : item.to}
         end={item.end}
         title={collapsed ? item.label : undefined}
         aria-label={collapsed ? item.label : undefined}
