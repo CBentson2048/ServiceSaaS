@@ -11,7 +11,7 @@
  * server — which knows every location's IANA timezone — resolves it
  * (apps/api/src/reports). Decision record: docs/V1.1/week-8-ticket-a-foundation.md.
  */
-import type { AuthUser, Permission } from './index';
+import type { MembershipGrant, Permission, UserRole } from './index';
 import { inclusiveDayCount, isLocalDate, type LocalDate } from './local-date';
 
 // ===========================================================================
@@ -116,8 +116,15 @@ export function isReportAvailable(definition: ReportDefinition, surface: ReportS
   return definition.release === 'released' || surface.foundationShell;
 }
 
-/** The only parts of the signed-in user that reporting access may read. */
-export type ReportAccessUser = Pick<AuthUser, 'roles' | 'membershipGrants'>;
+/**
+ * The only parts of the signed-in user that reporting access may read. An
+ * `AuthUser` satisfies it; the merged `permissions` and `allowedLocationIds`
+ * are deliberately not part of it.
+ */
+export interface ReportAccessUser {
+  readonly roles: readonly UserRole[];
+  readonly membershipGrants?: readonly MembershipGrant[];
+}
 
 function isOwner(user: ReportAccessUser): boolean {
   return user.roles.includes('owner');
