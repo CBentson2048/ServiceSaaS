@@ -10,16 +10,13 @@
  * own (see docs/V1.1/3-2 plan.md W3.2-F).
  *
  * Pure functions only — no clock reads. Callers pass "today" explicitly.
+ *
+ * Reporting (apps/api/src/reports) resolves per-location report windows with
+ * the same helpers, so there is exactly one DST-correct day boundary in the API.
  */
 
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-export function isLocalDate(value: string): boolean {
-  if (!DATE_RE.test(value)) return false;
-  const [y, m, d] = value.split('-').map(Number);
-  const probe = new Date(Date.UTC(y, m - 1, d));
-  return probe.getUTCFullYear() === y && probe.getUTCMonth() === m - 1 && probe.getUTCDate() === d;
-}
+// One strict calendar-date check for payroll, reporting and the browser.
+export { isLocalDate } from '@sheer/domain';
 
 /** 'YYYY-MM-DD' -> ms of that date at 00:00 UTC (calendar arithmetic space). */
 function dateToUtcMidnight(date: string): number {
@@ -164,24 +161,89 @@ function tzOffsetMs(timeZone: string, utcMs: number): number {
   return asUtc - Math.floor(utcMs / 1000) * 1000;
 }
 
+function wallClockDate(wc: WallClock): string {
+  return `${wc.year}-${String(wc.month).padStart(2, '0')}-${String(wc.day).padStart(2, '0')}`;
+}
+
+/** Every UTC offset in force within this span of a date's UTC midnight. */
+const TRANSITION_PROBE_MS = 40 * 3_600_000;
+/** An offset stays in force for weeks, never under an hour, so hourly samples see every one. */
+const TRANSITION_SAMPLE_MS = 3_600_000;
+
 /**
- * The UTC instant at which local date `date` begins in `timeZone`.
- * Two-pass offset refinement handles DST transitions (a 23:00/01:00 UTC
- * midnight either side of a BST/GMT switch resolves correctly).
+ * The first UTC instant whose local date in `timeZone` is `date`.
+ *
+ * Almost every date has one offset all day: its start is local midnight at that
+ * offset (the fast path). Around a clock change the start is the EARLIEST
+ * instant that reads `date` 00:00:00 on the local clock — which also covers a
+ * clock falling back across midnight, where midnight happens twice and the day
+ * begins at the first. Where midnight never happens (Santiago, Havana and the
+ * Azores jump from 23:59:59 to 01:00), the day begins at the first instant whose
+ * local date is `date`. A date the zone skipped entirely (Pacific/Apia,
+ * 2011-12-30) gets an empty window: its start equals the next day's start.
  */
 export function localDateStartUtc(timeZone: string, date: string): Date {
   const guess = dateToUtcMidnight(date);
-  const offset1 = tzOffsetMs(timeZone, guess);
-  const candidate = guess - offset1;
-  const offset2 = tzOffsetMs(timeZone, candidate);
-  return new Date(guess - offset2);
+  const earliestProbe = guess - TRANSITION_PROBE_MS;
+  const latestProbe = guess + TRANSITION_PROBE_MS;
+  const offsetBefore = tzOffsetMs(timeZone, earliestProbe);
+  const offsetAfter = tzOffsetMs(timeZone, latestProbe);
+  if (offsetBefore === offsetAfter) {
+    return new Date(guess - offsetBefore);
+  }
+
+  const offsets = new Set<number>([offsetBefore, offsetAfter]);
+  for (let probe = earliestProbe; probe <= latestProbe; probe += TRANSITION_SAMPLE_MS) {
+    offsets.add(tzOffsetMs(timeZone, probe));
+  }
+  let firstMidnight: number | null = null;
+  for (const offset of offsets) {
+    const candidate = guess - offset;
+    const wc = wallClockAt(timeZone, candidate);
+    const isMidnightOfDate =
+      wc.hour === 0 && wc.minute === 0 && wc.second === 0 && wallClockDate(wc) === date;
+    if (isMidnightOfDate && (firstMidnight === null || candidate < firstMidnight)) {
+      firstMidnight = candidate;
+    }
+  }
+  if (firstMidnight !== null) {
+    return new Date(firstMidnight);
+  }
+
+  // Local midnight does not occur on this date. The earliest probe reads an
+  // earlier date and the latest a later one (no offset exceeds ±14h), so search
+  // to the second for the first instant that reads `date` or later.
+  let before = earliestProbe;
+  let atOrAfter = latestProbe;
+  while (atOrAfter - before > 1000) {
+    const middle = Math.floor((before + atOrAfter) / 2000) * 1000;
+    if (wallClockDate(wallClockAt(timeZone, middle)) >= date) {
+      atOrAfter = middle;
+    } else {
+      before = middle;
+    }
+  }
+  return new Date(atOrAfter);
 }
 
 /** The local calendar date ('YYYY-MM-DD') of a UTC instant in `timeZone`. */
 export function utcToLocalDate(timeZone: string, isoOrMs: string | number): string {
   const utcMs = typeof isoOrMs === 'number' ? isoOrMs : Date.parse(isoOrMs);
-  const wc = wallClockAt(timeZone, utcMs);
-  return `${wc.year}-${String(wc.month).padStart(2, '0')}-${String(wc.day).padStart(2, '0')}`;
+  return wallClockDate(wallClockAt(timeZone, utcMs));
+}
+
+/**
+ * True when `timeZone` is an IANA zone this runtime can convert. Never throws:
+ * a location saved with a typo must be reported, not crash a request.
+ */
+export function isSupportedTimeZone(timeZone: string): boolean {
+  if (typeof timeZone !== 'string' || timeZone.trim() === '') return false;
+  try {
+    new Intl.DateTimeFormat('en-CA', { timeZone });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

@@ -18,6 +18,8 @@ export * from './notifications';
 export * from './upsell';
 // ZAC routing inspector: the closed routing vocabulary + its one display label set.
 export * from './zac-routing';
+// Local calendar dates ('YYYY-MM-DD'): validation and day counts, no timezone.
+export * from './local-date';
 import type { AppointmentBillingTax } from './tax';
 import type { FormulaChangeAssessment } from './formula-change';
 import type { NoShowRiskSignal, SpendTrendSignal } from './operational-signals';
