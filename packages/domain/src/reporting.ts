@@ -244,6 +244,11 @@ export const REPORT_PARAM_KEYS = ['preset', 'from', 'to', 'locations', 'staff', 
 export type ReportParamKey = (typeof REPORT_PARAM_KEYS)[number];
 
 export const REPORT_MIN_DATE: LocalDate = '2000-01-01';
+/**
+ * A validation bound, not a clamp: future ranges stay valid. It keeps every
+ * location's UTC window inside four-digit years, which timestamp columns parse.
+ */
+export const REPORT_MAX_DATE: LocalDate = '2099-12-31';
 export const MAX_REPORT_RANGE_DAYS = 366;
 export const MAX_REPORT_IDS = 50;
 
@@ -254,10 +259,12 @@ export type ReportFilterIssueCode =
   | 'custom_dates_required'
   | 'invalid_date'
   | 'date_before_min'
+  | 'date_after_max'
   | 'range_inverted'
   | 'range_too_long'
   | 'invalid_id'
   | 'too_many_ids'
+  | 'repeated_param'
   | 'control_not_supported';
 
 export interface ReportFilterIssue {
@@ -266,10 +273,19 @@ export interface ReportFilterIssue {
 }
 
 export type ReportParamsLike =
-  | { get(name: string): string | null }
+  | { get(name: string): string | null; getAll?(name: string): string[] }
   | Readonly<Record<string, string | undefined>>;
 
 const ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A parameter given more than once is ambiguous: reading only the first would silently drop the rest. */
+function repeatedParams(params: ReportParamsLike): ReportFilterIssue[] {
+  const getAll = (params as { getAll?: unknown }).getAll;
+  if (typeof getAll !== 'function') return [];
+  return REPORT_PARAM_KEYS.filter(
+    (key) => (params as { getAll(name: string): string[] }).getAll(key).length > 1,
+  ).map((param) => ({ code: 'repeated_param' as const, param }));
+}
 
 function readParam(params: ReportParamsLike, key: ReportParamKey): string | undefined {
   const raw =
@@ -305,6 +321,8 @@ export function reportCustomRangeIssues(
   if (to !== undefined && !validTo) issues.push({ code: 'invalid_date', param: 'to' });
   if (validFrom && from < REPORT_MIN_DATE) issues.push({ code: 'date_before_min', param: 'from' });
   if (validTo && to < REPORT_MIN_DATE) issues.push({ code: 'date_before_min', param: 'to' });
+  if (validFrom && from > REPORT_MAX_DATE) issues.push({ code: 'date_after_max', param: 'from' });
+  if (validTo && to > REPORT_MAX_DATE) issues.push({ code: 'date_after_max', param: 'to' });
   if (validFrom && validTo) {
     if (to < from) {
       issues.push({ code: 'range_inverted', param: 'to' });
@@ -340,9 +358,10 @@ function decodeIds(
  * - `strict` (API): every problem is an issue, and the API refuses the request.
  * - `lenient` (browser URL): parameters the report ignores are dropped silently
  *   (the URL is then canonicalised), junk presets/views fall back to defaults,
- *   and only problems that must stop a request are returned: a bad custom range
- *   or bad ids. Ids are never dropped — a shared link naming a location the
- *   viewer may not see is refused by the server, never silently widened.
+ *   and only problems that must stop a request are returned: a bad custom range,
+ *   bad ids or a repeated parameter. Ids are never dropped — a shared link
+ *   naming a location the viewer may not see is refused by the server, never
+ *   silently widened or narrowed.
  */
 export function decodeReportFilter(
   params: ReportParamsLike,
@@ -350,7 +369,7 @@ export function decodeReportFilter(
   mode: 'lenient' | 'strict',
 ): { filter: ReportFilter; issues: ReportFilterIssue[] } {
   const strict = mode === 'strict';
-  const issues: ReportFilterIssue[] = [];
+  const issues: ReportFilterIssue[] = repeatedParams(params);
 
   const rawPreset = readParam(params, 'preset');
   let preset: ReportPreset = 'today';

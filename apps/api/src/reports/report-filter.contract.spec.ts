@@ -102,6 +102,12 @@ describe('strict mode (API)', () => {
     expect(codes({ preset: 'custom', from: '2024-01-01', to: '2024-12-31' })).toEqual([]);
   });
 
+  it('refuses dates after 2099-12-31 (a validation bound, not a clamp)', () => {
+    expect(codes({ preset: 'custom', from: '9999-01-01', to: '9999-12-31' })).toEqual(['from:date_after_max', 'to:date_after_max']);
+    expect(codes({ preset: 'custom', from: '2099-12-01', to: '2100-01-01' })).toEqual(['to:date_after_max']);
+    expect(codes({ preset: 'custom', from: '2099-01-01', to: '2099-12-31' })).toEqual([]);
+  });
+
   it('accepts a custom range that is entirely in the future — dates apply as given', () => {
     expect(strict({ preset: 'custom', from: '2030-01-01', to: '2030-01-31' })).toEqual({
       filter: { preset: 'custom', from: '2030-01-01', to: '2030-01-31', locationIds: [], staffProfileIds: [], view: 'summary' },
@@ -146,6 +152,15 @@ describe('lenient mode (browser URL)', () => {
     const decoded = lenient(`locations=${L1},bogus`);
     expect(decoded.filter.locationIds).toEqual([L1, 'bogus']);
     expect(decoded.issues).toEqual([{ code: 'invalid_id', param: 'locations' }]);
+  });
+
+  it('blocks on a repeated parameter instead of silently reading only the first value', () => {
+    expect(lenient(`locations=${L1}&locations=${L2}`).issues).toEqual([{ code: 'repeated_param', param: 'locations' }]);
+    expect(lenient(`locations=&locations=${L2}`).issues).toEqual([{ code: 'repeated_param', param: 'locations' }]);
+    expect(lenient('preset=today&preset=last_week').issues).toEqual([{ code: 'repeated_param', param: 'preset' }]);
+    expect(decodeReportFilter(new URLSearchParams(`locations=${L1}&locations=${L2}`), money, 'strict').issues).toEqual([
+      { code: 'repeated_param', param: 'locations' },
+    ]);
   });
 
   it('blocks on an incomplete, inverted or over-long custom range', () => {
