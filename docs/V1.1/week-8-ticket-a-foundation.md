@@ -124,9 +124,11 @@ On dev-test (2026-09-13) this affects 2 of 3 non-owner manager users.
   `not_started` (from > localToday). A report must render unstarted days as
   "not started", never as 0 or £0.00.
 - **Week start** is the business's existing `payroll.payroll_settings.week_start_day`
-  (0 = Sunday). It is read with a SELECT only, only for week presets. A missing
-  row or invalid value is reported explicitly (`409 report_week_start_unconfigured`;
-  `options.weekStartDay: null`) — never silently Monday.
+  (0 = Sunday), read with a SELECT only. `options` always reads it (so the
+  control bar can disable week presets); `result` reads it only for week
+  presets. A missing row or invalid value is reported explicitly
+  (`409 report_week_start_unconfigured`; `options.weekStartDay: null`) — never
+  silently Monday. A failed read is a 500, never "unconfigured".
 - **A preset is not one custom range.** When locations' local dates differ, no
   single custom range reproduces a preset, so URLs, saved views and future
   scheduled exports store the preset, and exports print per-location ranges.
@@ -136,8 +138,9 @@ On dev-test (2026-09-13) this affects 2 of 3 non-owner manager users.
   never existed (an empty window). Payroll shares this helper; results in
   London, New York and Los Angeles are unchanged for 2000–2030.
 
-Limits: custom ranges up to 366 days, no earlier than 2000-01-01; at most 50 ids
-per list.
+Limits: custom ranges up to 366 days, from 2000-01-01 to 2099-12-31 inclusive;
+at most 50 ids per list; each parameter at most once (a repeated parameter is
+refused, never resolved by picking one copy).
 
 ---
 
@@ -150,18 +153,25 @@ GET /api/reports/:reportKey/result?preset&from&to&locations&staff&view
 
 Guard order: `ReportAvailabilityGuard` (404 before auth, identical for unknown
 and unavailable reports) → `SupabaseAuthGuard` (401) → `ReportAccessGuard` (403).
-No handler carries role/permission metadata. Responses send
-`Cache-Control: no-store, private`.
+No handler carries role/permission metadata. Handler responses (200s and the
+typed refusals thrown by the scope resolver) send `Cache-Control: no-store,
+private`; the guards' 404/401/403 are thrown before the handler and carry no
+report data.
 
 **options** takes no selection query in Ticket A, so it cannot return a
 selection-related 400 or 403. It returns every location the actor may report on
-(with `isActive` and `timezoneValid`) and `weekStartDay`. An actor with **no
-usable permitted location** for the report still receives
+— inactive locations and locations with an invalid timezone included, flagged by
+`isActive` and `timezoneValid` — and `weekStartDay`. An actor whose permitted
+set for the report is **empty** still receives
 `403 report_no_locations_in_scope`.
 
 **result** resolves in this order:
 
-1. strict decode → `400 report_filter_invalid` / `400 report_control_not_supported`
+0. the global ValidationPipe refuses unknown parameters, non-string values
+   (including a parameter repeated in the query string) and over-long values
+   with Nest's standard untyped 400 — no `code`, no issue list
+1. strict decode → `400 report_control_not_supported` if any issue is an
+   unsupported control, otherwise `400 report_filter_invalid` with the issues
 2. business locations (inactive included)
 3. permitted set empty → `403 report_no_locations_in_scope`
 4. any selected id outside the permitted set → `403 report_location_out_of_scope`
