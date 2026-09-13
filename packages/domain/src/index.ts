@@ -20,6 +20,8 @@ export * from './upsell';
 export * from './zac-routing';
 // Local calendar dates ('YYYY-MM-DD'): validation and day counts, no timezone.
 export * from './local-date';
+// QLOOQO 10 reporting foundation: report registry, fail-closed access, filter codec.
+export * from './reporting';
 import type { AppointmentBillingTax } from './tax';
 import type { FormulaChangeAssessment } from './formula-change';
 import type { NoShowRiskSignal, SpendTrendSignal } from './operational-signals';
@@ -218,6 +220,23 @@ export interface AuthUser {
    * {@link userHasPermission}. Owners always hold every permission.
    */
   permissions: Permission[];
+  /**
+   * Per-membership report grants (QLOOQO 10). One entry per ACTIVE MANAGER
+   * membership at a location of this business whose security level is
+   * explicitly assigned, exists and belongs to this business. Unlike
+   * {@link permissions} there is no role-default fallback: a NULL level grants
+   * nothing, and stylist memberships never grant. Omitted for owners, who may
+   * open every report. Absent means no grants. Read it only through
+   * `canOpenReport` / `reportLocationIds`.
+   */
+  membershipGrants?: MembershipGrant[];
+}
+
+/** One manager membership's explicit security-level permissions, for reporting. */
+export interface MembershipGrant {
+  locationId: string;
+  /** The level's permissions, expanded over prerequisites. */
+  permissions: Permission[];
 }
 
 /**
@@ -292,6 +311,7 @@ export type Permission =
   | 'report.commission.view'
   | 'report.financials.view'
   | 'report.lab_analytics.view'
+  | 'report.pnl.view'
   // Operational features
   | 'bookings.manage'
   | 'bookings.services.modify_after_checkin'
@@ -358,8 +378,13 @@ export const PERMISSION_CATALOG: readonly PermissionDefinition[] = [
   { key: 'report.dashboard.view', label: 'Dashboard', description: 'View the business dashboard and its KPIs.', kind: 'report', group: 'Reports & financials' },
   { key: 'report.performance.view', label: 'Team performance', description: 'View stylist performance reports.', kind: 'report', group: 'Reports & financials' },
   { key: 'report.commission.view', label: 'Commission', description: 'View commission figures and readiness.', kind: 'report', group: 'Reports & financials' },
-  { key: 'report.financials.view', label: 'Financials (revenue, P&L)', description: 'View revenue, retail sales and P&L figures.', kind: 'report', group: 'Reports & financials' },
+  { key: 'report.financials.view', label: 'Financials (revenue)', description: 'View revenue and retail sales figures.', kind: 'report', group: 'Reports & financials' },
   { key: 'report.lab_analytics.view', label: 'Colour lab analytics', description: 'View Qlooqo Lab analytics and margins.', kind: 'report', group: 'Reports & financials' },
+  // Owner-only by default: in no manager role default and no system security
+  // level (see SYSTEM_SECURITY_LEVELS). An owner delegates it by adding it to a
+  // custom level. Catalogue-only — owners hold it through ALL_PERMISSIONS, so no
+  // migration seeds it. Deliberately no `requires` edge.
+  { key: 'report.pnl.view', label: 'Profit & loss', description: 'View the profit and loss report, including revenue and costs. Owners only unless granted here.', kind: 'report', group: 'Reports & financials' },
   { key: 'crm.view', label: 'View clients', description: 'View client records.', kind: 'feature', group: 'Front of house' },
   { key: 'crm.manage', label: 'Manage clients', description: 'Create and edit client records.', kind: 'feature', group: 'Front of house', requires: ['crm.view'] },
   { key: 'services.view', label: 'View services', description: 'View the service catalogue without changing it.', kind: 'feature', group: 'Operations' },
@@ -552,19 +577,26 @@ export interface SystemSecurityLevelDefinition {
  * the expanded base levels called for in the brief.
  */
 export const SYSTEM_SECURITY_LEVELS: readonly SystemSecurityLevelDefinition[] = [
+  // Neither the Owner nor the Group Admin LEVEL carries `report.pnl.view`: the
+  // P&L is owner-only by default, and a level is assigned to non-owner
+  // memberships. Owners themselves hold it through their role
+  // (DEFAULT_ROLE_PERMISSIONS.owner). Existing businesses never had the key on
+  // these rows (ensureSystemLevels only inserts), so new and existing agree.
   {
     key: 'owner',
     name: 'Owner',
-    description: 'Full access to everything, including account and security settings.',
+    description: 'Full access to everything, including account and security settings. Profit & loss must be granted separately.',
     baseRole: 'owner',
-    permissions: [...ALL_PERMISSIONS],
+    permissions: ALL_PERMISSIONS.filter((p) => p !== 'report.pnl.view'),
   },
   {
     key: 'group_admin',
     name: 'Group Admin',
-    description: 'Runs the whole group across all locations, but cannot change the account plan or the security model.',
+    description: 'Runs the whole group across all locations, but cannot change the account plan or the security model. Profit & loss must be granted separately.',
     baseRole: 'owner',
-    permissions: ALL_PERMISSIONS.filter((p) => p !== 'account.manage' && p !== 'security.manage'),
+    permissions: ALL_PERMISSIONS.filter(
+      (p) => p !== 'account.manage' && p !== 'security.manage' && p !== 'report.pnl.view',
+    ),
   },
   {
     key: 'manager',
