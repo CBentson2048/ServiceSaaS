@@ -3,13 +3,15 @@
  * are proven in reports.http.spec.ts.
  */
 import { HttpException, type ExecutionContext } from '@nestjs/common';
-import type { AuthUser, ReportSurface } from '@sheer/domain';
+import { DEFAULT_ROLE_PERMISSIONS, type AuthUser, type ReportSurface } from '@sheer/domain';
+import type { ConfigService } from '@nestjs/config';
+import type { FactoryProvider } from '@nestjs/common';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ReportAccessGuard } from './report-access.guard';
 import type { ReportRequest } from './report-actor';
 import { ReportAvailabilityGuard } from './report-availability.guard';
-import { reportSurfaceFromEnv } from './report-surface';
+import { reportSurfaceFromEnv, reportSurfaceProvider } from './report-surface';
 
 const A = '00000000-0000-4000-8000-00000000000a';
 const B = '00000000-0000-4000-8000-00000000000b';
@@ -50,8 +52,25 @@ const owner = user({ roles: ['owner'], primaryRole: 'owner' });
 const managerLevel = user({
   membershipGrants: [{ locationId: A, permissions: ['report.financials.view', 'report.performance.view', 'report.lab_analytics.view'] }],
 });
-const nullLevelManager = user({ permissions: ['report.financials.view', 'report.pnl.view'] });
-const stylistWithManagerLevel = user({ roles: ['stylist'], primaryRole: 'stylist', permissions: ['report.financials.view'] });
+// Shaped exactly as resolveAuthUser builds them: grants [] (no qualifying
+// manager + explicit level), merged permissions from role defaults, and real
+// locations — so a fallback to any merged field would be caught.
+const nullLevelManager = user({
+  membershipGrants: [],
+  permissions: [...DEFAULT_ROLE_PERMISSIONS.manager, 'report.pnl.view'],
+  allowedLocationIds: [A],
+  locations: [{ id: A, name: 'London' }],
+  locationScope: { kind: 'locations', locationIds: [A] },
+});
+const stylistWithManagerLevel = user({
+  roles: ['stylist'],
+  primaryRole: 'stylist',
+  membershipGrants: [],
+  permissions: [...DEFAULT_ROLE_PERMISSIONS.manager],
+  allowedLocationIds: [A],
+  locations: [{ id: A, name: 'London' }],
+  locationScope: { kind: 'self', locationIds: [A] },
+});
 const managerAPlusStylistB = user({
   roles: ['manager', 'stylist'],
   allowedLocationIds: [A, B],
@@ -64,6 +83,20 @@ describe('reportSurfaceFromEnv', () => {
     for (const value of [undefined, '', 'TRUE', 'True', '1', 'yes', 'on', ' true']) {
       expect([value, reportSurfaceFromEnv(value).foundationShell]).toEqual([value, false]);
     }
+  });
+});
+
+describe('reportSurfaceProvider', () => {
+  it('reads exactly REPORTS_FOUNDATION_SHELL from config, with no default', () => {
+    const factory = (reportSurfaceProvider as FactoryProvider).useFactory;
+    const surfaceFor = (value: string | undefined) => {
+      const keys: string[] = [];
+      const config = { get: (key: string) => (keys.push(key), value) } as unknown as ConfigService;
+      return { surface: factory(config), keys };
+    };
+    expect(surfaceFor(undefined)).toEqual({ surface: { foundationShell: false }, keys: ['REPORTS_FOUNDATION_SHELL'] });
+    expect(surfaceFor('true').surface).toEqual({ foundationShell: true });
+    expect(surfaceFor('TRUE').surface).toEqual({ foundationShell: false });
   });
 });
 

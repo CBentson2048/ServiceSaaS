@@ -9,7 +9,7 @@
  */
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import type { AuthUser, ReportSurface } from '@sheer/domain';
+import { DEFAULT_ROLE_PERMISSIONS, type AuthUser, type ReportSurface } from '@sheer/domain';
 import request from 'supertest';
 import { AuthService } from '../auth/auth.service';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
@@ -31,13 +31,28 @@ const users: Record<string, Partial<AuthUser>> = {
     permissions: [],
     membershipGrants: [{ locationId: A, permissions: ['report.financials.view'] }],
   },
+  // Shaped as resolveAuthUser builds them: no grants, role-default merged
+  // permissions and real locations.
   'null-level-manager': {
     id: 'nl',
     businessId: 'biz',
     roles: ['manager'],
-    permissions: ['report.financials.view', 'report.pnl.view'],
+    membershipGrants: [],
+    permissions: [...DEFAULT_ROLE_PERMISSIONS.manager, 'report.pnl.view'],
+    allowedLocationIds: [A],
+    locations: [{ id: A, name: 'London' }],
+    locationScope: { kind: 'locations', locationIds: [A] },
   },
-  stylist: { id: 'stylist', businessId: 'biz', roles: ['stylist'], permissions: ['report.financials.view'] },
+  stylist: {
+    id: 'stylist',
+    businessId: 'biz',
+    roles: ['stylist'],
+    membershipGrants: [],
+    permissions: [...DEFAULT_ROLE_PERMISSIONS.manager],
+    allowedLocationIds: [A],
+    locations: [{ id: A, name: 'London' }],
+    locationScope: { kind: 'self', locationIds: [A] },
+  },
 };
 
 async function appWith(surface: ReportSurface) {

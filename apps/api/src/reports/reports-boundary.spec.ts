@@ -11,17 +11,41 @@
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import * as ts from 'typescript';
 
 const API_SRC = join(__dirname, '..');
 const DOMAIN_SRC = join(__dirname, '..', '..', '..', '..', 'packages', 'domain', 'src');
 
-function stripComments(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+/**
+ * Blank out comments using the TypeScript parser, so a `/*` or `//` inside a
+ * string, template or regex literal can never swallow real code.
+ */
+function stripComments(source: string, fileName = 'file.ts'): string {
+  const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const chars = source.split('');
+  const blank = (range: ts.CommentRange) => {
+    for (let i = range.pos; i < range.end; i++) if (chars[i] !== '\n') chars[i] = ' ';
+  };
+  const visit = (node: ts.Node) => {
+    ts.getLeadingCommentRanges(source, node.getFullStart())?.forEach(blank);
+    ts.getTrailingCommentRanges(source, node.getEnd())?.forEach(blank);
+    node.getChildren(file).forEach(visit);
+  };
+  visit(file);
+  return chars.join('');
 }
 
 function read(path: string): { name: string; code: string } {
-  return { name: relative(join(API_SRC, '..', '..', '..'), path), code: stripComments(readFileSync(path, 'utf8')) };
+  return { name: relative(join(API_SRC, '..', '..', '..'), path), code: stripComments(readFileSync(path, 'utf8'), path) };
 }
+
+/** Reads of the merged, role-default-backed user fields reporting must never use. */
+const MERGED_USER_READ = [
+  /allowedLocationIds|\blocationScope\b/,
+  /\b(auth|user|actor|currentUser)\s*[?!]?\.\s*(permissions|locations)\b/,
+  /\[\s*['"`](permissions|allowedLocationIds|locations|locationScope)['"`]\s*\]/,
+  /\{[^}]*\b(permissions|locations)\b[^}]*\}\s*=\s*(request\.|req\.)?(auth|user|actor)\b/,
+];
 
 const reportFiles = readdirSync(__dirname)
   .filter((file) => file.endsWith('.ts') && !file.endsWith('.spec.ts'))
@@ -49,11 +73,32 @@ describe('report foundation source boundaries', () => {
     ]);
   });
 
+  it('strips comments without swallowing code after a "/*" or "//" inside a string', () => {
+    const tricky = [
+      'const splat = "/reports/*";',
+      'const cdn = "//cdn.example.com";',
+      'const leak = user.permissions;',
+      '/** a doc comment */',
+      'export const x = 1; // trailing note mentioning allowedLocationIds',
+    ].join('\n');
+    const code = stripComments(tricky);
+    expect(code).toContain('user.permissions');
+    expect(code).toContain('"/reports/*"');
+    expect(code).not.toContain('a doc comment');
+    expect(code).not.toContain('allowedLocationIds');
+    expect(MERGED_USER_READ.some((pattern) => pattern.test(code))).toBe(true);
+  });
+
+  it('the merged-read patterns catch dotted, optional, non-null, bracket and destructured reads', () => {
+    for (const read of ['auth.permissions', 'user?.permissions', 'actor!.locations', "auth['permissions']", 'const { permissions } = request.auth', 'x.allowedLocationIds']) {
+      expect([read, MERGED_USER_READ.some((pattern) => pattern.test(read))]).toEqual([read, true]);
+    }
+    expect(MERGED_USER_READ.some((pattern) => pattern.test('grant.permissions.includes(key)'))).toBe(false);
+  });
+
   it('never reads merged permissions or merged location ids', () => {
     const files = [...reportFiles, grantResolver];
-    expect(offenders(files, /allowedLocationIds|locationScope\b/)).toEqual([]);
-    expect(offenders(files, /\b(auth|user|actor|currentUser)\??\.permissions\b/)).toEqual([]);
-    expect(offenders(files, /\{[^}]*\bpermissions\b[^}]*\}\s*=\s*(request\.)?(auth|user|actor)\b/)).toEqual([]);
+    for (const pattern of MERGED_USER_READ) expect([String(pattern), offenders(files, pattern)]).toEqual([String(pattern), []]);
     expect(offenders(files, /\buserHas(Permission|AllPermissions|AnyPermission|Role|AnyRole)\b|\bcanAccessLocation\b/)).toEqual([]);
   });
 

@@ -1,7 +1,8 @@
 /**
  * The approved Ticket A actor matrix, end to end:
- * membership rows → resolveMembershipGrants (as auth.service runs it) →
- * canOpenReport / reportLocationIds (as the guard, route and sidebar run them).
+ * membership rows → resolveMembershipGrants → canOpenReport / reportLocationIds
+ * (as the guard, route and sidebar run them). That AuthService feeds the resolver
+ * the right rows and levels is pinned in auth/auth.service.grants.spec.ts.
  *
  * Levels use the real SYSTEM_SECURITY_LEVELS permissions, so a change to a
  * seeded level that would widen report access fails here.

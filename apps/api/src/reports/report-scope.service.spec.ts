@@ -263,6 +263,43 @@ describe('per-location time resolution', () => {
     });
   });
 
+  it('checks timezones on the selection only: a broken location that is not selected blocks nothing', async () => {
+    const rows = [...LOCATION_ROWS, { id: BROKEN, name: 'Broken', timezone: 'Europe/Londn', is_active: true }];
+    const { service } = serviceWith({ locations: ok(rows) });
+    const scope = await service.resolve(owner, money, q({ locations: LONDON }), ASOF);
+    expect(scope.resolved.locations.map((l) => l.id)).toEqual([LONDON]);
+  });
+
+  it('refuses an out-of-scope id before checking timezones (403, not 422)', async () => {
+    const rows = [...LOCATION_ROWS, { id: BROKEN, name: 'Broken', timezone: 'Europe/Londn', is_active: true }];
+    const { service } = serviceWith({ locations: ok(rows) });
+    const managerWithBroken: ReportActor = { ...managerAPlusStylistB, membershipGrants: [grant(LONDON), grant(BROKEN)] };
+    expect(await failure(service.resolve(managerWithBroken, money, q({ locations: `${BROKEN},${FOREIGN}` }), ASOF))).toMatchObject({
+      status: 403,
+      body: { code: 'report_location_out_of_scope' },
+    });
+  });
+
+  it('reports an invalid timezone before a missing week start, without reading the week start', async () => {
+    const { service, queries } = serviceWith({
+      locations: ok([{ id: BROKEN, name: 'Broken', timezone: 'Europe/Londn', is_active: true }]),
+      payroll_settings: ok(null),
+    });
+    expect(await failure(service.resolve(owner, money, q({ preset: 'this_week' }), ASOF))).toMatchObject({
+      status: 422,
+      body: { code: 'report_timezone_invalid' },
+    });
+    expect(queries.map((query) => query.table)).toEqual(['locations']);
+  });
+
+  it('refuses an actor with no permitted locations as such, even when they name a location', async () => {
+    const { service } = serviceWith({ locations: ok(LOCATION_ROWS) });
+    expect(await failure(service.resolve(noGrants, money, q({ locations: LONDON }), ASOF))).toMatchObject({
+      status: 403,
+      body: { code: 'report_no_locations_in_scope' },
+    });
+  });
+
   it('does not name an invalid-timezone location the actor may not see', async () => {
     const rows = [...LOCATION_ROWS, { id: BROKEN, name: 'Broken', timezone: 'nope', is_active: true }];
     const { service } = serviceWith({ locations: ok(rows) });

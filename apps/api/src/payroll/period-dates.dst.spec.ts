@@ -12,6 +12,8 @@
  * transition dates depend on tzdata releases that governments still change.
  * Everything else asserts properties that hold for any tzdata.
  */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { isLocalDate as domainIsLocalDate, inclusiveDayCount } from '@sheer/domain';
 import {
   addDays,
@@ -23,6 +25,21 @@ import {
 } from './period-dates';
 
 const iso = (tz: string, date: string) => localDateStartUtc(tz, date).toISOString();
+
+/** Date APIs that read or write the SERVER's local time (UTC variants are fine). */
+const LOCAL_TIME_DATE_API =
+  /\.(get|set)(FullYear|Month|Date|Day|Hours|Minutes|Seconds|Milliseconds)\s*\(|getTimezoneOffset|toLocale\w*\(|new Date\(\s*[\w.$]+\s*,/;
+
+describe('the local-time guard itself', () => {
+  it('catches local getters, the local constructor and offsets, and allows UTC forms', () => {
+    for (const bad of ['d.getFullYear()', 'd.setDate(1)', 'new Date(y, m - 1, d)', 'd.getTimezoneOffset()', 'd.toLocaleDateString()']) {
+      expect([bad, LOCAL_TIME_DATE_API.test(bad)]).toEqual([bad, true]);
+    }
+    for (const good of ['d.getUTCFullYear()', 'd.setUTCDate(1)', 'new Date(Date.UTC(y, m - 1, d))', 'new Date(utcMs)']) {
+      expect([good, LOCAL_TIME_DATE_API.test(good)]).toEqual([good, false]);
+    }
+  });
+});
 
 /** Hours from the start of `date` to the start of the next day. */
 function dayLengthHours(tz: string, date: string): number {
@@ -230,21 +247,12 @@ describe('localDateStartUtc — zones where midnight is skipped, repeated or mis
     expect(problems).toEqual([]);
   }, 300_000);
 
-  it('does not depend on the server process timezone', () => {
-    const cases: Array<[string, string]> = [
-      ['Europe/London', '2026-10-25'],
-      ['America/Santiago', '2025-09-07'],
-      ['Asia/Tokyo', '2026-09-14'],
-    ];
-    const before = cases.map(([tz, date]) => iso(tz, date));
-    const original = process.env.TZ;
-    process.env.TZ = 'Pacific/Kiritimati';
-    try {
-      expect(cases.map(([tz, date]) => iso(tz, date))).toEqual(before);
-    } finally {
-      if (original === undefined) delete process.env.TZ;
-      else process.env.TZ = original;
-    }
+  it('never uses the server process timezone: no local-time Date API in the source', () => {
+    // Reassigning process.env.TZ inside Jest does not change the zone Date uses,
+    // so independence is enforced on the source instead: only UTC getters and
+    // explicit IANA conversions are allowed.
+    const source = readFileSync(join(__dirname, 'period-dates.ts'), 'utf8');
+    expect(source).not.toMatch(LOCAL_TIME_DATE_API);
   });
 });
 

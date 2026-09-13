@@ -5,6 +5,8 @@
  * before this file was written. Week start is 2 (Tuesday), as configured for
  * every dev-test business and LOH; 2026-09-13 is a Sunday.
  */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { resolveLocalRange, resolveReportWindows, reportLocalStatus } from './report-window';
 import type { ReportFilter, WeekStartDay } from '@sheer/domain';
 
@@ -197,6 +199,13 @@ describe('custom ranges apply as given at every location', () => {
     );
   });
 
+  it('keeps UTC bounds in four-digit years at the last allowed date, even in the most westerly zone', () => {
+    const westmost = { id: 'westmost', timezone: 'Etc/GMT+12' };
+    const [window] = resolveReportWindows([westmost], { preset: 'custom', from: '2099-12-31', to: '2099-12-31' }, new Date(asOf), 2);
+    expect(window.fromUtc).toMatch(/^\d{4}-/);
+    expect(window.toUtcExclusive).toMatch(/^\d{4}-/);
+  });
+
   it('a past range is complete', () => {
     expect(at(asOf, { preset: 'custom', from: '2026-08-01', to: '2026-08-31' }, 2, [LONDON]).london).toBe(
       '2026-08-01..2026-08-31 [2026-07-31T23:00Z, 2026-08-31T23:00Z) complete',
@@ -247,15 +256,12 @@ describe('calendar edges', () => {
 });
 
 describe('independence from the server clock and zone', () => {
-  it('gives identical windows when the process timezone is Pacific/Kiritimati', () => {
-    const before = at('2026-09-13T15:30:00Z', { preset: 'this_week' });
-    const original = process.env.TZ;
-    process.env.TZ = 'Pacific/Kiritimati';
-    try {
-      expect(at('2026-09-13T15:30:00Z', { preset: 'this_week' })).toEqual(before);
-    } finally {
-      if (original === undefined) delete process.env.TZ;
-      else process.env.TZ = original;
-    }
+  it('uses no local-time Date API and reads no clock (the instant is passed in)', () => {
+    // Reassigning process.env.TZ inside Jest does not change the zone Date uses,
+    // so this is enforced on the source.
+    const source = readFileSync(join(__dirname, 'report-window.ts'), 'utf8');
+    expect(source).not.toMatch(
+      /\.(get|set)(FullYear|Month|Date|Day|Hours|Minutes|Seconds|Milliseconds)\s*\(|getTimezoneOffset|toLocale\w*\(|new Date\(|Date\.now/,
+    );
   });
 });
