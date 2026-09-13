@@ -3,7 +3,9 @@ import {
   isReportErrorBody,
   type ReportDefinition,
   type ReportErrorBody,
+  type ReportErrorCode,
   type ReportFilter,
+  type ReportFilterIssueCode,
   type ReportOptions,
   type ReportResult,
 } from '@sheer/domain';
@@ -12,7 +14,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { AppButton, AppCard, AppText } from '../design';
 import { ReportControlBar, WEEK_START_UNCONFIGURED_MESSAGE } from './ReportControlBar';
 import { LOCAL_CALENDAR_NOTE, groupReportScope } from './reportScopeLine';
-import { useReportFilter } from './useReportFilter';
+import { useReportFilter, type ReportFilterWriteMode } from './useReportFilter';
 
 type Loadable<T> =
   | { status: 'idle' }
@@ -24,7 +26,32 @@ function reportErrorOf(error: unknown): ReportErrorBody | null {
   return error instanceof ApiRequestError && isReportErrorBody(error.details) ? error.details : null;
 }
 
-const ID_ISSUES = new Set(['invalid_id', 'too_many_ids']);
+const ID_ISSUES = new Set<ReportFilterIssueCode>(['invalid_id', 'too_many_ids']);
+/** Shown by the control bar's custom-range form rather than as a page notice. */
+const RANGE_ISSUES = new Set<ReportFilterIssueCode>([
+  'custom_dates_required',
+  'invalid_date',
+  'date_before_min',
+  'date_after_max',
+  'range_inverted',
+  'range_too_long',
+]);
+/** Refusals that no retry can change. */
+const TERMINAL_CODES = new Set<ReportErrorCode>(['report_no_locations_in_scope', 'report_forbidden', 'report_not_found']);
+/** Result refusals whose notice carries a way to fix the filter. */
+const FILTER_ACTION_CODES = new Set<ReportErrorCode>([
+  'report_filter_invalid',
+  'report_control_not_supported',
+  'report_location_out_of_scope',
+  'report_timezone_invalid',
+  'report_week_start_unconfigured',
+]);
+
+const DEFAULT_FILTER: ReportFilter = { preset: 'today', locationIds: [], staffProfileIds: [], view: 'summary' };
+
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && [...a].sort().every((id, i) => id === [...b].sort()[i]);
+}
 
 /**
  * One QLOOQO 10 report page on the shared foundation. Render it with
@@ -32,12 +59,14 @@ const ID_ISSUES = new Set(['invalid_id', 'too_many_ids']);
  *
  * The filter lives only in the URL. Options and result load in parallel; a
  * monotonic request id per stream discards any response that arrives after a
- * newer request (`request()` cannot be aborted). A request that failed is shown
- * as a message — never as an empty or zero report.
+ * newer request (`request()` cannot be aborted). An access-token rotation alone
+ * refreshes in place without blanking the page. A request that failed is shown
+ * as a message with a way forward — never as an empty or zero report.
  */
 export function ReportPage({ definition }: { definition: ReportDefinition }) {
-  const { session } = useAuth();
+  const { session, user } = useAuth();
   const accessToken = session?.accessToken ?? null;
+  const userId = user?.id ?? null;
   const { filter, issues, filterKey, setFilter } = useReportFilter(definition);
 
   // Stable while the canonical filter is unchanged, so an unrelated URL
@@ -45,6 +74,8 @@ export function ReportPage({ definition }: { definition: ReportDefinition }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const requestFilter = useMemo<ReportFilter>(() => filter, [filterKey]);
   const blocked = issues.length > 0;
+  const optionsKey = `${userId}|${definition.key}`;
+  const resultKey = `${userId}|${definition.key}?${filterKey}`;
 
   const [options, setOptions] = useState<Loadable<ReportOptions>>({ status: 'loading' });
   const [result, setResult] = useState<Loadable<ReportResult>>({ status: 'idle' });
@@ -52,20 +83,27 @@ export function ReportPage({ definition }: { definition: ReportDefinition }) {
   const [resultAttempt, setResultAttempt] = useState(0);
   const optionsRequest = useRef(0);
   const resultRequest = useRef(0);
+  const shownOptionsKey = useRef<string | null>(null);
+  const shownResultKey = useRef<string | null>(null);
 
   useEffect(() => {
     const id = ++optionsRequest.current;
     if (!accessToken) return;
-    setOptions({ status: 'loading' });
+    // Same user and report (a token rotation): keep what is shown while refreshing.
+    setOptions((current) =>
+      current.status === 'ready' && shownOptionsKey.current === optionsKey ? current : { status: 'loading' },
+    );
     getReportOptions(accessToken, definition.key).then(
       (data) => {
-        if (optionsRequest.current === id) setOptions({ status: 'ready', data });
+        if (optionsRequest.current !== id) return;
+        shownOptionsKey.current = optionsKey;
+        setOptions({ status: 'ready', data });
       },
       (error: unknown) => {
         if (optionsRequest.current === id) setOptions({ status: 'error', error });
       },
     );
-  }, [accessToken, definition.key, optionsAttempt]);
+  }, [accessToken, definition.key, optionsKey, optionsAttempt]);
 
   useEffect(() => {
     const id = ++resultRequest.current;
@@ -73,51 +111,66 @@ export function ReportPage({ definition }: { definition: ReportDefinition }) {
       setResult({ status: 'idle' });
       return;
     }
-    setResult({ status: 'loading' });
+    setResult((current) =>
+      current.status === 'ready' && shownResultKey.current === resultKey ? current : { status: 'loading' },
+    );
     getReportResult(accessToken, definition.key, requestFilter).then(
       (data) => {
-        if (resultRequest.current === id) setResult({ status: 'ready', data });
+        if (resultRequest.current !== id) return;
+        shownResultKey.current = resultKey;
+        setResult({ status: 'ready', data });
       },
       (error: unknown) => {
         if (resultRequest.current === id) setResult({ status: 'error', error });
       },
     );
-  }, [accessToken, definition.key, requestFilter, blocked, resultAttempt]);
+  }, [accessToken, definition.key, requestFilter, resultKey, blocked, resultAttempt]);
 
   const optionsData = options.status === 'ready' ? options.data : null;
   const resolved = result.status === 'ready' && result.data.reportKey === definition.key ? result.data.filter : null;
 
-  const resetLocations = () => setFilter({ ...filter, locationIds: [] }, 'push');
-  const resetFilters = () =>
-    setFilter({ preset: 'today', locationIds: [], staffProfileIds: [], view: 'summary' }, 'replace');
+  const write = (next: ReportFilter, mode: ReportFilterWriteMode) => setFilter(next, mode);
+  const handlers: NoticeHandlers = {
+    filter,
+    optionsData,
+    retryResult: () => setResultAttempt((n) => n + 1),
+    write,
+  };
 
-  let notice: ReactNode = null;
+  const notices: ReactNode[] = [];
   if (options.status === 'error') {
     const code = reportErrorOf(options.error)?.code;
-    notice =
-      code === 'report_no_locations_in_scope' ? (
-        <Notice message="You have no locations available for this report." />
-      ) : (
+    if (code && TERMINAL_CODES.has(code)) {
+      notices.push(resultNotice(options.error, handlers));
+    } else {
+      notices.push(
         <Notice
+          key="options"
           message="We couldn’t load this report’s options."
           action={<AppButton size="sm" variant="secondary" onClick={() => setOptionsAttempt((n) => n + 1)}>Retry</AppButton>}
-        />
+        />,
       );
+      const resultCode = result.status === 'error' ? reportErrorOf(result.error)?.code : undefined;
+      if (resultCode && FILTER_ACTION_CODES.has(resultCode)) notices.push(resultNotice(result.status === 'error' ? result.error : null, handlers));
+    }
   } else if (blocked && issues.some((issue) => ID_ISSUES.has(issue.code))) {
-    notice = (
+    notices.push(
       <Notice
+        key="ids"
         message="This link has location filters that aren’t valid."
-        action={<AppButton size="sm" variant="secondary" onClick={() => setFilter({ ...filter, locationIds: [] }, 'replace')}>Reset locations</AppButton>}
-      />
+        action={<AppButton size="sm" variant="secondary" onClick={() => write({ ...filter, locationIds: [] }, 'replace')}>Reset locations</AppButton>}
+      />,
+    );
+  } else if (blocked && issues.some((issue) => !RANGE_ISSUES.has(issue.code))) {
+    notices.push(
+      <Notice
+        key="link"
+        message="This link has filters that aren’t valid."
+        action={<AppButton size="sm" variant="secondary" onClick={() => write(DEFAULT_FILTER, 'replace')}>Reset filters</AppButton>}
+      />,
     );
   } else if (result.status === 'error') {
-    notice = resultNotice(result.error, {
-      optionsData,
-      retry: () => setResultAttempt((n) => n + 1),
-      resetLocations,
-      resetFilters,
-      useToday: () => setFilter({ ...filter, preset: 'today', from: undefined, to: undefined }, 'push'),
-    });
+    notices.push(resultNotice(result.error, handlers));
   }
 
   const groups = resolved ? groupReportScope(resolved.locations) : [];
@@ -145,7 +198,7 @@ export function ReportPage({ definition }: { definition: ReportDefinition }) {
         />
       </AppCard>
 
-      {notice}
+      {notices}
 
       <section aria-label="Report dates" aria-live="polite" className="mb-4">
         {result.status === 'loading' ? (
@@ -197,66 +250,90 @@ function Notice({ message, action }: { message: string; action?: ReactNode }) {
   );
 }
 
-function resultNotice(
-  error: unknown,
-  handlers: {
-    optionsData: ReportOptions | null;
-    retry: () => void;
-    resetLocations: () => void;
-    resetFilters: () => void;
-    useToday: () => void;
-  },
-): ReactNode {
+interface NoticeHandlers {
+  filter: ReportFilter;
+  optionsData: ReportOptions | null;
+  retryResult: () => void;
+  write: (next: ReportFilter, mode: ReportFilterWriteMode) => void;
+}
+
+/**
+ * For a timezone refusal: the permitted locations that can be reported on —
+ * the valid part of the current selection, or every valid location when the
+ * selection was "all" or held only broken ones. `null` when nothing usable
+ * remains or it would not change the request.
+ */
+function reportableInstead(body: ReportErrorBody, handlers: NoticeHandlers): string[] | null {
+  if (!handlers.optionsData) return null;
+  const broken = new Set(body.locationIds ?? []);
+  const usable = handlers.optionsData.locations
+    .filter((location) => location.timezoneValid && !broken.has(location.id))
+    .map((location) => location.id);
+  const keptSelection = handlers.filter.locationIds.filter((id) => usable.includes(id));
+  const target = (keptSelection.length > 0 ? keptSelection : usable).sort();
+  if (target.length === 0 || sameIds(target, handlers.filter.locationIds)) return null;
+  return target;
+}
+
+function resultNotice(error: unknown, handlers: NoticeHandlers): ReactNode {
   const body = reportErrorOf(error);
+  const { filter, write } = handlers;
+  const button = (label: string, onClick: () => void) => (
+    <AppButton size="sm" variant="secondary" onClick={onClick}>
+      {label}
+    </AppButton>
+  );
   switch (body?.code) {
     case 'report_filter_invalid':
     case 'report_control_not_supported':
       return (
         <Notice
+          key="result"
           message="This link has filters this report can’t use."
-          action={<AppButton size="sm" variant="secondary" onClick={handlers.resetFilters}>Reset filters</AppButton>}
+          action={button('Reset filters', () => write(DEFAULT_FILTER, 'replace'))}
         />
       );
     case 'report_location_out_of_scope':
       return (
         <Notice
+          key="result"
           message="This link includes a location you can’t report on."
-          action={<AppButton size="sm" variant="secondary" onClick={handlers.resetLocations}>Reset locations</AppButton>}
+          action={button('Reset locations', () => write({ ...filter, locationIds: [] }, 'push'))}
         />
       );
     case 'report_no_locations_in_scope':
-      return <Notice message="You have no locations available for this report." />;
+      return <Notice key="result" message="You have no locations available for this report." />;
     case 'report_timezone_invalid': {
       const known = new Map((handlers.optionsData?.locations ?? []).map((l) => [l.id, l.name]));
       const names = (body.locationIds ?? []).map((id) => known.get(id)).filter((name): name is string => Boolean(name));
+      const instead = reportableInstead(body, handlers);
       return (
         <Notice
+          key="result"
           message={
             names.length > 0
               ? `These locations need their time zone fixing before they can be reported on: ${names.join(', ')}.`
               : 'A selected location needs its time zone fixing before it can be reported on.'
           }
-          action={<AppButton size="sm" variant="secondary" onClick={handlers.resetLocations}>Reset locations</AppButton>}
+          action={instead ? button('Report on the other locations', () => write({ ...filter, locationIds: instead }, 'push')) : undefined}
         />
       );
     }
     case 'report_week_start_unconfigured':
       return (
         <Notice
+          key="result"
           message={WEEK_START_UNCONFIGURED_MESSAGE}
-          action={<AppButton size="sm" variant="secondary" onClick={handlers.useToday}>Use today</AppButton>}
+          action={button('Use today', () => write({ ...filter, preset: 'today', from: undefined, to: undefined }, 'push'))}
         />
       );
     case 'report_forbidden':
-      return <Notice message="You don’t have access to this report." />;
+      return <Notice key="result" message="You don’t have access to this report." />;
     case 'report_not_found':
-      return <Notice message="This report isn’t available." />;
+      return <Notice key="result" message="This report isn’t available." />;
     default:
       return (
-        <Notice
-          message="We couldn’t load this report."
-          action={<AppButton size="sm" variant="secondary" onClick={handlers.retry}>Retry</AppButton>}
-        />
+        <Notice key="result" message="We couldn’t load this report." action={button('Retry', handlers.retryResult)} />
       );
   }
 }

@@ -44,20 +44,41 @@ export function ReportMultiSelect(props: ReportMultiSelectProps) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<string[]>([...value]);
   const containerRef = useRef<HTMLDivElement>(null);
+  const toggleRef = useRef<HTMLButtonElement>(null);
   const listId = useId();
 
-  const close = () => {
+  // Follow the committed value (Back/Forward, a reset): an untouched open list
+  // must never commit the selection it opened with over a newer one.
+  const valueKey = [...value].sort().join(',');
+  useEffect(() => {
+    setDraft([...value]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [valueKey]);
+
+  const close = (returnFocus = false) => {
     setOpen(false);
     if (!sameSelection(draft, value)) onCommit([...draft].sort());
+    if (returnFocus) toggleRef.current?.focus();
   };
 
+  // Re-subscribed every render so the handlers always see the current draft.
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (event: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(event.target as Node)) close();
     };
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        close(true);
+      }
+    };
     document.addEventListener('mousedown', onPointerDown);
-    return () => document.removeEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
   });
 
   const openList = () => {
@@ -93,14 +114,15 @@ export function ReportMultiSelect(props: ReportMultiSelectProps) {
     <div
       ref={containerRef}
       className="relative"
-      onKeyDown={(event) => {
-        if (open && event.key === 'Escape') {
-          event.preventDefault();
-          close();
-        }
+      onBlur={(event) => {
+        // Keyboard focus moving to something outside closes and commits. A null
+        // target (a click on non-focusable popup chrome) is left to mousedown.
+        const next = event.relatedTarget as Node | null;
+        if (open && next && !event.currentTarget.contains(next)) close();
       }}
     >
       <button
+        ref={toggleRef}
         type="button"
         disabled={disabled}
         aria-haspopup="listbox"
@@ -170,7 +192,7 @@ export function ReportMultiSelect(props: ReportMultiSelectProps) {
           <div className="mt-2 flex justify-end border-t border-border pt-2">
             <button
               type="button"
-              onClick={close}
+              onClick={() => close(true)}
               className="rounded-pill bg-surface-ink px-3 py-1 text-[12px] font-medium text-text-on-primary"
             >
               Done

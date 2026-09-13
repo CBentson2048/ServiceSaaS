@@ -29,8 +29,11 @@ jest.mock('../auth/api', () => {
   return { ApiRequestError, getReportOptions: jest.fn(), getReportResult: jest.fn() };
 });
 
+let mockToken = 'token';
+let mockUserId = 'u';
+
 jest.mock('../auth/AuthProvider', () => ({
-  useAuth: () => ({ status: 'authenticated', session: { accessToken: 'token' }, user: { id: 'u', roles: ['owner'] } }),
+  useAuth: () => ({ status: 'authenticated', session: { accessToken: mockToken }, user: { id: mockUserId, roles: ['owner'] } }),
 }));
 
 const api = jest.requireMock('../auth/api') as {
@@ -94,19 +97,24 @@ function KeyedReport() {
 }
 
 function renderAt(url: string) {
-  return render(
+  // A fresh element each time: re-rendering the identical element is a React bail-out.
+  const tree = () => (
     <MemoryRouter initialEntries={[url]}>
       <Probe />
       <Routes>
         <Route path="/reports/:key" element={<KeyedReport />} />
       </Routes>
-    </MemoryRouter>,
+    </MemoryRouter>
   );
+  const view = render(tree());
+  return { ...view, rerenderSame: () => view.rerender(tree()) };
 }
 
 beforeEach(() => {
   api.getReportOptions.mockReset();
   api.getReportResult.mockReset();
+  mockToken = 'token';
+  mockUserId = 'u';
 });
 
 describe('loading', () => {
@@ -284,6 +292,71 @@ describe('refusals are messages with a way out', () => {
     await screen.findByText(/need their time zone fixing.*Tokyo/);
   });
 
+  it('invalid timezone on "all locations": Report on the other locations requests only the valid ones', async () => {
+    api.getReportOptions.mockResolvedValue(options());
+    api.getReportResult
+      .mockRejectedValueOnce(reportError(422, 'report_timezone_invalid', { locationIds: [L2] }))
+      .mockResolvedValueOnce(result('money', [loc(L1, 'London', '2026-09-28', '2026-09-28', 'in_progress')]));
+    renderAt('/reports/money');
+    fireEvent.click(await screen.findByRole('button', { name: 'Report on the other locations' }));
+    await waitFor(() => expect(api.getReportResult).toHaveBeenCalledTimes(2));
+    expect(api.getReportResult.mock.calls[1][2]).toMatchObject({ locationIds: [L1] });
+    expect(currentSearch).toBe(`?locations=${L1}`);
+  });
+
+  it('invalid timezone on an explicit link to the broken location: offers the valid locations instead', async () => {
+    api.getReportOptions.mockResolvedValue(options());
+    api.getReportResult
+      .mockRejectedValueOnce(reportError(422, 'report_timezone_invalid', { locationIds: [L2] }))
+      .mockResolvedValueOnce(result('money', []));
+    renderAt(`/reports/money?locations=${L2}`);
+    fireEvent.click(await screen.findByRole('button', { name: 'Report on the other locations' }));
+    await waitFor(() => expect(currentSearch).toBe(`?locations=${L1}`));
+  });
+
+  it('invalid timezone everywhere: the message, and no action that cannot work', async () => {
+    api.getReportOptions.mockResolvedValue(options());
+    api.getReportResult.mockRejectedValue(reportError(422, 'report_timezone_invalid', { locationIds: [L1, L2] }));
+    renderAt('/reports/money');
+    await screen.findByText(/need their time zone fixing/);
+    expect(screen.queryByRole('button', { name: 'Report on the other locations' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Reset locations' })).toBeNull();
+  });
+
+  it('options refused for good (403 / 404): a plain message, never a Retry that cannot succeed', async () => {
+    api.getReportOptions.mockRejectedValue(reportError(403, 'report_forbidden'));
+    api.getReportResult.mockRejectedValue(reportError(403, 'report_forbidden'));
+    const { unmount } = renderAt('/reports/money');
+    await screen.findByText('You don’t have access to this report.');
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    unmount();
+    api.getReportOptions.mockRejectedValue(reportError(404, 'report_not_found'));
+    api.getReportResult.mockRejectedValue(reportError(404, 'report_not_found'));
+    renderAt('/reports/money');
+    await screen.findByText('This report isn’t available.');
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
+
+  it('a transient options failure still shows the result’s own way out', async () => {
+    api.getReportOptions.mockRejectedValue(reportError(500, 'boom'));
+    api.getReportResult.mockRejectedValue(reportError(403, 'report_location_out_of_scope'));
+    renderAt(`/reports/money?locations=${L2}`);
+    await screen.findByText('This link includes a location you can’t report on.');
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Reset locations' })).toBeTruthy();
+  });
+
+  it('a link with a repeated parameter is refused as invalid, without a request', async () => {
+    api.getReportOptions.mockResolvedValue(options());
+    api.getReportResult.mockResolvedValue(result('money', []));
+    renderAt(`/reports/money?locations=${L1}&locations=${L2}`);
+    await screen.findByText('This link has filters that aren’t valid.');
+    expect(api.getReportResult).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Reset filters' }));
+    await waitFor(() => expect(currentSearch).toBe(''));
+    await waitFor(() => expect(api.getReportResult).toHaveBeenCalledTimes(1));
+  });
+
   it('an unexpected failure shows an error with Retry, never an empty report', async () => {
     api.getReportOptions.mockResolvedValue(options());
     api.getReportResult.mockRejectedValueOnce(new Error('network')).mockResolvedValueOnce(result('money', []));
@@ -292,6 +365,42 @@ describe('refusals are messages with a way out', () => {
     expect(screen.queryByText('Foundation preview')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(api.getReportResult).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe('access-token rotation', () => {
+  it('refreshes in place: controls stay enabled and the dates stay visible while the new token re-fetches', async () => {
+    api.getReportOptions.mockResolvedValueOnce(options());
+    api.getReportResult.mockResolvedValueOnce(result('money', [loc(L1, 'London', '2026-09-28', '2026-09-28', 'in_progress')]));
+    const { rerenderSame } = renderAt('/reports/money');
+    await screen.findByText('28 Sept 2026 (in progress)');
+    const pendingOptions = deferred<ReportOptions>();
+    const pendingResult = deferred<ReportResult>();
+    api.getReportOptions.mockReturnValueOnce(pendingOptions.promise);
+    api.getReportResult.mockReturnValueOnce(pendingResult.promise);
+    mockToken = 'token-2';
+    rerenderSame();
+    await waitFor(() => expect(api.getReportResult).toHaveBeenCalledTimes(2));
+    expect(api.getReportResult.mock.calls[1][0]).toBe('token-2');
+    expect(screen.getByText('28 Sept 2026 (in progress)')).toBeTruthy();
+    expect((screen.getByRole('tab', { name: 'Today' }) as HTMLButtonElement).disabled).toBe(false);
+    await act(async () => {
+      pendingOptions.resolve(options());
+      pendingResult.resolve(result('money', [loc(L1, 'London', '2026-09-28', '2026-09-28', 'in_progress')]));
+    });
+  });
+
+  it('a different signed-in user does not see the previous user’s dates while loading', async () => {
+    api.getReportOptions.mockResolvedValueOnce(options());
+    api.getReportResult.mockResolvedValueOnce(result('money', [loc(L1, 'London', '2026-09-28', '2026-09-28', 'in_progress')]));
+    const { rerenderSame } = renderAt('/reports/money');
+    await screen.findByText('28 Sept 2026 (in progress)');
+    api.getReportOptions.mockReturnValueOnce(deferred<ReportOptions>().promise);
+    api.getReportResult.mockReturnValueOnce(deferred<ReportResult>().promise);
+    mockToken = 'other-token';
+    mockUserId = 'someone-else';
+    rerenderSame();
+    await waitFor(() => expect(screen.queryByText('28 Sept 2026 (in progress)')).toBeNull());
   });
 });
 

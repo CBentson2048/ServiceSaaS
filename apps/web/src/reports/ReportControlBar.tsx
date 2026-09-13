@@ -31,6 +31,7 @@ const RANGE_MESSAGES: Partial<Record<ReportFilterIssueCode, string>> = {
   custom_dates_required: 'Choose a start and an end date.',
   invalid_date: 'Enter dates as real calendar dates.',
   date_before_min: 'Reports go back to 1 January 2000.',
+  date_after_max: 'Reports go up to 31 December 2099.',
   range_inverted: 'The start date must be on or before the end date.',
   range_too_long: 'Choose a range of 366 days or fewer.',
 };
@@ -202,6 +203,8 @@ export function ReportControlBar(props: ReportControlBarProps) {
         {singleLocation ? (
           <AppText as="span" variant="caption" tone="secondary">
             Location: <span className="font-medium text-text-primary">{singleLocation.name}</span>
+            {singleLocation.isActive ? null : <span> · Closed</span>}
+            {singleLocation.timezoneValid ? null : <span className="text-warning"> · Time zone needs fixing</span>}
           </AppText>
         ) : (
           <ReportMultiSelect
@@ -236,7 +239,11 @@ export function ReportControlBar(props: ReportControlBarProps) {
           </div>
         ) : null}
 
-        {actions ? <div className="ml-auto flex items-center gap-2">{actions}</div> : null}
+        {actions ? (
+          <div role="group" aria-label="Report actions" className="ml-auto flex items-center gap-2">
+            {actions}
+          </div>
+        ) : null}
       </div>
     </div>
   );

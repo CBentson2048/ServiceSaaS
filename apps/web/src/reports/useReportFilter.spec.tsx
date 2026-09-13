@@ -149,6 +149,13 @@ describe('useReportFilter', () => {
     expect(screen.getByTestId('issues').textContent).toBe('custom_dates_required,invalid_id');
   });
 
+  it('leaves a repeated parameter as typed: which copy was meant is unknowable', () => {
+    const { search } = setup(`/reports/money?locations=${L1}&locations=${L2}`);
+    expect(actions).toEqual([]);
+    expect(search()).toBe(`?locations=${L1}&locations=${L2}`);
+    expect(screen.getByTestId('issues').textContent).toBe('repeated_param');
+  });
+
   it('gives equal filters equal keys, independent of parameter and id order', () => {
     setup(`/reports/money?locations=${L2},${L1}&preset=yesterday`);
     const first = latest?.filterKey;

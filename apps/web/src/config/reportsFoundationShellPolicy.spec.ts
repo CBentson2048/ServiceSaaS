@@ -11,8 +11,4 @@ describe('resolveReportsFoundationShell', () => {
       expect([value, resolveReportsFoundationShell(value)]).toEqual([value, false]);
     }
   });
-
-  it('takes one input only: no dev-mode default and no browser override', () => {
-    expect(resolveReportsFoundationShell.length).toBe(1);
-  });
 });

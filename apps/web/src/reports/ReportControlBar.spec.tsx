@@ -88,6 +88,7 @@ describe('custom range', () => {
     ['an inverted range', '2026-09-29', '2026-09-22', /on or before the end date/],
     ['a range over 366 days', '2025-01-01', '2026-06-30', /366 days or fewer/],
     ['a range before 2000', '1999-12-31', '2000-01-02', /1 January 2000/],
+    ['a range after 2099', '2099-12-31', '2100-01-02', /31 December 2099/],
   ])('disables Apply with a message for %s', (_label, from, to, message) => {
     const { onChange } = renderBar();
     fireEvent.click(screen.getByRole('tab', { name: 'Custom' }));
@@ -212,11 +213,64 @@ describe('optional controls and slots', () => {
   });
 
   it('renders the actions slot when given one, and nothing otherwise', () => {
-    const { unmount, container } = renderBar();
-    expect(screen.queryByText('Export')).toBeNull();
-    expect(container.querySelector('.ml-auto')).toBeNull();
+    const { unmount } = renderBar();
+    expect(screen.queryByRole('group', { name: 'Report actions' })).toBeNull();
     unmount();
     renderBar({ actions: <button type="button">Export</button> });
-    expect(screen.getByRole('button', { name: 'Export' })).toBeTruthy();
+    const slot = screen.getByRole('group', { name: 'Report actions' });
+    expect(within(slot).getByRole('button', { name: 'Export' })).toBeTruthy();
+  });
+});
+
+describe('location list keeps the committed selection honest', () => {
+  const FOREIGN = '99999999-9999-4999-8999-999999999999';
+
+  it('keeps an id it has no option for: closing untouched commits nothing', () => {
+    const { onChange } = renderBar({ filter: { ...base, locationIds: [FOREIGN] } });
+    fireEvent.click(screen.getByRole('button', { name: /Locations/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('keeps an id it has no option for when another location is ticked', () => {
+    const { onChange } = renderBar({ filter: { ...base, locationIds: [FOREIGN] } });
+    fireEvent.click(screen.getByRole('button', { name: /Locations/ }));
+    fireEvent.click(screen.getByRole('option', { name: /London/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    expect(onChange).toHaveBeenCalledWith({ ...base, locationIds: [FOREIGN, L1].sort() }, 'push');
+  });
+
+  it('an untouched open list follows a URL change and does not commit the old selection', () => {
+    const { onChange, rerenderWith } = renderBar({ filter: { ...base, locationIds: [L1] } });
+    fireEvent.click(screen.getByRole('button', { name: /Locations/ }));
+    rerenderWith({ filter: { ...base, locationIds: [L1, L2] } }); // e.g. browser Back
+    fireEvent.mouseDown(document.body);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('closes and commits once when keyboard focus leaves the list', () => {
+    const { onChange } = renderBar();
+    fireEvent.click(screen.getByRole('button', { name: /Locations/ }));
+    const london = screen.getByRole('option', { name: /London/ });
+    fireEvent.keyDown(london, { key: ' ' });
+    fireEvent.blur(london, { relatedTarget: screen.getByRole('tab', { name: 'Detail' }) });
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange.mock.calls[0][0].locationIds).toEqual([L1]);
+  });
+
+  it('closes on Escape pressed anywhere, and Done returns focus to the toggle', () => {
+    renderBar();
+    fireEvent.click(screen.getByRole('button', { name: /Locations/ }));
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(screen.queryByRole('listbox')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Locations/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: /Locations/ }));
+  });
+
+  it('marks a single permitted location that is closed', () => {
+    renderBar({ options: { ...options, locations: [options.locations[2]] } });
+    expect(screen.getByText(/Closed/)).toBeTruthy();
   });
 });
