@@ -40,6 +40,7 @@ import {
 import type { ClientBookingAccountDto, ClientBookingLoginDto, CreateCustomerAccountDto } from './dto';
 import { normalizeE164 } from '../communications/phone';
 import { VerifiedTokenCache } from './verified-token.cache';
+import { resolveMembershipGrants, type GrantSecurityLevel } from './membership-grants';
 import { EmailService } from '../email/email.service';
 import { renderPasswordResetEmail } from '../email/templates/password-reset.template';
 
@@ -69,6 +70,7 @@ interface MembershipRow {
 
 interface SecurityLevelPermissionsRow {
   id: string;
+  business_id: string;
   permissions: unknown;
 }
 
@@ -632,7 +634,20 @@ export class AuthService {
       allowedLocationIds.includes(location.id),
     );
 
-    const permissions = await this.resolveEffectivePermissions(roles, sameBusinessMemberships);
+    const securityLevels = await this.fetchMembershipSecurityLevels(roles, sameBusinessMemberships);
+    const permissions = this.resolveEffectivePermissions(
+      roles,
+      sameBusinessMemberships,
+      securityLevels,
+    );
+    // Reporting reads these, never `permissions`: see membership-grants.ts.
+    const membershipGrants = resolveMembershipGrants({
+      businessId: business.id,
+      roles,
+      memberships: sameBusinessMemberships,
+      levels: securityLevels,
+      businessLocationIds: new Set(businessLocations.map((location) => location.id)),
+    });
 
     await this.admin
       .schema('core')
@@ -681,6 +696,7 @@ export class AuthService {
       clientCommunicationPreference: clientProfile?.communication_preference ?? undefined,
       timezone: profile.timezone ?? undefined,
       permissions,
+      ...(membershipGrants ? { membershipGrants } : {}),
     };
   }
 
@@ -730,20 +746,14 @@ export class AuthService {
    * assigned security level — or the base-role defaults when no level is set
    * (which is exactly V1 behaviour for un-migrated members).
    */
-  private async resolveEffectivePermissions(
+  private resolveEffectivePermissions(
     roles: UserRole[],
     memberships: MembershipRow[],
-  ): Promise<Permission[]> {
+    levels: ReadonlyMap<string, GrantSecurityLevel>,
+  ): Permission[] {
     if (roles.includes('owner')) {
       return [...ALL_PERMISSIONS];
     }
-
-    const levelIds = [
-      ...new Set(memberships.map((m) => m.security_level_id).filter(isString)),
-    ];
-    const levelPermissions = levelIds.length
-      ? await this.fetchSecurityLevelPermissions(levelIds)
-      : new Map<string, Permission[]>();
 
     const effective = new Set<Permission>();
     for (const membership of memberships) {
@@ -751,7 +761,7 @@ export class AuthService {
       // role when the referenced level is missing would silently restore broader
       // V1 manager access after a stale/deleted assignment.
       const perms = membership.security_level_id
-        ? (levelPermissions.get(membership.security_level_id) ?? [])
+        ? (levels.get(membership.security_level_id)?.permissions ?? [])
         : (DEFAULT_ROLE_PERMISSIONS[membership.role] ?? []);
       for (const perm of perms) effective.add(perm);
     }
@@ -762,17 +772,34 @@ export class AuthService {
     return expandPermissions(effective);
   }
 
+  /**
+   * The security levels referenced by a non-owner's memberships. Owners resolve
+   * every permission through their role, so no level is read for them.
+   */
+  private async fetchMembershipSecurityLevels(
+    roles: UserRole[],
+    memberships: MembershipRow[],
+  ): Promise<Map<string, GrantSecurityLevel>> {
+    if (roles.includes('owner')) {
+      return new Map();
+    }
+    const levelIds = [
+      ...new Set(memberships.map((m) => m.security_level_id).filter(isString)),
+    ];
+    return levelIds.length ? this.fetchSecurityLevelPermissions(levelIds) : new Map();
+  }
+
   private async fetchSecurityLevelPermissions(
     levelIds: string[],
-  ): Promise<Map<string, Permission[]>> {
+  ): Promise<Map<string, GrantSecurityLevel>> {
     const { data, error } = await this.admin
       .schema('core')
       .from('security_levels')
-      .select('id,permissions')
+      .select('id,business_id,permissions')
       .in('id', levelIds)
       .returns<SecurityLevelPermissionsRow[]>();
 
-    const map = new Map<string, Permission[]>();
+    const map = new Map<string, GrantSecurityLevel>();
     if (error || !data) {
       throw new ForbiddenException('Unable to resolve security level permissions');
     }
@@ -781,7 +808,7 @@ export class AuthService {
       const perms = Array.isArray(row.permissions)
         ? (row.permissions.filter((p): p is Permission => typeof p === 'string' && valid.has(p)))
         : [];
-      map.set(row.id, perms);
+      map.set(row.id, { businessId: row.business_id, permissions: perms });
     }
     return map;
   }
