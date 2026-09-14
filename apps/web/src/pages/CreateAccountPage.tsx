@@ -1,10 +1,11 @@
-import type { FormEvent} from 'react';
-import { useState } from 'react';
+import type { ChangeEvent, FormEvent } from 'react';
+import { useId, useState } from 'react';
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import type { LoginResponse } from '@sheer/domain';
 import { useAuth } from '../auth/AuthProvider';
 import { createClientBookingAccount } from '../auth/api';
 import { BrandLogo } from '../components/BrandLogo';
+import { PasswordInput } from '../design';
 import {
   readClientBookingSelection,
   updateClientBookingSelection,
@@ -187,20 +188,34 @@ function Field({
   autoComplete?: string;
   required?: boolean;
 }) {
+  const id = useId();
+  const inputProps = {
+    id,
+    className:
+      'w-full rounded-input-lg border border-[#E5D9CC] bg-[#FFFCF8] px-4 py-3 text-sm outline-none transition focus:border-primary',
+    autoComplete,
+    value,
+    onChange: (event: ChangeEvent<HTMLInputElement>) => onChange(event.target.value),
+    required,
+  };
+  // The label is tied by htmlFor rather than wrapping the input: a label may
+  // not contain a second labelable element such as the show/hide button.
   return (
-    <label className="block">
-      <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8A7D94]">
+    <div>
+      <label
+        htmlFor={id}
+        className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8A7D94]"
+      >
         {label}
-      </span>
-      <input
-        className="mt-2 w-full rounded-input-lg border border-[#E5D9CC] bg-[#FFFCF8] px-4 py-3 text-sm outline-none transition focus:border-primary"
-        type={type}
-        autoComplete={autoComplete}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        required={required}
-      />
-    </label>
+      </label>
+      <div className="mt-2">
+        {type === 'password' ? (
+          <PasswordInput {...inputProps} />
+        ) : (
+          <input type={type} {...inputProps} />
+        )}
+      </div>
+    </div>
   );
 }
 

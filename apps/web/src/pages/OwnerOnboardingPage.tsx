@@ -166,6 +166,10 @@ export function OwnerOnboardingPage() {
   const [stepIndex, setStepIndex] = useState(0);
   const [reachedStep, setReachedStep] = useState(0);
   const [owner, setOwner] = useState<OwnerForm>(emptyOwner);
+  // Held here rather than inside the password field: the field unmounts when
+  // the owner leaves step 1, and the review step re-validates the owner step,
+  // so the confirm rule below has to know it was shown.
+  const [passwordRevealed, setPasswordRevealed] = useState(false);
   const [business, setBusiness] = useState<BusinessForm>(emptyBusiness);
   const [location, setLocation] = useState<LocationForm>(emptyLocation);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -256,10 +260,12 @@ export function OwnerOnboardingPage() {
       next['owner.email'] = 'Enter a valid email address';
     if (owner.password.length < PASSWORD_MIN)
       next['owner.password'] = `Password must be at least ${PASSWORD_MIN} characters`;
-    if (owner.confirmPassword !== owner.password)
+    // A shown password needs no confirming: the owner can read what they typed,
+    // and the confirm field is not on screen to fix.
+    if (!passwordRevealed && owner.confirmPassword !== owner.password)
       next['owner.confirmPassword'] = 'Passwords do not match';
     return next;
-  }, [owner]);
+  }, [owner, passwordRevealed]);
 
   const validateBusiness = useCallback((): Record<string, string> => {
     const next: Record<string, string> = {};
@@ -465,7 +471,13 @@ export function OwnerOnboardingPage() {
           ) : null}
 
           {currentStep.key === 'owner' ? (
-            <OwnerStep value={owner} onChange={setOwner} errors={errors} />
+            <OwnerStep
+              value={owner}
+              onChange={setOwner}
+              errors={errors}
+              passwordRevealed={passwordRevealed}
+              onPasswordRevealedChange={setPasswordRevealed}
+            />
           ) : null}
 
           {currentStep.key === 'business' ? (
@@ -547,10 +559,14 @@ function OwnerStep({
   value,
   onChange,
   errors,
+  passwordRevealed,
+  onPasswordRevealedChange,
 }: {
   value: OwnerForm;
   onChange: (next: OwnerForm) => void;
   errors: Record<string, string>;
+  passwordRevealed: boolean;
+  onPasswordRevealedChange: (revealed: boolean) => void;
 }) {
   return (
     <div className="grid gap-4 sm:grid-cols-2">
@@ -598,17 +614,25 @@ function OwnerStep({
         onValueChange={(v) => onChange({ ...value, password: v })}
         hint={`At least ${PASSWORD_MIN} characters`}
         error={errors['owner.password']}
+        revealed={passwordRevealed}
+        onRevealedChange={onPasswordRevealedChange}
         required
       />
-      <TextField
-        label="Confirm password"
-        type="password"
-        autoComplete="new-password"
-        value={value.confirmPassword}
-        onValueChange={(v) => onChange({ ...value, confirmPassword: v })}
-        error={errors['owner.confirmPassword']}
-        required
-      />
+      {/* Confirming only makes sense while the password is masked. What was
+          typed here is kept, so hiding the password again brings it back and
+          Continue checks it against the password as it now stands. */}
+      {passwordRevealed ? null : (
+        <TextField
+          label="Confirm password"
+          type="password"
+          autoComplete="new-password"
+          value={value.confirmPassword}
+          onValueChange={(v) => onChange({ ...value, confirmPassword: v })}
+          error={errors['owner.confirmPassword']}
+          revealable={false}
+          required
+        />
+      )}
     </div>
   );
 }

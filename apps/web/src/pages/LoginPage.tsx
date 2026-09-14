@@ -7,6 +7,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { loginClientBookingAccount } from '../auth/api';
 import { loginRedirectTarget } from '../auth/loginRedirect';
 import { BrandLogo } from '../components/BrandLogo';
+import { PasswordInput } from '../design';
 import { usePageMetadata } from '../hooks/usePageMetadata';
 import { readClientBookingSelection, updateClientBookingSelection } from './clientBookingFlow';
 
@@ -151,27 +152,32 @@ export function LoginPage() {
             />
           </label>
 
-          <label className="block">
-            <span className="flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8A7D94]">
+          {/* Not a wrapping <label>: it would fold "Forgot password?" into the
+              input's name, and may not contain the show/hide button. */}
+          <div>
+            <div className="mb-2 flex items-center justify-between">
+              <label
+                htmlFor="login-password"
+                className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8A7D94]"
+              >
                 Password
-              </span>
+              </label>
               <Link
                 to="/forgot-password"
                 className="text-[12px] font-medium text-primary-deep hover:underline"
               >
                 Forgot password?
               </Link>
-            </span>
-            <input
-              className="mt-2 w-full rounded-input-lg border border-[#E5D9CC] bg-[#FFFCF8] px-4 py-3 text-sm outline-none transition focus:border-primary"
-              type="password"
+            </div>
+            <PasswordInput
+              id="login-password"
+              className="w-full rounded-input-lg border border-[#E5D9CC] bg-[#FFFCF8] px-4 py-3 text-sm outline-none transition focus:border-primary"
               autoComplete="current-password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               required
             />
-          </label>
+          </div>
 
           {error ? (
             <div className="rounded-input-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
