@@ -83,7 +83,7 @@ function renderApp(initial: string | string[], v7 = false) {
 }
 
 /** How the (re)rendered page was loaded, as the Navigation Timing API reports it. */
-function pageLoadedBy(type: 'navigate' | 'reload' | 'back_forward') {
+function pageLoadedBy(type: 'navigate' | 'prerender' | 'reload' | 'back_forward') {
   Object.defineProperty(performance, 'getEntriesByType', {
     configurable: true,
     value: (kind: string) => (kind === 'navigation' ? [{ type }] : []),
@@ -185,6 +185,13 @@ describe.each([
     await screen.findByText('Login page');
     expect(loginRedirectTarget(current.state)).toBe('/reports/money?preset=last_week&locations=shared');
     fresh.unmount();
+
+    // A typed URL the browser prerendered is also a new visit.
+    pageLoadedBy('prerender');
+    const prerendered = renderApp('/reports/money?preset=yesterday&locations=typed', v7);
+    await screen.findByText('Login page');
+    expect(loginRedirectTarget(current.state)).toBe('/reports/money?preset=yesterday&locations=typed');
+    prerendered.unmount();
 
     // Back into the previous user's pages is a return, not a new visit.
     pageLoadedBy('back_forward');

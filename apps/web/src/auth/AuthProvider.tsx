@@ -25,7 +25,8 @@ function readSignedOut(): boolean {
   try {
     if (sessionStorage.getItem(SIGNED_OUT_KEY) !== '1') return false;
     const [entry] = (performance.getEntriesByType?.('navigation') ?? []) as PerformanceNavigationTiming[];
-    return entry?.type !== 'navigate';
+    // No timing entry: assume a return (fail-safe). A prerender is a new visit.
+    return entry === undefined || entry.type === 'reload' || entry.type === 'back_forward';
   } catch {
     return false;
   }
