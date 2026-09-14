@@ -250,9 +250,10 @@ Therefore Ticket A ships **no staff scope**:
 - Sign-in after a bounce restores a report link whole (path, query, hash), so a
   shared report keeps its filters; any other page gets its path only, as
   before. After a sign-out (in that tab or another), protected pages record no
-  sign-in target until the next sign-in — kept per tab across reloads — so
-  neither the page signed out of nor one reached with Back is handed to the
-  next person on that browser.
+  sign-in target until the next sign-in, including after a reload or
+  Back/Forward into that tab, so neither the page signed out of nor one reached
+  with Back is handed to the next person on that browser. A link opened fresh
+  in that tab is a new visit and keeps its target.
 - A report is released by a **separate commit after its own G5 sign-off**, and
   only once the §2 release prerequisite and §7 preconditions are met.
 - Deploy the API before the web, so the new web never calls report endpoints or

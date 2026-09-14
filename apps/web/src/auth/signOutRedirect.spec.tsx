@@ -82,6 +82,18 @@ function renderApp(initial: string | string[], v7 = false) {
   );
 }
 
+/** How the (re)rendered page was loaded, as the Navigation Timing API reports it. */
+function pageLoadedBy(type: 'navigate' | 'reload' | 'back_forward') {
+  Object.defineProperty(performance, 'getEntriesByType', {
+    configurable: true,
+    value: (kind: string) => (kind === 'navigation' ? [{ type }] : []),
+  });
+}
+
+afterEach(() => {
+  delete (performance as unknown as Record<string, unknown>).getEntriesByType;
+});
+
 async function visit(to: string | number) {
   await act(async () => {
     go?.(to);
@@ -149,10 +161,34 @@ describe.each([
     first.unmount();
 
     // The reloaded page: same tab storage, history still holds the report page.
+    pageLoadedBy('reload');
     renderApp(['/reports/money?locations=aaa', '/login'], v7);
     await screen.findByText('Login page');
     expect(screen.getByTestId('signed-out').textContent).toBe('true');
     await visit(-1);
+    await screen.findByText('Login page');
+    expect(loginRedirectTarget(current.state)).toBeUndefined();
+  });
+
+  it('a shared report link opened fresh in a tab that was signed out of still keeps its target; Back still does not', async () => {
+    const first = renderApp('/login', v7);
+    await screen.findByText('Login page');
+    fireEvent.click(screen.getByRole('button', { name: 'sign in' }));
+    await waitFor(() => expect(screen.getByTestId('signed-out').textContent).toBe('false'));
+    fireEvent.click(screen.getByRole('button', { name: 'sign out' }));
+    await waitFor(() => expect(screen.getByTestId('signed-out').textContent).toBe('true'));
+    first.unmount();
+
+    // A new visit: someone pastes a shared link into the same tab.
+    pageLoadedBy('navigate');
+    const fresh = renderApp('/reports/money?preset=last_week&locations=shared', v7);
+    await screen.findByText('Login page');
+    expect(loginRedirectTarget(current.state)).toBe('/reports/money?preset=last_week&locations=shared');
+    fresh.unmount();
+
+    // Back into the previous user's pages is a return, not a new visit.
+    pageLoadedBy('back_forward');
+    renderApp('/reports/team?locations=bbb', v7);
     await screen.findByText('Login page');
     expect(loginRedirectTarget(current.state)).toBeUndefined();
   });
