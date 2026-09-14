@@ -431,6 +431,25 @@ describe('review fixes', () => {
     await waitFor(() => expect(screen.queryByText('We couldn’t refresh this report’s options.')).toBeNull());
   });
 
+  it('one Retry when both refreshes fail during an outage, and it retries both', async () => {
+    api.getReportOptions.mockResolvedValueOnce(options());
+    api.getReportResult.mockResolvedValueOnce(result('money', [loc(L1, 'London', '2026-09-28', '2026-09-28', 'in_progress')]));
+    const { rerenderSame } = renderAt('/reports/money');
+    await screen.findByText('28 Sept 2026 (in progress)');
+    api.getReportOptions.mockRejectedValueOnce(new Error('network')).mockResolvedValueOnce(options());
+    api.getReportResult.mockRejectedValueOnce(new Error('network')).mockResolvedValueOnce(result('money', [loc(L1, 'London', '2026-09-28', '2026-09-28', 'in_progress')]));
+    mockToken = 'token-2';
+    rerenderSame();
+    await screen.findByText('We couldn’t refresh this report’s options.');
+    await waitFor(() => expect(api.getReportResult).toHaveBeenCalledTimes(2));
+    await act(async () => undefined);
+    expect(screen.getAllByRole('button', { name: 'Retry' })).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(api.getReportResult).toHaveBeenCalledTimes(3));
+    await screen.findByText('28 Sept 2026 (in progress)');
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
+
   it('a refresh refused for access withdrawn is not kept quiet', async () => {
     api.getReportOptions.mockResolvedValueOnce(options());
     api.getReportResult.mockResolvedValueOnce(result('money', [loc(L1, 'London', '2026-09-28', '2026-09-28', 'in_progress')]));

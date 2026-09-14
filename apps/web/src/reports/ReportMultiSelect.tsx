@@ -76,7 +76,16 @@ export function ReportMultiSelect(props: ReportMultiSelectProps) {
   const reachable = (option: ReportMultiSelectOption) => !option.disabled || draft.includes(option.id);
   const canToggle = (option: ReportMultiSelectOption) =>
     draft.includes(option.id) || (!option.disabled && !atMax);
-  const rowIds = [ALL_ROW, ...ordered.filter(reachable).map((option) => option.id)];
+  /** Every rendered row, in order. Keyboard moves skip rows that cannot be changed. */
+  const rowIds = [ALL_ROW, ...ordered.map((option) => option.id)];
+  const rowReachable = (id: string) => {
+    if (id === ALL_ROW) return true;
+    const option = ordered.find((candidate) => candidate.id === id);
+    return option !== undefined && reachable(option);
+  };
+  // The active row is always the single tab stop — even one that just became
+  // locked (a broken location unticked) — and is "All" if its row is gone.
+  const focusId = rowIds.includes(activeId) ? activeId : ALL_ROW;
 
   const close = (returnFocus = false) => {
     setOpen(false);
@@ -116,6 +125,16 @@ export function ReportMultiSelect(props: ReportMultiSelectProps) {
     }
   }, [open, activeId]);
 
+  // The focused row left the list (its location went away while open): keep
+  // keyboard focus in the list instead of dropping it to the page.
+  useEffect(() => {
+    if (open && focusId !== activeId) {
+      const lostFocus = !containerRef.current?.contains(document.activeElement);
+      setActiveId(ALL_ROW);
+      if (lostFocus) rowRefs.current.get(ALL_ROW)?.focus();
+    }
+  }, [open, focusId, activeId]);
+
   const openList = () => {
     if (disabled) return;
     setDraft([...value]);
@@ -140,12 +159,15 @@ export function ReportMultiSelect(props: ReportMultiSelectProps) {
   };
 
   const onListKeyDown = (event: KeyboardEvent<HTMLUListElement>) => {
-    const index = Math.max(0, rowIds.indexOf(activeId));
+    const index = rowIds.indexOf(focusId);
+    const after = rowIds.slice(index + 1).filter(rowReachable);
+    const before = rowIds.slice(0, index).filter(rowReachable);
+    const reachableIds = rowIds.filter(rowReachable);
     const next: Record<string, string | undefined> = {
-      ArrowDown: rowIds[Math.min(rowIds.length - 1, index + 1)],
-      ArrowUp: rowIds[Math.max(0, index - 1)],
-      Home: rowIds[0],
-      End: rowIds[rowIds.length - 1],
+      ArrowDown: after[0],
+      ArrowUp: before[before.length - 1],
+      Home: reachableIds[0],
+      End: reachableIds[reachableIds.length - 1],
     };
     if (event.key in next) {
       event.preventDefault();
@@ -214,7 +236,7 @@ export function ReportMultiSelect(props: ReportMultiSelectProps) {
             <li
               ref={rowRef(ALL_ROW)}
               role="option"
-              tabIndex={activeId === ALL_ROW ? 0 : -1}
+              tabIndex={focusId === ALL_ROW ? 0 : -1}
               aria-selected={draft.length === 0}
               onClick={() => {
                 setActiveId(ALL_ROW);
@@ -244,7 +266,7 @@ export function ReportMultiSelect(props: ReportMultiSelectProps) {
                           key={option.id}
                           ref={rowRef(option.id)}
                           role="option"
-                          tabIndex={reachable(option) && activeId === option.id ? 0 : -1}
+                          tabIndex={focusId === option.id ? 0 : -1}
                           aria-selected={selected}
                           aria-disabled={locked || undefined}
                           onClick={() => {

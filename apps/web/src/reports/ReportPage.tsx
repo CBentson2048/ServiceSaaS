@@ -146,9 +146,16 @@ export function ReportPage({ definition }: { definition: ReportDefinition }) {
     write,
   };
 
-  const retryOptions = () => setOptionsAttempt((n) => n + 1);
   const optionsCode = options.status === 'error' ? reportErrorOf(options.error)?.code : undefined;
   const optionsRefused = optionsCode !== undefined && TERMINAL_CODES.has(optionsCode);
+  const optionsRetryShown =
+    (options.status === 'error' && !optionsRefused) || (options.status === 'ready' && options.refreshError !== undefined);
+  // The page's one Retry: it also retries a failed result, which is then not
+  // offered a Retry of its own.
+  const retryOptions = () => {
+    setOptionsAttempt((n) => n + 1);
+    if (result.status === 'error') setResultAttempt((n) => n + 1);
+  };
   const notices: ReactNode[] = [];
   if (options.status === 'error') {
     notices.push(
@@ -191,9 +198,10 @@ export function ReportPage({ definition }: { definition: ReportDefinition }) {
     );
   } else if (result.status === 'error') {
     const resultCode = reportErrorOf(result.error)?.code;
-    // Beside an options Retry, show only a refusal with its own way out, so the
-    // page never offers two Retry buttons for different things.
-    if (options.status !== 'error' || (resultCode !== undefined && FILTER_ACTION_CODES.has(resultCode))) {
+    // Beside an options Retry, show only a refusal that carries its own way out
+    // or needs none, so the page never offers two Retry buttons.
+    const ownWayOut = resultCode !== undefined && (FILTER_ACTION_CODES.has(resultCode) || TERMINAL_CODES.has(resultCode));
+    if (!optionsRetryShown || ownWayOut) {
       notices.push(resultNotice(result.error, handlers));
     }
   }

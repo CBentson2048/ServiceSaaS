@@ -395,3 +395,41 @@ describe('review fixes: one selected range, honest messages, keyboard and limits
     expect(onChange).not.toHaveBeenCalled();
   });
 });
+
+describe('keyboard focus stays in the list when a row cannot be changed', () => {
+  const broken = { id: 'broken', name: 'Broken', timezone: 'Europe/Londn', isActive: true, timezoneValid: false };
+  const withBroken = { ...options, locations: [...options.locations, broken] };
+  const tabStops = () =>
+    screen.getAllByRole('option').filter((option) => option.getAttribute('tabindex') === '0').map((option) => option.textContent);
+
+  it('after Space unticks a broken location, it stays the one tab stop and ArrowDown goes to the next row', () => {
+    renderBar({ options: withBroken, filter: { ...base, locationIds: ['broken'] } });
+    fireEvent.click(screen.getByRole('button', { name: /Locations/ }));
+    const row = screen.getByRole('option', { name: /Broken/ });
+    expect(document.activeElement).toBe(row);
+    fireEvent.keyDown(row, { key: ' ' });
+    expect(tabStops()).toEqual([row.textContent]);
+    fireEvent.keyDown(screen.getByRole('listbox'), { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(screen.getByRole('option', { name: /Old Street/ }));
+  });
+
+  it('a focused locked row moves to its neighbours, not to the top of the list', () => {
+    renderBar({ options: withBroken });
+    fireEvent.click(screen.getByRole('button', { name: /Locations/ }));
+    const row = screen.getByRole('option', { name: /Broken/ });
+    fireEvent.focus(row);
+    expect(tabStops()).toEqual([row.textContent]);
+    fireEvent.keyDown(screen.getByRole('listbox'), { key: 'ArrowUp' });
+    expect(document.activeElement).toBe(screen.getByRole('option', { name: /Tokyo/ }));
+  });
+
+  it('if the focused location disappears while the list is open, focus moves to "All locations"', () => {
+    const { rerenderWith } = renderBar({ filter: { ...base, locationIds: [L2] } });
+    fireEvent.click(screen.getByRole('button', { name: /Locations/ }));
+    expect(document.activeElement).toBe(screen.getByRole('option', { name: /Tokyo/ }));
+    rerenderWith({ filter: { ...base, locationIds: [L2] }, options: { ...options, locations: options.locations.filter((l) => l.id !== L2) } });
+    const all = screen.getByRole('option', { name: /All locations/ });
+    expect(document.activeElement).toBe(all);
+    expect(tabStops()).toEqual([all.textContent]);
+  });
+});
