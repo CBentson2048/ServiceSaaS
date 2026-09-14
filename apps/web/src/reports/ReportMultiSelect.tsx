@@ -6,6 +6,7 @@ export interface ReportMultiSelectOption {
   label: string;
   /** Options are shown under their group heading, in the order given. */
   group: string;
+  /** Cannot be added. An option that is already selected can still be removed. */
   disabled?: boolean;
   /** Shown beside the label, e.g. why an option is disabled. */
   note?: string;
@@ -20,10 +21,15 @@ export interface ReportMultiSelectProps {
   options: readonly ReportMultiSelectOption[];
   /** `[]` means "all". Ids with no matching option are kept, never dropped. */
   value: readonly string[];
+  /** The most ids an explicit selection may hold; further ticks are refused. */
+  maxSelected?: number;
   disabled?: boolean;
   /** Called once, when the list closes, and only if the selection changed. */
   onCommit(next: string[]): void;
 }
+
+/** Roving-focus id of the "All" row. Never a real option id (those are uuids). */
+const ALL_ROW = '__all__';
 
 function sameSelection(a: readonly string[], b: readonly string[]): boolean {
   if (a.length !== b.length) return false;
@@ -32,20 +38,28 @@ function sameSelection(a: readonly string[], b: readonly string[]): boolean {
 }
 
 /**
- * Accessible multi-select for report scopes. The selection is edited as a draft
- * and committed once when the list closes (Done, Escape or a click outside), so
- * choosing three locations makes one request and one history entry, not three.
- * "All" is the empty selection; ticking every option one by one stays an
- * explicit list, because "all I may see" and "these exact ids" are different
- * requests.
+ * Accessible multi-select for report scopes (WAI-ARIA multi-select listbox).
+ * The selection is edited as a draft and committed once when the list closes
+ * (Done, Escape, Tab away or a click outside), so choosing three locations
+ * makes one request and one history entry, not three. "All" is the empty
+ * selection; ticking every option one by one stays an explicit list, because
+ * "all I may see" and "these exact ids" are different requests.
+ *
+ * Keyboard: opening moves focus to the first selected row (or "All"); Arrow
+ * Up/Down, Home and End move between rows with a single tab stop; Space or
+ * Enter toggles; Escape closes and returns focus to the button.
  */
 export function ReportMultiSelect(props: ReportMultiSelectProps) {
-  const { label, allLabel, pluralNoun, options, value, disabled, onCommit } = props;
+  const { label, allLabel, pluralNoun, options, value, maxSelected, disabled, onCommit } = props;
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<string[]>([...value]);
+  const [activeId, setActiveId] = useState<string>(ALL_ROW);
   const containerRef = useRef<HTMLDivElement>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
+  const rowRefs = useRef(new Map<string, HTMLLIElement>());
+  const focusOnOpen = useRef(false);
   const listId = useId();
+  const noteId = useId();
 
   // Follow the committed value (Back/Forward, a reset): an untouched open list
   // must never commit the selection it opened with over a newer one.
@@ -55,11 +69,25 @@ export function ReportMultiSelect(props: ReportMultiSelectProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [valueKey]);
 
+  const groups = [...new Set(options.map((option) => option.group))];
+  const ordered = groups.flatMap((group) => options.filter((option) => option.group === group));
+  const atMax = maxSelected !== undefined && draft.length >= maxSelected;
+  /** Reachable by keyboard: anything that can be added, or removed. */
+  const reachable = (option: ReportMultiSelectOption) => !option.disabled || draft.includes(option.id);
+  const canToggle = (option: ReportMultiSelectOption) =>
+    draft.includes(option.id) || (!option.disabled && !atMax);
+  const rowIds = [ALL_ROW, ...ordered.filter(reachable).map((option) => option.id)];
+
   const close = (returnFocus = false) => {
     setOpen(false);
     if (!sameSelection(draft, value)) onCommit([...draft].sort());
     if (returnFocus) toggleRef.current?.focus();
   };
+
+  // A list left open when the control becomes disabled closes without committing.
+  useEffect(() => {
+    if (disabled && open) setOpen(false);
+  }, [disabled, open]);
 
   // Re-subscribed every render so the handlers always see the current draft.
   useEffect(() => {
@@ -81,24 +109,60 @@ export function ReportMultiSelect(props: ReportMultiSelectProps) {
     };
   });
 
+  useEffect(() => {
+    if (open && focusOnOpen.current) {
+      focusOnOpen.current = false;
+      rowRefs.current.get(activeId)?.focus();
+    }
+  }, [open, activeId]);
+
   const openList = () => {
     if (disabled) return;
     setDraft([...value]);
+    const firstSelected = ordered.find((option) => value.includes(option.id));
+    setActiveId(firstSelected ? firstSelected.id : ALL_ROW);
+    focusOnOpen.current = true;
     setOpen(true);
   };
 
   const toggle = (option: ReportMultiSelectOption) => {
-    if (option.disabled) return;
-    setDraft((current) =>
-      current.includes(option.id) ? current.filter((id) => id !== option.id) : [...current, option.id],
-    );
+    setDraft((current) => {
+      if (current.includes(option.id)) return current.filter((id) => id !== option.id);
+      if (option.disabled || (maxSelected !== undefined && current.length >= maxSelected)) return current;
+      return [...current, option.id];
+    });
   };
 
-  const onOptionKey = (event: KeyboardEvent, action: () => void) => {
+  const moveTo = (id: string | undefined) => {
+    if (!id) return;
+    setActiveId(id);
+    rowRefs.current.get(id)?.focus();
+  };
+
+  const onListKeyDown = (event: KeyboardEvent<HTMLUListElement>) => {
+    const index = Math.max(0, rowIds.indexOf(activeId));
+    const next: Record<string, string | undefined> = {
+      ArrowDown: rowIds[Math.min(rowIds.length - 1, index + 1)],
+      ArrowUp: rowIds[Math.max(0, index - 1)],
+      Home: rowIds[0],
+      End: rowIds[rowIds.length - 1],
+    };
+    if (event.key in next) {
+      event.preventDefault();
+      moveTo(next[event.key]);
+    }
+  };
+
+  const onRowKey = (event: KeyboardEvent, action: () => void) => {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
       action();
     }
+  };
+
+  const rowRef = (id: string) => (element: HTMLLIElement | null) => {
+    if (element) rowRefs.current.set(id, element);
+    else rowRefs.current.delete(id);
   };
 
   const summary =
@@ -107,8 +171,6 @@ export function ReportMultiSelect(props: ReportMultiSelectProps) {
       : value.length === 1
         ? (options.find((option) => option.id === value[0])?.label ?? `1 ${pluralNoun.replace(/s$/, '')}`)
         : `${value.length} ${pluralNoun}`;
-
-  const groups = [...new Set(options.map((option) => option.group))];
 
   return (
     <div
@@ -140,13 +202,26 @@ export function ReportMultiSelect(props: ReportMultiSelectProps) {
 
       {open ? (
         <div className="absolute left-0 z-20 mt-1 w-72 rounded-card border border-border bg-surface p-2 shadow-hero">
-          <ul id={listId} role="listbox" aria-multiselectable="true" aria-label={label} className="max-h-72 overflow-y-auto">
+          <ul
+            id={listId}
+            role="listbox"
+            aria-multiselectable="true"
+            aria-label={label}
+            aria-describedby={atMax ? noteId : undefined}
+            onKeyDown={onListKeyDown}
+            className="max-h-72 overflow-y-auto"
+          >
             <li
+              ref={rowRef(ALL_ROW)}
               role="option"
-              tabIndex={0}
+              tabIndex={activeId === ALL_ROW ? 0 : -1}
               aria-selected={draft.length === 0}
-              onClick={() => setDraft([])}
-              onKeyDown={(event) => onOptionKey(event, () => setDraft([]))}
+              onClick={() => {
+                setActiveId(ALL_ROW);
+                setDraft([]);
+              }}
+              onFocus={() => setActiveId(ALL_ROW)}
+              onKeyDown={(event) => onRowKey(event, () => setDraft([]))}
               className={cn(
                 'flex cursor-pointer items-center gap-2 rounded-input-lg px-2 py-1.5 text-[13px] hover:bg-surface-alt focus:bg-surface-alt focus:outline-none',
                 draft.length === 0 ? 'font-medium text-text-primary' : 'text-text-secondary',
@@ -163,18 +238,24 @@ export function ReportMultiSelect(props: ReportMultiSelectProps) {
                     .filter((option) => option.group === group)
                     .map((option) => {
                       const selected = draft.includes(option.id);
+                      const locked = !canToggle(option);
                       return (
                         <li
                           key={option.id}
+                          ref={rowRef(option.id)}
                           role="option"
-                          tabIndex={option.disabled ? -1 : 0}
+                          tabIndex={reachable(option) && activeId === option.id ? 0 : -1}
                           aria-selected={selected}
-                          aria-disabled={option.disabled || undefined}
-                          onClick={() => toggle(option)}
-                          onKeyDown={(event) => onOptionKey(event, () => toggle(option))}
+                          aria-disabled={locked || undefined}
+                          onClick={() => {
+                            if (reachable(option)) setActiveId(option.id);
+                            toggle(option);
+                          }}
+                          onFocus={() => setActiveId(option.id)}
+                          onKeyDown={(event) => onRowKey(event, () => toggle(option))}
                           className={cn(
                             'flex items-center gap-2 rounded-input-lg px-2 py-1.5 text-[13px]',
-                            option.disabled
+                            locked
                               ? 'cursor-not-allowed text-text-muted'
                               : 'cursor-pointer text-text-primary hover:bg-surface-alt focus:bg-surface-alt focus:outline-none',
                           )}
@@ -189,6 +270,11 @@ export function ReportMultiSelect(props: ReportMultiSelectProps) {
               </li>
             ))}
           </ul>
+          {atMax ? (
+            <p id={noteId} role="status" className="mt-2 px-2 text-[11px] text-text-secondary">
+              Up to {maxSelected} {pluralNoun} — or choose {allLabel}.
+            </p>
+          ) : null}
           <div className="mt-2 flex justify-end border-t border-border pt-2">
             <button
               type="button"

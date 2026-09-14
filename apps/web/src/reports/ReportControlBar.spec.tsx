@@ -284,3 +284,114 @@ describe('location list keeps the committed selection honest', () => {
     expect(screen.getByText(/Closed/)).toBeTruthy();
   });
 });
+
+describe('review fixes: one selected range, honest messages, keyboard and limits', () => {
+  const selectedRanges = () =>
+    within(screen.getByRole('tablist', { name: 'Date range' }))
+      .getAllByRole('tab')
+      .filter((tab) => tab.getAttribute('aria-selected') === 'true')
+      .map((tab) => tab.textContent);
+
+  it('opening Custom never marks two date ranges selected; the open form is aria-expanded', () => {
+    const { rerenderWith } = renderBar();
+    expect(selectedRanges()).toEqual(['Today']);
+    const custom = screen.getByRole('tab', { name: 'Custom' });
+    fireEvent.click(custom);
+    expect(selectedRanges()).toEqual(['Today']);
+    expect(custom.getAttribute('aria-expanded')).toBe('true');
+    rerenderWith({ filter: { ...base, preset: 'custom', from: '2026-09-01', to: '2026-09-02' } });
+    expect(selectedRanges()).toEqual(['Custom']);
+  });
+
+  it('names the real URL problem: an invalid date is not reported as a missing one', () => {
+    renderBar({ filter: { ...base, preset: 'custom', to: '2026-03-05' }, issues: [{ code: 'invalid_date', param: 'from' }] });
+    expect(screen.getByRole('status').textContent).toBe('Enter real calendar dates (YYYY-MM-DD).');
+  });
+
+  it('links the range warning to both date inputs and bounds the pickers to the format', () => {
+    renderBar();
+    fireEvent.click(screen.getByRole('tab', { name: 'Custom' }));
+    const from = screen.getByLabelText('From');
+    const to = screen.getByLabelText('To');
+    expect(from.getAttribute('min')).toBe('2000-01-01');
+    expect(to.getAttribute('max')).toBe('9999-12-31');
+    fireEvent.change(from, { target: { value: '2026-09-29' } });
+    fireEvent.change(to, { target: { value: '2026-09-22' } });
+    const warning = screen.getByRole('status');
+    expect(warning.textContent).toMatch(/on or before the end date/);
+    expect(from.getAttribute('aria-describedby')).toBe(warning.id);
+    expect(to.getAttribute('aria-describedby')).toBe(warning.id);
+  });
+
+  it('moves focus into the list on open and navigates rows with the arrow keys and one tab stop', () => {
+    renderBar({ filter: { ...base, locationIds: [L2] } });
+    fireEvent.click(screen.getByRole('button', { name: /Locations/ }));
+    const tokyo = screen.getByRole('option', { name: /Tokyo/ });
+    expect(document.activeElement).toBe(tokyo);
+    const listbox = screen.getByRole('listbox');
+    fireEvent.keyDown(listbox, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(screen.getByRole('option', { name: /Old Street/ }));
+    fireEvent.keyDown(listbox, { key: 'Home' });
+    expect(document.activeElement).toBe(screen.getByRole('option', { name: /All locations/ }));
+    fireEvent.keyDown(listbox, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(screen.getByRole('option', { name: /London/ }));
+    fireEvent.keyDown(listbox, { key: 'End' });
+    expect(document.activeElement).toBe(screen.getByRole('option', { name: /Old Street/ }));
+    const tabStops = screen.getAllByRole('option').filter((option) => option.getAttribute('tabindex') === '0');
+    expect(tabStops).toHaveLength(1);
+  });
+
+  it('opening with nothing selected focuses "All locations"', () => {
+    renderBar();
+    fireEvent.click(screen.getByRole('button', { name: /Locations/ }));
+    expect(document.activeElement).toBe(screen.getByRole('option', { name: /All locations/ }));
+  });
+
+  it('a selected location with a broken time zone can be unticked, by mouse or keyboard', () => {
+    const brokenOptions = { ...options, locations: [...options.locations, { id: 'broken', name: 'Broken', timezone: 'Europe/Londn', isActive: true, timezoneValid: false }] };
+    const first = renderBar({ options: brokenOptions, filter: { ...base, locationIds: [L1, 'broken'] } });
+    fireEvent.click(screen.getByRole('button', { name: /Locations/ }));
+    const broken = screen.getByRole('option', { name: /Broken/ });
+    expect(broken.getAttribute('aria-disabled')).toBeNull();
+    fireEvent.click(broken);
+    expect(broken.getAttribute('aria-selected')).toBe('false');
+    expect(broken.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    expect(first.onChange).toHaveBeenCalledWith({ ...base, locationIds: [L1] }, 'push');
+    first.unmount();
+
+    const second = renderBar({ options: brokenOptions, filter: { ...base, locationIds: ['broken'] } });
+    fireEvent.click(screen.getByRole('button', { name: /Locations/ }));
+    fireEvent.keyDown(screen.getByRole('option', { name: /Broken/ }), { key: ' ' });
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    expect(second.onChange).toHaveBeenCalledWith({ ...base, locationIds: [] }, 'push');
+  });
+
+  it('never lets the list build more than 50 locations, and says so', () => {
+    const many = Array.from({ length: 52 }, (_, i) => ({
+      id: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+      name: `Salon ${i}`,
+      timezone: 'Europe/London',
+      isActive: true,
+      timezoneValid: true,
+    }));
+    const { onChange } = renderBar({ options: { ...options, locations: many } });
+    fireEvent.click(screen.getByRole('button', { name: /Locations/ }));
+    for (let i = 0; i < 52; i += 1) fireEvent.click(screen.getByRole('option', { name: new RegExp(`^Salon ${i}$`) }));
+    expect(screen.getByRole('status').textContent).toBe('Up to 50 locations — or choose All locations.');
+    expect(screen.getByRole('option', { name: /^Salon 51$/ }).getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange.mock.calls[0][0].locationIds).toHaveLength(50);
+  });
+
+  it('an open list closes without committing when the bar becomes disabled', () => {
+    const { onChange, rerenderWith } = renderBar();
+    fireEvent.click(screen.getByRole('button', { name: /Locations/ }));
+    fireEvent.click(screen.getByRole('option', { name: /London/ }));
+    rerenderWith({ disabled: true });
+    expect(screen.queryByRole('listbox')).toBeNull();
+    fireEvent.mouseDown(document.body);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+});

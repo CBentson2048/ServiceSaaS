@@ -1,5 +1,7 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useId, useState, type ReactNode } from 'react';
 import {
+  MAX_REPORT_IDS,
+  REPORT_MIN_DATE,
   WEEK_PRESETS,
   reportCustomRangeIssues,
   type ReportDefinition,
@@ -29,11 +31,14 @@ const RELATIVE_PRESETS: ReportPreset[] = ['today', 'yesterday', 'this_week', 'la
 
 const RANGE_MESSAGES: Partial<Record<ReportFilterIssueCode, string>> = {
   custom_dates_required: 'Choose a start and an end date.',
-  invalid_date: 'Enter dates as real calendar dates.',
+  invalid_date: 'Enter real calendar dates (YYYY-MM-DD).',
   date_before_min: 'Reports go back to 1 January 2000.',
   range_inverted: 'The start date must be on or before the end date.',
   range_too_long: 'Choose a range of 366 days or fewer.',
 };
+
+/** The last date the YYYY-MM-DD format can express; the input picker stops there too. */
+const LAST_FORMAT_DATE = '9999-12-31';
 
 export const WEEK_START_UNCONFIGURED_MESSAGE =
   'This business has no week start configured, so weekly ranges are unavailable.';
@@ -78,6 +83,8 @@ export function ReportControlBar(props: ReportControlBarProps) {
   const [customOpen, setCustomOpen] = useState(isCustom);
   const [draftFrom, setDraftFrom] = useState(filter.from ?? '');
   const [draftTo, setDraftTo] = useState(filter.to ?? '');
+  const rangeMessageId = useId();
+  const customFormId = useId();
 
   // Follow the URL (Back/Forward, a pasted link): the draft mirrors it.
   useEffect(() => {
@@ -90,6 +97,10 @@ export function ReportControlBar(props: ReportControlBarProps) {
   const draftIssues = reportCustomRangeIssues(draftFrom || undefined, draftTo || undefined);
   const draftMessage = rangeMessage(draftIssues);
   const urlRangeMessage = isCustom ? rangeMessage(issues) : null;
+  // While the form still mirrors the URL, the URL's own problem is the accurate
+  // one (the lenient decoder drops an invalid date, so the draft looks empty).
+  const draftMirrorsUrl = draftFrom === (filter.from ?? '') && draftTo === (filter.to ?? '');
+  const shownRangeMessage = draftMirrorsUrl ? (urlRangeMessage ?? draftMessage) : (draftMessage ?? urlRangeMessage);
 
   const choosePreset = (preset: ReportPreset) => {
     onChange({ preset, locationIds: filter.locationIds, staffProfileIds: filter.staffProfileIds, view: filter.view }, 'push');
@@ -146,7 +157,11 @@ export function ReportControlBar(props: ReportControlBarProps) {
         <Pill
           label={REPORT_PRESET_LABELS.custom}
           tone="ink"
-          active={isCustom || customOpen}
+          // Selected only once applied: the open form is shown by aria-expanded,
+          // so exactly one date-range tab is ever selected.
+          active={isCustom}
+          aria-expanded={customOpen}
+          aria-controls={customOpen ? customFormId : undefined}
           disabled={disabled}
           onClick={openCustom}
         />
@@ -159,12 +174,15 @@ export function ReportControlBar(props: ReportControlBarProps) {
       ) : null}
 
       {customOpen ? (
-        <div className="flex flex-wrap items-end gap-2">
+        <div id={customFormId} className="flex flex-wrap items-end gap-2">
           <label className="flex flex-col gap-1 text-[12px] text-text-secondary">
             From
             <input
               type="date"
               aria-label="From"
+              min={REPORT_MIN_DATE}
+              max={LAST_FORMAT_DATE}
+              aria-describedby={shownRangeMessage ? rangeMessageId : undefined}
               value={draftFrom}
               disabled={disabled}
               onChange={(event) => setDraftFrom(event.target.value)}
@@ -176,6 +194,9 @@ export function ReportControlBar(props: ReportControlBarProps) {
             <input
               type="date"
               aria-label="To"
+              min={REPORT_MIN_DATE}
+              max={LAST_FORMAT_DATE}
+              aria-describedby={shownRangeMessage ? rangeMessageId : undefined}
               value={draftTo}
               disabled={disabled}
               onChange={(event) => setDraftTo(event.target.value)}
@@ -190,10 +211,10 @@ export function ReportControlBar(props: ReportControlBarProps) {
               Cancel
             </AppButton>
           ) : null}
-          {draftMessage || urlRangeMessage ? (
-            <AppText as="p" variant="caption" tone="warning" className="w-full">
-              {draftMessage ?? urlRangeMessage}
-            </AppText>
+          {shownRangeMessage ? (
+            <p id={rangeMessageId} role="status" className="w-full text-[12px] leading-[16px] text-warning">
+              {shownRangeMessage}
+            </p>
           ) : null}
         </div>
       ) : null}
@@ -212,6 +233,7 @@ export function ReportControlBar(props: ReportControlBarProps) {
             pluralNoun="locations"
             options={locationOptions}
             value={filter.locationIds}
+            maxSelected={MAX_REPORT_IDS}
             disabled={disabled || options === null}
             onCommit={(next) => onChange({ ...filter, locationIds: next }, 'push')}
           />
