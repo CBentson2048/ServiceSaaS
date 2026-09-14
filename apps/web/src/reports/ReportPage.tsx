@@ -150,6 +150,12 @@ export function ReportPage({ definition }: { definition: ReportDefinition }) {
   const optionsRefused = optionsCode !== undefined && TERMINAL_CODES.has(optionsCode);
   const optionsRetryShown =
     (options.status === 'error' && !optionsRefused) || (options.status === 'ready' && options.refreshError !== undefined);
+  const resultCode = result.status === 'error' ? reportErrorOf(result.error)?.code : undefined;
+  /** A result refusal that carries its own way out, or needs none. */
+  const resultOwnWayOut = resultCode !== undefined && (FILTER_ACTION_CODES.has(resultCode) || TERMINAL_CODES.has(resultCode));
+  // When the page's one Retry also stands for a failed report, say so: the
+  // report failing is what the person sees missing.
+  const resultFailedBehindRetry = result.status === 'error' && !resultOwnWayOut;
   // The page's one Retry: it also retries a failed result, which is then not
   // offered a Retry of its own.
   const retryOptions = () => {
@@ -164,7 +170,7 @@ export function ReportPage({ definition }: { definition: ReportDefinition }) {
       ) : (
         <Notice
           key="options"
-          message="We couldn’t load this report’s options."
+          message={resultFailedBehindRetry ? 'We couldn’t load this report.' : 'We couldn’t load this report’s options.'}
           action={<AppButton size="sm" variant="secondary" onClick={retryOptions}>Retry</AppButton>}
         />
       ),
@@ -173,7 +179,7 @@ export function ReportPage({ definition }: { definition: ReportDefinition }) {
     notices.push(
       <Notice
         key="options"
-        message="We couldn’t refresh this report’s options."
+        message={resultFailedBehindRetry ? 'We couldn’t load this report.' : 'We couldn’t refresh this report’s options.'}
         action={<AppButton size="sm" variant="secondary" onClick={retryOptions}>Retry</AppButton>}
       />,
     );
@@ -196,14 +202,10 @@ export function ReportPage({ definition }: { definition: ReportDefinition }) {
         action={<AppButton size="sm" variant="secondary" onClick={() => write(DEFAULT_FILTER, 'replace')}>Reset filters</AppButton>}
       />,
     );
-  } else if (result.status === 'error') {
-    const resultCode = reportErrorOf(result.error)?.code;
-    // Beside an options Retry, show only a refusal that carries its own way out
-    // or needs none, so the page never offers two Retry buttons.
-    const ownWayOut = resultCode !== undefined && (FILTER_ACTION_CODES.has(resultCode) || TERMINAL_CODES.has(resultCode));
-    if (!optionsRetryShown || ownWayOut) {
-      notices.push(resultNotice(result.error, handlers));
-    }
+  } else if (result.status === 'error' && (!optionsRetryShown || resultOwnWayOut)) {
+    // Beside the options Retry, only a refusal with its own way out gets a
+    // notice of its own, so the page never offers two Retry buttons.
+    notices.push(resultNotice(result.error, handlers));
   }
 
   const groups = resolved ? groupReportScope(resolved.locations) : [];
