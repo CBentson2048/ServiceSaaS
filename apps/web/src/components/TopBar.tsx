@@ -137,10 +137,6 @@ export function TopBar() {
                   tone="danger"
                   onClick={() => {
                     setMenuOpen(false);
-                    // Leave for /login in the same update that clears the session,
-                    // so the page being signed out of is not kept as a sign-in target
-                    // for whoever uses this browser next.
-                    navigate('/login', { replace: true });
                     void signOut();
                   }}
                   icon={

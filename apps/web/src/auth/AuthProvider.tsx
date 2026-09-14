@@ -64,6 +64,12 @@ interface AuthState {
   signIn: (email: string, password: string) => Promise<AuthUser>;
   signOut: () => Promise<void>;
   applyAuthenticatedSession: (session: AuthSession, user: AuthUser) => void;
+  /**
+   * True from a sign-out (in this tab or another) until the next sign-in. A
+   * protected route then records no sign-in target, so nothing about the page
+   * that was signed out of — Back included — reaches whoever signs in next.
+   */
+  signedOut: boolean;
 }
 
 const AuthContext = createContext<AuthState | undefined>(undefined);
@@ -72,6 +78,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthState['status']>('bootstrapping');
   const [user, setUser] = useState<AuthUser | null>(null);
   const [session, setSession] = useState<AuthSession | null>(() => readStoredSession());
+  const [signedOut, setSignedOut] = useState(false);
   /**
    * Bumped when something suggests it is worth trying the API again — the
    * browser came back online, the tab was brought forward. Both the bootstrap
@@ -91,6 +98,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const applySession = useCallback((nextSession: AuthSession, nextUser: AuthUser) => {
     provenToken.current = nextSession.accessToken;
+    setSignedOut(false);
     setSession(nextSession);
     setUser(nextUser);
     setStatus('authenticated');
@@ -293,6 +301,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return next;
       });
       if (!next) {
+        setSignedOut(true);
         setUser(null);
         setStatus('anonymous');
       }
@@ -321,6 +330,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     const currentSession = session;
+    setSignedOut(true);
     clearSession();
     await authApi.logout(currentSession?.accessToken, currentSession?.refreshToken).catch(() => undefined);
   }, [clearSession, session]);
@@ -334,8 +344,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signIn,
       signOut,
       applyAuthenticatedSession: applySession,
+      signedOut,
     }),
-    [applySession, createAccount, session, signIn, signOut, status, user],
+    [applySession, createAccount, session, signIn, signOut, signedOut, status, user],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
