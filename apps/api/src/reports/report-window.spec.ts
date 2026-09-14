@@ -7,7 +7,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { resolveLocalRange, resolveReportWindows, reportLocalStatus } from './report-window';
+import { resolveLocalRange, resolveReportWindows, reportLocalStatus, utcInstantString } from './report-window';
 import type { ReportFilter, WeekStartDay } from '@sheer/domain';
 
 const LONDON = { id: 'london', timezone: 'Europe/London' };
@@ -199,11 +199,24 @@ describe('custom ranges apply as given at every location', () => {
     );
   });
 
-  it('keeps UTC bounds in four-digit years at the last allowed date, even in the most westerly zone', () => {
-    const westmost = { id: 'westmost', timezone: 'Etc/GMT+12' };
-    const [window] = resolveReportWindows([westmost], { preset: 'custom', from: '2099-12-31', to: '2099-12-31' }, new Date(asOf), 2);
-    expect(window.fromUtc).toMatch(/^\d{4}-/);
-    expect(window.toUtcExclusive).toMatch(/^\d{4}-/);
+  it('resolves the last YYYY-MM-DD date, 9999-12-31, in every zone with instants Postgres can parse', () => {
+    const zones = [
+      { id: 'westmost', timezone: 'Etc/GMT+12' },
+      { id: 'london', timezone: 'Europe/London' },
+      { id: 'eastmost', timezone: 'Pacific/Kiritimati' },
+    ];
+    const windows = resolveReportWindows(zones, { preset: 'custom', from: '9999-12-31', to: '9999-12-31' }, new Date(asOf), 2);
+    expect(windows.map((w) => [w.locationId, w.fromUtc, w.toUtcExclusive, w.status])).toEqual([
+      ['westmost', '9999-12-31T12:00:00.000Z', '10000-01-01T12:00:00.000Z', 'not_started'],
+      ['london', '9999-12-31T00:00:00.000Z', '10000-01-01T00:00:00.000Z', 'not_started'],
+      ['eastmost', '9999-12-30T10:00:00.000Z', '9999-12-31T10:00:00.000Z', 'not_started'],
+    ]);
+  });
+
+  it('writes instants past year 9999 unsigned, and leaves every other instant exactly as toISOString', () => {
+    expect(utcInstantString(new Date(Date.UTC(10000, 0, 1, 12)))).toBe('10000-01-01T12:00:00.000Z');
+    expect(utcInstantString(new Date('2026-09-13T23:00:00.000Z'))).toBe('2026-09-13T23:00:00.000Z');
+    expect(utcInstantString(new Date('9999-12-31T23:59:59.999Z'))).toBe('9999-12-31T23:59:59.999Z');
   });
 
   it('a past range is complete', () => {

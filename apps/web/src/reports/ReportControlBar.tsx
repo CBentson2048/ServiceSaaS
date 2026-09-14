@@ -31,7 +31,6 @@ const RANGE_MESSAGES: Partial<Record<ReportFilterIssueCode, string>> = {
   custom_dates_required: 'Choose a start and an end date.',
   invalid_date: 'Enter dates as real calendar dates.',
   date_before_min: 'Reports go back to 1 January 2000.',
-  date_after_max: 'Reports go up to 31 December 2099.',
   range_inverted: 'The start date must be on or before the end date.',
   range_too_long: 'Choose a range of 366 days or fewer.',
 };

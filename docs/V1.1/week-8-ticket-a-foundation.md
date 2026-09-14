@@ -138,9 +138,10 @@ On dev-test (2026-09-13) this affects 2 of 3 non-owner manager users.
   never existed (an empty window). Payroll shares this helper; results in
   London, New York and Los Angeles are unchanged for 2000–2030.
 
-Limits: custom ranges up to 366 days, from 2000-01-01 to 2099-12-31 inclusive;
-at most 50 ids per list; each parameter at most once (a repeated parameter is
-refused, never resolved by picking one copy).
+Limits: custom ranges up to 366 days, no earlier than 2000-01-01, and no product
+upper bound — a date only has to be a real `YYYY-MM-DD` date (so the format itself
+ends at 9999-12-31); at most 50 ids per list; each parameter at most once (a
+repeated parameter is refused, never resolved by picking one copy).
 
 ---
 
@@ -187,7 +188,10 @@ and is never reported as "missing".
 ### Provider invariant (every later report service)
 
 - Every fact belongs to a resolved location and lies in that location's
-  `[fromUtc, toUtcExclusive)`, or in `[from, to]` for date columns.
+  `[fromUtc, toUtcExclusive)`, or in `[from, to]` for date columns. Pass those
+  strings to Postgres as they are: they are written unsigned past year 9999
+  (`10000-01-01T…`), because timestamptz rejects JavaScript's signed
+  `+010000-…` form.
 - Unstarted locations/days are rendered as not started, never zero.
 - Staff filters (when a later ticket adds them) only ever narrow.
 - Sub-gates (e.g. commission) use per-grant location checks, never

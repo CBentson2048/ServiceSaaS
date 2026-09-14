@@ -244,11 +244,6 @@ export const REPORT_PARAM_KEYS = ['preset', 'from', 'to', 'locations', 'staff', 
 export type ReportParamKey = (typeof REPORT_PARAM_KEYS)[number];
 
 export const REPORT_MIN_DATE: LocalDate = '2000-01-01';
-/**
- * A validation bound, not a clamp: future ranges stay valid. It keeps every
- * location's UTC window inside four-digit years, which timestamp columns parse.
- */
-export const REPORT_MAX_DATE: LocalDate = '2099-12-31';
 export const MAX_REPORT_RANGE_DAYS = 366;
 export const MAX_REPORT_IDS = 50;
 
@@ -259,7 +254,6 @@ export type ReportFilterIssueCode =
   | 'custom_dates_required'
   | 'invalid_date'
   | 'date_before_min'
-  | 'date_after_max'
   | 'range_inverted'
   | 'range_too_long'
   | 'invalid_id'
@@ -321,8 +315,6 @@ export function reportCustomRangeIssues(
   if (to !== undefined && !validTo) issues.push({ code: 'invalid_date', param: 'to' });
   if (validFrom && from < REPORT_MIN_DATE) issues.push({ code: 'date_before_min', param: 'from' });
   if (validTo && to < REPORT_MIN_DATE) issues.push({ code: 'date_before_min', param: 'to' });
-  if (validFrom && from > REPORT_MAX_DATE) issues.push({ code: 'date_after_max', param: 'from' });
-  if (validTo && to > REPORT_MAX_DATE) issues.push({ code: 'date_after_max', param: 'to' });
   if (validFrom && validTo) {
     if (to < from) {
       issues.push({ code: 'range_inverted', param: 'to' });

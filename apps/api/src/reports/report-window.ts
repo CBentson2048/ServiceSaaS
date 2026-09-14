@@ -98,6 +98,16 @@ export function reportLocalStatus(range: ReportLocalRange, localToday: LocalDate
 }
 
 /**
+ * An instant as ISO 8601 that Postgres can parse. `toISOString()` writes years
+ * past 9999 in the signed expanded form (`+010000-01-01T…`), which timestamptz
+ * rejects (22009, verified on dev-test); the unsigned `10000-01-01T…` parses.
+ * Only a range ending 9999-12-31 at a location at or west of UTC reaches that.
+ */
+export function utcInstantString(date: Date): string {
+  return date.toISOString().replace(/^\+0*(\d{5,})-/, '$1-');
+}
+
+/**
  * One window per location, in the order given. Every location's timezone must
  * already have been validated by the caller.
  */
@@ -118,8 +128,8 @@ export function resolveReportWindows(
       from: range.from,
       to: range.to,
       status: reportLocalStatus(range, localToday),
-      fromUtc: localDateStartUtc(location.timezone, range.from).toISOString(),
-      toUtcExclusive: localDateStartUtc(location.timezone, addDays(range.to, 1)).toISOString(),
+      fromUtc: utcInstantString(localDateStartUtc(location.timezone, range.from)),
+      toUtcExclusive: utcInstantString(localDateStartUtc(location.timezone, addDays(range.to, 1))),
     };
   });
 }

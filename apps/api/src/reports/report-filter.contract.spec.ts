@@ -102,10 +102,10 @@ describe('strict mode (API)', () => {
     expect(codes({ preset: 'custom', from: '2024-01-01', to: '2024-12-31' })).toEqual([]);
   });
 
-  it('refuses dates after 2099-12-31 (a validation bound, not a clamp)', () => {
-    expect(codes({ preset: 'custom', from: '9999-01-01', to: '9999-12-31' })).toEqual(['from:date_after_max', 'to:date_after_max']);
-    expect(codes({ preset: 'custom', from: '2099-12-01', to: '2100-01-01' })).toEqual(['to:date_after_max']);
-    expect(codes({ preset: 'custom', from: '2099-01-01', to: '2099-12-31' })).toEqual([]);
+  it('has no product upper bound: any real YYYY-MM-DD date is valid, up to the format’s own 9999-12-31', () => {
+    expect(codes({ preset: 'custom', from: '2099-12-01', to: '2100-01-01' })).toEqual([]);
+    expect(codes({ preset: 'custom', from: '9999-01-01', to: '9999-12-31' })).toEqual([]);
+    expect(codes({ preset: 'custom', from: '9999-12-31', to: '10000-01-01' })).toEqual(['to:invalid_date']);
   });
 
   it('accepts a custom range that is entirely in the future — dates apply as given', () => {

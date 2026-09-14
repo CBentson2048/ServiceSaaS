@@ -32,7 +32,6 @@ const RANGE_ISSUES = new Set<ReportFilterIssueCode>([
   'custom_dates_required',
   'invalid_date',
   'date_before_min',
-  'date_after_max',
   'range_inverted',
   'range_too_long',
 ]);

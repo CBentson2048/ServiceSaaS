@@ -88,7 +88,6 @@ describe('custom range', () => {
     ['an inverted range', '2026-09-29', '2026-09-22', /on or before the end date/],
     ['a range over 366 days', '2025-01-01', '2026-06-30', /366 days or fewer/],
     ['a range before 2000', '1999-12-31', '2000-01-02', /1 January 2000/],
-    ['a range after 2099', '2099-12-31', '2100-01-02', /31 December 2099/],
   ])('disables Apply with a message for %s', (_label, from, to, message) => {
     const { onChange } = renderBar();
     fireEvent.click(screen.getByRole('tab', { name: 'Custom' }));
@@ -99,6 +98,17 @@ describe('custom range', () => {
     expect(screen.getByText(message)).toBeTruthy();
     fireEvent.click(apply);
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('sets no product upper bound: a range in 2100 applies like any other', () => {
+    const { onChange } = renderBar();
+    fireEvent.click(screen.getByRole('tab', { name: 'Custom' }));
+    fireEvent.change(screen.getByLabelText('From'), { target: { value: '2100-12-01' } });
+    fireEvent.change(screen.getByLabelText('To'), { target: { value: '2101-01-31' } });
+    const apply = screen.getByRole('button', { name: 'Apply' }) as HTMLButtonElement;
+    expect(apply.disabled).toBe(false);
+    fireEvent.click(apply);
+    expect(onChange).toHaveBeenCalledWith({ ...base, preset: 'custom', from: '2100-12-01', to: '2101-01-31' }, 'push');
   });
 
   it('allows a future range: the server decides per location what has started', () => {
