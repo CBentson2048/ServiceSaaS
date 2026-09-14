@@ -46,7 +46,9 @@ A missing security level must never broaden report access.
 | Stylist membership | **Never** grants a management report, whatever level the stylist row carries. |
 | Front desk | No report access, unless the business deliberately gives the person a manager membership with a qualifying level. |
 
-The grants are resolved at sign-in into `AuthUser.membershipGrants`: one entry
+The grants are resolved with the signed-in user into `AuthUser.membershipGrants`
+on every access-token verification (cached for up to 30 s), so a level change
+applies within 30 s with no new sign-in: one entry
 per qualifying manager membership, `{ locationId, permissions }`. Owners carry
 no grants. The merged `AuthUser.permissions` and `allowedLocationIds` are
 unchanged and are **never** read by reporting — that is what stops a
@@ -135,13 +137,26 @@ On dev-test (2026-09-13) this affects 2 of 3 non-owner manager users.
 - **DST.** `localDateStartUtc` returns the first instant of the local date,
   including in zones where midnight is skipped (Santiago, Havana, Azores), where
   the clock falls back over midnight (first midnight wins) and on dates that
-  never existed (an empty window). Payroll shares this helper; results in
-  London, New York and Los Angeles are unchanged for 2000–2030.
+  never existed (an empty window). Payroll shares this helper. Results in
+  London, New York and Los Angeles (and every zone the product offers) are
+  unchanged for 2000–2030. Payroll day boundaries change **only** on dates whose
+  midnight is skipped, repeated or missing, in zones such as Santiago, Havana,
+  the Azores and Amman — a boundary correction, not a payroll-rule change.
+  Known knock-on, recorded for a separate payroll ticket: payroll-inputs builds
+  an approved leave's end as start(end_date) + 24 h, which is already an hour
+  off on every DST date in every DST zone; in the skipped-midnight zones this
+  fix moves that existing hour from the leave start to the leave end. Ticket A
+  does not change payroll code.
 
 Limits: custom ranges up to 366 days, no earlier than 2000-01-01, and no product
 upper bound — a date only has to be a real `YYYY-MM-DD` date (so the format itself
-ends at 9999-12-31); at most 50 ids per list; each parameter at most once (a
-repeated parameter is refused, never resolved by picking one copy).
+ends at 9999-12-31); at most 50 ids per list (the location list stops at 50 and
+says so); each parameter at most once (a repeated parameter is refused, never
+resolved by picking one copy).
+
+The scope line reads names first, one line per distinct range:
+`London, New York · 28 Sept 2026 (in progress)` / `Tokyo · 29 Sept 2026 (in progress)`,
+with "Dates follow each location’s local calendar." when there is more than one.
 
 ---
 
@@ -232,10 +247,23 @@ Therefore Ticket A ships **no staff scope**:
   and a "Foundation preview" banner, and no figures.
 - With the shell off, `/reports/*` redirects to `/` and `/api/reports/*` returns
   404 before auth.
+- Sign-in after a bounce restores a report link whole (path, query, hash), so a
+  shared report keeps its filters; any other page gets its path only, as
+  before. Logout goes straight to `/login` and leaves no address for the next
+  person to sign in on that browser.
 - A report is released by a **separate commit after its own G5 sign-off**, and
   only once the §2 release prerequisite and §7 preconditions are met.
-- Deploy the API before the web, so an old API never strips `report.pnl.view`
-  when an owner saves a level.
+- Deploy the API before the web, so the new web never calls report endpoints or
+  sends `report.pnl.view` to an old API (which answers an unknown permission
+  with a 400; it never strips it). During the window where the new API is live
+  but an old web bundle is still open, that page cannot grant P&L, and ticking a
+  permission on a level that holds `report.pnl.view` drops it on save — this
+  can only remove access. Owners reload after the web deploy before delegating
+  P&L, and re-check any custom level holding `report.pnl.view`.
+- Existing businesses keep their seeded Owner and Group Admin descriptions
+  ("Full access to everything…"); only newly seeded levels carry "Profit & loss
+  must be granted separately." (no migration). The P&L checkbox is the source
+  of truth on every business.
 
 ---
 

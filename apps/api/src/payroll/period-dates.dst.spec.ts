@@ -157,9 +157,17 @@ describe('localDateStartUtc — zones whose results must not change', () => {
     expect(dayLengthHours('Australia/Sydney', '2026-10-04')).toBe(23);
   });
 
-  it('is identical to the previous algorithm for every date 2000–2030 in London, New York and Los Angeles', () => {
+  it('is identical to the previous algorithm for every date 2000–2030 in every zone the product offers', () => {
+    // The timezone choices in owner onboarding (owner-onboarding.service.ts) and
+    // apps/web/src/config/timezones.ts. None skips or repeats midnight, so no
+    // payroll period boundary moves for any business that picked its zone there.
+    const offeredZones = [
+      'Europe/London', 'Europe/Dublin', 'Europe/Amsterdam', 'Europe/Berlin', 'Europe/Madrid', 'Europe/Paris', 'Europe/Rome',
+      'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'America/Toronto',
+      'Asia/Dubai', 'Asia/Singapore', 'Asia/Tokyo', 'Australia/Sydney',
+    ];
     const mismatches: string[] = [];
-    for (const tz of ['Europe/London', 'America/New_York', 'America/Los_Angeles']) {
+    for (const tz of offeredZones) {
       for (let date = '2000-01-01'; date <= '2030-12-31'; date = addDays(date, 1)) {
         if (localDateStartUtc(tz, date).getTime() !== previousLocalDateStartUtc(tz, date)) {
           mismatches.push(`${tz} ${date}`);
@@ -167,7 +175,7 @@ describe('localDateStartUtc — zones whose results must not change', () => {
       }
     }
     expect(mismatches).toEqual([]);
-  }, 120_000);
+  }, 300_000);
 
   it('leaves payroll period windows unchanged for London weekly periods in 2026', () => {
     expect(periodUtcWindow('Europe/London', '2026-03-24', '2026-03-31')).toEqual({

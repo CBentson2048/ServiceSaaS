@@ -12,7 +12,8 @@
  * Pure functions only — no clock reads. Callers pass "today" explicitly.
  *
  * Reporting (apps/api/src/reports) resolves per-location report windows with
- * the same helpers, so there is exactly one DST-correct day boundary in the API.
+ * the same helpers, so payroll and reporting share one day boundary. (EOD and
+ * operational signals still have their own zoned-midnight helpers.)
  */
 
 // One strict calendar-date check for payroll, reporting and the browser.

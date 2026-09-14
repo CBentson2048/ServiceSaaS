@@ -38,9 +38,13 @@ export interface ReportLocationWindow extends ReportLocalRange {
   /** The location's local date at the request instant. */
   localToday: LocalDate;
   status: ReportLocalStatus;
-  /** First instant of `from` at the location, ISO UTC. */
+  /**
+   * First instant of `from` at the location, as a UTC instant string for SQL
+   * (see utcInstantString). JavaScript code clamps with Date values from
+   * localDateStartUtc instead of parsing these.
+   */
   fromUtc: string;
-  /** First instant of the day after `to` at the location, ISO UTC (exclusive). */
+  /** First instant of the day after `to` at the location (exclusive); same form as `fromUtc`. */
   toUtcExclusive: string;
 }
 
@@ -98,7 +102,7 @@ export function reportLocalStatus(range: ReportLocalRange, localToday: LocalDate
 }
 
 /**
- * An instant as ISO 8601 that Postgres can parse. `toISOString()` writes years
+ * An instant as an ISO-style UTC string that Postgres can parse. `toISOString()` writes years
  * past 9999 in the signed expanded form (`+010000-01-01T…`), which timestamptz
  * rejects (22009, verified on dev-test); the unsigned `10000-01-01T…` parses.
  * Only a range ending 9999-12-31 at a location at or west of UTC reaches that.

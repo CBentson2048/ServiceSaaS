@@ -581,7 +581,9 @@ export const SYSTEM_SECURITY_LEVELS: readonly SystemSecurityLevelDefinition[] = 
   // P&L is owner-only by default, and a level is assigned to non-owner
   // memberships. Owners themselves hold it through their role
   // (DEFAULT_ROLE_PERMISSIONS.owner). Existing businesses never had the key on
-  // these rows (ensureSystemLevels only inserts), so new and existing agree.
+  // these rows, so permissions agree for new and existing businesses. The
+  // descriptions do not: ensureSystemLevels only inserts, so existing rows keep
+  // their seeded text (ADR §6).
   {
     key: 'owner',
     name: 'Owner',
