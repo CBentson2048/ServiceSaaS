@@ -40,6 +40,7 @@ import { OwnerOnboardingModule } from './owner-onboarding/owner-onboarding.modul
 import { PayrollModule } from './payroll/payroll.module';
 import { ProfileModule } from './profile/profile.module';
 import { PublicBookingModule } from './public-booking/public-booking.module';
+import { ReportsModule } from './reports/reports.module';
 import { RetailSalesModule } from './retail-sales/retail-sales.module';
 import { RotaModule } from './rota/rota.module';
 import { SalonDirectoryModule } from './salon-directory/salon-directory.module';
@@ -87,6 +88,7 @@ import { validateEnv } from './config/env.validation';
     OperationalSignalsModule,
     MessageUsageModule,
     DashboardModule,
+    ReportsModule,
     KpiModule,
     RetailSalesModule,
     RotaModule,

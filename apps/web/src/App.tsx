@@ -66,6 +66,8 @@ import { SheerLabPage } from './pages/SheerLabPage';
 import { SupportPage } from './pages/SupportPage';
 import { TeamPage } from './pages/TeamPage';
 import { UnauthorizedPage } from './pages/UnauthorizedPage';
+import { reportsSurface } from './config/reportsFoundationShell';
+import { reportRoutes } from './reports/reportRoutes';
 
 export function App() {
   return (
@@ -133,6 +135,11 @@ export function App() {
           >
             <Route path="/dashboard" element={<DashboardPage />} />
           </Route>
+          {/*
+            QLOOQO 10 reports: routes exist only for reports available in this
+            build, each behind ReportGate (the API's own access decision).
+          */}
+          {reportRoutes(reportsSurface())}
           <Route
             element={
               <ProtectedRoute

@@ -22,7 +22,9 @@ export function ProtectedRoute({
   }
 
   if (!auth.user) {
-    return <Navigate to="/login" replace state={{ from: location }} />;
+    // After a sign-out, remember nothing: the next person to sign in on this
+    // browser must not be sent to the previous user's page.
+    return <Navigate to="/login" replace state={auth.signedOut ? undefined : { from: location }} />;
   }
 
   if (!userHasAnyRole(auth.user, allowedRoles)) {

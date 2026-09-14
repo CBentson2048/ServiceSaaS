@@ -337,6 +337,17 @@ export class EnvConfig {
   LOG_HTTP_BODIES?: string;
 
   /**
+   * QLOOQO 10 report foundation preview. Exactly `true` makes the not-yet-released
+   * reports reachable at `/api/reports/:reportKey/*` for G4/G5 testing; unset or
+   * any other value hides them (404 before auth). A released report is reachable
+   * regardless. Set on dev-test only — never in production. Pair with the web's
+   * `VITE_REPORTS_FOUNDATION_SHELL`. Defaults off.
+   */
+  @IsOptional()
+  @IsString()
+  REPORTS_FOUNDATION_SHELL?: string;
+
+  /**
    * Kill-switch for the ZAC assistant. ZAC is ON by default (general
    * availability); set exactly `false` to hide every `/api/zac/*` route (404)
    * regardless of the `zac.access` permission. Unset or any other value leaves

@@ -5,6 +5,7 @@ import type { AuthUser, LoginResponse, Permission } from '@sheer/domain';
 import { userHasPermission } from '@sheer/domain';
 import { useAuth } from '../auth/AuthProvider';
 import { loginClientBookingAccount } from '../auth/api';
+import { loginRedirectTarget } from '../auth/loginRedirect';
 import { BrandLogo } from '../components/BrandLogo';
 import { usePageMetadata } from '../hooks/usePageMetadata';
 import { readClientBookingSelection, updateClientBookingSelection } from './clientBookingFlow';
@@ -25,7 +26,7 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const requestedFrom = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname;
+  const requestedFrom = loginRedirectTarget(location.state);
   const from = bookingMode ? '/book/review' : requestedFrom;
   const justOnboarded = searchParams.get('onboarded') === '1';
   const justAcceptedInvitation = searchParams.get('invitation') === 'accepted';
