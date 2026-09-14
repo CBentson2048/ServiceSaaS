@@ -33,7 +33,8 @@ import { AuthProvider, useAuth } from './AuthProvider';
 import { ProtectedRoute } from './ProtectedRoute';
 import { loginRedirectTarget } from './loginRedirect';
 
-const mocked = api as unknown as { login: jest.Mock };
+const mocked = api as unknown as { login: jest.Mock; getCurrentUser: jest.Mock };
+const SESSION_KEY = 'sheer.web.auth.session';
 const OWNER = { id: 'owner-a', roles: ['owner'], primaryRole: 'owner', permissions: [], allowedLocationIds: [] } as unknown as AuthUser;
 
 let current = { pathname: '', search: '', state: undefined as unknown };
@@ -60,9 +61,14 @@ function Controls() {
   );
 }
 
-function renderApp(initial: string, v7 = false) {
+function renderApp(initial: string | string[], v7 = false) {
+  const entries = Array.isArray(initial) ? initial : [initial];
   return render(
-    <MemoryRouter initialEntries={[initial]} future={v7 ? { v7_startTransition: true, v7_relativeSplatPath: true } : undefined}>
+    <MemoryRouter
+      initialEntries={entries}
+      initialIndex={entries.length - 1}
+      future={v7 ? { v7_startTransition: true, v7_relativeSplatPath: true } : undefined}
+    >
       <AuthProvider>
         <Controls />
         <Routes>
@@ -84,6 +90,8 @@ async function visit(to: string | number) {
 
 beforeEach(() => {
   localStorage.clear();
+  sessionStorage.clear();
+  mocked.getCurrentUser.mockReset();
   mocked.login.mockReset();
   mocked.login.mockResolvedValue({
     session: { accessToken: 'access-a', refreshToken: 'refresh-a', expiresAt: new Date(Date.now() + 3_600_000).toISOString() },
@@ -129,6 +137,47 @@ describe.each([
     await waitFor(() => expect(screen.getByTestId('signed-out').textContent).toBe('true'));
     fireEvent.click(screen.getByRole('button', { name: 'sign in' }));
     await waitFor(() => expect(screen.getByTestId('signed-out').textContent).toBe('false'));
+  });
+
+  it('a reload after Logout still remembers the sign-out, so Back records no sign-in target', async () => {
+    const first = renderApp('/login', v7);
+    await screen.findByText('Login page');
+    fireEvent.click(screen.getByRole('button', { name: 'sign in' }));
+    await waitFor(() => expect(screen.getByTestId('signed-out').textContent).toBe('false'));
+    fireEvent.click(screen.getByRole('button', { name: 'sign out' }));
+    await waitFor(() => expect(screen.getByTestId('signed-out').textContent).toBe('true'));
+    first.unmount();
+
+    // The reloaded page: same tab storage, history still holds the report page.
+    renderApp(['/reports/money?locations=aaa', '/login'], v7);
+    await screen.findByText('Login page');
+    expect(screen.getByTestId('signed-out').textContent).toBe('true');
+    await visit(-1);
+    await screen.findByText('Login page');
+    expect(loginRedirectTarget(current.state)).toBeUndefined();
+  });
+
+  it('a session adopted from another tab counts as a sign-in here', async () => {
+    renderApp('/login', v7);
+    await screen.findByText('Login page');
+    fireEvent.click(screen.getByRole('button', { name: 'sign in' }));
+    await waitFor(() => expect(screen.getByTestId('signed-out').textContent).toBe('false'));
+    act(() => {
+      localStorage.removeItem(SESSION_KEY);
+      window.dispatchEvent(new StorageEvent('storage', { key: SESSION_KEY, storageArea: localStorage }));
+    });
+    await waitFor(() => expect(screen.getByTestId('signed-out').textContent).toBe('true'));
+
+    mocked.getCurrentUser.mockResolvedValue({ user: OWNER });
+    act(() => {
+      localStorage.setItem(
+        SESSION_KEY,
+        JSON.stringify({ accessToken: 'access-b', refreshToken: 'refresh-b', expiresAt: new Date(Date.now() + 3_600_000).toISOString() }),
+      );
+      window.dispatchEvent(new StorageEvent('storage', { key: SESSION_KEY, storageArea: localStorage }));
+    });
+    await waitFor(() => expect(screen.getByTestId('signed-out').textContent).toBe('false'));
+    expect(sessionStorage.getItem('sheer.web.auth.signedOut')).toBeNull();
   });
 
   it('a sign-out in another tab counts as a sign-out here', async () => {

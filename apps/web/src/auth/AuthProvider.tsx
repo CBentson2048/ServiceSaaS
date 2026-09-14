@@ -13,6 +13,25 @@ import * as authApi from './api';
 import { ApiRequestError, setExpiredTokenHandler } from './api';
 
 const STORAGE_KEY = 'sheer.web.auth.session';
+/** Per tab, so a reload or a restored tab still knows it was signed out of. */
+const SIGNED_OUT_KEY = 'sheer.web.auth.signedOut';
+
+function readSignedOut(): boolean {
+  try {
+    return sessionStorage.getItem(SIGNED_OUT_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeSignedOut(value: boolean): void {
+  try {
+    if (value) sessionStorage.setItem(SIGNED_OUT_KEY, '1');
+    else sessionStorage.removeItem(SIGNED_OUT_KEY);
+  } catch {
+    // Storage unavailable: the in-memory flag still covers this page load.
+  }
+}
 
 /** Cross-tab Web Lock guarding refresh-token rotation. */
 const REFRESH_LOCK_NAME = 'sheer.web.auth.refresh';
@@ -65,9 +84,10 @@ interface AuthState {
   signOut: () => Promise<void>;
   applyAuthenticatedSession: (session: AuthSession, user: AuthUser) => void;
   /**
-   * True from a sign-out (in this tab or another) until the next sign-in. A
-   * protected route then records no sign-in target, so nothing about the page
-   * that was signed out of — Back included — reaches whoever signs in next.
+   * True from a sign-out (in this tab or another) until the next sign-in or a
+   * proven stored session. Kept per tab across reloads. A protected route then
+   * records no sign-in target, so nothing about the page that was signed out
+   * of — Back included — reaches whoever signs in next.
    */
   signedOut: boolean;
 }
@@ -78,7 +98,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthState['status']>('bootstrapping');
   const [user, setUser] = useState<AuthUser | null>(null);
   const [session, setSession] = useState<AuthSession | null>(() => readStoredSession());
-  const [signedOut, setSignedOut] = useState(false);
+  const [signedOut, setSignedOut] = useState(readSignedOut);
+  useEffect(() => writeSignedOut(signedOut), [signedOut]);
   /**
    * Bumped when something suggests it is worth trying the API again — the
    * browser came back online, the tab was brought forward. Both the bootstrap
@@ -142,6 +163,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (result.outcome === 'valid') {
         provenToken.current = session.accessToken;
+        // A proven stored session (this tab reloaded, or another tab signed in)
+        // is a sign-in for this tab.
+        setSignedOut(false);
         setUser(result.user);
         setStatus('authenticated');
         return;
