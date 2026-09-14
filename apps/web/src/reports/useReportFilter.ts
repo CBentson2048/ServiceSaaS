@@ -31,8 +31,9 @@ export function withReportFilter(current: URLSearchParams, filter: ReportFilter)
 export interface UseReportFilter {
   filter: ReportFilter;
   /**
-   * Problems that must stop a request: an incomplete, invalid or too-long
-   * custom range, or malformed ids. Empty when the filter can be sent.
+   * Problems that must stop a request: a repeated parameter; an incomplete,
+   * invalid, pre-2000, inverted or over-366-day custom range; or malformed or
+   * too many ids. Empty when the filter can be sent.
    */
   issues: ReportFilterIssue[];
   /** Canonical query string of `filter`: equal filters always give equal keys. */

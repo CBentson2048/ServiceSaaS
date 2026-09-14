@@ -19,7 +19,8 @@ import { useReportFilter, type ReportFilterWriteMode } from './useReportFilter';
 type Loadable<T> =
   | { status: 'idle' }
   | { status: 'loading' }
-  | { status: 'ready'; data: T }
+  /** `refreshError`: a refresh of data already shown failed; the data stays usable. */
+  | { status: 'ready'; data: T; refreshError?: unknown }
   | { status: 'error'; error: unknown };
 
 function reportErrorOf(error: unknown): ReportErrorBody | null {
@@ -99,7 +100,16 @@ export function ReportPage({ definition }: { definition: ReportDefinition }) {
         setOptions({ status: 'ready', data });
       },
       (error: unknown) => {
-        if (optionsRequest.current === id) setOptions({ status: 'error', error });
+        if (optionsRequest.current !== id) return;
+        const code = reportErrorOf(error)?.code;
+        const refusal = code !== undefined && TERMINAL_CODES.has(code);
+        // A failed refresh of options already shown for this user and report
+        // keeps them usable; a refusal (access withdrawn) never does.
+        setOptions((current) =>
+          current.status === 'ready' && shownOptionsKey.current === optionsKey && !refusal
+            ? { status: 'ready', data: current.data, refreshError: error }
+            : { status: 'error', error },
+        );
       },
     );
   }, [accessToken, definition.key, optionsKey, optionsAttempt]);
@@ -136,22 +146,33 @@ export function ReportPage({ definition }: { definition: ReportDefinition }) {
     write,
   };
 
+  const retryOptions = () => setOptionsAttempt((n) => n + 1);
+  const optionsCode = options.status === 'error' ? reportErrorOf(options.error)?.code : undefined;
+  const optionsRefused = optionsCode !== undefined && TERMINAL_CODES.has(optionsCode);
   const notices: ReactNode[] = [];
   if (options.status === 'error') {
-    const code = reportErrorOf(options.error)?.code;
-    if (code && TERMINAL_CODES.has(code)) {
-      notices.push(resultNotice(options.error, handlers));
-    } else {
-      notices.push(
+    notices.push(
+      optionsRefused ? (
+        resultNotice(options.error, handlers)
+      ) : (
         <Notice
           key="options"
           message="We couldn’t load this report’s options."
-          action={<AppButton size="sm" variant="secondary" onClick={() => setOptionsAttempt((n) => n + 1)}>Retry</AppButton>}
-        />,
-      );
-      const resultCode = result.status === 'error' ? reportErrorOf(result.error)?.code : undefined;
-      if (resultCode && FILTER_ACTION_CODES.has(resultCode)) notices.push(resultNotice(result.status === 'error' ? result.error : null, handlers));
-    }
+          action={<AppButton size="sm" variant="secondary" onClick={retryOptions}>Retry</AppButton>}
+        />
+      ),
+    );
+  } else if (options.status === 'ready' && options.refreshError !== undefined) {
+    notices.push(
+      <Notice
+        key="options"
+        message="We couldn’t refresh this report’s options."
+        action={<AppButton size="sm" variant="secondary" onClick={retryOptions}>Retry</AppButton>}
+      />,
+    );
+  }
+  if (optionsRefused) {
+    // The refusal is the whole story: nothing else on the page can succeed.
   } else if (blocked && issues.some((issue) => ID_ISSUES.has(issue.code))) {
     notices.push(
       <Notice
@@ -169,7 +190,12 @@ export function ReportPage({ definition }: { definition: ReportDefinition }) {
       />,
     );
   } else if (result.status === 'error') {
-    notices.push(resultNotice(result.error, handlers));
+    const resultCode = reportErrorOf(result.error)?.code;
+    // Beside an options Retry, show only a refusal with its own way out, so the
+    // page never offers two Retry buttons for different things.
+    if (options.status !== 'error' || (resultCode !== undefined && FILTER_ACTION_CODES.has(resultCode))) {
+      notices.push(resultNotice(result.error, handlers));
+    }
   }
 
   const groups = resolved ? groupReportScope(resolved.locations) : [];
@@ -209,8 +235,8 @@ export function ReportPage({ definition }: { definition: ReportDefinition }) {
           <div className="flex flex-col gap-1">
             {groups.map((group) => (
               <AppText as="p" variant="body" key={group.key}>
+                <span className="text-text-secondary">{group.locationNames.join(', ')} · </span>
                 <span className="font-medium">{group.label}</span>
-                <span className="text-text-secondary"> · {group.locationNames.join(', ')}</span>
               </AppText>
             ))}
             {groups.length > 1 ? (

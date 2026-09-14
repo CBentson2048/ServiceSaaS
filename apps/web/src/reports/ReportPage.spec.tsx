@@ -4,7 +4,7 @@
  * (never an empty or zero page), and dates shown per location without a clock
  * time.
  */
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useEffect } from 'react';
 import { MemoryRouter, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
@@ -232,7 +232,7 @@ describe('refusals are messages with a way out', () => {
     api.getReportResult.mockRejectedValueOnce(reportError(403, 'report_location_out_of_scope')).mockResolvedValueOnce(result('money', []));
     renderAt(`/reports/money?locations=${L2}`);
     await screen.findByText('This link includes a location you can’t report on.');
-    expect(document.body.textContent).not.toContain('Tokyo ·');
+    expect(within(screen.getByRole('region', { name: 'Report dates' })).queryByText(/Tokyo/)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Reset locations' }));
     await waitFor(() => expect(api.getReportResult).toHaveBeenCalledTimes(2));
     expect(currentSearch).toBe('');
@@ -401,6 +401,55 @@ describe('access-token rotation', () => {
     mockUserId = 'someone-else';
     rerenderSame();
     await waitFor(() => expect(screen.queryByText('28 Sept 2026 (in progress)')).toBeNull());
+  });
+});
+
+describe('review fixes', () => {
+  it('writes each scope line names first: "London · 28 Sept 2026 (in progress)"', async () => {
+    api.getReportOptions.mockResolvedValue(options());
+    api.getReportResult.mockResolvedValue(
+      result('money', [loc(L1, 'London', '2026-09-28', '2026-09-28', 'in_progress'), loc(L2, 'Tokyo', '2026-09-29', '2026-09-29', 'in_progress')]),
+    );
+    renderAt('/reports/money');
+    await screen.findByText('28 Sept 2026 (in progress)');
+    const lines = within(screen.getByRole('region', { name: 'Report dates' })).getAllByText(/Sept 2026/).map((node) => node.parentElement?.textContent);
+    expect(lines).toEqual(['London · 28 Sept 2026 (in progress)', 'Tokyo · 29 Sept 2026 (in progress)']);
+  });
+
+  it('a failed options refresh keeps the controls usable and offers a quiet Retry', async () => {
+    api.getReportOptions.mockResolvedValueOnce(options());
+    api.getReportResult.mockResolvedValue(result('money', [loc(L1, 'London', '2026-09-28', '2026-09-28', 'in_progress')]));
+    const { rerenderSame } = renderAt('/reports/money');
+    await screen.findByText('28 Sept 2026 (in progress)');
+    api.getReportOptions.mockRejectedValueOnce(reportError(500, 'boom')).mockResolvedValueOnce(options());
+    mockToken = 'token-2';
+    rerenderSame();
+    await screen.findByText('We couldn’t refresh this report’s options.');
+    expect((screen.getByRole('tab', { name: 'Today' }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByText('We couldn’t load this report’s options.')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByText('We couldn’t refresh this report’s options.')).toBeNull());
+  });
+
+  it('a refresh refused for access withdrawn is not kept quiet', async () => {
+    api.getReportOptions.mockResolvedValueOnce(options());
+    api.getReportResult.mockResolvedValueOnce(result('money', [loc(L1, 'London', '2026-09-28', '2026-09-28', 'in_progress')]));
+    const { rerenderSame } = renderAt('/reports/money');
+    await screen.findByText('28 Sept 2026 (in progress)');
+    api.getReportOptions.mockRejectedValueOnce(reportError(403, 'report_forbidden'));
+    api.getReportResult.mockRejectedValueOnce(reportError(403, 'report_forbidden'));
+    mockToken = 'token-2';
+    rerenderSame();
+    await screen.findByText('You don’t have access to this report.');
+    expect((screen.getByRole('tab', { name: 'Today' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('while options fail, a link with bad location ids still shows its own way out', async () => {
+    api.getReportOptions.mockRejectedValue(reportError(500, 'boom'));
+    renderAt('/reports/money?locations=bogus');
+    await screen.findByText('We couldn’t load this report’s options.');
+    expect(screen.getByText('This link has location filters that aren’t valid.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Reset locations' })).toBeTruthy();
   });
 });
 
