@@ -15,8 +15,10 @@ import {
   excludedDaysNote,
   formatCashUpAmount,
   formatCount,
-  formatEntered,
+  formatManualEntry,
   thresholdLabel,
+  CURRENT_THRESHOLD_NOTE,
+  MANUAL_ENTRY_NOTE,
 } from './cashUpLabels';
 
 export type CashUpFirstPage = CashUpFirstPageBody;
@@ -74,15 +76,17 @@ export function CashUpReport({ body, locations, loadMore }: CashUpReportProps) {
             rows={[
               ['Variance, both tenders', money(recorded.variance)],
               ['Petty cash out', money(recorded.pettyCashOut)],
-              ['Refunds entered at cash-up', formatEntered(recorded.refundsEntered, currency)],
-              ['Voids entered at cash-up', formatEntered(recorded.voidsEntered, currency)],
-              ['Days outside threshold', formatCount(recorded.daysOutsideThreshold)],
+              ['Refunds (manual entry)', formatManualEntry(recorded.refundsEntered, currency)],
+              ['Voids (manual entry)', formatManualEntry(recorded.voidsEntered, currency)],
+              ['Days outside current threshold', formatCount(recorded.daysOutsideThreshold)],
             ]}
           />
           <Note>
             Variance is counted minus expected, as recorded at sign-off. The opening float and petty
-            cash are not part of it. Days outside threshold use each location’s threshold today.
+            cash are not part of it.
           </Note>
+          <Note>{CURRENT_THRESHOLD_NOTE}</Note>
+          <Note>{MANUAL_ENTRY_NOTE}</Note>
           {recorded.daysUnavailable > 0 ? (
             <Note>{excludedDaysNote(recorded.daysUnavailable, recorded.unavailableReasons)}</Note>
           ) : null}
@@ -243,8 +247,8 @@ function LocationTable({
                   'Days not signed off',
                   'Days with no cash-up',
                   'Variance, both tenders',
-                  'Days outside threshold',
-                  'Threshold today',
+                  'Days outside current threshold',
+                  'Current threshold',
                 ].map((label, index) => (
                   <th
                     key={label}
@@ -298,10 +302,10 @@ const DETAIL_COLUMNS = [
   'Counted card',
   'Card variance',
   'Variance, both tenders',
-  'Threshold (today’s)',
+  'Against current threshold',
   'Petty cash out',
-  'Refunds entered',
-  'Voids entered',
+  'Refunds (manual entry)',
+  'Voids (manual entry)',
   'Signed off',
   'Changed since sign-off',
   'Notes',
@@ -354,6 +358,12 @@ function CashUpDetail({
             </table>
           </div>
         )}
+        {initial.notStarted ? null : (
+          <>
+            <Note>{CURRENT_THRESHOLD_NOTE}</Note>
+            <Note>{MANUAL_ENTRY_NOTE}</Note>
+          </>
+        )}
         <p aria-live="polite" className="sr-only">
           {initial.notStarted ? '' : `Showing ${rows.length} ${rows.length === 1 ? 'row' : 'rows'}`}
         </p>
@@ -401,7 +411,7 @@ function DayRow({ row, locationName }: { row: CashUpDayRow; locationName: string
       {cell(dayStatusLabel(row), false)}
       {cell(f(row.sources.expectedCash))}
       {cell(f(row.sources.expectedCard))}
-      {cell(record ? f(record.openingFloat) : blank)}
+      {cell(record ? formatManualEntry(record.openingFloat, row.currencyCode) : blank)}
       {cell(record ? f(record.cash.expected) : blank)}
       {cell(record ? f(record.cash.counted) : blank)}
       {cell(record ? f(record.cash.variance) : blank)}
@@ -411,8 +421,8 @@ function DayRow({ row, locationName }: { row: CashUpDayRow; locationName: string
       {cell(record ? f(record.variance) : blank)}
       {cell(record ? thresholdLabel(record.thresholdCheck) : blank, false)}
       {cell(record ? f(record.pettyCashOut) : blank)}
-      {cell(record ? formatEntered(record.refundsEntered, row.currencyCode) : blank)}
-      {cell(record ? formatEntered(record.voidsEntered, row.currencyCode) : blank)}
+      {cell(record ? formatManualEntry(record.refundsEntered, row.currencyCode) : blank)}
+      {cell(record ? formatManualEntry(record.voidsEntered, row.currencyCode) : blank)}
       {cell(
         record?.signedOff
           ? `${formatReportDate(record.signedOff.localDate)} ${record.signedOff.localTime}${record.signedOffBy ? ` · ${record.signedOffBy}` : ''}`

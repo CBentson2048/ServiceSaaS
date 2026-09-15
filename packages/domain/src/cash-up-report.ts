@@ -61,7 +61,8 @@ export interface CashUpDayCounts {
 
 /**
  * The threshold result for one day:
- * - `within` / `outside`: |variance| against the location's threshold today;
+ * - `within` / `outside`: |variance| against the location's CURRENT threshold (the
+ *   threshold at sign-off is not stored, so this is never the historical one);
  * - `not_signed_off`: no variance yet;
  * - `no_threshold`: the location has no threshold setting;
  * - `not_comparable`: the recorded variance is unavailable (London trading day, currency, missing value).
@@ -82,10 +83,13 @@ export interface CashUpRecordedTotals {
   /** The stored combined variance: (counted cash + card) − (expected cash + card). */
   variance: CashUpAmount;
   pettyCashOut: CashUpAmount;
-  /** Manual entries on End of Day. A zero cannot be told apart from "not entered". */
+  /**
+   * Manual entries on End of Day. The column stores zero when nothing is typed, so
+   * a zero never proves an entry of zero was made (the web shows "£0.00 recorded").
+   */
   refundsEntered: CashUpAmount;
   voidsEntered: CashUpAmount;
-  /** Signed-off days whose |variance| exceeds today's threshold for the location. */
+  /** Signed-off days whose |variance| exceeds the location's CURRENT threshold (not the one at sign-off). */
   daysOutsideThreshold: CashUpCount;
   /**
    * Signed-off days left out of every recorded figure above, because their figures
@@ -124,7 +128,7 @@ export interface CashUpLocationTotals {
   locationId: string;
   /** The location's single currency; `null` when mixed, not started or unknown. */
   currencyCode: string | null;
-  /** Today's variance threshold for the location. */
+  /** The location's CURRENT variance threshold; the threshold at sign-off is not stored. */
   threshold: CashUpAmount;
   /** The threshold's currency: the location's configured currency; `null` when unknown. */
   thresholdCurrencyCode: string | null;

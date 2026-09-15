@@ -33,11 +33,22 @@ export function formatCashUpAmount(amount: CashUpAmount, currencyCode: string | 
   return formatMoneyAmount(amount as MoneyAmount, currencyCode);
 }
 
-/** Refunds and voids are manual entries whose zero can't be told apart from "not entered". */
-export function formatEntered(amount: CashUpAmount, currencyCode: string | null): string {
-  if (amount.availability === 'available' && amount.cents === 0) return 'None entered';
-  return formatCashUpAmount(amount, currencyCode);
+/**
+ * Refunds, voids and the opening float are typed in on End of Day, and the column
+ * stores zero when nothing is typed. A stored zero can't show whether anyone
+ * entered zero, so it reads "£0.00 recorded" — never "None entered", which would
+ * claim no entry was made. A non-zero value can only come from an entry.
+ */
+export function formatManualEntry(amount: CashUpAmount, currencyCode: string | null): string {
+  const text = formatCashUpAmount(amount, currencyCode);
+  return amount.availability === 'available' && amount.cents === 0 ? `${text} recorded` : text;
 }
+
+export const MANUAL_ENTRY_NOTE =
+  'Refunds, voids and the opening float are typed in on End of Day, and zero is stored when nothing is typed. A zero marked “recorded” can’t show whether anyone entered it.';
+
+export const CURRENT_THRESHOLD_NOTE =
+  'Days outside the current threshold compare each day’s variance with the location’s threshold as it is now. The threshold in force at sign-off was not stored, so it may have been different.';
 
 export function formatCount(count: CashUpCount): string {
   if (count.availability === 'available') return String(count.count);

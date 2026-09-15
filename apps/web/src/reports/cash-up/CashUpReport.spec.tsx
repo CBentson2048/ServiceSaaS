@@ -112,18 +112,32 @@ describe('CashUpReport summary', () => {
     const cashRow = within(recorded).getByRole('rowheader', { name: 'Cash' }).parentElement!;
     expect(cashRow.textContent).toBe('Cash£50.00£55.00£5.00');
     expect(valueOf(recorded, 'Variance, both tenders')).toBe('£5.00');
-    expect(valueOf(recorded, 'Days outside threshold')).toBe('1');
+    expect(valueOf(recorded, 'Days outside current threshold')).toBe('1');
     expect(valueOf(section('Days'), 'No cash-up recorded')).toBe('0');
     expect(valueOf(section('Changed since sign-off'), 'Cash')).toBe('£5.00');
     expect(valueOf(section('Takings without a signed-off cash-up'), 'Expected card')).toBe('£30.00');
     expect(valueOf(section('Retail outside the till'), 'Payment method not recorded')).toBe('£2.00');
   });
 
-  it('a manual entry of zero reads None entered, because a zero can’t be told apart from not entered', () => {
+  it('a stored zero for a manual entry reads “£0.00 recorded”, and never claims whether anyone entered it', () => {
     render(<CashUpReport body={body()} locations={locations} loadMore={jest.fn()} />);
     const recorded = section('Signed-off days, as recorded');
-    expect(valueOf(recorded, 'Voids entered at cash-up')).toBe('None entered');
-    expect(valueOf(recorded, 'Refunds entered at cash-up')).toBe('£12.00');
+    expect(valueOf(recorded, 'Voids (manual entry)')).toBe('£0.00 recorded');
+    expect(valueOf(recorded, 'Refunds (manual entry)')).toBe('£12.00');
+    expect(recorded.textContent).toContain(
+      'Refunds, voids and the opening float are typed in on End of Day, and zero is stored when nothing is typed. A zero marked “recorded” can’t show whether anyone entered it.',
+    );
+    expect(document.body.textContent).not.toMatch(/None entered|entered at cash-up/);
+  });
+
+  it('the threshold is always called the current threshold, never the one in force at sign-off', () => {
+    render(<CashUpReport body={body({ detail: page([signedRow('2026-09-12', -200)], null) })} locations={locations} loadMore={jest.fn()} />);
+    const recorded = section('Signed-off days, as recorded');
+    expect(valueOf(recorded, 'Days outside current threshold')).toBe('1');
+    expect(recorded.textContent).toContain('The threshold in force at sign-off was not stored, so it may have been different.');
+    expect(within(section('By location')).getByRole('columnheader', { name: 'Current threshold' })).toBeTruthy();
+    expect(within(section('Detail')).getByRole('columnheader', { name: 'Against current threshold' })).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/threshold today|today’s threshold|Threshold \(today’s\)/i);
   });
 
   it('figures that can’t be compared, and an unset threshold, are words — never £0.00', () => {
@@ -131,7 +145,7 @@ describe('CashUpReport summary', () => {
     const recorded = section('Signed-off days, as recorded');
     expect(within(recorded).getByRole('rowheader', { name: 'Card' }).parentElement!.textContent).not.toMatch(/£/);
     expect(valueOf(recorded, 'Variance, both tenders')).toBe('Not comparable (London trading day)');
-    expect(valueOf(recorded, 'Days outside threshold')).toBe('Not comparable (London trading day)');
+    expect(valueOf(recorded, 'Days outside current threshold')).toBe('Not comparable (London trading day)');
     expect(valueOf(recorded, 'Petty cash out')).toBe('Not comparable (London trading day)');
     // The note gives the real reasons, not always the London day.
     expect(recorded.textContent).toContain(
@@ -166,7 +180,7 @@ describe('CashUpReport detail', () => {
     expect(signed.textContent).toContain('12 Sept 2026 20:30 · Ava Stone');
     expect(signed.textContent).toContain('Within');
     expect(signed.textContent).toContain('£100.00'); // opening float
-    expect(signed.textContent).toContain('None entered'); // refunds and voids
+    expect(signed.textContent).toContain('£0.00 recorded'); // refunds and voids: a stored zero
     const today = within(detail).getByText('Not cashed up yet').closest('tr')!;
     // Takings in the row's own currency; no recorded figures invented.
     expect(today.textContent).toContain('US$7.00');
