@@ -9,6 +9,9 @@ import { useEffect } from 'react';
 import { MemoryRouter, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   getReportDefinition,
+  type MoneyDetailPage,
+  type MoneyReportBody,
+  type MoneyTotals,
   type ReportDefinition,
   type ReportOptions,
   type ReportResult,
@@ -486,6 +489,80 @@ describe('review fixes', () => {
     await screen.findByText('We couldn’t load this report’s options.');
     expect(screen.getByText('This link has location filters that aren’t valid.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Reset locations' })).toBeTruthy();
+  });
+});
+
+describe('R1 Money body', () => {
+  const zero = { availability: 'available', cents: 0 } as const;
+  const totals: MoneyTotals = {
+    paidBills: { gross: { availability: 'available', cents: 35500 }, netOfVat: zero, vat: zero },
+    composition: [
+      { key: 'service', gross: zero },
+      { key: 'product_usage', gross: zero },
+      { key: 'adjustment', gross: zero },
+      { key: 'not_itemised', gross: zero },
+    ],
+    colour: { gross: zero, netOfVat: zero, vat: zero },
+    settlement: [
+      { key: 'cash', amount: zero },
+      { key: 'card_reader', amount: zero },
+      { key: 'deposits_applied', amount: zero },
+      { key: 'not_itemised', amount: zero },
+    ],
+    retail: { recorded: zero, vat: { availability: 'unavailable', reason: 'not_captured' }, byMethod: [] },
+    deposits: { collected: zero, redeemed: zero, refunded: zero },
+    netPosition: { availability: 'unavailable', reason: 'definition_pending' },
+  };
+  const moneyBody = (detail: MoneyDetailPage | null): MoneyReportBody => ({
+    currencyCode: 'GBP',
+    summary: totals,
+    locations: [{ locationId: L1, totals }],
+    notRecorded: ['discounts'],
+    coverage: { tillPaymentsWithoutBill: { count: 0, amount: zero } },
+    detail,
+  });
+  const detailRow = (n: number): MoneyDetailPage['rows'][number] => ({
+    kind: 'retail_sale',
+    rowKey: `retail_sale:${n}`,
+    locationId: L1,
+    localDate: '2026-09-28',
+    localTime: '10:0' + n,
+    currencyCode: 'GBP',
+    amount: { availability: 'available', cents: 100 * n },
+    quantity: n,
+    method: 'cash',
+  });
+  const moneyResult = (detail: MoneyDetailPage | null): ReportResult => ({
+    ...result('money', [loc(L1, 'London', '2026-09-28', '2026-09-28', 'in_progress')]),
+    body: moneyBody(detail),
+  });
+
+  it('renders the Money figures in place of the foundation preview card, under the same scope line', async () => {
+    api.getReportOptions.mockResolvedValue(options());
+    api.getReportResult.mockResolvedValue(moneyResult(null));
+    renderAt('/reports/money');
+    await screen.findByRole('region', { name: 'Paid bill revenue' });
+    expect(screen.getByText('£355.00')).toBeTruthy();
+    expect(screen.getByText('28 Sept 2026 (in progress)')).toBeTruthy();
+    expect(screen.queryByText('Foundation preview')).toBeNull();
+  });
+
+  it('Detail asks for the detail view, and Load more pages with the same filter and the cursor', async () => {
+    api.getReportOptions.mockResolvedValue(options());
+    api.getReportResult
+      .mockResolvedValueOnce(moneyResult(null))
+      .mockResolvedValueOnce(moneyResult({ rows: [detailRow(1)], nextCursor: 'm1.next' }))
+      .mockResolvedValueOnce(moneyResult({ rows: [detailRow(2)], nextCursor: null }));
+    renderAt(`/reports/money?locations=${L1}`);
+    await screen.findByRole('region', { name: 'Paid bill revenue' });
+    fireEvent.click(screen.getByRole('tab', { name: 'Detail' }));
+    await screen.findByRole('region', { name: 'Detail' });
+    expect(api.getReportResult.mock.calls[1][2]).toMatchObject({ view: 'detail', locationIds: [L1] });
+    expect(currentSearch).toBe(`?locations=${L1}&view=detail`);
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    await screen.findByText('10:02');
+    expect(api.getReportResult.mock.calls[2]).toEqual(['token', 'money', expect.objectContaining({ view: 'detail', locationIds: [L1] }), 'm1.next']);
+    expect(screen.getByText('10:01')).toBeTruthy();
   });
 });
 

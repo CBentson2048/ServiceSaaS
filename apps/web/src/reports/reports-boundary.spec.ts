@@ -33,12 +33,16 @@ function stripComments(source: string, fileName = 'file.tsx'): string {
 }
 
 const reportsDir = __dirname;
+const moneyDir = join(__dirname, 'money');
 const configDir = join(__dirname, '..', 'config');
+const sources = (dir: string) =>
+  readdirSync(dir)
+    .filter((file) => /\.(ts|tsx)$/.test(file) && !/\.spec\.(ts|tsx)$/.test(file))
+    .map((file) => join(dir, file));
 
 const files = [
-  ...readdirSync(reportsDir)
-    .filter((file) => /\.(ts|tsx)$/.test(file) && !/\.spec\.(ts|tsx)$/.test(file))
-    .map((file) => join(reportsDir, file)),
+  ...sources(reportsDir),
+  ...sources(moneyDir),
   join(configDir, 'reportsFoundationShell.ts'),
   join(configDir, 'reportsFoundationShellPolicy.ts'),
 ].map((path) => ({ name: path.split('/src/')[1], code: stripComments(readFileSync(path, 'utf8'), path) }));
@@ -53,6 +57,8 @@ describe('web report foundation source boundaries', () => {
       'reports/ReportControlBar.tsx',
       'reports/ReportMultiSelect.tsx',
       'reports/ReportPage.tsx',
+      'reports/money/MoneyReport.tsx',
+      'reports/money/moneyLabels.ts',
       'reports/reportNav.ts',
       'reports/reportRoutes.tsx',
       'reports/reportScopeLine.ts',
@@ -98,5 +104,19 @@ describe('web report foundation source boundaries', () => {
     expect(code).toContain('<div>');
     expect(code).not.toContain('localStorage');
     expect(code).not.toContain('allowedLocationIds');
+  });
+
+  it('R1 Money: React formats money and never calculates it', () => {
+    const money = files.filter((file) => file.name.startsWith('reports/money/'));
+    expect(money).toHaveLength(2);
+    // No summing, no arithmetic on amounts, no parsing money back out of text.
+    const arithmetic = /\.reduce\s*\(|\bcents\s*[-+*/%]|[-+*/%]=?\s*[\w.]*\bcents\b|\bMath\.|parseFloat|parseInt|Number\s*\(/;
+    expect(money.filter((file) => arithmetic.test(file.code)).map((file) => file.name)).toEqual([]);
+    // Money is formatted only through the shared formatter, from minor units.
+    expect(money.filter((file) => /formatCurrency\(/.test(file.code)).map((file) => file.name)).toEqual(['reports/money/moneyLabels.ts']);
+    // An unavailable figure is words: the formatter handles every availability.
+    const labels = money.find((file) => file.name === 'reports/money/moneyLabels.ts')!.code;
+    expect(labels).toMatch(/case 'unavailable'/);
+    expect(labels).toMatch(/case 'not_started'/);
   });
 });

@@ -3487,8 +3487,12 @@ export async function getReportResult(
   accessToken: string,
   reportKey: ReportKey,
   filter: ReportFilter,
+  /** Detail-view page cursor. Never part of the report URL. */
+  cursor?: string,
 ): Promise<ReportResult> {
-  const query = new URLSearchParams(encodeReportFilter(filter)).toString();
+  const params = new URLSearchParams(encodeReportFilter(filter));
+  if (cursor !== undefined) params.set('cursor', cursor);
+  const query = params.toString();
   return request<ReportResult>(
     `/reports/${encodeURIComponent(reportKey)}/result${query ? `?${query}` : ''}`,
     { accessToken },

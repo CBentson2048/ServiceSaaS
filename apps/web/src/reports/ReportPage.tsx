@@ -8,11 +8,13 @@ import {
   type ReportFilterIssueCode,
   type ReportOptions,
   type ReportResult,
+  type MoneyReportBody,
 } from '@sheer/domain';
 import { ApiRequestError, getReportOptions, getReportResult } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
 import { AppButton, AppCard, AppText } from '../design';
 import { ReportControlBar, WEEK_START_UNCONFIGURED_MESSAGE } from './ReportControlBar';
+import { MoneyReport } from './money/MoneyReport';
 import { LOCAL_CALENDAR_NOTE, groupReportScope } from './reportScopeLine';
 import { useReportFilter, type ReportFilterWriteMode } from './useReportFilter';
 
@@ -258,7 +260,19 @@ export function ReportPage({ definition }: { definition: ReportDefinition }) {
         ) : null}
       </section>
 
-      {resolved && definition.release === 'foundation' ? (
+      {result.status === 'ready' && result.data.reportKey === 'money' && result.data.body ? (
+        <MoneyReport
+          body={result.data.body as MoneyReportBody}
+          locations={result.data.filter.locations}
+          loadMore={(cursor) =>
+            accessToken
+              ? getReportResult(accessToken, 'money', requestFilter, cursor).then((next) =>
+                  next.reportKey === 'money' && next.body ? (next.body as MoneyReportBody).detail : null,
+                )
+              : Promise.resolve(null)
+          }
+        />
+      ) : resolved && definition.release === 'foundation' ? (
         <AppCard padding="md" variant="warning" elevation="none">
           <AppText as="p" variant="body" weight="medium">
             Foundation preview
