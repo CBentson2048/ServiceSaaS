@@ -259,6 +259,12 @@ const SHIFT_COLUMNS = 'id,staff_profile_id,scheduled_start_at,scheduled_end_at';
 const BREAK_COLUMNS = 'shift_id,started_at,ended_at';
 const APPOINTMENT_COLUMNS = 'assigned_staff_profile_id,scheduled_start_at,scheduled_end_at,occupied_ranges';
 const BOOKING_ATTEMPT_BUSY_COLUMNS = 'id,stylist_profile_id,selected_start_at,selected_end_at,occupied_ranges';
+/**
+ * `booking.deposit_status_enum` values that precede a collection. A successful
+ * payment is recorded only from one of these; `paid`, `partially_refunded`,
+ * `refunded` and `cancelled` are never overwritten by a payment webhook.
+ */
+const DEPOSIT_AWAITING_PAYMENT_STATUSES = ['pending', 'requires_action', 'authorized', 'failed'];
 const BOOKING_ATTEMPT_COLUMNS =
   'id,business_id,location_id,service_id,stylist_profile_id,client_profile_id,user_profile_id,appointment_id,staff_request_mode,selected_start_at,selected_end_at,communication_preference,client_note,deposit_amount,currency_code,stripe_payment_intent_id,status,expires_at,metadata';
 const BOOKING_ATTEMPT_SERVICE_COLUMNS =
@@ -2118,13 +2124,24 @@ export class PublicBookingService {
     }
   }
 
+  /**
+   * Records the deposit's collection exactly once.
+   *
+   * Stripe re-delivers `payment_intent.succeeded` until it gets a 2xx, and may
+   * deliver an event more than once, so this runs again for an attempt that is
+   * already confirmed. The update only applies while no collection is recorded
+   * (`paid_at` is null and the deposit is still awaiting payment): a repeat never
+   * moves `paid_at`, never records a second collection, and never turns a
+   * refunded or partially refunded deposit back into `paid`. Financial reporting
+   * (R1 Money) reads the collection by `paid_at` and refunds by `refunded_at`.
+   */
   private async markDepositPaid(
     attempt: BookingAttemptRow,
     paymentIntent: StripePaymentIntent,
   ): Promise<void> {
     const chargeId =
       typeof paymentIntent.latest_charge === 'string' ? paymentIntent.latest_charge : paymentIntent.latest_charge?.id;
-    const { error } = await this.admin
+    const { data, error } = await this.admin
       .schema('booking')
       .from('deposits')
       .update({
@@ -2134,11 +2151,20 @@ export class PublicBookingService {
         paid_at: new Date().toISOString(),
         metadata: { stripe_status: paymentIntent.status },
       })
-      .eq('booking_attempt_id', attempt.id);
+      .eq('booking_attempt_id', attempt.id)
+      .is('paid_at', null)
+      .in('status', DEPOSIT_AWAITING_PAYMENT_STATUSES)
+      .select('id');
 
     if (error) {
       this.logger.error(`markDepositPaid failed: ${error.message}`);
       throw new InternalServerErrorException('Unable to mark deposit paid');
+    }
+    if (!data || data.length === 0) {
+      this.logger.log(
+        `Deposit collection already recorded for attempt=${attempt.id} paymentIntent=${paymentIntent.id}; repeated payment_intent.succeeded left it unchanged`,
+      );
+      return;
     }
     this.logger.log(
       `Marked booking deposit paid for attempt=${attempt.id} appointment=${attempt.appointment_id ?? 'pending'} paymentIntent=${paymentIntent.id}`,
