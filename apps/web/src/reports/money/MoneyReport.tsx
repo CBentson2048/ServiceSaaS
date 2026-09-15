@@ -219,17 +219,30 @@ function MoneyDetail({
   const [state, setState] = useState<'idle' | 'loading' | 'error'>('idle');
   /** Bumped on every reset: a Load more that began before it must not append. */
   const generation = useRef(0);
+  /** One action button (Load more, Loading…, Retry) keeps keyboard focus across states. */
+  const actionRef = useRef<HTMLButtonElement>(null);
+  const sectionRef = useRef<HTMLElement>(null);
+  /** The action had focus when the last page arrived: move focus to the list, not the page body. */
+  const refocusList = useRef(false);
 
   // A new first page (a new filter or a refresh) starts the list again.
   useEffect(() => {
     generation.current += 1;
+    refocusList.current = false;
     setRows(initial.rows);
     setCursor(initial.nextCursor);
     setState('idle');
   }, [initial]);
 
+  useEffect(() => {
+    if (cursor === null && refocusList.current) {
+      refocusList.current = false;
+      sectionRef.current?.focus();
+    }
+  }, [cursor]);
+
   const more = () => {
-    if (cursor === null) return;
+    if (cursor === null || state === 'loading') return;
     const started = generation.current;
     setState('loading');
     loadMore(cursor).then(
@@ -239,6 +252,7 @@ function MoneyDetail({
           setState('error');
           return;
         }
+        if (page.nextCursor === null && document.activeElement === actionRef.current) refocusList.current = true;
         setRows((current) => [...current, ...page.rows]);
         setCursor(page.nextCursor);
         setState('idle');
@@ -251,7 +265,7 @@ function MoneyDetail({
 
   return (
     <AppCard padding="md">
-      <section aria-label="Detail" className="flex flex-col gap-2">
+      <section ref={sectionRef} tabIndex={-1} aria-label="Detail" className="flex flex-col gap-2 outline-none">
         <AppText as="h2" variant="subtitle" weight="medium">
           Detail
         </AppText>
@@ -296,19 +310,17 @@ function MoneyDetail({
           {initial.notStarted ? '' : `Showing ${rows.length} ${rows.length === 1 ? 'row' : 'rows'}`}
         </p>
         {state === 'error' ? (
-          <div role="alert" className="flex items-center gap-3">
+          <div role="alert">
             <AppText as="p" variant="caption" tone="danger">
               We couldn’t load more rows.
             </AppText>
-            <AppButton size="sm" variant="secondary" onClick={more}>
-              Retry
-            </AppButton>
           </div>
         ) : null}
-        {cursor !== null && state !== 'error' ? (
+        {cursor !== null ? (
           <div>
-            <AppButton size="sm" variant="secondary" onClick={more} disabled={state === 'loading'}>
-              {state === 'loading' ? 'Loading…' : 'Load more'}
+            {/* aria-disabled, not disabled: a disabled button would drop keyboard focus while loading. */}
+            <AppButton ref={actionRef} size="sm" variant="secondary" onClick={more} aria-disabled={state === 'loading' || undefined}>
+              {state === 'error' ? 'Retry' : state === 'loading' ? 'Loading…' : 'Load more'}
             </AppButton>
           </div>
         ) : null}

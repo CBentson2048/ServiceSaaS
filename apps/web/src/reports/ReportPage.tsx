@@ -269,8 +269,18 @@ export function ReportPage({ definition }: { definition: ReportDefinition }) {
           locations={result.data.filter.locations}
           loadMore={(cursor) =>
             accessToken
-              ? getReportResult(accessToken, 'money', requestFilter, cursor).then((next) =>
-                  next.reportKey === 'money' && next.body ? (next.body as MoneyReportBody).detail : null,
+              ? getReportResult(accessToken, 'money', requestFilter, cursor).then(
+                  (next) => {
+                    const nextBody = next.reportKey === 'money' ? (next.body as MoneyReportBody | null) : null;
+                    return nextBody?.continuation ? nextBody.detail : null;
+                  },
+                  (error: unknown) => {
+                    // The filter now names other dates (a relative preset past local midnight) or
+                    // other locations: the page is stale, so reload it rather than append rows
+                    // from other dates.
+                    if (reportErrorOf(error)?.code === 'report_cursor_invalid') setResultAttempt((n) => n + 1);
+                    throw error;
+                  },
                 )
               : Promise.resolve(null)
           }

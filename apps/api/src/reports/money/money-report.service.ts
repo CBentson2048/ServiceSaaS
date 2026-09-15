@@ -23,6 +23,7 @@ import {
   DETAIL_KIND_RANK,
   decodeDetailCursor,
   encodeDetailCursor,
+  windowsFingerprint,
   keysetAfter,
   mergeDetailPage,
   type DetailPosition,
@@ -63,12 +64,13 @@ export class MoneyReportService {
   async build(scope: ReportScope, request: MoneyBuildRequest): Promise<MoneyReportBody> {
     const detailView = scope.resolved.filter.view === 'detail';
     if (request.cursor !== null && !detailView) throw reportHttpError('report_cursor_invalid');
-    const position = request.cursor === null ? null : decodeDetailCursor(request.cursor);
 
     const businessId = scope.actor.businessId;
     const started: MoneyWindow[] = scope.windows
       .filter((window) => window.status !== 'not_started')
       .map((window) => ({ locationId: window.locationId, fromUtc: window.fromUtc, toUtcExclusive: window.toUtcExclusive }));
+    const fingerprint = windowsFingerprint(started);
+    const position = request.cursor === null ? null : decodeDetailCursor(request.cursor, fingerprint);
     const timezoneByLocation = new Map(scope.windows.map((window) => [window.locationId, window.timezone]));
 
     // A continuation page carries only the next detail rows: the summary was
@@ -81,14 +83,14 @@ export class MoneyReportService {
         locations: [],
         notRecorded: [...MONEY_NOT_RECORDED_CATEGORIES],
         coverage: null,
-        detail: await this.detailPage(businessId, started, timezoneByLocation, position),
+        detail: await this.detailPage(businessId, started, timezoneByLocation, position, fingerprint),
       };
     }
 
     const [facts, coverage, detail, configured] = await Promise.all([
       started.length > 0 ? this.loadFacts(businessId, started) : Promise.resolve(null),
       this.coverage(businessId, started),
-      detailView ? this.detailPage(businessId, started, timezoneByLocation, null) : Promise.resolve(null),
+      detailView ? this.detailPage(businessId, started, timezoneByLocation, null, fingerprint) : Promise.resolve(null),
       this.locationCurrencies(businessId, started),
     ]);
 
@@ -199,6 +201,7 @@ export class MoneyReportService {
     windows: readonly MoneyWindow[],
     timezoneByLocation: ReadonlyMap<string, string>,
     position: DetailPosition | null,
+    fingerprint: string,
   ): Promise<MoneyDetailPage> {
     if (windows.length === 0) return { notStarted: true, rows: [], nextCursor: null };
     // Each (kind, location chunk) stream contributes its first PAGE+1 rows after
@@ -235,7 +238,11 @@ export class MoneyReportService {
       ...bills.map((bill) => ({
         position: { key: bill.at, rank: DETAIL_KIND_RANK.paid_bill, id: bill.id },
         build: (billFacts: Map<string, BillFacts>): MoneyDetailRow => {
-          const figures = billFigures(billFacts.get(bill.id) ?? { bill, lines: [], payments: [] });
+          const facts = billFacts.get(bill.id) ?? { bill, lines: [], payments: [] };
+          const figures = billFigures(facts);
+          // Tenders in another currency than the bill are never written under the bill's currency.
+          const tendersMixed = facts.payments.some((payment) => payment.currencyCode !== bill.currencyCode);
+          const tender = (cents: number): MoneyAmount => (tendersMixed ? { availability: 'unavailable', reason: 'mixed_currencies' } : available(cents));
           return {
             kind: 'paid_bill',
             rowKey: `paid_bill:${bill.id}`,
@@ -244,8 +251,8 @@ export class MoneyReportService {
             netOfVat: available(bill.netCents),
             vat: available(bill.taxCents),
             colour: available(figures.colour.gross),
-            cash: available(figures.cash),
-            cardReader: available(figures.cardReader),
+            cash: tender(figures.cash),
+            cardReader: tender(figures.cardReader),
             depositApplied: available(bill.depositAppliedCents),
           };
         },
@@ -285,7 +292,7 @@ export class MoneyReportService {
     const { page, next } = mergeDetailPage(candidates, MONEY_DETAIL_PAGE_SIZE);
     const pageBills = bills.filter((bill) => page.some((row) => row.position.rank === DETAIL_KIND_RANK.paid_bill && row.position.id === bill.id));
     const billFacts = new Map((await this.withLinesAndPayments(businessId, pageBills)).map((facts) => [facts.bill.id, facts]));
-    return { notStarted: false, rows: page.map((row) => row.build(billFacts)), nextCursor: next === null ? null : encodeDetailCursor(next) };
+    return { notStarted: false, rows: page.map((row) => row.build(billFacts)), nextCursor: next === null ? null : encodeDetailCursor(next, fingerprint) };
   }
 }
 

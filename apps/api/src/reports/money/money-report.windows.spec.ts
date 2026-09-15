@@ -159,8 +159,17 @@ describe('Money reads each location inside its own window', () => {
       timezone: i % 2 ? 'Europe/London' : 'Asia/Tokyo',
     }));
     const scope = moneyScope(BIZ, many, filter(), new Date('2026-09-14T15:30:00Z'));
-    const ledger = ledgerWithBills(many.map((l, i) => ({ locationId: l.id, at: '2026-09-14T16:00:00Z', gross: 100 + i })));
-    const { body, source } = await run(ledger, scope);
+    // Each bill sits where only its own location's window reaches (London 14 Sep 10:00Z is before
+    // Tokyo's window; 15 Sep 01:00Z is after London's), with a decoy at the other zone's instant
+    // that must not count — so a chunk read with another location's window bounds would fail.
+    const own = (i: number) => (i % 2 ? '2026-09-14T10:00:00Z' : '2026-09-15T01:00:00Z');
+    const other = (i: number) => (i % 2 ? '2026-09-15T01:00:00Z' : '2026-09-14T10:00:00Z');
+    const ledger = ledgerWithBills([
+      ...many.map((l, i) => ({ locationId: l.id, at: own(i), gross: 100 + i })),
+      ...many.map((l, i) => ({ locationId: l.id, at: other(i), gross: 100000 })),
+    ]);
+    const { body, source, byLocation } = await run(ledger, scope);
+    expect(many.every((l, i) => byLocation[l.id] === 100 + i)).toBe(true);
     const billReads = source.reads.filter((r) => r.method === 'paidBills');
     expect(billReads.every((r) => (r.windows?.length ?? 0) <= 10)).toBe(true);
     // Each chunk is read until an empty read, so a chunk's windows appear more than once: compare the set.

@@ -8,7 +8,7 @@
  */
 import type { MoneyDetailRowKind } from '@sheer/domain';
 import { reportHttpError } from '../report-errors';
-import type { MoneyAfter } from './money-source';
+import type { MoneyAfter, MoneyWindow } from './money-source';
 import { isInstantKey, isUuid } from './money-values';
 
 export const DETAIL_KIND_RANK: Record<MoneyDetailRowKind, number> = {
@@ -25,13 +25,36 @@ export interface DetailPosition {
 }
 
 const CURSOR_PREFIX = 'm1.';
+const FINGERPRINT = /^[0-9a-f]{16}$/;
 
-export function encodeDetailCursor(position: DetailPosition): string {
-  return CURSOR_PREFIX + Buffer.from(JSON.stringify([position.key, position.rank, position.id]), 'utf8').toString('base64url');
+/**
+ * The windows a cursor was issued for. A relative preset resolves again on every
+ * request, so after a location's local midnight (or a change of locations) the
+ * same filter names different windows: a cursor from the old windows would skip
+ * the rest of that day and append rows from another. The fingerprint makes such
+ * a cursor invalid instead. It detects staleness, not tampering (FNV-1a, 64-bit).
+ */
+export function windowsFingerprint(windows: readonly MoneyWindow[]): string {
+  const canonical = JSON.stringify(
+    windows
+      .map((window) => [window.locationId, window.fromUtc, window.toUtcExclusive])
+      .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)),
+  );
+  let hash = 0xcbf29ce484222325n;
+  for (const byte of Buffer.from(canonical, 'utf8')) hash = BigInt.asUintN(64, (hash ^ BigInt(byte)) * 0x100000001b3n);
+  return hash.toString(16).padStart(16, '0');
 }
 
-/** A malformed cursor is `400 report_cursor_invalid`; nothing from it reaches a query unvalidated. */
-export function decodeDetailCursor(cursor: string): DetailPosition {
+export function encodeDetailCursor(position: DetailPosition, fingerprint: string): string {
+  const payload = JSON.stringify([position.key, position.rank, position.id, fingerprint]);
+  return CURSOR_PREFIX + Buffer.from(payload, 'utf8').toString('base64url');
+}
+
+/**
+ * A malformed cursor, or one issued for other windows, is `400 report_cursor_invalid`;
+ * nothing from it reaches a query unvalidated.
+ */
+export function decodeDetailCursor(cursor: string, fingerprint: string): DetailPosition {
   const invalid = () => reportHttpError('report_cursor_invalid');
   if (!cursor.startsWith(CURSOR_PREFIX)) throw invalid();
   const payload = cursor.slice(CURSOR_PREFIX.length);
@@ -42,11 +65,12 @@ export function decodeDetailCursor(cursor: string): DetailPosition {
   } catch {
     throw invalid();
   }
-  if (!Array.isArray(parsed) || parsed.length !== 3) throw invalid();
-  const [key, rank, id] = parsed as unknown[];
+  if (!Array.isArray(parsed) || parsed.length !== 4) throw invalid();
+  const [key, rank, id, issuedFor] = parsed as unknown[];
   if (typeof key !== 'string' || !isInstantKey(key)) throw invalid();
   if (typeof rank !== 'number' || !Number.isInteger(rank) || rank < 0 || rank > 3) throw invalid();
   if (typeof id !== 'string' || !isUuid(id)) throw invalid();
+  if (typeof issuedFor !== 'string' || !FINGERPRINT.test(issuedFor) || issuedFor !== fingerprint) throw invalid();
   return { key, rank, id };
 }
 

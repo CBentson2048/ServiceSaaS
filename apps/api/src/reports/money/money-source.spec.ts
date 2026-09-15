@@ -260,5 +260,15 @@ describe('SupabaseMoneySource reads', () => {
     await expect(offset.source.retailSales(BIZ, WINDOWS, null, 10)).rejects.toBeInstanceOf(MoneySourceShapeError);
     const fraction = fakeSupabase({ data: [{ id: ROW_ID, location_id: L1, paid_at: '2026-09-14T08:00:00Z', amount: 1.005, status: 'paid', currency_code: 'GBP' }], error: null });
     await expect(fraction.source.depositsCollected(BIZ, WINDOWS, null, 10)).rejects.toBeInstanceOf(MoneySourceShapeError);
+    const badCurrency = fakeSupabase({ data: [{ id: ROW_ID, location_id: L1, paid_at: '2026-09-14T08:00:00Z', amount: '1.00', status: 'paid', currency_code: 'GB ' }], error: null });
+    await expect(badCurrency.source.depositsCollected(BIZ, WINDOWS, null, 10)).rejects.toBeInstanceOf(MoneySourceShapeError);
+  });
+
+  it('a recorded currency is normalised, so a lower-case code is never a second currency', async () => {
+    const { source } = fakeSupabase({
+      data: [{ id: ROW_ID, location_id: L1, sold_at: '2026-09-14T09:00:00Z', total_amount_cents: 100, quantity: 1, payment_method: 'cash', currency_code: 'gbp' }],
+      error: null,
+    });
+    expect((await source.retailSales(BIZ, WINDOWS, null, 10))[0].currencyCode).toBe('GBP');
   });
 });

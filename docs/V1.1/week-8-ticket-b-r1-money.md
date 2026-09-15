@@ -170,7 +170,12 @@ have no customer-safe reference and show their type only) and its amounts.
 Ordered by (instant, row kind, id), paged by an opaque keyset cursor with no row
 cap: identical instants never duplicate or skip a row. Instants keep the
 database's microsecond precision. Pages hold 50 rows; each source is read by
-keyset until the page is full, so a server row cap cannot shorten a page. When no
+keyset until the page is full, so a server row cap cannot shorten a page. A
+cursor is valid only for the per-location windows it was issued for: when the
+same filter resolves to other windows (a relative preset past a location's local
+midnight, other locations, a location whose window has since started), the next
+page is refused with `400 report_cursor_invalid` and the web reloads the report,
+rather than skipping the rest of one day and appending rows from another. When no
 location's window has started, detail says so (`detail.notStarted`) instead of
 "nothing recorded".
 
@@ -279,9 +284,11 @@ taken by R1.
     booking. Fix ships with a normal web deploy.
   - *Mobile* (`sheer-app/app/booking/review.tsx`, `waitForConfirmedAttempt`):
     shows the same message after the PaymentSheet has closed; tapping confirm
-    again starts a new checkout (new attempt, new PaymentIntent), so a second
-    charge for another slot is possible. Fix needs an app release, so it has the
-    longer lead time.
+    again starts a new checkout (new attempt, new PaymentIntent) — possibly for
+    the same slot, because a `payment_failed` attempt no longer holds it and no
+    appointment exists until the success webhook is processed. A second charge is
+    possible, and whichever payment finalises second falls into FD-2. Fix needs
+    an app release, so it has the longer lead time.
 - **FD-2 Paid but slot no longer available — HIGH PRIORITY / MUST FIX BEFORE
   PILOT** (booking/payment defect; not R1 technical debt). A PaymentIntent can
   succeed after the attempt's slot hold has expired (15 minutes) or, after an

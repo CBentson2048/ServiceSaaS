@@ -572,6 +572,22 @@ describe('R1 Money body', () => {
     expect(screen.getByText('£355.00')).toBeTruthy();
   });
 
+  it('a Load more refused because the dates moved on reloads the report instead of appending', async () => {
+    api.getReportOptions.mockResolvedValue(options());
+    api.getReportResult
+      .mockResolvedValueOnce(moneyResult({ notStarted: false, rows: [detailRow(1)], nextCursor: 'm1.issued-yesterday' }))
+      .mockRejectedValueOnce(reportError(400, 'report_cursor_invalid'))
+      .mockResolvedValueOnce(moneyResult({ notStarted: false, rows: [detailRow(3)], nextCursor: null }));
+    renderAt(`/reports/money?locations=${L1}&view=detail`);
+    await screen.findByText('10:01');
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    await screen.findByText('10:03');
+    expect(screen.queryByText('10:01')).toBeNull();
+    // The reload is a first-page request: same filter, no cursor.
+    expect(api.getReportResult.mock.calls[2]).toEqual(['token', 'money', expect.objectContaining({ view: 'detail', locationIds: [L1] })]);
+    expect(screen.queryByText('We couldn’t load more rows.')).toBeNull();
+  });
+
   it('never renders a continuation page as the report', async () => {
     api.getReportOptions.mockResolvedValue(options());
     api.getReportResult.mockResolvedValue(continuationResult({ notStarted: false, rows: [detailRow(1)], nextCursor: null }));

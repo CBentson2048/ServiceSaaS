@@ -196,6 +196,13 @@ function text(value: unknown, what: string): string {
   return value;
 }
 
+/** A recorded currency, normalised; anything that is not an ISO 4217 code is refused, never guessed. */
+function currency(value: unknown, what: string): string {
+  const code = currencyCodeOf(value);
+  if (code === null) throw new MoneySourceShapeError(what);
+  return code;
+}
+
 function oneOf<T extends string>(value: unknown, allowed: readonly T[], what: string): T {
   if (typeof value !== 'string' || !(allowed as readonly string[]).includes(value)) throw new MoneySourceShapeError(what);
   return value as T;
@@ -240,7 +247,7 @@ export class SupabaseMoneySource implements MoneySource {
       netCents: integerCents(row.net_cents, 'bill net'),
       taxCents: integerCents(row.tax_cents, 'bill tax'),
       depositAppliedCents: integerCents(row.deposit_applied_cents, 'bill deposit applied'),
-      currencyCode: text(row.currency_code, 'bill currency'),
+      currencyCode: currency(row.currency_code, 'bill currency'),
     }));
   }
 
@@ -340,7 +347,7 @@ export class SupabaseMoneySource implements MoneySource {
       totalCents: integerCents(row.total_amount_cents, 'retail total'),
       quantity: integerValue(row.quantity, 'retail quantity'),
       method: row.payment_method === null ? 'not_recorded' : oneOf(row.payment_method, RETAIL_METHODS, 'retail method'),
-      currencyCode: text(row.currency_code, 'retail currency'),
+      currencyCode: currency(row.currency_code, 'retail currency'),
     }));
   }
 
@@ -380,7 +387,7 @@ export class SupabaseMoneySource implements MoneySource {
       at: instantKey(row[column]),
       amountCents: poundsToCents(row.amount),
       status: oneOf(row.status, DEPOSIT_EVENT_STATUSES, 'deposit status'),
-      currencyCode: text(row.currency_code, 'deposit currency'),
+      currencyCode: currency(row.currency_code, 'deposit currency'),
     }));
   }
 
@@ -423,7 +430,7 @@ export class SupabaseMoneySource implements MoneySource {
       visitId: text(row.visit_id, 'payment visit'),
       method: oneOf(row.payment_method, TILL_METHODS, 'payment method'),
       amountCents: integerCents(row.amount_cents, 'payment amount'),
-      currencyCode: text(row.currency_code, 'payment currency'),
+      currencyCode: currency(row.currency_code, 'payment currency'),
     };
   }
 

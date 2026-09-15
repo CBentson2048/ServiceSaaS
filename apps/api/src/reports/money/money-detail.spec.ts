@@ -11,6 +11,7 @@ import {
   encodeDetailCursor,
   keysetAfter,
   mergeDetailPage,
+  windowsFingerprint,
 } from './money-detail';
 import { MoneyReportService } from './money-report.service';
 import { MemoryMoneySource, type Ledger } from './testing/memory-money-source';
@@ -22,6 +23,7 @@ const TOKYO = { id: '30000000-0000-4000-8000-000000000002', name: 'Tokyo', timez
 const DETAIL: ReportFilter = { preset: 'today', locationIds: [], staffProfileIds: [], view: 'detail' };
 const AS_OF = new Date('2026-09-14T15:30:00Z');
 const ID = '40000000-0000-4000-8000-00000000000a';
+const FP = windowsFingerprint([{ locationId: LONDON.id, fromUtc: '2026-09-13T23:00:00.000Z', toUtcExclusive: '2026-09-14T23:00:00.000Z' }]);
 
 function expectCursorInvalid(fn: () => unknown): void {
   try {
@@ -37,7 +39,19 @@ function expectCursorInvalid(fn: () => unknown): void {
 describe('detail cursor', () => {
   it('round-trips a position', () => {
     const position = { key: '2026-09-14T10:00:00.123456Z', rank: 2, id: ID };
-    expect(decodeDetailCursor(encodeDetailCursor(position))).toEqual(position);
+    expect(decodeDetailCursor(encodeDetailCursor(position, FP), FP)).toEqual(position);
+  });
+
+  it('is valid only for the windows it was issued for', () => {
+    const position = { key: '2026-09-14T10:00:00.123456Z', rank: 0, id: ID };
+    const nextDay = windowsFingerprint([{ locationId: LONDON.id, fromUtc: '2026-09-14T23:00:00.000Z', toUtcExclusive: '2026-09-15T23:00:00.000Z' }]);
+    expect(nextDay).not.toBe(FP);
+    expectCursorInvalid(() => decodeDetailCursor(encodeDetailCursor(position, FP), nextDay));
+    // Window order does not matter; the set does.
+    const a = { locationId: LONDON.id, fromUtc: '2026-09-13T23:00:00.000Z', toUtcExclusive: '2026-09-14T23:00:00.000Z' };
+    const b = { locationId: TOKYO.id, fromUtc: '2026-09-14T15:00:00.000Z', toUtcExclusive: '2026-09-15T15:00:00.000Z' };
+    expect(windowsFingerprint([a, b])).toBe(windowsFingerprint([b, a]));
+    expect(windowsFingerprint([a, b])).not.toBe(windowsFingerprint([a]));
   });
 
   it('refuses anything malformed with 400 report_cursor_invalid', () => {
@@ -54,9 +68,13 @@ describe('detail cursor', () => {
       encode(['2026-09-14T10:00:00.000000Z', 1.5, ID]),
       encode(['2026-09-14T10:00:00.000000Z', 0, 'not-a-uuid']),
       encode(['2026-09-14T10:00:00.000000Z"),id.gt.(', 0, ID]),
+      encode(['2026-09-14T10:00:00.000000Z', 0, ID]),
+      encode(['2026-09-14T10:00:00.000000Z', 0, ID, 'short']),
+      encode(['2026-09-14T10:00:00.000000Z', 0, ID, 'AAAAAAAAAAAAAAAA']),
+      encode(['2026-09-14T10:00:00.000000Z', 0, ID, '0123456789abcdef']),
       `m1.${'A'.repeat(401)}`,
     ]) {
-      expectCursorInvalid(() => decodeDetailCursor(cursor));
+      expectCursorInvalid(() => decodeDetailCursor(cursor, FP));
     }
   });
 
@@ -187,6 +205,25 @@ describe('detail paging over identical instants', () => {
     const continuationReads = source.reads.slice(readsBefore);
     expect(continuationReads.some((r) => r.method === 'tillPaymentsInWindows')).toBe(false);
     expect(continuationReads.filter((r) => r.windows).every((r) => r.after !== null)).toBe(true);
+  });
+
+  it('refuses a cursor once the dates have moved on (past local midnight) or the locations changed', async () => {
+    const source = new MemoryMoneySource(crowdedLedger());
+    const first = await page(source, null);
+    expect(first.nextCursor).not.toBeNull();
+    // The same "Today" filter, one hour later: London and Tokyo are both on a new local day.
+    const afterMidnight = moneyScope(BIZ, [LONDON, TOKYO], DETAIL, new Date('2026-09-14T23:30:00Z'));
+    await expect(new MoneyReportService(source).build(afterMidnight, { cursor: first.nextCursor })).rejects.toMatchObject({
+      response: { code: 'report_cursor_invalid' },
+    });
+    const londonOnly = moneyScope(BIZ, [LONDON], DETAIL, AS_OF);
+    await expect(new MoneyReportService(source).build(londonOnly, { cursor: first.nextCursor })).rejects.toMatchObject({
+      response: { code: 'report_cursor_invalid' },
+    });
+    // Within the same windows it still pages.
+    const sameDayLater = moneyScope(BIZ, [LONDON, TOKYO], DETAIL, new Date('2026-09-14T15:59:00Z'));
+    const next = await new MoneyReportService(source).build(sameDayLater, { cursor: first.nextCursor });
+    expect(next.continuation).toBe(true);
   });
 
   it('a detail view whose dates have not started says so, with no rows', async () => {
@@ -331,5 +368,25 @@ describe('detail rows explain the money in local time', () => {
       },
     ]);
     expect(JSON.stringify(detail)).not.toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/);
+  });
+
+  it('a bill whose till payments are in another currency does not show them under the bill’s currency', async () => {
+    serial = 0;
+    const billId = uid();
+    const visitId = uid();
+    const ledger: Ledger = {
+      bills: [{ id: billId, visitId, businessId: BIZ, status: 'paid', locationId: LONDON.id, at: instant('2026-09-14T16:05:00Z'), billNumber: 7, grossCents: 5000, netCents: 5000, taxCents: 0, depositAppliedCents: 0, currencyCode: 'GBP' }],
+      lines: [{ id: uid(), billId, lineType: 'service', grossCents: 5000, netCents: 5000, taxCents: 0 }],
+      payments: [{ id: uid(), businessId: BIZ, visitId, locationId: LONDON.id, at: instant('2026-09-14T16:05:00Z'), method: 'cash', amountCents: 5000, currencyCode: 'EUR' }],
+      retail: [],
+      deposits: [],
+    };
+    const [row] = (await page(new MemoryMoneySource(ledger), null)).rows;
+    expect(row).toMatchObject({
+      kind: 'paid_bill',
+      amount: { availability: 'available', cents: 5000 },
+      cash: { availability: 'unavailable', reason: 'mixed_currencies' },
+      cardReader: { availability: 'unavailable', reason: 'mixed_currencies' },
+    });
   });
 });

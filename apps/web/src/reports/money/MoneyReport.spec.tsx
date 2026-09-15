@@ -283,6 +283,29 @@ describe('MoneyReport detail', () => {
     expect((screen.getByRole('button', { name: 'Load more' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
+  it('keyboard focus stays on the action through Loading and Retry, then moves to the list when the last page arrives', async () => {
+    let fail!: (error: Error) => void;
+    const loadMore = jest
+      .fn()
+      .mockReturnValueOnce(new Promise((_resolve, reject) => (fail = reject)))
+      .mockResolvedValueOnce(detailPage([billRow(2)], null));
+    render(<MoneyReport body={body({ detail: detailPage([billRow(1)], 'm1.cursor') })} locations={locations} loadMore={loadMore} />);
+    const action = screen.getByRole('button', { name: 'Load more' });
+    action.focus();
+    fireEvent.click(action);
+    expect(screen.getByRole('button', { name: 'Loading…' })).toBe(action);
+    expect(document.activeElement).toBe(action);
+    // A second click while loading sends nothing.
+    fireEvent.click(action);
+    expect(loadMore).toHaveBeenCalledTimes(1);
+    await act(async () => fail(new Error('network')));
+    expect(screen.getByRole('button', { name: 'Retry' })).toBe(action);
+    expect(document.activeElement).toBe(action);
+    fireEvent.click(action);
+    await screen.findByText('Bill 2');
+    await waitFor(() => expect(document.activeElement).toBe(section('Detail')));
+  });
+
   it('dates that have not started say so, rather than that nothing was recorded', () => {
     render(<MoneyReport body={body({ detail: detailPage([], null, true) })} locations={locations} loadMore={jest.fn()} />);
     const detail = section('Detail');
