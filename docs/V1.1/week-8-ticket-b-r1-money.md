@@ -266,15 +266,30 @@ taken by R1.
   GBP (the API sends no currency to `record_retail_sale`); deposits use the
   location's configured currency. R1 shows such a location's figures as "mixed
   currencies" rather than relabelling them, which is sufficient for this ticket.
-- **Booking confirmation message after a declined-then-paid retry.** The web and
-  mobile clients stop polling as soon as the attempt reads `payment_failed`, which
-  is still the status from the decline when the retried payment succeeds, so the
-  client is told the payment failed although the booking is confirmed moments
-  later by the webhook. Client-only change; the mobile app needs a release.
-- **Paid, but the slot is gone.** If a successful payment arrives after the slot
-  hold has lapsed (15 minutes, or at once after a decline) and the slot was booked
-  by someone else, finalisation fails and Stripe keeps retrying: the money is taken
-  and no booking or collection is recorded. Unchanged by R1.
+- **FD-1 Client retry status UX — MUST FIX BEFORE PILOT** (booking clients; not
+  R1 technical debt). After decline → retry on the same PaymentIntent → success,
+  both clients poll the attempt and stop at the first `payment_failed`, which is
+  still the decline's status until the success webhook is processed, so the
+  customer is told the payment failed although the booking is confirmed moments
+  later.
+  - *Web* (`ClientBookingReviewPage.tsx`, `waitForConfirmedAttempt`): shows
+    "Payment failed, so the booking was not confirmed." under a still-enabled
+    Pay button. The intent has already succeeded, so paying again on it is
+    refused by Stripe; the risk is the customer abandoning or starting a new
+    booking. Fix ships with a normal web deploy.
+  - *Mobile* (`sheer-app/app/booking/review.tsx`, `waitForConfirmedAttempt`):
+    shows the same message after the PaymentSheet has closed; tapping confirm
+    again starts a new checkout (new attempt, new PaymentIntent), so a second
+    charge for another slot is possible. Fix needs an app release, so it has the
+    longer lead time.
+- **FD-2 Paid but slot no longer available — HIGH PRIORITY / MUST FIX BEFORE
+  PILOT** (booking/payment defect; not R1 technical debt). A PaymentIntent can
+  succeed after the attempt's slot hold has expired (15 minutes) or, after an
+  earlier decline, once another client has taken the slot (a `payment_failed`
+  attempt no longer holds it). Finalisation revalidates the slot and throws, the
+  webhook answers an error, Stripe retries for up to three days, and the customer
+  has paid with no booking and no recorded deposit collection. A separate non-ZAC
+  ticket/spec for Cosan follows R1 G5.
 - **Refunds made in the Stripe dashboard** are not captured (no `charge.refunded`
   handler); R1 lists them as not recorded.
 - **Deposits altered before the webhook fix** are not repaired.
