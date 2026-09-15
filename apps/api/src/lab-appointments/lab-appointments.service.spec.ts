@@ -1145,6 +1145,302 @@ describe('LabAppointmentsService — check-in arrival notification', () => {
     expect(result.appointment.status).toBe('checked_in');
     expect(arrival.notifyClientArrivedSafe).toHaveBeenCalledTimes(1);
   });
+
+  it('keys the arrival to THIS check-in, so a real arrival after an undo still notifies', async () => {
+    const client = createMockSupabaseClient([
+      { data: appointmentRow(), error: null },
+      { data: appointmentRow({ status: 'checked_in', check_in_at: '2026-05-13T09:02:00.000Z' }), error: null },
+      { data: [clientProfileRow()], error: null },
+    ]);
+    const arrival = arrivalFake();
+    const service = createService(client, undefined, undefined, arrival);
+
+    await service.checkIn(stylistActor(), 'appointment_1');
+
+    expect(arrival.notifyClientArrivedSafe).toHaveBeenCalledWith(
+      expect.objectContaining({ check_in_at: '2026-05-13T09:02:00.000Z' }),
+      'user_1',
+    );
+  });
+
+  it('audits who checked the client in — once, on the winning transition only', async () => {
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const won = createMockSupabaseClient([
+      { data: appointmentRow(), error: null },
+      { data: appointmentRow({ status: 'checked_in', check_in_at: '2026-05-13T09:02:00.000Z' }), error: null },
+      { data: [clientProfileRow()], error: null },
+    ]);
+    await createService(won, undefined, undefined, undefined, audit).checkIn(stylistActor(), 'appointment_1');
+
+    expect(audit.record).toHaveBeenCalledTimes(1);
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'booking.checked_in',
+        entityId: 'appointment_1',
+        before: { status: 'accepted' },
+        after: { status: 'checked_in', checkInAt: '2026-05-13T09:02:00.000Z' },
+      }),
+    );
+
+    audit.record.mockClear();
+    const doubleTap = createMockSupabaseClient([
+      { data: appointmentRow({ status: 'checked_in' }), error: null },
+      { data: [clientProfileRow()], error: null },
+    ]);
+    await createService(doubleTap, undefined, undefined, undefined, audit).checkIn(stylistActor(), 'appointment_1');
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Undoing a mistaken check-in.
+ *
+ * Check-in carries no money, so the undo is a status correction — but it must not
+ * reach past the arrival: not into a checked-out visit, and not into a visit whose
+ * services were already changed (that history is append-only, and an appointment
+ * back at 'accepted' with it could no longer be edited).
+ */
+describe('LabAppointmentsService — undo check-in', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  const CHECK_IN_AT = '2026-05-13T09:02:00.000Z';
+  const CHECKED_IN = { status: 'checked_in', check_in_at: CHECK_IN_AT } as const;
+  const noChanges = { data: [], error: null };
+  const oneChange = { data: [{ id: 'change_1' }], error: null };
+
+  function fakes() {
+    return {
+      audit: { record: jest.fn().mockResolvedValue(undefined) },
+      arrival: {
+        notifyClientArrivedSafe: jest.fn().mockResolvedValue(undefined),
+        notifyCheckInUndoneSafe: jest.fn().mockResolvedValue(undefined),
+      },
+    };
+  }
+
+  function wroteAppointmentStatus(client: MockSupabaseClient): boolean {
+    return client.queries.some((query) => query.calls.some((call) => call.method === 'update'));
+  }
+
+  it('returns the appointment to accepted, clears the arrival time, audits and tells the stylist', async () => {
+    const { audit, arrival } = fakes();
+    const client = createMockSupabaseClient([
+      { data: appointmentRow(CHECKED_IN), error: null }, // fetchAppointmentForActor
+      noChanges, // service change history
+      { data: appointmentRow({ status: 'accepted', check_in_at: null }), error: null }, // the winning update
+      noChanges, // re-check after the update
+      { data: [clientProfileRow()], error: null }, // fetchClientProfiles
+    ]);
+    const service = createService(client, undefined, undefined, arrival, audit);
+
+    const result = await service.undoCheckIn(stylistActor(), 'appointment_1', '  Wrong client  ');
+
+    expect(result.appointment.status).toBe('accepted');
+
+    const update = client.queries[2];
+    expect(update.calls).toContainEqual({ method: 'update', args: [{ status: 'accepted', check_in_at: null }] });
+    // Only the request that still sees the arrival may undo it.
+    expect(update.calls).toContainEqual({ method: 'eq', args: ['status', 'checked_in'] });
+
+    expect(audit.record).toHaveBeenCalledTimes(1);
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'booking.check_in_undone',
+        entityType: 'booking',
+        entityId: 'appointment_1',
+        before: { status: 'checked_in', checkInAt: CHECK_IN_AT },
+        after: { status: 'accepted', checkInAt: null },
+        metadata: expect.objectContaining({ reason: 'Wrong client' }),
+      }),
+    );
+
+    // Keyed to the check-in being undone, hence the pre-undo arrival time.
+    expect(arrival.notifyCheckInUndoneSafe).toHaveBeenCalledTimes(1);
+    expect(arrival.notifyCheckInUndoneSafe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'appointment_1',
+        assigned_staff_profile_id: 'staff_1',
+        check_in_at: CHECK_IN_AT,
+      }),
+      'user_1',
+    );
+    expect(arrival.notifyClientArrivedSafe).not.toHaveBeenCalled();
+  });
+
+  it('is idempotent — an appointment already back at accepted changes nothing', async () => {
+    const { audit, arrival } = fakes();
+    const client = createMockSupabaseClient([
+      { data: appointmentRow({ status: 'accepted' }), error: null },
+      { data: [clientProfileRow()], error: null },
+    ]);
+    const service = createService(client, undefined, undefined, arrival, audit);
+
+    const result = await service.undoCheckIn(stylistActor(), 'appointment_1');
+
+    expect(result.appointment.status).toBe('accepted');
+    expect(wroteAppointmentStatus(client)).toBe(false);
+    expect(audit.record).not.toHaveBeenCalled();
+    expect(arrival.notifyCheckInUndoneSafe).not.toHaveBeenCalled();
+  });
+
+  it.each(['awaiting_payment', 'paid'])('refuses once the visit is checked out (%s)', async (status) => {
+    const { audit, arrival } = fakes();
+    const client = createMockSupabaseClient([{ data: appointmentRow({ status }), error: null }]);
+    const service = createService(client, undefined, undefined, arrival, audit);
+
+    await expect(service.undoCheckIn(stylistActor(), 'appointment_1')).rejects.toThrow(/already been checked out/i);
+    expect(wroteAppointmentStatus(client)).toBe(false);
+    expect(audit.record).not.toHaveBeenCalled();
+    expect(arrival.notifyCheckInUndoneSafe).not.toHaveBeenCalled();
+  });
+
+  it.each(['pending', 'cancelled', 'no_show', 'rejected'])('refuses an appointment that is %s', async (status) => {
+    const client = createMockSupabaseClient([{ data: appointmentRow({ status }), error: null }]);
+    const service = createService(client);
+
+    await expect(service.undoCheckIn(stylistActor(), 'appointment_1')).rejects.toBeInstanceOf(ConflictException);
+    expect(wroteAppointmentStatus(client)).toBe(false);
+  });
+
+  it('refuses once services have been changed on the visit', async () => {
+    const { audit, arrival } = fakes();
+    const client = createMockSupabaseClient([
+      { data: appointmentRow(CHECKED_IN), error: null },
+      oneChange,
+    ]);
+    const service = createService(client, undefined, undefined, arrival, audit);
+
+    await expect(service.undoCheckIn(stylistActor(), 'appointment_1')).rejects.toThrow(
+      /changed since check-in/i,
+    );
+    const history = client.queries[1];
+    expect(history.calls).toContainEqual({ method: 'from', args: ['appointment_service_changes'] });
+    expect(history.calls).toContainEqual({ method: 'eq', args: ['appointment_id', 'appointment_1'] });
+    expect(wroteAppointmentStatus(client)).toBe(false);
+    expect(audit.record).not.toHaveBeenCalled();
+    expect(arrival.notifyCheckInUndoneSafe).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the service history cannot be read', async () => {
+    const client = createMockSupabaseClient([
+      { data: appointmentRow(CHECKED_IN), error: null },
+      { data: null, error: { message: 'connection reset' } },
+    ]);
+    const service = createService(client);
+
+    await expect(service.undoCheckIn(stylistActor(), 'appointment_1')).rejects.toThrow(/unable to undo/i);
+    expect(wroteAppointmentStatus(client)).toBe(false);
+  });
+
+  it('puts the arrival back when a service change slips in between the check and the update', async () => {
+    const { audit, arrival } = fakes();
+    const client = createMockSupabaseClient([
+      { data: appointmentRow(CHECKED_IN), error: null },
+      noChanges, // clean when first checked...
+      { data: appointmentRow({ status: 'accepted', check_in_at: null }), error: null },
+      oneChange, // ...but a colleague's amendment committed before our update
+      { error: null }, // the restore
+    ]);
+    const service = createService(client, undefined, undefined, arrival, audit);
+
+    await expect(service.undoCheckIn(stylistActor(), 'appointment_1')).rejects.toThrow(
+      /changed since check-in/i,
+    );
+
+    const restore = client.queries[4];
+    expect(restore.calls).toContainEqual({
+      method: 'update',
+      args: [{ status: 'checked_in', check_in_at: CHECK_IN_AT }],
+    });
+    // Only reverses our own write — never a status someone else has since set.
+    expect(restore.calls).toContainEqual({ method: 'eq', args: ['status', 'accepted'] });
+    expect(audit.record).not.toHaveBeenCalled();
+    expect(arrival.notifyCheckInUndoneSafe).not.toHaveBeenCalled();
+  });
+
+  it('returns the result without re-notifying when a colleague undid it first', async () => {
+    const { audit, arrival } = fakes();
+    const client = createMockSupabaseClient([
+      { data: appointmentRow(CHECKED_IN), error: null },
+      noChanges,
+      { data: null, error: null }, // lost the .eq('status','checked_in') claim
+      { data: appointmentRow({ status: 'accepted', check_in_at: null }), error: null }, // re-read
+      { data: [clientProfileRow()], error: null },
+    ]);
+    const service = createService(client, undefined, undefined, arrival, audit);
+
+    const result = await service.undoCheckIn(stylistActor(), 'appointment_1');
+
+    expect(result.appointment.status).toBe('accepted');
+    expect(audit.record).not.toHaveBeenCalled();
+    expect(arrival.notifyCheckInUndoneSafe).not.toHaveBeenCalled();
+  });
+
+  it('refuses when the appointment moved on (e.g. checked out) before the undo landed', async () => {
+    const client = createMockSupabaseClient([
+      { data: appointmentRow(CHECKED_IN), error: null },
+      noChanges,
+      { data: null, error: null },
+      { data: appointmentRow({ status: 'awaiting_payment' }), error: null },
+    ]);
+    const service = createService(client);
+
+    await expect(service.undoCheckIn(stylistActor(), 'appointment_1')).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('still undoes the check-in when the notification path throws', async () => {
+    const { audit } = fakes();
+    const arrival = {
+      notifyClientArrivedSafe: jest.fn(),
+      notifyCheckInUndoneSafe: jest.fn().mockRejectedValue(new Error('notifications are down')),
+    };
+    const client = createMockSupabaseClient([
+      { data: appointmentRow(CHECKED_IN), error: null },
+      noChanges,
+      { data: appointmentRow({ status: 'accepted', check_in_at: null }), error: null },
+      noChanges,
+      { data: [clientProfileRow()], error: null },
+    ]);
+    const service = createService(client, undefined, undefined, arrival, audit);
+
+    const result = await service.undoCheckIn(stylistActor(), 'appointment_1');
+
+    expect(result.appointment.status).toBe('accepted');
+    expect(audit.record).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses another business\'s appointment', async () => {
+    const client = createMockSupabaseClient([{ data: null, error: null }]);
+    const service = createService(client);
+
+    await expect(service.undoCheckIn(stylistActor(), 'appointment_1')).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('has no financial side effects', async () => {
+    const client = createMockSupabaseClient([
+      { data: appointmentRow(CHECKED_IN), error: null },
+      noChanges,
+      { data: appointmentRow({ status: 'accepted', check_in_at: null }), error: null },
+      noChanges,
+      { data: [clientProfileRow()], error: null },
+    ]);
+    const stripe = { refundPaymentIntent: jest.fn() };
+    const service = createService(client, undefined, stripe);
+
+    await service.undoCheckIn(stylistActor(), 'appointment_1');
+
+    expect(stripe.refundPaymentIntent).not.toHaveBeenCalled();
+    const touchedMoney = client.queries.some((query) =>
+      query.calls.some(
+        (call) =>
+          call.method === 'from' &&
+          ['bills', 'visit_line_items', 'deposits', 'visits', 'salon_payments'].includes(String(call.args[0])),
+      ),
+    );
+    expect(touchedMoney).toBe(false);
+  });
 });
 
 /**
@@ -1379,8 +1675,9 @@ function createService(
   stripe: { refundPaymentIntent: jest.Mock } = {
     refundPaymentIntent: jest.fn().mockResolvedValue({ id: 're_test', status: 'succeeded' }),
   },
-  arrivalNotifications: { notifyClientArrivedSafe: jest.Mock } = {
+  arrivalNotifications: { notifyClientArrivedSafe: jest.Mock; notifyCheckInUndoneSafe?: jest.Mock } = {
     notifyClientArrivedSafe: jest.fn().mockResolvedValue(undefined),
+    notifyCheckInUndoneSafe: jest.fn().mockResolvedValue(undefined),
   },
   audit: { record: jest.Mock } = { record: jest.fn().mockResolvedValue(undefined) },
 ): LabAppointmentsService {

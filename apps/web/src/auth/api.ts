@@ -724,6 +724,22 @@ export async function checkInBooking(
 }
 
 /**
+ * Undo a mistaken check-in: the appointment goes back to accepted and the stylist is
+ * told the client has not arrived. The API refuses once the visit is checked out or
+ * its services have been changed, and says which — show its message as-is.
+ */
+export async function undoCheckInBooking(
+  accessToken: string,
+  bookingId: string,
+  reason?: string,
+): Promise<CheckInAppointmentResponse> {
+  return request<CheckInAppointmentResponse>(
+    `/lab/appointments/${encodeURIComponent(bookingId)}/check-in/undo`,
+    { method: 'POST', accessToken, body: reason ? { reason } : {} },
+  );
+}
+
+/**
  * Mark a past appointment as a no-show.
  *
  * Deliberately separate from `cancelBooking`: a cancellation is something the
