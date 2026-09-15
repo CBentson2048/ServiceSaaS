@@ -429,7 +429,7 @@ function ProductBillingSection({
                 return (
                   <label
                     key={value}
-                    className={`group flex cursor-pointer flex-col gap-1 rounded-input-lg border px-4 py-3 transition-colors ${
+                    className={`group flex cursor-pointer flex-col gap-1 rounded-input-lg border px-4 py-3 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-primary/30 ${
                       selected
                         ? 'border-primary bg-primary/[0.05]'
                         : 'border-border bg-surface hover:border-border-strong hover:bg-surface-alt/50'
@@ -987,7 +987,7 @@ function TaxSettingsSection({
                 return (
                   <label
                     key={value}
-                    className={`group flex cursor-pointer flex-col gap-1 rounded-input-lg border px-4 py-3 transition-colors ${
+                    className={`group flex cursor-pointer flex-col gap-1 rounded-input-lg border px-4 py-3 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-primary/30 ${
                       selected
                         ? 'border-primary bg-primary/[0.05]'
                         : 'border-border bg-surface hover:border-border-strong hover:bg-surface-alt/50'
