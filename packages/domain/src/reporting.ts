@@ -13,6 +13,7 @@
  */
 import type { MembershipGrant, Permission, UserRole } from './index';
 import { inclusiveDayCount, isLocalDate, type LocalDate } from './local-date';
+import type { MoneyReportBody } from './money-report';
 
 // ===========================================================================
 // Registry
@@ -490,9 +491,11 @@ export interface ResolvedReportFilter {
   locations: ResolvedReportLocation[];
 }
 
-/** Report bodies, added by each report's own ticket (e.g. `money: MoneyReportBody`). */
-// eslint-disable-next-line @typescript-eslint/no-empty-interface
-export interface ReportBodyMap {}
+/** Report bodies, added by each report's own ticket. */
+export interface ReportBodyMap {
+  /** R1 Money (Ticket B). */
+  money: MoneyReportBody;
+}
 
 export type ReportBody<K extends ReportKey> = K extends keyof ReportBodyMap ? ReportBodyMap[K] : null;
 
@@ -511,7 +514,9 @@ export type ReportErrorCode =
   | 'report_location_out_of_scope'
   | 'report_no_locations_in_scope'
   | 'report_timezone_invalid'
-  | 'report_week_start_unconfigured';
+  | 'report_week_start_unconfigured'
+  /** A detail-page cursor that is malformed, or sent without the detail view. */
+  | 'report_cursor_invalid';
 
 export const REPORT_ERROR_CODES: readonly ReportErrorCode[] = [
   'report_not_found',
@@ -522,6 +527,7 @@ export const REPORT_ERROR_CODES: readonly ReportErrorCode[] = [
   'report_no_locations_in_scope',
   'report_timezone_invalid',
   'report_week_start_unconfigured',
+  'report_cursor_invalid',
 ];
 
 export interface ReportErrorBody {
