@@ -492,6 +492,66 @@ describe('review fixes', () => {
   });
 });
 
+describe('R7 Cash up body', () => {
+  const zero = { availability: 'available', cents: 0 } as const;
+  const tender = { expected: zero, counted: zero, variance: zero };
+  const totals = {
+    days: { started: 1, signedOff: 1, open: 0, none: 0, notStarted: 0 },
+    recorded: {
+      cash: { expected: { availability: 'available', cents: 4000 }, counted: { availability: 'available', cents: 3800 }, variance: { availability: 'available', cents: -200 } },
+      card: tender,
+      variance: { availability: 'available', cents: -200 },
+      pettyCashOut: zero,
+      refundsEntered: zero,
+      voidsEntered: zero,
+      daysOutsideThreshold: { availability: 'available', count: 0 },
+      daysUnavailable: 0,
+    },
+    sourceCheck: { daysChanged: { availability: 'available', count: 0 }, cashChange: zero, cardChange: zero },
+    withoutSignOff: { expectedCash: zero, expectedCard: zero },
+    retailOutsideTill: { other: zero, notRecorded: zero },
+  } as const;
+  const dayRow = (date: string) => ({
+    rowKey: `${L1}:${date}`,
+    locationId: L1,
+    localDate: date,
+    isToday: false,
+    status: 'none' as const,
+    currencyCode: 'GBP',
+    record: null,
+    sources: { expectedCash: zero, expectedCard: zero, retailOther: zero, retailNotRecorded: zero },
+    changeSinceSignOff: null,
+  });
+  const cashUpResult = (detail: { notStarted: boolean; rows: ReturnType<typeof dayRow>[]; nextCursor: string | null } | null, continuation = false): ReportResult => ({
+    ...result('cash-up', [loc(L1, 'London', '2026-09-28', '2026-09-28', 'in_progress')]),
+    body: continuation
+      ? { continuation: true, currencyCode: null, summary: null, locations: [], detail: detail! }
+      : { continuation: false, currencyCode: 'GBP', summary: totals, locations: [{ locationId: L1, currencyCode: 'GBP', threshold: { availability: 'available', cents: 500 }, totals }], detail },
+  });
+
+  it('renders the Cash up figures in place of the foundation preview card', async () => {
+    api.getReportOptions.mockResolvedValue({ ...options(), reportKey: 'cash-up' });
+    api.getReportResult.mockResolvedValue(cashUpResult(null));
+    renderAt('/reports/cash-up');
+    await screen.findByRole('region', { name: 'Signed-off days, as recorded' });
+    expect(screen.getByText('£40.00')).toBeTruthy();
+    expect(screen.queryByText('Foundation preview')).toBeNull();
+  });
+
+  it('Load more asks the cash-up report for the next page with the same filter and the cursor', async () => {
+    api.getReportOptions.mockResolvedValue({ ...options(), reportKey: 'cash-up' });
+    api.getReportResult
+      .mockResolvedValueOnce(cashUpResult({ notStarted: false, rows: [dayRow('2026-09-28')], nextCursor: 'c1.next' }))
+      .mockResolvedValueOnce(cashUpResult({ notStarted: false, rows: [dayRow('2026-09-27')], nextCursor: null }, true));
+    renderAt(`/reports/cash-up?locations=${L1}&view=detail`);
+    await screen.findByText('28 Sept 2026');
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    await screen.findByText('27 Sept 2026');
+    expect(api.getReportResult.mock.calls[1]).toEqual(['token', 'cash-up', expect.objectContaining({ view: 'detail', locationIds: [L1] }), 'c1.next']);
+    expect(within(screen.getByRole('region', { name: 'Detail' })).getAllByText('No cash-up recorded')).toHaveLength(2);
+  });
+});
+
 describe('R1 Money body', () => {
   const zero = { availability: 'available', cents: 0 } as const;
   const totals: MoneyTotals = {
