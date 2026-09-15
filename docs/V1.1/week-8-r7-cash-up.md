@@ -1,13 +1,14 @@
 # QLOOQO V1.1 Week 8 — R7 Cash Up
 
-**Status:** G1 definition, 2026-09-15. Builds on
+**Status:** G1 definition, 2026-09-15; product decisions and pre-G5 End of Day
+source fixes 2026-09-15 (§8, §9, §11). Builds on
 [Ticket A](week-8-ticket-a-foundation.md) (report registry, fail-closed access,
 per-location windows) and uses the fact definitions of
 [R1 Money](week-8-ticket-b-r1-money.md). R7 is COMPLETE only after its own G5.
 
 **Ownership.** Cosan owns this ticket. No ZAC file and no Dashboard file changes.
-The End of Day screen and API are **not** changed by R7; §9 lists their defects
-for a separate decision.
+The End of Day API received the approved no-migration source fixes D-2, D-5, D-6
+and D-8 (§9); its trading-day window (D-1) is unchanged pending §11.
 
 ---
 
@@ -55,10 +56,12 @@ service's day window, and never uses `allowedLocationIds`.
   time at sign-off. The recorded variance is `(counted cash + counted card) −
   (expected cash + expected card)`, frozen at sign-off. It ignores the opening
   float, petty cash, and the manual refund and void entries.
-- Opening float, petty cash out, refunds and voids are manual, default 0 and
-  indistinguishable from "not entered".
-- The EOD trading day is computed in **Europe/London for every location** and
-  its currency is always stored as GBP (§9 D-1, D-2).
+- Opening float, refunds and voids are typed in and the columns default to 0, so a
+  stored 0 can't show whether anyone entered zero. Petty cash out is the sum of
+  the day's entries.
+- The EOD expected-figures window is computed on a **Europe/London day for every
+  location** (§9 D-1, §11). Before the D-2 fix every day was stored as GBP;
+  days opened after it carry the location's currency.
 - Signed-off rows are protected by the API only; there is no database guard
   (§9 D-3).
 
@@ -84,8 +87,13 @@ missed (`open` or `none`) day.
 - Threshold check per day: `outside` when `|variance| > current threshold`,
   otherwise `within`; `not_signed_off`, `not_comparable` (variance unavailable) or
   `no_threshold` otherwise. The threshold is not stored at sign-off, so this is
-  **against today's threshold**. With no settings row it is `no_threshold` and the
-  count is unavailable — never an assumed £5.00.
+  **against the CURRENT threshold**, and is always labelled so — never presented
+  as the threshold in force at sign-off. With no settings row it is
+  `no_threshold` and the count is unavailable — never an assumed £5.00.
+- Manual entries (opening float, refunds, voids): a stored zero is shown as
+  **£0.00 recorded**, with a note that a stored zero can't show whether anyone
+  entered it. A non-zero value can only come from an entry and is shown as the
+  amount.
 
 Every recorded figure (tills, petty cash, manual entries) covers the same days:
 signed-off days whose figures are all available. A signed-off day that isn't —
@@ -152,43 +160,41 @@ separate commit.
 
 ## 7. Migrations
 
-None. R7 reads existing tables only and changes no function. `0113`/`0114` stay
-reserved; `0115` is not taken.
+None. R7 reads existing tables only and changes no function; the End of Day
+source fixes are API-only. `0113`/`0114` stay reserved; `0115` is not taken. The
+D-1 design in §11 would need a migration and is awaiting approval.
 
-## 8. Decisions taken as defaults (for product approval)
+## 8. Product decisions (approved 2026-09-15)
 
-| # | Question | Default in R7 |
+| # | Question | Decision |
 |---|---|---|
-| P-1 | Which variance is official | The one recorded at sign-off. Recomputation is shown separately as "changed since sign-off". |
-| P-2 | Days with no record | **No cash-up recorded**; their takings from sources are shown under "without a signed-off cash-up". |
-| P-3 | Open days | Draft figures appear in detail only, marked *Not signed off*; never in signed-off totals. |
-| P-4 | Future days / future records | *Not started*; future-dated records ignored. |
-| P-5 | Float and petty cash | EOD's formula is kept (neither enters the variance); both shown as entered. No "expected drawer" figure is invented. |
-| P-6 | Per-tender variance | Shown next to the recorded combined variance, so a cash shortfall is not hidden by a card surplus. |
-| P-7 | Payments after sign-off | Shown as "changed since sign-off". |
-| P-8 | Non-London locations | Recorded expected and variance unavailable (`london_trading_day`). |
-| P-9 | Record currency | Recorded figures only when the record's currency equals the location's configured currency. |
-| P-10 | Manual refunds and voids | Shown as "entered at cash-up"; a zero reads **None entered**. |
-| P-11 | Threshold | Today's threshold, labelled so; unknown threshold → unavailable. |
+| P-1 | Which variance is official | Approved. The one recorded at sign-off. Recomputation is shown separately as "changed since sign-off". |
+| P-2 | Days with no record | Approved. **No cash-up recorded**; their takings from sources are shown under "without a signed-off cash-up". |
+| P-3 | Open days | Approved. Draft figures appear in detail only, marked *Not signed off*; never in signed-off totals. |
+| P-4 | Future days / future records | Approved. *Not started*; future-dated records ignored. |
+| P-5 | Float and petty cash | Approved. EOD's formula is kept (neither enters the variance); both shown as stored. No "expected drawer" figure is invented. |
+| P-6 | Per-tender variance | Approved. Shown next to the recorded combined variance, so a cash shortfall is not hidden by a card surplus. |
+| P-7 | Payments after sign-off | Approved. Shown as "changed since sign-off". |
+| P-8 | Non-London locations | Approved as **temporary legacy behaviour**: recorded expected and variance unavailable (`london_trading_day`) until §11 is decided. |
+| P-9 | Record currency | Approved. Recorded figures only when the record's currency equals the location's configured currency. |
+| P-10 | Manual refunds, voids and float | **Changed.** A stored zero reads **£0.00 recorded**, with help text that a stored zero can't show whether anyone entered it. Never "None entered". Labels say "manual entry", not "entered". |
+| P-11 | Threshold | Approved with a constraint: always labelled the **CURRENT threshold** ("Days outside current threshold", "Current threshold", "Against current threshold"), with a note that the threshold at sign-off was not stored. Unknown threshold → unavailable. |
 
-## 9. End of Day defects found in the G1 audit (not changed by R7)
+## 9. End of Day defects found in the G1 audit
 
-| # | Defect | Effect on R7 |
-|---|---|---|
-| D-1 | EOD trading day hardcoded to Europe/London; the web page's default date is the browser's | Non-London records unavailable (P-8) |
-| D-2 | `currency_code` never set on open (always GBP); expected figures summed across currencies | Guarded by P-9 |
-| D-3 | Sign-off immutability is API-only: an edit that read the row before sign-off can land after it; sign-off is two separate updates | A changed signed-off row is not detectable from the row |
-| D-4 | Row edits and Refresh are not audited; only sign-off is | History of counts can't be rebuilt |
-| D-5 | A failed petty-cash read writes a petty-cash total of 0 | A recorded petty cash of 0 may be wrong |
-| D-6 | An owner can open a day for a location of another business (no ownership check) | R7 filters `business_id` and `location_id` |
-| D-7 | EOD deposits collected count only current `paid` deposits; redeemed has no bill-status filter | Not used by R7 (deposits are in Money) |
-| D-8 | Future dates can be opened and signed off | Ignored (P-4) |
-| D-9 | EOD uses `allowedLocationIds` for location scope | Not used by R7 |
-| D-10 | Retail sales can be backdated (`soldAt`) and edited or deleted under the management RLS policy | Surfaces as "changed since sign-off" |
-| D-11 | The variance threshold is not stored at sign-off; EOD silently falls back to £5 | P-11 |
-
-Fixing D-1 to D-6 and D-8 needs no migration; D-3 (database guard), D-7 and D-10
-(RLS) would.
+| # | Defect | Status | Effect on R7 |
+|---|---|---|---|
+| D-1 | EOD expected-figures window hardcoded to a Europe/London day; the web page's default date is the browser's | **Not changed.** Audit and proposed design in §11 (needs a migration; awaiting approval). The API's "today" is now the location's (D-8). | Non-London records unavailable (P-8, temporary) |
+| D-2 | `currency_code` never set on open (always the GBP default); expected figures summed across currencies | **Fixed for new days** (2026-09-15): open stores the location's currency by R1's rule (settings row, else business default); a location with no usable currency can't open a day. Historical rows are not rewritten. The RPC still sums across currencies (a migration). | P-9 still refuses a record whose currency isn't the location's; mixed takings are not comparable |
+| D-3 | Sign-off immutability is API-only: an edit that read the row before sign-off can land after it; sign-off is two separate updates | **HIGH PRIORITY / MUST FIX BEFORE PILOT.** A locked financial record can be mutated. Not expanded into R7; a separate fix proposal follows R7 G5. | A changed signed-off row is not detectable from the row |
+| D-4 | Row edits and Refresh are not audited; only sign-off is | Tracked as a cash-up audit/history improvement. | History of counts can't be rebuilt |
+| D-5 | A failed petty-cash read writes a petty-cash total of 0 | **Fixed** (2026-09-15): a failed read fails the request and writes nothing; reading a day or the history fails instead of showing no entries; Refresh and sign-off re-read the entries, so the stored total is always their sum. | A signed-off petty cash total is the entries' sum |
+| D-6 | An owner can open a day for a location of another business (no ownership check) | **Fixed** (2026-09-15): every route checks the location belongs to the actor's business, owners included; a foreign location and an unknown id get the same 403; a stray row of another business's location can't be read or changed. | R7 filters `business_id` and `location_id` |
+| D-7 | EOD deposits collected count only current `paid` deposits; redeemed has no bill-status filter | Not part of R7 (R7 does not consume the EOD deposit calculation). | Not used |
+| D-8 | Future dates can be opened and signed off | **Fixed** (2026-09-15): opening or signing off a day after the location's own local today is refused (400); an omitted date defaults to the location's own today; an invalid location timezone is refused, never guessed. | Ignored (P-4) |
+| D-9 | EOD uses `allowedLocationIds` for non-owner location scope | Unchanged, now inside the same-business check (D-6). | Not used by R7 |
+| D-10 | Retail sales can be backdated (`soldAt`) and edited or deleted under the management RLS policy | Accepted: R7's changed-since-sign-off treatment. | Surfaces as "changed since sign-off" |
+| D-11 | The variance threshold is not stored at sign-off; EOD silently falls back to £5 | R7 uses the current threshold, labelled CURRENT (P-11). EOD's own £5 fallback is unchanged. | P-11 |
 
 ## 10. Later consumers (not changed in R7)
 
@@ -196,3 +202,81 @@ Fixing D-1 to D-6 and D-8 needs no migration; D-3 (database guard), D-7 and D-10
   RPC once D-1/D-2 are decided.
 - **ZAC**: any till or cash-variance signal should consume R7's recorded and
   source-check figures (handoff note in the R7 report).
+
+## 11. D-1: can existing rows tell which trading-day algorithm wrote them?
+
+Read-only audit, 2026-09-15.
+
+**A. A field recording the timezone or date algorithm?** No. The row has
+`business_date` (a date label), status, the figures, `opened_by`/`signed_off_by`,
+`signed_off_at`, `currency_code`, `created_at`, `updated_at` — nothing names the
+zone or window that computed the expected snapshot. The `cashup.opened` and
+`cashup.signed_off` audit events record the date and figures, no zone, and audit
+writes are fail-soft (an event can be missing).
+
+**B. Can historical non-London rows be told apart from rows written after a
+fix?** No. A fixed writer would produce rows of identical shape; nothing in a row
+would differ except the figures.
+
+**C. Can `created_at`, `signed_off_at` or another field give a reliable cutover?**
+No.
+- The deploy instant is not in the database, and differs per environment.
+- Railway runs old and new instances side by side during a deploy, so rows near
+  any cutover instant are ambiguous.
+- The expected snapshot is rewritten at Refresh and sign-off, so `created_at`
+  says nothing about the final snapshot, and `updated_at` moves on every edit.
+- A location's timezone is editable with no history (location updates are not
+  audited), so even a known-local row can't be recomputed if the zone changed.
+- Inferring the algorithm by recomputing both windows is a guess: it fails when
+  sources changed after sign-off, or when both windows hold the same takings.
+
+What is certain: the End of Day writer has used `Europe/London` since it was
+added (one commit, 2026-08-12), so **every row that exists today was computed on
+a London day**. End of Day is not on `main`, so production has not served it; the
+production database itself was not read.
+
+**D. If the writer switched now, how would R7 know?** It couldn't. So the writer
+has **not** been switched, and R7 keeps P-8 (non-London recorded figures
+unavailable) as temporary legacy behaviour.
+
+### Proposed source-versioning design (for approval; needs a migration)
+
+1. **Marker columns** on `billing.eod_reconciliations`, all nullable, all three
+   set or all three null (check constraint): `expected_zone text`,
+   `expected_window_start timestamptz`, `expected_window_end timestamptz` — the
+   zone and exact UTC window that computed the stored expected snapshot. No
+   backfill: historical rows are not rewritten. `null` means "written by the
+   London writer", which is a fact, not a guess (A–C above).
+2. **Writer, two deploys.**
+   - Step 1: every expected snapshot (open, Refresh, sign-off) writes the marker
+     in the same update, with the current London window. No change in meaning.
+   - Step 2, after step 1 is fully live: the window becomes the location's own
+     day and the marker says so. During step 2's rollover, an older instance
+     still writes a London snapshot with a London marker, so a marker always
+     describes the snapshot written with it.
+3. **R7.** Recorded expected figures, variances, threshold check and source check
+   are comparable only when the marker's zone equals the location's current
+   timezone and the stored window equals R7's window for that local date. A null
+   marker is comparable only for a `Europe/London` location (today's rule). A
+   marker whose zone differs from the location's current zone is unavailable with
+   a new reason (timezone changed since the cash-up).
+4. **End of Day web.** The default date becomes the location's own today, from the
+   API, instead of the browser's date.
+
+Rejected: a `created_at`/`signed_off_at` cutover, and inferring the algorithm
+from the figures (both guess, per C).
+
+## 12. Changed behaviour from the pre-G5 source fixes
+
+- End of Day, open: a day after the location's own today is refused; with no date
+  given the day is the location's own today (it was London's); a new day is stored
+  in the location's currency; a location with no usable currency or an invalid
+  timezone can't open a day.
+- End of Day, sign-off: refused for a day after the location's own today; the
+  petty cash total is re-read from its entries. Refresh re-reads it too.
+- End of Day, every route: a location outside the actor's business is refused
+  (403) for owners as well as managers.
+- End of Day, reads: a failed petty cash read is an error (500), not an empty list.
+- R7: totals and the reconciliation fixture are unchanged. Wording only: manual
+  entries read "£0.00 recorded" for a stored zero, and the threshold is labelled
+  the current threshold.
