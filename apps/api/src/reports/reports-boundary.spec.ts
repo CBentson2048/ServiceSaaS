@@ -47,11 +47,19 @@ const MERGED_USER_READ = [
   /\{[^}]*\b(permissions|locations)\b[^}]*\}\s*=\s*(request\.|req\.)?(auth|user|actor)\b/,
 ];
 
-const reportFiles = readdirSync(__dirname)
-  .filter((file) => file.endsWith('.ts') && !file.endsWith('.spec.ts'))
-  .map((file) => read(join(__dirname, file)));
+const MONEY_DIR = join(__dirname, 'money');
+const reportFiles = [
+  ...readdirSync(__dirname)
+    .filter((file) => file.endsWith('.ts') && !file.endsWith('.spec.ts'))
+    .map((file) => read(join(__dirname, file))),
+  // R1 Money (Ticket B). Test support under money/testing is not app code.
+  ...readdirSync(MONEY_DIR)
+    .filter((file) => file.endsWith('.ts') && !file.endsWith('.spec.ts'))
+    .map((file) => read(join(MONEY_DIR, file))),
+];
+const moneyFiles = reportFiles.filter((file) => file.name.includes('/reports/money/'));
 const grantResolver = read(join(API_SRC, 'auth', 'membership-grants.ts'));
-const domainContract = ['reporting.ts', 'local-date.ts'].map((file) => read(join(DOMAIN_SRC, file)));
+const domainContract = ['reporting.ts', 'local-date.ts', 'money-report.ts'].map((file) => read(join(DOMAIN_SRC, file)));
 
 function offenders(files: Array<{ name: string; code: string }>, pattern: RegExp): string[] {
   return files.filter((file) => pattern.test(file.code)).map((file) => file.name);
@@ -61,6 +69,11 @@ describe('report foundation source boundaries', () => {
   it('scans the files it claims to', () => {
     expect(reportFiles.map((file) => file.name.split('/').pop()).sort()).toEqual([
       'dto.ts',
+      'money-detail.ts',
+      'money-report.service.ts',
+      'money-source.ts',
+      'money-totals.ts',
+      'money-values.ts',
       'report-access.guard.ts',
       'report-actor.ts',
       'report-availability.guard.ts',
@@ -122,6 +135,17 @@ describe('report foundation source boundaries', () => {
 
   it('has no staff scope in Ticket A (S-1d): no staff-location source and no primary location', () => {
     expect(offenders(reportFiles, /primary_location_id|staff_profiles|user_memberships|['"]shifts['"]|['"]appointments['"]|appointment_services/)).toEqual([]);
+  });
+
+  it('R1 Money reads only its canonical sources, never a legacy revenue calculation', () => {
+    expect(moneyFiles).toHaveLength(5);
+    expect(
+      offenders(moneyFiles, /visit_line_items|appointment_services|price_amount|billable_charge_cents|eod_expected_figures|\bDashboardService\b|\bKpiService\b|\bEodService\b|\bRetailSalesService\b|\bLabAnalyticsService\b|scheduled_start_at|completed_at/),
+    ).toEqual([]);
+    // Money never resolves a date itself: windows come from the Ticket A scope.
+    expect(offenders(moneyFiles, /resolveReportWindows|localDateStartUtc|periodUtcWindow|resolveLocalRange|asOf\b.*new Date/)).toEqual([]);
+    const sourceTables = [...new Set([...moneyFiles.map((f) => f.code).join('\n').matchAll(/\.from\('([a-z_]+)'\)/g)].map((m) => m[1]))].sort();
+    expect(sourceTables).toEqual(['bill_lines', 'bills', 'deposits', 'retail_sales', 'salon_payments']);
   });
 
   it('keeps the domain contract browser-safe: no clock, no Intl, no day boundaries', () => {

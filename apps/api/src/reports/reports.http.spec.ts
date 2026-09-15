@@ -19,6 +19,7 @@ import { ReportAvailabilityGuard } from './report-availability.guard';
 import { ReportScopeService } from './report-scope.service';
 import { REPORT_SURFACE } from './report-surface';
 import { ReportsController } from './reports.controller';
+import { MoneyReportService } from './money/money-report.service';
 
 const A = '00000000-0000-4000-8000-00000000000a';
 
@@ -43,6 +44,31 @@ const users: Record<string, Partial<AuthUser>> = {
     locations: [{ id: A, name: 'London' }],
     locationScope: { kind: 'locations', locationIds: [A] },
   },
+  // Receptionist level: front-desk permissions, no financials.
+  receptionist: {
+    id: 'receptionist',
+    businessId: 'biz',
+    roles: ['manager'],
+    permissions: [],
+    membershipGrants: [{ locationId: A, permissions: ['bookings.manage', 'eod.manage'] }],
+  },
+  // A custom manager level without report.financials.view.
+  'no-financials': {
+    id: 'no-financials',
+    businessId: 'biz',
+    roles: ['manager'],
+    permissions: [],
+    membershipGrants: [{ locationId: A, permissions: ['report.performance.view', 'report.lab_analytics.view'] }],
+  },
+  // manager@A (Manager level) + stylist@B: the stylist row grants nothing.
+  'manager-a-stylist-b': {
+    id: 'mixed',
+    businessId: 'biz',
+    roles: ['manager', 'stylist'],
+    permissions: [...DEFAULT_ROLE_PERMISSIONS.manager],
+    allowedLocationIds: [A, '00000000-0000-4000-8000-00000000000b'],
+    membershipGrants: [{ locationId: A, permissions: ['report.financials.view'] }],
+  },
   stylist: {
     id: 'stylist',
     businessId: 'biz',
@@ -60,6 +86,7 @@ async function appWith(surface: ReportSurface) {
     options: jest.fn().mockResolvedValue({ reportKey: 'money', locations: [], weekStartDay: 2 }),
     resolve: jest.fn().mockResolvedValue({ resolved: { reportKey: 'money', filter: {}, weekStartDay: null, locations: [] } }),
   };
+  const money = { build: jest.fn().mockResolvedValue({ currencyCode: 'GBP' }) };
   const auth = {
     verifyAccessToken: jest.fn(async (token: string) => {
       const user = users[token];
@@ -72,6 +99,7 @@ async function appWith(surface: ReportSurface) {
     providers: [
       { provide: REPORT_SURFACE, useValue: surface },
       { provide: ReportScopeService, useValue: scope },
+      { provide: MoneyReportService, useValue: money },
       { provide: AuthService, useValue: auth },
       SupabaseAuthGuard,
       ReportAvailabilityGuard,
@@ -82,7 +110,7 @@ async function appWith(surface: ReportSurface) {
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }));
   app.setGlobalPrefix('api');
   await app.init();
-  return { app, scope, auth };
+  return { app, scope, money, auth };
 }
 
 describe('report routes with the foundation shell OFF (production)', () => {
@@ -109,14 +137,16 @@ describe('report routes with the foundation shell OFF (production)', () => {
 describe('report routes with the foundation shell ON (dev-test)', () => {
   let app: INestApplication;
   let scope: { options: jest.Mock; resolve: jest.Mock };
+  let money: { build: jest.Mock };
 
   beforeAll(async () => {
-    ({ app, scope } = await appWith({ foundationShell: true }));
+    ({ app, scope, money } = await appWith({ foundationShell: true }));
   });
   afterAll(() => app.close());
   beforeEach(() => {
     scope.options.mockClear();
     scope.resolve.mockClear();
+    money.build.mockClear();
   });
 
   const get = (path: string, token?: string) => {
@@ -144,6 +174,24 @@ describe('report routes with the foundation shell ON (dev-test)', () => {
     expect(scope.options).not.toHaveBeenCalled();
   });
 
+  it('R1 Money actor matrix: only an owner or a grant carrying report.financials.view reaches the Money body', async () => {
+    const outcomes: Array<[string, number, string | undefined]> = [];
+    for (const token of ['owner', 'manager', 'manager-a-stylist-b', 'null-level-manager', 'receptionist', 'stylist', 'no-financials']) {
+      money.build.mockClear();
+      const response = await get('/api/reports/money/result', token);
+      outcomes.push([token, response.status, money.build.mock.calls.length ? 'body built' : response.body.code]);
+    }
+    expect(outcomes).toEqual([
+      ['owner', 200, 'body built'],
+      ['manager', 200, 'body built'],
+      ['manager-a-stylist-b', 200, 'body built'],
+      ['null-level-manager', 403, 'report_forbidden'],
+      ['receptionist', 403, 'report_forbidden'],
+      ['stylist', 403, 'report_forbidden'],
+      ['no-financials', 403, 'report_forbidden'],
+    ]);
+  });
+
   it('lets a Manager-level membership open Money and refuses P&L', async () => {
     expect((await get('/api/reports/money/options', 'manager')).status).toBe(200);
     const pnl = await get('/api/reports/pnl/options', 'manager');
@@ -158,15 +206,25 @@ describe('report routes with the foundation shell ON (dev-test)', () => {
     expect(Object.keys(scope.options.mock.calls[0][0]).sort()).toEqual(['businessId', 'id', 'roles']);
   });
 
-  it('returns the resolved filter with a null body', async () => {
-    const response = await get('/api/reports/money/result?preset=this_week&view=detail', 'owner');
+  it('returns the resolved filter with the Money body', async () => {
+    const response = await get('/api/reports/money/result?preset=this_week&view=detail&cursor=m1.abc', 'owner');
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ reportKey: 'money', filter: { reportKey: 'money', filter: {}, weekStartDay: null, locations: [] }, body: null });
-    expect(scope.resolve.mock.calls[0][2]).toEqual({ preset: 'this_week', view: 'detail' });
+    expect(response.body).toEqual({
+      reportKey: 'money',
+      filter: { reportKey: 'money', filter: {}, weekStartDay: null, locations: [] },
+      body: { currencyCode: 'GBP' },
+    });
+    expect(scope.resolve.mock.calls[0][2]).toEqual({ preset: 'this_week', view: 'detail', cursor: 'm1.abc' });
+  });
+
+  it('refuses a cursor on a report without a paged detail view', async () => {
+    const response = await get('/api/reports/team/result?cursor=m1.abc', 'owner');
+    expect([response.status, response.body.code]).toEqual([400, 'report_cursor_invalid']);
   });
 
   it('refuses unknown and repeated query parameters on result at the pipe', async () => {
-    expect((await get('/api/reports/money/result?cursor=abc', 'owner')).status).toBe(400);
+    expect((await get('/api/reports/money/result?page=2', 'owner')).status).toBe(400);
+    expect((await get(`/api/reports/money/result?cursor=${'x'.repeat(513)}`, 'owner')).status).toBe(400);
     expect((await get('/api/reports/money/result?preset=today&preset=yesterday', 'owner')).status).toBe(400);
     expect(scope.resolve).not.toHaveBeenCalled();
   });
