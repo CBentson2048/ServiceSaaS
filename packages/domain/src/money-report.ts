@@ -84,7 +84,11 @@ export interface MoneyTotals {
 
 export interface MoneyLocationTotals {
   locationId: string;
-  /** The single currency of this location's facts; `null` when there are none or they are mixed. */
+  /**
+   * The single currency of this location's facts. A location with no facts takes
+   * the report's single currency. `null` when its facts are mixed, or when it has
+   * none and the report has no single currency.
+   */
   currencyCode: string | null;
   totals: MoneyTotals;
 }
@@ -155,23 +159,35 @@ export interface MoneyDetailPage {
   nextCursor: string | null;
 }
 
-/**
- * The first page carries the whole report. A continuation page (a request with a
- * detail cursor) carries only the next detail rows: its summary, locations and
- * coverage are not recomputed and are `null`/empty.
- */
-export interface MoneyReportBody {
-  continuation: boolean;
+/** The first page (a request without a cursor): the whole report. */
+export interface MoneyFirstPageBody {
+  continuation: false;
   /** The single currency of the scoped facts; `null` when there are none or they are mixed. */
   currencyCode: string | null;
-  summary: MoneyTotals | null;
+  summary: MoneyTotals;
   /** One per resolved location, in the same order. Additive figures sum to the summary. */
   locations: MoneyLocationTotals[];
   notRecorded: MoneyNotRecordedCategory[];
-  coverage: MoneyCoverage | null;
+  coverage: MoneyCoverage;
   /** Present when the request asked for the detail view. */
   detail: MoneyDetailPage | null;
 }
+
+/**
+ * A continuation page (a request with a detail cursor): only the next detail
+ * rows. The summary, locations and coverage are not recomputed.
+ */
+export interface MoneyContinuationBody {
+  continuation: true;
+  currencyCode: null;
+  summary: null;
+  locations: [];
+  notRecorded: MoneyNotRecordedCategory[];
+  coverage: null;
+  detail: MoneyDetailPage;
+}
+
+export type MoneyReportBody = MoneyFirstPageBody | MoneyContinuationBody;
 
 /** Detail rows per page. */
 export const MONEY_DETAIL_PAGE_SIZE = 50;

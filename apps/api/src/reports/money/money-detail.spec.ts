@@ -209,6 +209,67 @@ describe('detail paging over identical instants', () => {
   });
 });
 
+describe('detail paging across location chunks', () => {
+  // Twelve locations: the service reads ten at a time, so rows come from two chunks.
+  const MANY = Array.from({ length: 12 }, (_, i) => ({
+    id: `31000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+    name: `Salon ${i}`,
+    timezone: i % 2 ? 'Europe/London' : 'Asia/Tokyo',
+  }));
+
+  /**
+   * 120 bills dealt round-robin across the twelve locations, the first 100 at one
+   * microsecond, so ids interleave across the chunks and the first chunk alone
+   * holds more than a page at that instant; plus 30 retail lines at the same
+   * microsecond in both chunks. All inside the London/Tokyo overlap.
+   */
+  function spreadLedger(): Ledger {
+    const ledger: Ledger = { bills: [], lines: [], payments: [], retail: [], deposits: [] };
+    const sameInstant = instant('2026-09-14T16:00:00.500000Z');
+    for (let i = 0; i < 120; i += 1) {
+      const id = uid();
+      const at = i < 100 ? sameInstant : instant(`2026-09-14T17:00:00.00000${i % 3}Z`);
+      ledger.bills.push({ id, visitId: uid(), businessId: BIZ, status: 'paid', locationId: MANY[i % 12].id, at, billNumber: 7000 + i, grossCents: 100 + i, netCents: 100 + i, taxCents: 0, depositAppliedCents: 0, currencyCode: 'GBP' });
+      ledger.lines.push({ id: uid(), billId: id, lineType: 'service', grossCents: 100 + i, netCents: 100 + i, taxCents: 0 });
+    }
+    for (let i = 0; i < 30; i += 1) {
+      ledger.retail.push({ id: uid(), businessId: BIZ, locationId: MANY[(i * 5) % 12].id, at: sameInstant, totalCents: 300 + i, quantity: 1, method: 'cash', currencyCode: 'GBP' });
+    }
+    return ledger;
+  }
+
+  beforeEach(() => {
+    serial = 0;
+  });
+
+  it('walks every row of every chunk exactly once, in order, under a server row cap', async () => {
+    const ledger = spreadLedger();
+    const source = new MemoryMoneySource(ledger, 7);
+    const scope = moneyScope(BIZ, MANY, DETAIL, AS_OF);
+    const keys: string[] = [];
+    let cursor: string | null = null;
+    let pages = 0;
+    do {
+      const body = await new MoneyReportService(source).build(scope, { cursor });
+      expect(body.detail!.rows.length).toBeLessThanOrEqual(MONEY_DETAIL_PAGE_SIZE);
+      keys.push(...body.detail!.rows.map((row) => row.rowKey));
+      cursor = body.detail!.nextCursor;
+      pages += 1;
+    } while (cursor !== null && pages < 10);
+    const expectedOrder = [
+      ...ledger.bills.map((b) => ({ key: b.at, rank: 0, id: b.id, rowKey: `paid_bill:${b.id}` })),
+      ...ledger.retail.map((r) => ({ key: r.at, rank: 1, id: r.id, rowKey: `retail_sale:${r.id}` })),
+    ]
+      .sort((a, b) => comparePositions(a, b))
+      .map((p) => p.rowKey);
+    expect(pages).toBe(3);
+    expect(keys).toEqual(expectedOrder);
+    // The reads really were split: some bill read covered only the second chunk's two locations.
+    expect(source.reads.some((r) => r.method === 'paidBills' && r.windows?.length === 2)).toBe(true);
+    expect(source.reads.every((r) => (r.windows?.length ?? 0) <= 10)).toBe(true);
+  });
+});
+
 describe('detail rows explain the money in local time', () => {
   it('shows each location’s local date and time, the bill’s tenders and deposit, and never raw UTC', async () => {
     serial = 0;

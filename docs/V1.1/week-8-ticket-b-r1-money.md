@@ -131,9 +131,11 @@ money not yet in bill revenue.
 
 **Currency.** If the scoped facts carry more than one currency, money figures are
 unavailable (`mixed_currencies`) rather than summed. Each location row carries its
-own `currencyCode` (null when that location has no facts or is itself mixed), and
-the coverage notice carries its own; the web writes each figure in its own
-currency.
+own `currencyCode`: a location with no facts takes the report's single currency;
+it is null when the location's own facts are mixed, or when it has no facts and
+the report has no single currency (then its zeros are written in the platform
+default, GBP). The coverage notice carries its own currency. The web writes each
+figure in its own currency.
 
 ## 4. Detail view
 
@@ -156,9 +158,9 @@ location's window has started, detail says so (`detail.notStarted`) instead of
   (`packages/domain/src/money-report.ts`): `summary`, one `locations[]` row per
   resolved location (additive figures sum to the summary), `notRecorded`,
   `coverage`, and `detail` when `view=detail`.
-- A request with a `cursor` returns a **continuation** page:
-  `continuation: true`, `summary: null`, `coverage: null`, `locations: []`, and
-  only the next `detail` rows. The summary is not recomputed for every page.
+- A request with a `cursor` returns a **continuation** page (the body type is a
+  union on `continuation`): `continuation: true`, `summary: null`,
+  `coverage: null`, `locations: []`, and only the next `detail` rows. The summary is not recomputed for every page.
 - Reads are made for at most ten locations at a time, so request URLs stay
   bounded for large businesses.
 - Every amount is `{availability:'available', cents}` |

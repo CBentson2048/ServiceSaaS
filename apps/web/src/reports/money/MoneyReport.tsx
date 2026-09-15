@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type {
   MoneyAmount,
-  MoneyCoverage,
   MoneyDetailPage,
   MoneyDetailRow,
+  MoneyFirstPageBody,
   MoneyReportBody,
   MoneyTotals,
   ResolvedReportLocation,
@@ -20,10 +20,10 @@ import {
 } from './moneyLabels';
 
 /** A first page: the whole report (a continuation page carries only detail rows). */
-export type MoneyFirstPage = MoneyReportBody & { summary: MoneyTotals; coverage: MoneyCoverage };
+export type MoneyFirstPage = MoneyFirstPageBody;
 
 export function isMoneyFirstPage(body: MoneyReportBody): body is MoneyFirstPage {
-  return !body.continuation && body.summary !== null && body.coverage !== null;
+  return body.continuation === false;
 }
 
 export interface MoneyReportProps {
@@ -162,7 +162,7 @@ const LOCATION_COLUMNS: Array<[string, (t: MoneyTotals) => MoneyAmount]> = [
   ['Deposits redeemed', (t) => t.deposits.redeemed],
 ];
 
-function LocationTable({ body, nameOf }: { body: MoneyReportBody; nameOf: (id: string) => string }) {
+function LocationTable({ body, nameOf }: { body: MoneyFirstPage; nameOf: (id: string) => string }) {
   return (
     <AppCard padding="md">
       <section aria-label="By location" className="flex flex-col gap-2">

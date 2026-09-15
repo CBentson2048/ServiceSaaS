@@ -1,5 +1,5 @@
 /** Build a Ticket A ReportScope for Money tests from real per-location windows. */
-import { getReportDefinition, type MoneyCoverage, type MoneyReportBody, type MoneyTotals, type ReportFilter, type WeekStartDay } from '@sheer/domain';
+import { getReportDefinition, type MoneyFirstPageBody, type MoneyReportBody, type ReportFilter, type WeekStartDay } from '@sheer/domain';
 import type { ReportScope } from '../../report-scope.service';
 import { resolveReportWindows } from '../../report-window';
 
@@ -48,10 +48,10 @@ export function instant(iso: string): string {
   return `${date}T${time}.${frac.padEnd(6, '0')}Z`;
 }
 
-export type FirstPageBody = MoneyReportBody & { continuation: false; summary: MoneyTotals; coverage: MoneyCoverage };
+export type FirstPageBody = MoneyFirstPageBody;
 
-/** Narrow a body to a first page (summary and coverage present), failing loudly otherwise. */
+/** Narrow a body to a first page, failing loudly otherwise. */
 export function firstPage(body: MoneyReportBody): FirstPageBody {
-  if (body.continuation || body.summary === null || body.coverage === null) throw new Error('expected a first page');
-  return body as FirstPageBody;
+  if (body.continuation) throw new Error('expected a first page');
+  return body;
 }

@@ -537,6 +537,11 @@ describe('R1 Money body', () => {
     ...result('money', [loc(L1, 'London', '2026-09-28', '2026-09-28', 'in_progress')]),
     body: moneyBody(detail),
   });
+  /** A continuation page carries only the next detail rows. */
+  const continuationResult = (detail: MoneyDetailPage): ReportResult => ({
+    ...result('money', [loc(L1, 'London', '2026-09-28', '2026-09-28', 'in_progress')]),
+    body: { continuation: true, currencyCode: null, summary: null, locations: [], notRecorded: ['discounts'], coverage: null, detail },
+  });
 
   it('renders the Money figures in place of the foundation preview card, under the same scope line', async () => {
     api.getReportOptions.mockResolvedValue(options());
@@ -553,11 +558,7 @@ describe('R1 Money body', () => {
     api.getReportResult
       .mockResolvedValueOnce(moneyResult(null))
       .mockResolvedValueOnce(moneyResult({ notStarted: false, rows: [detailRow(1)], nextCursor: 'm1.next' }))
-      .mockResolvedValueOnce({
-        ...moneyResult(null),
-        // A continuation page carries only the next detail rows.
-        body: { ...moneyBody({ notStarted: false, rows: [detailRow(2)], nextCursor: null }), continuation: true, currencyCode: null, summary: null, locations: [], coverage: null },
-      });
+      .mockResolvedValueOnce(continuationResult({ notStarted: false, rows: [detailRow(2)], nextCursor: null }));
     renderAt(`/reports/money?locations=${L1}`);
     await screen.findByRole('region', { name: 'Paid bill revenue' });
     fireEvent.click(screen.getByRole('tab', { name: 'Detail' }));
@@ -568,8 +569,17 @@ describe('R1 Money body', () => {
     await screen.findByText('10:02');
     expect(api.getReportResult.mock.calls[2]).toEqual(['token', 'money', expect.objectContaining({ view: 'detail', locationIds: [L1] }), 'm1.next']);
     expect(screen.getByText('10:01')).toBeTruthy();
-    // The continuation page did not replace the report: the summary is still there.
     expect(screen.getByText('£355.00')).toBeTruthy();
+  });
+
+  it('never renders a continuation page as the report', async () => {
+    api.getReportOptions.mockResolvedValue(options());
+    api.getReportResult.mockResolvedValue(continuationResult({ notStarted: false, rows: [detailRow(1)], nextCursor: null }));
+    renderAt('/reports/money');
+    await screen.findByText('28 Sept 2026 (in progress)');
+    expect(screen.queryByRole('region', { name: 'Paid bill revenue' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Detail' })).toBeNull();
+    expect(document.body.textContent).not.toMatch(/£/);
   });
 });
 

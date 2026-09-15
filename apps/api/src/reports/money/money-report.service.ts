@@ -12,6 +12,7 @@ import {
   MONEY_DETAIL_PAGE_SIZE,
   MONEY_NOT_RECORDED_CATEGORIES,
   type MoneyAmount,
+  type MoneyCoverage,
   type MoneyDetailPage,
   type MoneyDetailRow,
   type MoneyReportBody,
@@ -98,15 +99,18 @@ export class MoneyReportService {
     const summaryFacts = facts === null ? null : combineFacts([...factsByLocation.values()]);
     const currencies = summaryFacts === null ? new Set<string>() : currenciesOf(summaryFacts);
 
+    const currencyCode = singleCurrency(currencies);
     return {
       continuation: false,
-      currencyCode: singleCurrency(currencies),
+      currencyCode,
       summary: moneyTotals(summaryFacts),
       locations: scope.windows.map((window) => {
         const locationFacts = window.status === 'not_started' ? null : (factsByLocation.get(window.locationId) ?? EMPTY_FACTS);
+        const own = locationFacts === null ? new Set<string>() : currenciesOf(locationFacts);
         return {
           locationId: window.locationId,
-          currencyCode: locationFacts === null ? null : singleCurrency(currenciesOf(locationFacts)),
+          // A location with no facts writes its zeros in the report's currency.
+          currencyCode: locationFacts === null ? null : own.size === 0 ? currencyCode : singleCurrency(own),
           totals: moneyTotals(locationFacts),
         };
       }),
@@ -151,7 +155,7 @@ export class MoneyReportService {
   }
 
   /** Till payments recorded in the windows whose visit has no paid bill at all. */
-  private async coverage(businessId: string, windows: readonly MoneyWindow[]): Promise<MoneyReportBody['coverage']> {
+  private async coverage(businessId: string, windows: readonly MoneyWindow[]): Promise<MoneyCoverage> {
     if (windows.length === 0) {
       return { tillPaymentsWithoutBill: { count: 0, amount: { availability: 'not_started' }, currencyCode: null } };
     }

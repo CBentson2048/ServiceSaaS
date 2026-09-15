@@ -167,4 +167,31 @@ describe('Money reads each location inside its own window', () => {
     expect([...new Set(billReads.flatMap((r) => r.windows ?? []).map((w) => w.locationId))].sort()).toEqual(many.map((l) => l.id).sort());
     expect(gross(body.summary.paidBills.gross)).toBe(many.reduce((sum, _l, i) => sum + 100 + i, 0));
   });
+
+  it('counts till payments without a paid bill in every location chunk, under a server row cap', async () => {
+    const many = Array.from({ length: 23 }, (_, i) => ({
+      id: `22000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+      name: `Salon ${i}`,
+      timezone: i % 2 ? 'Europe/London' : 'Asia/Tokyo',
+    }));
+    const scope = moneyScope(BIZ, many, filter(), new Date('2026-09-14T15:30:00Z'));
+    const ledger = ledgerWithBills(many.map((l) => ({ locationId: l.id, at: '2026-09-14T16:00:00Z', gross: 100 })));
+    // Every location's bill was paid at the till (billed), and each location also has one payment with no bill.
+    ledger.bills.forEach((b) => {
+      ledger.payments.push({ id: uid(), businessId: BIZ, visitId: b.visitId, locationId: b.locationId, at: instant('2026-09-14T16:00:00Z'), method: 'cash', amountCents: 100, currencyCode: 'GBP' });
+    });
+    many.forEach((l, i) => {
+      ledger.payments.push({ id: uid(), businessId: BIZ, visitId: uid(), locationId: l.id, at: instant('2026-09-14T16:30:00Z'), method: 'card_reader', amountCents: 1000 + i, currencyCode: 'GBP' });
+    });
+    const source = new MemoryMoneySource(ledger, 3);
+    const body = firstPage(await new MoneyReportService(source).build(scope, { cursor: null }));
+    expect(body.coverage.tillPaymentsWithoutBill).toEqual({
+      count: 23,
+      amount: { availability: 'available', cents: many.reduce((sum, _l, i) => sum + 1000 + i, 0) },
+      currencyCode: 'GBP',
+    });
+    const reads = source.reads.filter((r) => r.method === 'tillPaymentsInWindows');
+    expect(reads.every((r) => (r.windows?.length ?? 0) <= 10)).toBe(true);
+    expect(new Set(reads.flatMap((r) => r.windows ?? []).map((w) => w.locationId)).size).toBe(23);
+  });
 });
