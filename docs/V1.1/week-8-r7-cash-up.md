@@ -161,8 +161,10 @@ separate commit.
 ## 7. Migrations
 
 None. R7 reads existing tables only and changes no function; the End of Day
-source fixes are API-only. `0113`/`0114` stay reserved; `0115` is not taken. The
-D-1 design in §11 would need a migration and is awaiting approval.
+source fixes are API-only. `0113`/`0114` stay reserved, and no further Week 8
+migration number is allocated: the D-1 source-versioning design (§11) is approved
+in direction only, and its migration is not to be created until the migration
+plan is approved.
 
 ## 8. Product decisions (approved 2026-09-15)
 
@@ -184,12 +186,12 @@ D-1 design in §11 would need a migration and is awaiting approval.
 
 | # | Defect | Status | Effect on R7 |
 |---|---|---|---|
-| D-1 | EOD expected-figures window hardcoded to a Europe/London day; the web page's default date is the browser's | **Not changed.** Audit and proposed design in §11 (needs a migration; awaiting approval). The API's "today" is now the location's (D-8). | Non-London records unavailable (P-8, temporary) |
+| D-1 | EOD expected-figures window hardcoded to a Europe/London day; the web page's default date is the browser's | **Not changed.** Audit in §11; the source-versioning direction is approved in principle (2026-09-15) but **no migration is to be created yet**. The API's "today" is now the location's (D-8). | Non-London records unavailable (P-8, temporary); unmarked rows are legacy semantics |
 | D-2 | `currency_code` never set on open (always the GBP default); expected figures summed across currencies | **Fixed for new days** (2026-09-15): open stores the location's currency by R1's rule (settings row, else business default); a location with no usable currency can't open a day. Historical rows are not rewritten. The RPC still sums across currencies (a migration). | P-9 still refuses a record whose currency isn't the location's; mixed takings are not comparable |
-| D-3 | Sign-off immutability is API-only: an edit, Refresh or petty cash add that read the row before sign-off can land after it; sign-off is two separate updates | **HIGH PRIORITY / MUST FIX BEFORE PILOT.** A locked financial record can be mutated (including a petty cash total written just after sign-off). Not expanded into R7; a separate fix proposal follows R7 G5. | A changed signed-off row is not detectable from the row |
+| D-3 | Sign-off immutability is API-only: an edit, Refresh or petty cash add that read the row before sign-off can land after it; sign-off is two separate updates | **HIGH PRIORITY / MUST FIX BEFORE PILOT.** Not solved inside R7 G5. After R7 G5, a separate transactional / database-integrity proposal covering the edit vs sign-off race, the Refresh vs sign-off race and a petty cash write after sign-off: a signed-off record must be immutable **by invariant**, not by API convention. | A changed signed-off row is not detectable from the row |
 | D-4 | Row edits and Refresh are not audited; only sign-off is | Tracked as a cash-up audit/history improvement. | History of counts can't be rebuilt |
 | D-5 | A failed petty-cash read writes a petty-cash total of 0 | **Fixed** (2026-09-15): a failed read never writes a total. Adding petty cash saves (and audits) the entry first; if the re-read or the reload then fails, no total is written, the day keeps its previous total and the answer says the entry was recorded, so it isn't added twice. Refresh and sign-off read the entries before writing anything, so a signed-off total is the entries' sum at sign-off (subject to D-3). Reading a day or the history fails instead of showing no entries. | An open day's draft petty cash can be behind its entries after a failed re-read, until Refresh or sign-off |
-| D-6 | An owner can open a day for a location of another business (no ownership check) | **Fixed** (2026-09-15): every route checks the location belongs to the actor's business, owners included; a foreign location and an unknown id get the same 403; a stray row of another business's location can't be read or changed. Not fixable without a data fix: a stray row the old defect already wrote still holds `unique(location_id, business_date)`, so the owning business gets a 500 opening that date. Check dev-test before G5 (read-only): `select r.id, r.business_id, l.business_id as location_business_id, r.business_date from billing.eod_reconciliations r join core.locations l on l.id = r.location_id where r.business_id <> l.business_id;` | R7 filters `business_id` and `location_id` |
+| D-6 | An owner can open a day for a location of another business (no ownership check) | **Fixed** (2026-09-15): every route checks the location belongs to the actor's business, owners included; a foreign location and an unknown id get the same 403; a stray row of another business's location can't be read or changed. Not fixable without a data fix: a stray row the old defect already wrote still holds `unique(location_id, business_date)`, so the owning business gets a 500 opening that date. See §13 for the read-only check and what to do if it returns rows. | R7 filters `business_id` and `location_id` |
 | D-7 | EOD deposits collected count only current `paid` deposits; redeemed has no bill-status filter | Not part of R7 (R7 does not consume the EOD deposit calculation). | Not used |
 | D-8 | Future dates can be opened and signed off | **Fixed** (2026-09-15): opening or signing off a day after the location's own local today is refused (400); an omitted date defaults to the location's own today; an invalid location timezone is refused, never guessed. | Ignored (P-4) |
 | D-9 | EOD uses `allowedLocationIds` for non-owner location scope | Unchanged, now inside the same-business check (D-6). | Not used by R7 |
@@ -230,30 +232,46 @@ No.
 - Inferring the algorithm by recomputing both windows is a guess: it fails when
   sources changed after sign-off, or when both windows hold the same takings.
 
-What is certain: the End of Day writer has used `Europe/London` since it was
-added (one commit, 2026-08-12), so **every row that exists today was computed on
-a London day**. End of Day is not on `main`, so production has not served it; the
-production database itself was not read.
+What the code shows: the End of Day writer has used `Europe/London` since it was
+added (one commit, 2026-08-12), so every row written so far was written by a
+London-day writer. That is evidence from the writer, not a property of the row —
+a row itself carries no proof of how it was computed, so an unmarked row is
+**LEGACY EOD SEMANTICS**, never "known-good London-comparable". End of Day is not
+on `main`, so production has not served it; the production database was not read.
 
 **D. If the writer switched now, how would R7 know?** It couldn't. So the writer
 has **not** been switched, and R7 keeps P-8 (non-London recorded figures
 unavailable) as temporary legacy behaviour.
 
-### Proposed source-versioning design (for approval; needs a migration)
+### Source-versioning design — direction approved in principle, 2026-09-15
 
-1. **Marker columns** on `billing.eod_reconciliations`, all nullable, all three
-   set or all three null (check constraint): `expected_zone text`,
-   `expected_window_start timestamptz`, `expected_window_end timestamptz` — the
-   zone and exact UTC window that computed the stored expected snapshot. No
-   backfill: historical rows are not rewritten. `null` means "written by the
-   London writer", which is a fact, not a guess (A–C above).
-2. **Writer, two deploys.**
+**No migration now.** `0113` and `0114` stay reserved, and no further Week 8
+migration number is allocated until the migration plan itself is approved. Until
+then the writer is unchanged and R7 keeps its legacy behaviour.
+
+1. **What the persisted model must identify.** For every stored expected
+   snapshot, both the exact interval used and the semantics that produced it:
+   - calculation timezone;
+   - window start (UTC);
+   - window end (UTC, exclusive);
+   - window semantics / version.
+
+   Held together (all set or all absent) and written in the same statement as the
+   figures they describe, so a marker can never describe a different snapshot.
+   Historical rows are not rewritten and are not backfilled.
+2. **Unmarked rows are LEGACY EOD SEMANTICS.** Absence of a marker says only
+   "written before versioning". It is not a guarantee of a London window, and it
+   must never be presented as one. A legacy row at a non-`Europe/London` location
+   stays **Not comparable** (P-8). A legacy row at a `Europe/London` location
+   keeps today's treatment, which rests on the writer's history rather than on the
+   row — R7 says which rule it applied.
+3. **Writer, two deploys.**
    - Step 1: every expected snapshot (open, Refresh, sign-off) writes the marker
-     in the same update, with the current London window. No change in meaning.
+     with the current London window. No change in meaning.
    - Step 2, after step 1 is fully live: the window becomes the location's own
-     day and the marker says so. During step 2's rollover, an older instance
-     still writes a London snapshot with a London marker, so a marker always
-     describes the snapshot written with it.
+     day and the marker says so. During step 2's rollover an older instance still
+     writes a London snapshot with a London marker, so a marker always describes
+     the snapshot written with it.
    - Sign-off must write the final expected figures, the marker, the variance and
      the status in **one** update. Today they are two updates, so an older
      instance's Refresh landing between them would leave a variance computed on a
@@ -264,13 +282,13 @@ unavailable) as temporary legacy behaviour.
      midnight, which is wrong for zones whose offset changes between UTC midnight
      and local midnight (for example Australia/Sydney on 2026-04-05 it gives 01:00
      local), so R7's "stored window equals R7's window" check would never match.
-3. **R7.** Recorded expected figures, variances, threshold check and source check
-   are comparable only when the marker's zone equals the location's current
-   timezone and the stored window equals R7's window for that local date. A null
-   marker is comparable only for a `Europe/London` location (today's rule). A
-   marker whose zone differs from the location's current zone is unavailable with
-   a new reason (timezone changed since the cash-up).
-4. **End of Day web.** The default date becomes the location's own today, from the
+4. **R7.** Recorded expected figures, variances, threshold check and source check
+   are comparable only when the marker's semantics version is one R7 understands,
+   its zone equals the location's current timezone, and its window equals R7's
+   window for that local date. A marker whose zone differs from the location's
+   current zone is unavailable with its own reason (timezone changed since the
+   cash-up). Unmarked rows follow rule 2.
+5. **End of Day web.** The default date becomes the location's own today, from the
    API, instead of the browser's date.
 
 Rejected: a `created_at`/`signed_off_at` cutover, and inferring the algorithm
@@ -300,3 +318,46 @@ from the figures (both guess, per C).
 - R7: totals and the reconciliation fixture are unchanged. Wording only: manual
   entries read "£0.00 recorded" for a stored zero, and the threshold is labelled
   the current threshold.
+
+## 13. Before and during R7 G5
+
+### Stray cross-tenant rows (D-6 legacy data)
+
+Read-only, run by the user on dev-test before R7 G5, and on production before
+pilot:
+
+```sql
+select r.id, r.business_id, l.business_id as location_business_id, r.business_date
+from billing.eod_reconciliations r
+join core.locations l on l.id = r.location_id
+where r.business_id <> l.business_id;
+```
+
+Expected: 0 rows. If any row comes back: **do not modify or delete it.** Report
+the count and each row's business, location and date; establish whether the
+location's real business is blocked from cashing up that date (the unique
+constraint is on location and date, so it would be); and propose a repair plan
+for approval before anything is changed.
+
+### G5 data plan (after R1 G5 figures are recorded)
+
+- **Kensington:** sign off the completed test day; reconcile expected cash and
+  card against the R1 source ledger.
+- **Primrose Hill:** a day left open — verify *Not signed off*.
+- **Pinner:** untouched — verify *No cash-up recorded*.
+- **Non-London:** optional legacy evidence for *Not comparable*; it does not block
+  UK-location G5.
+
+Verify in the report: recorded variance; recomputed (current) takings; changed
+since sign-off; per-tender variance; combined variance; the CURRENT threshold
+wording; "£0.00 recorded" for defaulted manual-entry fields; and no invented zero
+anywhere a figure is unavailable.
+
+### Branch sequencing
+
+R7 is based on develop `0f4a35e`. It is not pushed. After R1 G5 completes and R1
+is accepted and merged: rebase onto the accepted develop, resolve conflicts with
+care, confirm no R1 canonical behaviour is overwritten, rebuild clean, and rerun
+the full API and web suites plus the R7 reconciliation, End of Day, permission,
+timezone and paging tests. Report the updated SHA and results, and only then
+prepare the R7 PR.
