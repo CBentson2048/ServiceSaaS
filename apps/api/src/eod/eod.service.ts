@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -17,14 +18,19 @@ import type {
 } from '@sheer/domain';
 import { userHasRole } from '@sheer/domain';
 import { AuditService } from '../audit/audit.service';
+import { isSupportedTimeZone, utcToLocalDate } from '../payroll/period-dates';
+import { MONEY_SOURCE, type MoneySource } from '../reports/money/money-source';
 import type {
   AddEodPettyCashDto,
   OpenEodDayDto,
   UpdateEodDayDto,
 } from './dto';
 
-// Every current salon trades in the UK; a per-location timezone setting can
-// replace this constant without touching the window arithmetic below.
+// The expected-figures window is still computed on a Europe/London day for every
+// location (D-1 in docs/V1.1/week-8-r7-cash-up.md). Stored rows carry no marker
+// of the zone that computed them, so switching this needs the approved
+// source-versioning design first. "Today" (the default date and the future-day
+// check) already uses the location's own timezone.
 const EOD_TIMEZONE = 'Europe/London';
 
 interface EodRow {
@@ -75,6 +81,12 @@ const EOD_COLUMNS =
   'id,business_id,location_id,business_date,status,opening_float_cents,expected_cash_cents,counted_cash_cents,expected_card_cents,counted_card_cents,unclassified_retail_cents,deposits_collected_cents,deposits_redeemed_cents,voids_cents,refunds_cents,petty_cash_out_cents,variance_cents,notes,signed_off_by_user_profile_id,signed_off_at,currency_code,created_at,updated_at';
 const PETTY_COLUMNS = 'id,eod_id,amount_cents,reason,recorded_by_user_profile_id,created_at';
 
+/** A location of the actor's own business. */
+interface EodLocation {
+  id: string;
+  timezone: string;
+}
+
 @Injectable()
 export class EodService {
   private readonly logger = new Logger(EodService.name);
@@ -83,6 +95,9 @@ export class EodService {
   constructor(
     config: ConfigService,
     private readonly audit: AuditService,
+    // R1's authoritative location currency rule: settings row, else the
+    // business default; an unusable code is never replaced by a guess.
+    @Inject(MONEY_SOURCE) private readonly currencies: Pick<MoneySource, 'locationCurrencies'>,
   ) {
     const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
     const serviceRoleKey = config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY');
@@ -97,12 +112,17 @@ export class EodService {
    * already-open day just returns it — two receptionists can't fork a day.
    */
   async openDay(actor: AuthUser, input: OpenEodDayDto): Promise<EodDayResponse> {
-    this.assertLocationScope(actor, input.locationId);
-    const businessDate = input.businessDate ?? todayBusinessDate();
+    const location = await this.resolveLocation(actor, input.locationId);
+    const today = locationToday(location);
+    const businessDate = input.businessDate ?? today;
+    if (businessDate > today) {
+      throw new BadRequestException('This trading day has not started yet at this location');
+    }
 
     const existing = await this.fetchDayRow(actor.businessId, input.locationId, businessDate);
     if (existing) return this.buildDayResponse(actor, existing);
 
+    const currencyCode = await this.fetchLocationCurrency(actor.businessId, input.locationId);
     const expected = await this.fetchExpectedFigures(
       actor.businessId,
       input.locationId,
@@ -120,6 +140,7 @@ export class EodService {
         unclassified_retail_cents: expected.unclassifiedRetailCents,
         deposits_collected_cents: expected.depositsCollectedCents,
         deposits_redeemed_cents: expected.depositsRedeemedCents,
+        currency_code: currencyCode,
         opened_by_user_profile_id: actor.id,
       })
       .select(EOD_COLUMNS)
@@ -152,12 +173,12 @@ export class EodService {
     locationId: string,
     businessDate?: string,
   ): Promise<EodDayResponse> {
-    this.assertLocationScope(actor, locationId);
-    const date = businessDate ?? todayBusinessDate();
+    const location = await this.resolveLocation(actor, locationId);
+    const date = businessDate ?? locationToday(location);
     const row = await this.fetchDayRow(actor.businessId, locationId, date);
     if (!row) {
       const [threshold, expected] = await Promise.all([
-        this.fetchVarianceThresholdCents(locationId),
+        this.fetchVarianceThresholdCents(actor.businessId, locationId),
         this.fetchExpectedFigures(actor.businessId, locationId, date),
       ]);
       return {
@@ -175,7 +196,7 @@ export class EodService {
     locationId: string,
     limit = 30,
   ): Promise<ListEodDaysResponse> {
-    this.assertLocationScope(actor, locationId);
+    await this.resolveLocation(actor, locationId);
     const { data, error } = await this.admin
       .schema('billing')
       .from('eod_reconciliations')
@@ -199,14 +220,14 @@ export class EodService {
    * — the ticket's "completing/paying a visit updates that day's figures".
    */
   async refreshExpected(actor: AuthUser, id: string): Promise<EodDayResponse> {
-    const row = await this.fetchDayById(actor, id);
+    const { row } = await this.fetchDayById(actor, id);
     this.assertOpen(row);
     const updated = await this.applyExpected(row);
     return this.buildDayResponse(actor, updated);
   }
 
   async updateDay(actor: AuthUser, id: string, input: UpdateEodDayDto): Promise<EodDayResponse> {
-    const row = await this.fetchDayById(actor, id);
+    const { row } = await this.fetchDayById(actor, id);
     this.assertOpen(row);
     const patch: Record<string, unknown> = {};
     if (input.openingFloatCents !== undefined) patch.opening_float_cents = input.openingFloatCents;
@@ -226,7 +247,7 @@ export class EodService {
     id: string,
     input: AddEodPettyCashDto,
   ): Promise<EodDayResponse> {
-    const row = await this.fetchDayById(actor, id);
+    const { row } = await this.fetchDayById(actor, id);
     this.assertOpen(row);
     const { error } = await this.admin.schema('billing').from('eod_petty_cash_entries').insert({
       eod_id: row.id,
@@ -238,9 +259,17 @@ export class EodService {
       this.logger.error(`addPettyCash failed: ${error.message}`);
       throw new InternalServerErrorException('Unable to record petty cash');
     }
-    // Keep the denormalised header sum true to the entries.
-    const petty = await this.fetchPettyCash([row.id]);
-    const total = (petty.get(row.id) ?? []).reduce((sum, entry) => sum + entry.amount_cents, 0);
+    // Keep the denormalised header sum true to the entries. The entry is saved,
+    // so a failed re-read must not write a total: the header keeps its last true
+    // value and Refresh or sign-off re-reads the entries.
+    let total: number;
+    try {
+      total = await this.fetchPettyCashTotal(row.id);
+    } catch {
+      throw new InternalServerErrorException(
+        'Petty cash was recorded, but the day total could not be updated. Reload the day before adding it again.',
+      );
+    }
     const updated = await this.updateRow(row.id, { petty_cash_out_cents: total });
 
     await this.audit.record(actor, {
@@ -255,12 +284,17 @@ export class EodService {
 
   /**
    * Freezes the day: one final expected recompute (so checkouts taken between
-   * opening and signing are captured), then variance = counted − expected,
-   * status → signed_off, who/when stamped. Signed-off days never change.
+   * opening and signing are captured) and petty cash re-read from its entries,
+   * then variance = counted − expected, status → signed_off, who/when stamped.
+   * Signed-off days never change. A day that has not started at the location
+   * cannot be signed off.
    */
   async signOff(actor: AuthUser, id: string): Promise<EodDayResponse> {
-    const row = await this.fetchDayById(actor, id);
+    const { row, location } = await this.fetchDayById(actor, id);
     this.assertOpen(row);
+    if (row.business_date > locationToday(location)) {
+      throw new BadRequestException('This trading day has not started yet at this location, so it cannot be signed off');
+    }
     if (row.counted_cash_cents === null || row.counted_card_cents === null) {
       throw new BadRequestException('Enter the counted cash and card amounts before signing off');
     }
@@ -289,6 +323,7 @@ export class EodService {
         countedCardCents: refreshed.counted_card_cents,
         expectedCashCents: refreshed.expected_cash_cents,
         expectedCardCents: refreshed.expected_card_cents,
+        pettyCashOutCents: refreshed.petty_cash_out_cents,
       },
     });
     return this.buildDayResponse(actor, updated);
@@ -296,7 +331,13 @@ export class EodService {
 
   // -------------------------------------------------------------------------
 
+  /**
+   * Rewrites the derived figures: expected takings and the petty cash total from
+   * its entries. Every read happens before the single write, so a failed read
+   * changes nothing.
+   */
   private async applyExpected(row: EodRow): Promise<EodRow> {
+    const pettyCashOutCents = await this.fetchPettyCashTotal(row.id);
     const expected = await this.fetchExpectedFigures(
       row.business_id,
       row.location_id,
@@ -308,6 +349,7 @@ export class EodService {
       unclassified_retail_cents: expected.unclassifiedRetailCents,
       deposits_collected_cents: expected.depositsCollectedCents,
       deposits_redeemed_cents: expected.depositsRedeemedCents,
+      petty_cash_out_cents: pettyCashOutCents,
     });
   }
 
@@ -348,7 +390,7 @@ export class EodService {
   private async buildDayResponse(actor: AuthUser, row: EodRow): Promise<EodDayResponse> {
     const [petty, threshold, expected] = await Promise.all([
       this.fetchPettyCash([row.id]),
-      this.fetchVarianceThresholdCents(row.location_id),
+      this.fetchVarianceThresholdCents(row.business_id, row.location_id),
       this.fetchExpectedFigures(row.business_id, row.location_id, row.business_date),
     ]);
     return {
@@ -379,7 +421,7 @@ export class EodService {
     return data ?? null;
   }
 
-  private async fetchDayById(actor: AuthUser, id: string): Promise<EodRow> {
+  private async fetchDayById(actor: AuthUser, id: string): Promise<{ row: EodRow; location: EodLocation }> {
     const { data, error } = await this.admin
       .schema('billing')
       .from('eod_reconciliations')
@@ -392,8 +434,8 @@ export class EodService {
       throw new InternalServerErrorException('Unable to load the trading day');
     }
     if (!data) throw new NotFoundException('Trading day not found');
-    this.assertLocationScope(actor, data.location_id);
-    return data;
+    const location = await this.resolveLocation(actor, data.location_id);
+    return { row: data, location };
   }
 
   private async updateRow(id: string, patch: Record<string, unknown>): Promise<EodRow> {
@@ -422,8 +464,9 @@ export class EodService {
       .order('created_at', { ascending: true })
       .returns<PettyCashRow[]>();
     if (error) {
+      // Never an empty list: that would read (and be summed) as no petty cash.
       this.logger.error(`fetchPettyCash failed: ${error.message}`);
-      return byDay;
+      throw new InternalServerErrorException('Unable to load petty cash');
     }
     for (const row of data ?? []) {
       byDay.set(row.eod_id, [...(byDay.get(row.eod_id) ?? []), row]);
@@ -431,11 +474,27 @@ export class EodService {
     return byDay;
   }
 
-  private async fetchVarianceThresholdCents(locationId: string): Promise<number> {
+  /** The sum of the day's petty cash entries; a failed read throws. */
+  private async fetchPettyCashTotal(eodId: string): Promise<number> {
+    const petty = await this.fetchPettyCash([eodId]);
+    return (petty.get(eodId) ?? []).reduce((sum, entry) => sum + entry.amount_cents, 0);
+  }
+
+  private async fetchLocationCurrency(businessId: string, locationId: string): Promise<string> {
+    const code = (await this.currencies.locationCurrencies(businessId, [locationId])).get(locationId);
+    if (!code) {
+      // Never the column's GBP default: a day in the wrong currency is worse than no day.
+      throw new BadRequestException('Set the location’s currency before opening a trading day');
+    }
+    return code;
+  }
+
+  private async fetchVarianceThresholdCents(businessId: string, locationId: string): Promise<number> {
     const { data, error } = await this.admin
       .schema('core')
       .from('location_settings')
       .select('location_id,cash_variance_threshold_amount')
+      .eq('business_id', businessId)
       .eq('location_id', locationId)
       .maybeSingle<{ cash_variance_threshold_amount: number | string }>();
     if (error) {
@@ -453,12 +512,39 @@ export class EodService {
     }
   }
 
-  private assertLocationScope(actor: AuthUser, locationId: string): void {
-    if (userHasRole(actor, 'owner')) return;
-    if (!actor.allowedLocationIds.includes(locationId)) {
+  /**
+   * The same-business location boundary, for every actor, owners included: the
+   * location must belong to the actor's business. A non-owner must also hold the
+   * location. A location of another business and an unknown id get the same 403.
+   */
+  private async resolveLocation(actor: AuthUser, locationId: string): Promise<EodLocation> {
+    if (!userHasRole(actor, 'owner') && !actor.allowedLocationIds.includes(locationId)) {
       throw new ForbiddenException('Location is outside your scope');
     }
+    const { data, error } = await this.admin
+      .schema('core')
+      .from('locations')
+      .select('id,business_id,timezone')
+      .eq('id', locationId)
+      .eq('business_id', actor.businessId)
+      .maybeSingle<{ id: string; business_id: string; timezone: string }>();
+    if (error) {
+      this.logger.error(`resolveLocation failed: ${error.message}`);
+      throw new InternalServerErrorException('Unable to load the location');
+    }
+    if (!data || data.business_id !== actor.businessId) {
+      throw new ForbiddenException('Location is outside your scope');
+    }
+    return { id: data.id, timezone: data.timezone };
   }
+}
+
+/** Today's date at the location, YYYY-MM-DD, in the location's own timezone. */
+function locationToday(location: EodLocation): string {
+  if (!isSupportedTimeZone(location.timezone)) {
+    throw new BadRequestException('The location’s timezone is not valid. Fix it in location settings first.');
+  }
+  return utcToLocalDate(location.timezone, Date.now());
 }
 
 // Categories the platform cannot feed automatically yet — surfaced honestly
@@ -499,11 +585,6 @@ function toEodReconciliation(row: EodRow, petty: PettyCashRow[]): EodReconciliat
       createdAt: entry.created_at,
     })),
   };
-}
-
-/** Today's date in the trading timezone, YYYY-MM-DD. */
-function todayBusinessDate(): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: EOD_TIMEZONE }).format(new Date());
 }
 
 /**
