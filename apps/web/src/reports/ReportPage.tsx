@@ -278,8 +278,9 @@ export function ReportPage({ definition }: { definition: ReportDefinition }) {
                     // The filter now names other dates (a relative preset past local midnight) or
                     // other locations: the page is stale, so reload it rather than append rows
                     // from other dates.
-                    if (reportErrorOf(error)?.code === 'report_cursor_invalid') setResultAttempt((n) => n + 1);
-                    throw error;
+                    if (reportErrorOf(error)?.code !== 'report_cursor_invalid') throw error;
+                    setResultAttempt((n) => n + 1);
+                    return 'reloading' as const;
                   },
                 )
               : Promise.resolve(null)

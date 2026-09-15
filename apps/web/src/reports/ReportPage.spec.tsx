@@ -574,13 +574,19 @@ describe('R1 Money body', () => {
 
   it('a Load more refused because the dates moved on reloads the report instead of appending', async () => {
     api.getReportOptions.mockResolvedValue(options());
+    const reload = deferred<ReportResult>();
     api.getReportResult
       .mockResolvedValueOnce(moneyResult({ notStarted: false, rows: [detailRow(1)], nextCursor: 'm1.issued-yesterday' }))
       .mockRejectedValueOnce(reportError(400, 'report_cursor_invalid'))
-      .mockResolvedValueOnce(moneyResult({ notStarted: false, rows: [detailRow(3)], nextCursor: null }));
+      .mockReturnValueOnce(reload.promise);
     renderAt(`/reports/money?locations=${L1}&view=detail`);
     await screen.findByText('10:01');
     fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    // While the report reloads: still Loading…, and no error is announced.
+    await act(async () => undefined);
+    expect(screen.getByRole('button', { name: 'Loading…' })).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+    await act(async () => reload.resolve(moneyResult({ notStarted: false, rows: [detailRow(3)], nextCursor: null })));
     await screen.findByText('10:03');
     expect(screen.queryByText('10:01')).toBeNull();
     // The reload is a first-page request: same filter, no cursor.

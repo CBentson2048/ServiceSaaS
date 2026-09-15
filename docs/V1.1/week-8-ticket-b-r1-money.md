@@ -194,8 +194,9 @@ location's window has started, detail says so (`detail.notStarted`) instead of
   bounded for large businesses.
 - Every amount is `{availability:'available', cents}` |
   `{availability:'unavailable', reason}` | `{availability:'not_started'}`.
-- A `cursor` without `view=detail`, or a malformed cursor, is
-  `400 report_cursor_invalid`.
+- A `cursor` without `view=detail`, a malformed cursor, or a cursor issued for
+  other windows (§4) is `400 report_cursor_invalid`. The web treats the last as
+  a stale page: it keeps showing "Loading…" and reloads the report.
 - All arithmetic is in the API. The web formats and renders.
 
 ## 6. Release

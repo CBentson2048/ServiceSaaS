@@ -30,8 +30,12 @@ export interface MoneyReportProps {
   body: MoneyFirstPage;
   /** The resolved locations, for names. */
   locations: readonly ResolvedReportLocation[];
-  /** Fetch the next detail page for the current filter. */
-  loadMore(cursor: string): Promise<MoneyDetailPage | null>;
+  /**
+   * Fetch the next detail page for the current filter. `'reloading'`: the cursor
+   * belongs to dates the filter no longer names, and a fresh first page is on its
+   * way (it arrives as a new `body`).
+   */
+  loadMore(cursor: string): Promise<MoneyDetailPage | 'reloading' | null>;
 }
 
 /**
@@ -212,7 +216,7 @@ function MoneyDetail({
 }: {
   initial: MoneyDetailPage;
   nameOf: (id: string) => string;
-  loadMore(cursor: string): Promise<MoneyDetailPage | null>;
+  loadMore(cursor: string): Promise<MoneyDetailPage | 'reloading' | null>;
 }) {
   const [rows, setRows] = useState<MoneyDetailRow[]>(initial.rows);
   const [cursor, setCursor] = useState<string | null>(initial.nextCursor);
@@ -222,24 +226,31 @@ function MoneyDetail({
   /** One action button (Load more, Loading…, Retry) keeps keyboard focus across states. */
   const actionRef = useRef<HTMLButtonElement>(null);
   const sectionRef = useRef<HTMLElement>(null);
-  /** The action had focus when the last page arrived: move focus to the list, not the page body. */
-  const refocusList = useRef(false);
+  /**
+   * The action had focus when it went away (the last page arrived, or a reload
+   * replaced the list): move focus to the list on the next rows render, not to
+   * the page body.
+   */
+  const focusList = useRef(false);
+  /** A stale Load more asked the page to reload while the action had focus. */
+  const focusAfterReload = useRef(false);
 
   // A new first page (a new filter or a refresh) starts the list again.
   useEffect(() => {
     generation.current += 1;
-    refocusList.current = false;
+    focusList.current = focusAfterReload.current;
+    focusAfterReload.current = false;
     setRows(initial.rows);
     setCursor(initial.nextCursor);
     setState('idle');
   }, [initial]);
 
   useEffect(() => {
-    if (cursor === null && refocusList.current) {
-      refocusList.current = false;
-      sectionRef.current?.focus();
+    if (focusList.current) {
+      focusList.current = false;
+      sectionRef.current?.focus({ preventScroll: true });
     }
-  }, [cursor]);
+  }, [rows]);
 
   const more = () => {
     if (cursor === null || state === 'loading') return;
@@ -248,11 +259,16 @@ function MoneyDetail({
     loadMore(cursor).then(
       (page) => {
         if (generation.current !== started) return;
+        if (page === 'reloading') {
+          // Keep showing Loading…: the report reloads for its current dates and replaces this list.
+          focusAfterReload.current = document.activeElement === actionRef.current;
+          return;
+        }
         if (!page) {
           setState('error');
           return;
         }
-        if (page.nextCursor === null && document.activeElement === actionRef.current) refocusList.current = true;
+        if (page.nextCursor === null && document.activeElement === actionRef.current) focusList.current = true;
         setRows((current) => [...current, ...page.rows]);
         setCursor(page.nextCursor);
         setState('idle');
@@ -265,7 +281,7 @@ function MoneyDetail({
 
   return (
     <AppCard padding="md">
-      <section ref={sectionRef} tabIndex={-1} aria-label="Detail" className="flex flex-col gap-2 outline-none">
+      <section ref={sectionRef} tabIndex={-1} aria-label="Detail" className="flex flex-col gap-2 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-primary">
         <AppText as="h2" variant="subtitle" weight="medium">
           Detail
         </AppText>

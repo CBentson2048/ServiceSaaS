@@ -306,6 +306,23 @@ describe('MoneyReport detail', () => {
     await waitFor(() => expect(document.activeElement).toBe(section('Detail')));
   });
 
+  it('a stale Load more keeps showing Loading while the report reloads, with no error, then focuses the new list', async () => {
+    const loadMore = jest.fn().mockResolvedValue('reloading');
+    const { rerender } = render(<MoneyReport body={body({ detail: detailPage([billRow(1)], 'm1.old') })} locations={locations} loadMore={loadMore} />);
+    const action = screen.getByRole('button', { name: 'Load more' });
+    action.focus();
+    fireEvent.click(action);
+    await act(async () => undefined);
+    expect(screen.getByRole('button', { name: 'Loading…' })).toBe(action);
+    expect(screen.queryByRole('alert')).toBeNull();
+    // The reloaded first page, for the new dates, fits on one page: the action goes away.
+    rerender(<MoneyReport body={body({ detail: detailPage([billRow(7)], null) })} locations={locations} loadMore={loadMore} />);
+    await screen.findByText('Bill 7');
+    expect(screen.queryByText('Bill 1')).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(section('Detail')));
+    expect(loadMore).toHaveBeenCalledTimes(1);
+  });
+
   it('dates that have not started say so, rather than that nothing was recorded', () => {
     render(<MoneyReport body={body({ detail: detailPage([], null, true) })} locations={locations} loadMore={jest.fn()} />);
     const detail = section('Detail');
