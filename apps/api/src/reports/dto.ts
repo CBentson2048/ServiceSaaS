@@ -40,4 +40,10 @@ export class ReportResultQueryDto {
   @IsString()
   @MaxLength(32)
   view?: string;
+
+  /** Detail-view page cursor (R1 Money). Not a filter: never part of the report URL. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(512)
+  cursor?: string;
 }

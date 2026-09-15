@@ -5,12 +5,21 @@ import { ReportAvailabilityGuard } from './report-availability.guard';
 import { ReportScopeService } from './report-scope.service';
 import { reportSurfaceProvider } from './report-surface';
 import { ReportsController } from './reports.controller';
+import { MoneyReportService } from './money/money-report.service';
+import { MONEY_SOURCE, SupabaseMoneySource } from './money/money-source';
 
 /** QLOOQO 10 report foundation (V1.1 Week 8 Ticket A). */
 @Module({
   imports: [AuthModule],
   controllers: [ReportsController],
-  providers: [reportSurfaceProvider, ReportScopeService, ReportAvailabilityGuard, ReportAccessGuard],
+  providers: [
+    reportSurfaceProvider,
+    ReportScopeService,
+    ReportAvailabilityGuard,
+    ReportAccessGuard,
+    MoneyReportService,
+    { provide: MONEY_SOURCE, useClass: SupabaseMoneySource },
+  ],
   exports: [ReportScopeService],
 })
 export class ReportsModule {}

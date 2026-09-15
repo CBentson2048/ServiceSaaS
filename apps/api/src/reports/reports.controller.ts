@@ -6,7 +6,9 @@ import { ReportResultQueryDto } from './dto';
 import { ReportAccessGuard } from './report-access.guard';
 import { toReportActor, type ReportActor, type ReportRequest } from './report-actor';
 import { ReportAvailabilityGuard } from './report-availability.guard';
+import { reportHttpError } from './report-errors';
 import { ReportScopeService } from './report-scope.service';
+import { MoneyReportService } from './money/money-report.service';
 
 /**
  * QLOOQO 10 report foundation routes.
@@ -22,7 +24,10 @@ import { ReportScopeService } from './report-scope.service';
 @Controller('reports/:reportKey')
 @UseGuards(ReportAvailabilityGuard, SupabaseAuthGuard, ReportAccessGuard)
 export class ReportsController {
-  constructor(private readonly scope: ReportScopeService) {}
+  constructor(
+    private readonly scope: ReportScopeService,
+    private readonly money: MoneyReportService,
+  ) {}
 
   /** Takes no selection query: it cannot refuse a selection. */
   @Get('options')
@@ -46,6 +51,13 @@ export class ReportsController {
     // The one clock read for this request: every location resolves from it.
     const asOf = new Date();
     const scope = await this.scope.resolve(actor, definition, query, asOf);
+    const cursor = query.cursor ?? null;
+    if (definition.key === 'money') {
+      const body = await this.money.build(scope, { cursor });
+      return { reportKey: definition.key, filter: scope.resolved, body };
+    }
+    // Only a report with a paged detail view accepts a cursor.
+    if (cursor !== null) throw reportHttpError('report_cursor_invalid');
     return { reportKey: definition.key, filter: scope.resolved, body: null };
   }
 
