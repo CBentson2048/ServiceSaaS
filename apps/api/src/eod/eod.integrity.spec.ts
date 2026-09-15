@@ -50,6 +50,8 @@ const BAD_ZONE = 'a1000000-0000-4000-8000-000000000006';
 const FOREIGN = 'b1000000-0000-4000-8000-000000000001';
 const UNKNOWN = 'c1000000-0000-4000-8000-000000000001';
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const OWNER_A = 'a9000000-0000-4000-8000-000000000001';
 const MANAGER_A = 'a9000000-0000-4000-8000-000000000002';
 const OWNER_B = 'b9000000-0000-4000-8000-000000000001';
@@ -129,7 +131,7 @@ class FakeDb {
   readonly reads: Array<{ table: string; filters: Array<[string, string, unknown]> }> = [];
   readonly writes: Array<{ table: string; op: Op; filters: Array<[string, string, unknown]>; payload: unknown }> = [];
   readonly rpcs: Row[] = [];
-  private failures: Array<{ table: string; op: Op }> = [];
+  private failures: Array<{ table: string; op: Op; skip: number }> = [];
   private serial = 0;
 
   reset() {
@@ -140,8 +142,9 @@ class FakeDb {
     this.failures = [];
   }
 
-  failNext(table: string, op: Op) {
-    this.failures.push({ table, op });
+  /** Fail the next matching query, after letting `skip` matching queries through. */
+  failNext(table: string, op: Op, skip = 0) {
+    this.failures.push({ table, op, skip });
   }
 
   rows(table: string): Row[] {
@@ -166,6 +169,10 @@ class FakeDb {
   takeFailure(table: string, op: Op): boolean {
     const index = this.failures.findIndex((f) => f.table === table && f.op === op);
     if (index === -1) return false;
+    if (this.failures[index].skip > 0) {
+      this.failures[index].skip -= 1;
+      return false;
+    }
     this.failures.splice(index, 1);
     return true;
   }
@@ -285,7 +292,10 @@ class FakeQuery implements PromiseLike<Result> {
       const actual = row[column];
       switch (op) {
         case 'eq':
-          return actual === value;
+          // Postgres compares uuid values, not their spelling.
+          return typeof actual === 'string' && typeof value === 'string' && UUID.test(actual) && UUID.test(value)
+            ? actual.toLowerCase() === value.toLowerCase()
+            : actual === value;
         case 'in':
           return (value as unknown[]).includes(actual);
         case 'gte':
@@ -534,6 +544,27 @@ describe('D-6: End of Day holds every actor to their own business’s locations'
     expect((await http.open('manager-a', { locationId: LONDON, businessDate: '2026-09-15' })).status).toBe(201);
   });
 
+  it('a manager is refused a day, by id, at a location of their business that they don’t hold', async () => {
+    const newYorkDay = storedDay({ id: 'a2000000-0000-4000-8000-00000000000e', business_id: BIZ_A, location_id: NEW_YORK, business_date: '2026-09-14', counted_cash_cents: 1, counted_card_cents: 1 });
+    db.rows('eod_reconciliations').push(newYorkDay);
+    const before = db.snapshot('eod_reconciliations');
+    const responses = [
+      await http.patch('manager-a', newYorkDay.id as string, { notes: 'edit' }),
+      await http.refresh('manager-a', newYorkDay.id as string),
+      await http.petty('manager-a', newYorkDay.id as string, { amountCents: 100, reason: 'x' }),
+      await http.signOff('manager-a', newYorkDay.id as string),
+    ];
+    expect(responses.map((r) => r.status)).toEqual([403, 403, 403, 403]);
+    expect(db.snapshot('eod_reconciliations')).toEqual(before);
+    expect(db.rows('eod_petty_cash_entries')).toEqual([]);
+  });
+
+  it('an owner may spell the location id in capitals; the day is stored under the location’s own id', async () => {
+    const response = await http.open('owner-a', { locationId: LONDON.toUpperCase(), businessDate: '2026-09-15' });
+    expect(response.status).toBe(201);
+    expect(db.rows('eod_reconciliations').map((r) => [r.location_id, r.currency_code])).toEqual([[LONDON, 'GBP']]);
+  });
+
   it('a row the old defect wrote (this business, another business’s location) can no longer be read or changed', async () => {
     const strayDay = storedDay({
       id: 'a2000000-0000-4000-8000-00000000000f',
@@ -685,18 +716,16 @@ describe('D-2: a new day is stored in the location’s currency, never the GBP c
     await http.patch('owner-a', opened.body.day.id as string, { countedCashCents: 1200, countedCardCents: 0 });
     expect((await http.signOff('owner-a', opened.body.day.id as string)).status).toBe(201);
 
-    // R7 reads exactly what End of Day wrote, through its real adapter.
-    const money = new MemoryMoneySource({
-      bills: [],
-      lines: [],
-      payments: [],
-      retail: [],
-      deposits: [],
-      locations: [{ id: EURO_DESK, businessId: BIZ_A, currencyCode: 'EUR' }],
+    // R7 reads exactly what End of Day wrote, through its real adapter, and takes
+    // the location's currency from the same reader End of Day used.
+    const config = { getOrThrow: () => 'test' } as unknown as ConfigService;
+    const currencies = new SupabaseMoneySource(config);
+    const money = Object.assign(new MemoryMoneySource({ bills: [], lines: [], payments: [], retail: [], deposits: [] }), {
+      locationCurrencies: currencies.locationCurrencies.bind(currencies),
     });
     const filter: ReportFilter = { preset: 'custom', from: '2026-09-14', to: '2026-09-15', locationIds: [], staffProfileIds: [], view: 'detail' };
     const scope = moneyScope(BIZ_A, [{ id: EURO_DESK, name: 'Euro desk', timezone: 'Europe/London' }], filter, new Date(NOW));
-    const body = await new CashUpReportService(money, new SupabaseCashUpSource({ getOrThrow: () => 'test' } as unknown as ConfigService)).build(scope, { cursor: null });
+    const body = await new CashUpReportService(money, new SupabaseCashUpSource(config)).build(scope, { cursor: null });
     if (body.continuation) throw new Error('expected a first page');
 
     const byDate = Object.fromEntries(body.detail!.rows.map((row) => [row.localDate, row]));
@@ -725,14 +754,26 @@ describe('D-5: a failed petty cash read never becomes a recorded £0.00', () => 
     db.rows('eod_petty_cash_entries').push({ id: 'a3000000-0000-4000-8000-000000000001', eod_id: DAY_ID, amount_cents: 700, reason: 'window cleaner', created_at: '2026-09-15T10:00:00.000Z' });
   });
 
-  it('a failed re-read after adding petty cash fails the request and leaves the day total as it was, never £0.00', async () => {
+  const RECORDED_MESSAGE = 'Petty cash was recorded, but the day could not be reloaded. Reload the day before adding it again.';
+
+  it('a failed re-read after adding petty cash writes no total — the day keeps its last total, never £0.00 — and says the entry was saved', async () => {
     db.failNext('eod_petty_cash_entries', 'read');
     const response = await http.petty('owner-a', DAY_ID, { amountCents: 300, reason: 'milk' });
     expect(response.status).toBe(500);
-    expect(response.body.message).toBe('Petty cash was recorded, but the day total could not be updated. Reload the day before adding it again.');
+    expect(response.body.message).toBe(RECORDED_MESSAGE);
     expect(dayRow(LONDON, '2026-09-15')!.petty_cash_out_cents).toBe(700);
     expect(db.rows('eod_petty_cash_entries').map((e) => e.amount_cents)).toEqual([700, 300]);
     expect(db.writes.filter((w) => w.table === 'eod_reconciliations')).toEqual([]);
+    // The saved entry is still audited.
+    expect(audit.record).toHaveBeenCalledWith(expect.objectContaining({ id: OWNER_A }), expect.objectContaining({ action: 'petty_cash.recorded', after: { amountCents: 300, reason: 'milk' } }));
+  });
+
+  it('when only reloading the day fails after the total is saved, the answer still says the entry was recorded', async () => {
+    db.failNext('eod_petty_cash_entries', 'read', 1);
+    const response = await http.petty('owner-a', DAY_ID, { amountCents: 300, reason: 'milk' });
+    expect(response.status).toBe(500);
+    expect(response.body.message).toBe(RECORDED_MESSAGE);
+    expect(dayRow(LONDON, '2026-09-15')!.petty_cash_out_cents).toBe(1000);
   });
 
   it('refresh and sign-off re-read the entries, so the stored total is always their sum', async () => {

@@ -113,19 +113,21 @@ export class EodService {
    */
   async openDay(actor: AuthUser, input: OpenEodDayDto): Promise<EodDayResponse> {
     const location = await this.resolveLocation(actor, input.locationId);
+    // From here on the location's id as stored, never the request's spelling of it.
+    const locationId = location.id;
     const today = locationToday(location);
     const businessDate = input.businessDate ?? today;
     if (businessDate > today) {
       throw new BadRequestException('This trading day has not started yet at this location');
     }
 
-    const existing = await this.fetchDayRow(actor.businessId, input.locationId, businessDate);
+    const existing = await this.fetchDayRow(actor.businessId, locationId, businessDate);
     if (existing) return this.buildDayResponse(actor, existing);
 
-    const currencyCode = await this.fetchLocationCurrency(actor.businessId, input.locationId);
+    const currencyCode = await this.fetchLocationCurrency(actor.businessId, locationId);
     const expected = await this.fetchExpectedFigures(
       actor.businessId,
-      input.locationId,
+      locationId,
       businessDate,
     );
     const { data, error } = await this.admin
@@ -133,7 +135,7 @@ export class EodService {
       .from('eod_reconciliations')
       .insert({
         business_id: actor.businessId,
-        location_id: input.locationId,
+        location_id: locationId,
         business_date: businessDate,
         expected_cash_cents: expected.expectedCashCents,
         expected_card_cents: expected.expectedCardCents,
@@ -147,7 +149,7 @@ export class EodService {
       .single<EodRow>();
     if (error || !data) {
       // A racing open hits unique(location_id, business_date) — return theirs.
-      const raced = await this.fetchDayRow(actor.businessId, input.locationId, businessDate);
+      const raced = await this.fetchDayRow(actor.businessId, locationId, businessDate);
       if (raced) return this.buildDayResponse(actor, raced);
       this.logger.error(`openDay failed: ${error?.message ?? 'no row'}`);
       throw new InternalServerErrorException('Unable to open the trading day');
@@ -157,7 +159,7 @@ export class EodService {
       action: 'cashup.opened',
       entityType: 'cashup',
       entityId: data.id,
-      locationId: input.locationId,
+      locationId,
       after: {
         businessDate,
         expectedCashCents: expected.expectedCashCents,
@@ -175,11 +177,11 @@ export class EodService {
   ): Promise<EodDayResponse> {
     const location = await this.resolveLocation(actor, locationId);
     const date = businessDate ?? locationToday(location);
-    const row = await this.fetchDayRow(actor.businessId, locationId, date);
+    const row = await this.fetchDayRow(actor.businessId, location.id, date);
     if (!row) {
       const [threshold, expected] = await Promise.all([
-        this.fetchVarianceThresholdCents(actor.businessId, locationId),
-        this.fetchExpectedFigures(actor.businessId, locationId, date),
+        this.fetchVarianceThresholdCents(actor.businessId, location.id),
+        this.fetchExpectedFigures(actor.businessId, location.id, date),
       ]);
       return {
         day: null,
@@ -196,13 +198,13 @@ export class EodService {
     locationId: string,
     limit = 30,
   ): Promise<ListEodDaysResponse> {
-    await this.resolveLocation(actor, locationId);
+    const location = await this.resolveLocation(actor, locationId);
     const { data, error } = await this.admin
       .schema('billing')
       .from('eod_reconciliations')
       .select(EOD_COLUMNS)
       .eq('business_id', actor.businessId)
-      .eq('location_id', locationId)
+      .eq('location_id', location.id)
       .order('business_date', { ascending: false })
       .limit(Math.min(Math.max(limit, 1), 90))
       .returns<EodRow[]>();
@@ -259,19 +261,7 @@ export class EodService {
       this.logger.error(`addPettyCash failed: ${error.message}`);
       throw new InternalServerErrorException('Unable to record petty cash');
     }
-    // Keep the denormalised header sum true to the entries. The entry is saved,
-    // so a failed re-read must not write a total: the header keeps its last true
-    // value and Refresh or sign-off re-reads the entries.
-    let total: number;
-    try {
-      total = await this.fetchPettyCashTotal(row.id);
-    } catch {
-      throw new InternalServerErrorException(
-        'Petty cash was recorded, but the day total could not be updated. Reload the day before adding it again.',
-      );
-    }
-    const updated = await this.updateRow(row.id, { petty_cash_out_cents: total });
-
+    // The entry is saved: record it before anything else can fail.
     await this.audit.record(actor, {
       action: 'petty_cash.recorded',
       entityType: 'cashup',
@@ -279,7 +269,19 @@ export class EodService {
       locationId: row.location_id,
       after: { amountCents: input.amountCents, reason: input.reason.trim() },
     });
-    return this.buildDayResponse(actor, updated);
+    // Keep the denormalised header sum true to the entries. A failed re-read
+    // writes no total (the header keeps its last value until Refresh or sign-off
+    // re-reads the entries), and any failure from here on says the entry was
+    // saved, so nobody adds it twice.
+    try {
+      const total = await this.fetchPettyCashTotal(row.id);
+      const updated = await this.updateRow(row.id, { petty_cash_out_cents: total });
+      return await this.buildDayResponse(actor, updated);
+    } catch {
+      throw new InternalServerErrorException(
+        'Petty cash was recorded, but the day could not be reloaded. Reload the day before adding it again.',
+      );
+    }
   }
 
   /**
