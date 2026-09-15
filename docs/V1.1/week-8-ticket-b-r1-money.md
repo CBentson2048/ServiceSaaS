@@ -70,6 +70,16 @@ browser-local day windows, `allowedLocationIds`, unpaginated reads.
   awaiting payment), so a repeat changes nothing. R1 still reads refunds by
   `refunded_at` whatever the status, which keeps any deposit altered before the
   fix counted as refunded.
+- Source-integrity defect, **fixed with R1**: a declined card, then a successful
+  payment on the same PaymentIntent, took the money but recorded nothing. The web
+  booking page keeps the PaymentIntent after a decline (the payment form stays
+  mounted and "Pay deposit and confirm" stays enabled; the client secret is kept
+  in session storage); the mobile app presents one PaymentSheet per intent, and
+  Stripe's sheet lets the client try another card after a decline.
+  `payment_intent.payment_failed` marked the attempt `payment_failed`, and the
+  later success was ignored. A success on the attempt's own intent now completes
+  a `payment_failed` attempt exactly once, and a failure never overwrites a
+  recorded collection.
 - Location currency is set when a location is created (from the business
   default) and is not editable through the API. Transactions do not all follow
   it: service lines are written in GBP and retail sales default to GBP, while
@@ -248,3 +258,23 @@ taken by R1.
   KPI summary, scorecard, service mix, stylist performance, retail performance,
   appointment summary) and the metric registry's `DashboardService.kpis` source
   will disagree with R1 until Oleksandr moves them. Handoff note in the R1 report.
+
+## 10. Follow-ups outside R1 (recorded, not in this ticket)
+
+- **Transaction currency.** Service lines and therefore bills and till payments
+  are written in GBP (`lab-appointments.service.ts`), and retail sales default to
+  GBP (the API sends no currency to `record_retail_sale`); deposits use the
+  location's configured currency. R1 shows such a location's figures as "mixed
+  currencies" rather than relabelling them, which is sufficient for this ticket.
+- **Booking confirmation message after a declined-then-paid retry.** The web and
+  mobile clients stop polling as soon as the attempt reads `payment_failed`, which
+  is still the status from the decline when the retried payment succeeds, so the
+  client is told the payment failed although the booking is confirmed moments
+  later by the webhook. Client-only change; the mobile app needs a release.
+- **Paid, but the slot is gone.** If a successful payment arrives after the slot
+  hold has lapsed (15 minutes, or at once after a decline) and the slot was booked
+  by someone else, finalisation fails and Stripe keeps retrying: the money is taken
+  and no booking or collection is recorded. Unchanged by R1.
+- **Refunds made in the Stripe dashboard** are not captured (no `charge.refunded`
+  handler); R1 lists them as not recorded.
+- **Deposits altered before the webhook fix** are not repaired.
