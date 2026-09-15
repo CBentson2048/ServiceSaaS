@@ -186,10 +186,10 @@ D-1 design in §11 would need a migration and is awaiting approval.
 |---|---|---|---|
 | D-1 | EOD expected-figures window hardcoded to a Europe/London day; the web page's default date is the browser's | **Not changed.** Audit and proposed design in §11 (needs a migration; awaiting approval). The API's "today" is now the location's (D-8). | Non-London records unavailable (P-8, temporary) |
 | D-2 | `currency_code` never set on open (always the GBP default); expected figures summed across currencies | **Fixed for new days** (2026-09-15): open stores the location's currency by R1's rule (settings row, else business default); a location with no usable currency can't open a day. Historical rows are not rewritten. The RPC still sums across currencies (a migration). | P-9 still refuses a record whose currency isn't the location's; mixed takings are not comparable |
-| D-3 | Sign-off immutability is API-only: an edit that read the row before sign-off can land after it; sign-off is two separate updates | **HIGH PRIORITY / MUST FIX BEFORE PILOT.** A locked financial record can be mutated. Not expanded into R7; a separate fix proposal follows R7 G5. | A changed signed-off row is not detectable from the row |
+| D-3 | Sign-off immutability is API-only: an edit, Refresh or petty cash add that read the row before sign-off can land after it; sign-off is two separate updates | **HIGH PRIORITY / MUST FIX BEFORE PILOT.** A locked financial record can be mutated (including a petty cash total written just after sign-off). Not expanded into R7; a separate fix proposal follows R7 G5. | A changed signed-off row is not detectable from the row |
 | D-4 | Row edits and Refresh are not audited; only sign-off is | Tracked as a cash-up audit/history improvement. | History of counts can't be rebuilt |
-| D-5 | A failed petty-cash read writes a petty-cash total of 0 | **Fixed** (2026-09-15): a failed read fails the request and writes nothing; reading a day or the history fails instead of showing no entries; Refresh and sign-off re-read the entries, so the stored total is always their sum. | A signed-off petty cash total is the entries' sum |
-| D-6 | An owner can open a day for a location of another business (no ownership check) | **Fixed** (2026-09-15): every route checks the location belongs to the actor's business, owners included; a foreign location and an unknown id get the same 403; a stray row of another business's location can't be read or changed. | R7 filters `business_id` and `location_id` |
+| D-5 | A failed petty-cash read writes a petty-cash total of 0 | **Fixed** (2026-09-15): a failed read never writes a total. Adding petty cash saves (and audits) the entry first; if the re-read or the reload then fails, no total is written, the day keeps its previous total and the answer says the entry was recorded, so it isn't added twice. Refresh and sign-off read the entries before writing anything, so a signed-off total is the entries' sum at sign-off (subject to D-3). Reading a day or the history fails instead of showing no entries. | An open day's draft petty cash can be behind its entries after a failed re-read, until Refresh or sign-off |
+| D-6 | An owner can open a day for a location of another business (no ownership check) | **Fixed** (2026-09-15): every route checks the location belongs to the actor's business, owners included; a foreign location and an unknown id get the same 403; a stray row of another business's location can't be read or changed. Not fixable without a data fix: a stray row the old defect already wrote still holds `unique(location_id, business_date)`, so the owning business gets a 500 opening that date. Check dev-test before G5 (read-only): `select r.id, r.business_id, l.business_id as location_business_id, r.business_date from billing.eod_reconciliations r join core.locations l on l.id = r.location_id where r.business_id <> l.business_id;` | R7 filters `business_id` and `location_id` |
 | D-7 | EOD deposits collected count only current `paid` deposits; redeemed has no bill-status filter | Not part of R7 (R7 does not consume the EOD deposit calculation). | Not used |
 | D-8 | Future dates can be opened and signed off | **Fixed** (2026-09-15): opening or signing off a day after the location's own local today is refused (400); an omitted date defaults to the location's own today; an invalid location timezone is refused, never guessed. | Ignored (P-4) |
 | D-9 | EOD uses `allowedLocationIds` for non-owner location scope | Unchanged, now inside the same-business check (D-6). | Not used by R7 |
@@ -254,6 +254,16 @@ unavailable) as temporary legacy behaviour.
      day and the marker says so. During step 2's rollover, an older instance
      still writes a London snapshot with a London marker, so a marker always
      describes the snapshot written with it.
+   - Sign-off must write the final expected figures, the marker, the variance and
+     the status in **one** update. Today they are two updates, so an older
+     instance's Refresh landing between them would leave a variance computed on a
+     different window from the marker (this also narrows D-3).
+   - The location's window must come from the same local-midnight function R7
+     uses (`localDateStartUtc` in `payroll/period-dates.ts`), not
+     `businessDayWindow` with another zone: its offset probe is taken at UTC
+     midnight, which is wrong for zones whose offset changes between UTC midnight
+     and local midnight (for example Australia/Sydney on 2026-04-05 it gives 01:00
+     local), so R7's "stored window equals R7's window" check would never match.
 3. **R7.** Recorded expected figures, variances, threshold check and source check
    are comparable only when the marker's zone equals the location's current
    timezone and the stored window equals R7's window for that local date. A null
@@ -272,8 +282,18 @@ from the figures (both guess, per C).
   given the day is the location's own today (it was London's); a new day is stored
   in the location's currency; a location with no usable currency or an invalid
   timezone can't open a day.
+- End of Day page: unchanged apart from the threshold label, which now reads
+  "current threshold". Its date picker still defaults to, and is capped at, the
+  **browser's** date. A browser ahead of the location (for example after London
+  midnight for a New York location) defaults to a date the API now refuses, with
+  the message "This trading day has not started yet at this location"; a browser
+  behind the location can't pick the location's today. For the UK dev-test
+  business and a UK browser the dates agree. The fix belongs with §11 step 4.
 - End of Day, sign-off: refused for a day after the location's own today; the
   petty cash total is re-read from its entries. Refresh re-reads it too.
+- End of Day, petty cash add: a failure after the entry is saved answers "Petty
+  cash was recorded, but the day could not be reloaded. Reload the day before
+  adding it again." The audit event is written as soon as the entry is saved.
 - End of Day, every route: a location outside the actor's business is refused
   (403) for owners as well as managers.
 - End of Day, reads: a failed petty cash read is an error (500), not an empty list.
