@@ -27,7 +27,9 @@ interface Recorded {
   ops: Array<[string, unknown[]]>;
 }
 
-function fakeSupabase(result: { data: unknown; error: unknown }) {
+type FakeResult = { data: unknown; error: unknown };
+
+function fakeSupabase(result: FakeResult | ((table: string) => FakeResult)) {
   const queries: Recorded[] = [];
   const writes: unknown[] = [];
   const client = {
@@ -48,7 +50,7 @@ function fakeSupabase(result: { data: unknown; error: unknown }) {
             return builder;
           };
         }
-        builder.returns = () => Promise.resolve(result);
+        builder.returns = () => Promise.resolve(typeof result === 'function' ? result(table) : result);
         return builder;
       },
     }),
@@ -189,6 +191,58 @@ describe('SupabaseMoneySource reads', () => {
     await payments.source.tillPaymentsForVisits(BIZ, [ROW_ID], null, 1000);
     expect(payments.queries[0].ops).toContainEqual(['eq', ['business_id', BIZ]]);
     expect(payments.queries[0].ops).toContainEqual(['in', ['visit_id', [ROW_ID]]]);
+  });
+
+  it('location currency: each location’s own settings, business-scoped, normalised, with no default', async () => {
+    const { source, queries, writes } = fakeSupabase({
+      data: [
+        { location_id: L1, currency_code: 'eur' },
+        { location_id: L2, currency_code: 'GBP' },
+      ],
+      error: null,
+    });
+    const currencies = await source.locationCurrencies(BIZ, [L1, L2]);
+    expect([...currencies]).toEqual([[L1, 'EUR'], [L2, 'GBP']]);
+    expect(queries).toEqual([
+      {
+        schema: 'core',
+        table: 'location_settings',
+        ops: [
+          ['select', ['location_id,currency_code']],
+          ['eq', ['business_id', BIZ]],
+          ['in', ['location_id', [L1, L2]]],
+          ['limit', [2]],
+        ],
+      },
+    ]);
+    expect(writes).toEqual([]);
+  });
+
+  it('location currency: no settings row takes the business default; an unusable code is never replaced by a guess', async () => {
+    const { source, queries } = fakeSupabase((table) =>
+      table === 'location_settings'
+        ? { data: [{ location_id: L1, currency_code: 'E1' }], error: null }
+        : { data: [{ default_currency_code: 'USD' }], error: null },
+    );
+    const currencies = await source.locationCurrencies(BIZ, [L1, L2]);
+    // L1 has a settings row with an unusable code: no currency. L2 has no settings row: the business default.
+    expect([...currencies]).toEqual([[L2, 'USD']]);
+    expect(queries[1]).toEqual({
+      schema: 'core',
+      table: 'businesses',
+      ops: [
+        ['select', ['default_currency_code']],
+        ['eq', ['id', BIZ]],
+        ['limit', [1]],
+      ],
+    });
+  });
+
+  it('location currency: with no settings and no usable business default there is no currency at all', async () => {
+    const { source } = fakeSupabase((table) =>
+      table === 'location_settings' ? { data: [], error: null } : { data: [{ default_currency_code: null }], error: null },
+    );
+    expect((await source.locationCurrencies(BIZ, [L1])).size).toBe(0);
   });
 
   it('a database error is a 500, never an empty report', async () => {

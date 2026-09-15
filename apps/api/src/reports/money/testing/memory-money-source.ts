@@ -45,12 +45,22 @@ export interface LedgerDeposit {
   currencyCode: string;
 }
 
+/** A location's resolved configured currency (the adapter's settings → business-default precedence is pinned in money-source.spec.ts). */
+export interface LedgerLocation {
+  id: string;
+  businessId: string;
+  /** `null`: the currency cannot be determined. */
+  currencyCode: string | null;
+}
+
 export interface Ledger {
   bills: LedgerBill[];
   lines: LedgerLine[];
   payments: LedgerPayment[];
   retail: LedgerRetailSale[];
   deposits: LedgerDeposit[];
+  /** Locations with no entry have no determinable currency. */
+  locations?: LedgerLocation[];
 }
 
 /** Microseconds since the epoch for an instant key or a window bound (five-digit years included). */
@@ -158,6 +168,17 @@ export class MemoryMoneySource implements MoneySource {
   async depositsRefunded(businessId: string, windows: readonly MoneyWindow[], after: MoneyAfter | null, limit: number): Promise<DepositEventRow[]> {
     this.reads.push({ method: 'depositsRefunded', businessId, windows, after, limit });
     return this.depositEvents('refundedAt', null, businessId, windows, after, limit);
+  }
+
+  async locationCurrencies(businessId: string, locationIds: readonly string[]): Promise<Map<string, string>> {
+    this.reads.push({ method: 'locationCurrencies', businessId, ids: locationIds });
+    const currencies = new Map<string, string>();
+    for (const location of this.ledger.locations ?? []) {
+      if (location.businessId === businessId && locationIds.includes(location.id) && location.currencyCode !== null) {
+        currencies.set(location.id, location.currencyCode);
+      }
+    }
+    return currencies;
   }
 
   private depositEvents(

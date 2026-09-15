@@ -45,7 +45,7 @@
 import type { MoneyAmount, MoneyTotals, ReportFilter } from '@sheer/domain';
 import type { ReportScope } from '../report-scope.service';
 import { MoneyReportService } from './money-report.service';
-import { MemoryMoneySource, type Ledger, type LedgerBill, type LedgerLine } from './testing/memory-money-source';
+import { MemoryMoneySource, type Ledger, type LedgerBill, type LedgerLine, type LedgerLocation } from './testing/memory-money-source';
 import { firstPage, instant as at, moneyScope, type FirstPageBody } from './testing/money-scope';
 
 const BIZ = 'biz-1';
@@ -93,8 +93,11 @@ function bill(
   }
 }
 
+/** Every fixture location is configured in pounds. */
+const GBP_LOCATIONS: LedgerLocation[] = [LONDON, TOKYO, NEW_YORK].map((id) => ({ id, businessId: BIZ, currencyCode: 'GBP' }));
+
 function buildLedger(): Ledger {
-  const ledger: Ledger = { bills: [], lines: [], payments: [], retail: [], deposits: [] };
+  const ledger: Ledger = { bills: [], lines: [], payments: [], retail: [], deposits: [], locations: GBP_LOCATIONS };
   // London
   bill(ledger, { locationId: LONDON, at: '2026-09-14T10:00:00Z', billNumber: 1001, gross: 12000, net: 10000, tax: 2000 }, [['service', 12000, 10000, 2000]], [['cash', 4000], ['card_reader', 6000]], 2000);
   bill(ledger, { locationId: LONDON, at: '2026-09-14T11:15:30.123456Z', billNumber: 1002, gross: 18000, net: 15000, tax: 3000 }, [['service', 15000, 12500, 2500], ['product_usage', 3000, 2500, 500]], [['card_reader', 18000]]);
@@ -312,6 +315,80 @@ function buildLedgerFresh(): Ledger {
   return buildLedger();
 }
 
+describe('currency comes from each location, never a default', () => {
+  const ZERO = { availability: 'available', cents: 0 };
+  const noActivity = (locations: LedgerLocation[]): Ledger => ({ bills: [], lines: [], payments: [], retail: [], deposits: [], locations });
+  async function report(ledger: Ledger, locations = LOCATIONS) {
+    return firstPage(await new MoneyReportService(new MemoryMoneySource(ledger)).build(scopeFor(TODAY, AS_OF, locations), { cursor: null }));
+  }
+  const rows = (body: FirstPageBody) => body.locations.map((l) => [l.locationId, l.currencyCode, l.totals.paidBills.gross]);
+
+  it('a GBP location with no activity is a zero in pounds', async () => {
+    const body = await report(noActivity([{ id: LONDON, businessId: BIZ, currencyCode: 'GBP' }]), [LOCATIONS[0]]);
+    expect(rows(body)).toEqual([[LONDON, 'GBP', ZERO]]);
+    expect([body.currencyCode, body.summary.paidBills.gross, body.summary.deposits.refunded]).toEqual(['GBP', ZERO, ZERO]);
+  });
+
+  it('a EUR location with no activity is a zero in euros, never pounds', async () => {
+    const body = await report(noActivity([{ id: TOKYO, businessId: BIZ, currencyCode: 'EUR' }]), [LOCATIONS[1]]);
+    expect(rows(body)).toEqual([[TOKYO, 'EUR', ZERO]]);
+    expect([body.currencyCode, body.summary.paidBills.gross]).toEqual(['EUR', ZERO]);
+  });
+
+  it('two locations with no activity in different currencies: each its own zero, and the summary is not totalled', async () => {
+    const body = await report(
+      noActivity([
+        { id: LONDON, businessId: BIZ, currencyCode: 'GBP' },
+        { id: TOKYO, businessId: BIZ, currencyCode: 'EUR' },
+      ]),
+      LOCATIONS.slice(0, 2),
+    );
+    expect(rows(body)).toEqual([
+      [LONDON, 'GBP', ZERO],
+      [TOKYO, 'EUR', ZERO],
+    ]);
+    expect(body.currencyCode).toBeNull();
+    expect(body.summary.paidBills.gross).toEqual({ availability: 'unavailable', reason: 'mixed_currencies' });
+    expect(body.summary.deposits.collected).toEqual({ availability: 'unavailable', reason: 'mixed_currencies' });
+  });
+
+  it('a GBP location with activity and a EUR location without: the summary is still not totalled', async () => {
+    const ledger = noActivity([
+      { id: LONDON, businessId: BIZ, currencyCode: 'GBP' },
+      { id: TOKYO, businessId: BIZ, currencyCode: 'EUR' },
+    ]);
+    bill(ledger, { locationId: LONDON, at: '2026-09-14T10:00:00Z', billNumber: 1, gross: 5000, net: 5000, tax: 0 }, [['service', 5000, 5000, 0]], [['card_reader', 5000]]);
+    const body = await report(ledger, LOCATIONS.slice(0, 2));
+    expect(rows(body)).toEqual([
+      [LONDON, 'GBP', { availability: 'available', cents: 5000 }],
+      [TOKYO, 'EUR', ZERO],
+    ]);
+    expect([body.currencyCode, body.summary.paidBills.gross]).toEqual([null, { availability: 'unavailable', reason: 'mixed_currencies' }]);
+  });
+
+  it('a location whose currency cannot be determined is never written in another currency', async () => {
+    const ledger = noActivity([{ id: LONDON, businessId: BIZ, currencyCode: 'GBP' }, { id: TOKYO, businessId: BIZ, currencyCode: null }]);
+    bill(ledger, { locationId: LONDON, at: '2026-09-14T10:00:00Z', billNumber: 1, gross: 5000, net: 5000, tax: 0 }, [['service', 5000, 5000, 0]], [['cash', 5000]]);
+    const body = await report(ledger, LOCATIONS.slice(0, 2));
+    expect(rows(body)).toEqual([
+      [LONDON, 'GBP', { availability: 'available', cents: 5000 }],
+      [TOKYO, null, { availability: 'unavailable', reason: 'currency_not_recorded' }],
+    ]);
+    // Tokyo contributes nothing, so the summary is London's, in pounds.
+    expect([body.currencyCode, body.summary.paidBills.gross]).toEqual(['GBP', { availability: 'available', cents: 5000 }]);
+
+    const unknownOnly = await report(noActivity([]), [LOCATIONS[1]]);
+    expect([unknownOnly.currencyCode, unknownOnly.summary.paidBills.gross]).toEqual([null, { availability: 'unavailable', reason: 'currency_not_recorded' }]);
+  });
+
+  it('facts recorded in a currency other than the location’s own are not relabelled', async () => {
+    const ledger = noActivity([{ id: TOKYO, businessId: BIZ, currencyCode: 'EUR' }]);
+    bill(ledger, { locationId: TOKYO, at: '2026-09-14T16:00:00Z', billNumber: 1, gross: 5000, net: 5000, tax: 0 }, [['service', 5000, 5000, 0]], []);
+    const body = await report(ledger, [LOCATIONS[1]]);
+    expect(rows(body)).toEqual([[TOKYO, null, { availability: 'unavailable', reason: 'mixed_currencies' }]]);
+  });
+});
+
 describe('availability', () => {
   it('a window that has not started renders Not started and reads nothing', async () => {
     const source = new MemoryMoneySource(buildLedger());
@@ -327,24 +404,11 @@ describe('availability', () => {
   });
 
   it('a started location with no facts shows recorded zeros, which are genuine', async () => {
-    const source = new MemoryMoneySource({ bills: [], lines: [], payments: [], retail: [], deposits: [] });
+    const source = new MemoryMoneySource({ bills: [], lines: [], payments: [], retail: [], deposits: [], locations: GBP_LOCATIONS });
     const body = firstPage(await new MoneyReportService(source).build(scopeFor(TODAY), { cursor: null }));
     expect(body.summary.paidBills.gross).toEqual({ availability: 'available', cents: 0 });
-    // No facts anywhere: there is no currency to name.
-    expect(body.currencyCode).toBeNull();
-    expect(body.locations.map((l) => l.currencyCode)).toEqual([null, null, null]);
-  });
-
-  it('a location with no facts writes its zeros in the report’s currency, not a default one', async () => {
-    const ledger: Ledger = { bills: [], lines: [], payments: [], retail: [], deposits: [] };
-    bill(ledger, { locationId: LONDON, at: '2026-09-14T10:00:00Z', billNumber: 1, gross: 5000, net: 5000, tax: 0, currencyCode: 'USD' }, [['service', 5000, 5000, 0]], []);
-    const body = firstPage(await new MoneyReportService(new MemoryMoneySource(ledger)).build(scopeFor(TODAY), { cursor: null }));
-    expect(body.currencyCode).toBe('USD');
-    expect(body.locations.map((l) => [l.locationId, l.currencyCode, l.totals.paidBills.gross])).toEqual([
-      [LONDON, 'USD', { availability: 'available', cents: 5000 }],
-      [TOKYO, 'USD', { availability: 'available', cents: 0 }],
-      [NEW_YORK, 'USD', { availability: 'available', cents: 0 }],
-    ]);
+    expect(body.currencyCode).toBe('GBP');
+    expect(body.locations.map((l) => l.currencyCode)).toEqual(['GBP', 'GBP', 'GBP']);
   });
 
   it('mixed currencies are never summed', async () => {

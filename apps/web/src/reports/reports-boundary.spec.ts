@@ -118,5 +118,7 @@ describe('web report foundation source boundaries', () => {
     const labels = money.find((file) => file.name === 'reports/money/moneyLabels.ts')!.code;
     expect(labels).toMatch(/case 'unavailable'/);
     expect(labels).toMatch(/case 'not_started'/);
+    // A figure is written only in the currency the API names: no default currency.
+    expect(money.filter((file) => /['"`]GBP['"`]/.test(file.code)).map((file) => file.name)).toEqual([]);
   });
 });

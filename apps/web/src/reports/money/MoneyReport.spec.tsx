@@ -171,6 +171,55 @@ describe('MoneyReport summary', () => {
     expect(tokyo).not.toContain('£');
   });
 
+  it('a location with no activity is a zero in its own currency: pounds for London, euros for Tokyo', () => {
+    const zero = (): MoneyTotals =>
+      JSON.parse(JSON.stringify(totals(0)), (_key, value) => (value && typeof value === 'object' && value.availability === 'available' ? a(0) : value));
+    const mixed = JSON.parse(JSON.stringify(zero()), (_key, value) =>
+      value && typeof value === 'object' && value.availability === 'available' ? { availability: 'unavailable', reason: 'mixed_currencies' } : value,
+    ) as MoneyTotals;
+    render(
+      <MoneyReport
+        body={body({
+          currencyCode: null,
+          summary: mixed,
+          locations: [
+            { locationId: L1, currencyCode: 'GBP', totals: zero() },
+            { locationId: L2, currencyCode: 'EUR', totals: zero() },
+          ],
+        })}
+        locations={locations}
+        loadMore={jest.fn()}
+      />,
+    );
+    const table = section('By location');
+    const london = within(table).getByRole('rowheader', { name: 'London' }).parentElement?.textContent ?? '';
+    const tokyo = within(table).getByRole('rowheader', { name: 'Tokyo' }).parentElement?.textContent ?? '';
+    expect(london).toContain('£0.00');
+    expect(london).not.toContain('€');
+    expect(tokyo).toContain('€0.00');
+    expect(tokyo).not.toContain('£');
+    expect(within(section('Paid bill revenue')).getByText('Gross (VAT included)').nextSibling?.textContent).toBe('Not totalled (mixed currencies)');
+  });
+
+  it('a figure the API names no currency for is never written in pounds', () => {
+    const unknown = { ...totals(0), paidBills: { gross: { availability: 'unavailable', reason: 'currency_not_recorded' }, netOfVat: a(0), vat: a(0) } } as MoneyTotals;
+    render(
+      <MoneyReport
+        body={body({
+          locations: [
+            { locationId: L1, currencyCode: 'GBP', totals: totals(35500) },
+            { locationId: L2, currencyCode: null, totals: unknown },
+          ],
+        })}
+        locations={locations}
+        loadMore={jest.fn()}
+      />,
+    );
+    const tokyo = within(section('By location')).getByRole('rowheader', { name: 'Tokyo' }).parentElement!;
+    expect(within(tokyo).getAllByText('Not recorded (currency)').length).toBeGreaterThan(1);
+    expect(tokyo.textContent).not.toMatch(/£|€|\$/);
+  });
+
   it('a single location has no location table', () => {
     render(<MoneyReport body={body({ locations: [{ locationId: L1, currencyCode: 'GBP', totals: totals(35500) }] })} locations={locations} loadMore={jest.fn()} />);
     expect(screen.queryByRole('region', { name: 'By location' })).toBeNull();

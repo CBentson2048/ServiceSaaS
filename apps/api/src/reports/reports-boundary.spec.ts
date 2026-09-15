@@ -145,7 +145,9 @@ describe('report foundation source boundaries', () => {
     // Money never resolves a date itself: windows come from the Ticket A scope.
     expect(offenders(moneyFiles, /resolveReportWindows|localDateStartUtc|periodUtcWindow|resolveLocalRange|asOf\b.*new Date/)).toEqual([]);
     const sourceTables = [...new Set([...moneyFiles.map((f) => f.code).join('\n').matchAll(/\.from\('([a-z_]+)'\)/g)].map((m) => m[1]))].sort();
-    expect(sourceTables).toEqual(['bill_lines', 'bills', 'deposits', 'retail_sales', 'salon_payments']);
+    expect(sourceTables).toEqual(['bill_lines', 'bills', 'businesses', 'deposits', 'location_settings', 'retail_sales', 'salon_payments']);
+    // A figure's currency always comes from data: there is no default currency.
+    expect(offenders(moneyFiles, /['"`]GBP['"`]/)).toEqual([]);
   });
 
   it('keeps the domain contract browser-safe: no clock, no Intl, no day boundaries', () => {

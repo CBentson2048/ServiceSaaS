@@ -18,7 +18,12 @@ export type MoneyUnavailableReason =
   /** A partially refunded deposit is in scope and its refund amount is not stored. */
   | 'partial_refund_amount_not_recorded'
   /** No approved product definition exists yet. */
-  | 'definition_pending';
+  | 'definition_pending'
+  /**
+   * The figure is a zero, but the location's own currency cannot be determined,
+   * so it is not written in any currency.
+   */
+  | 'currency_not_recorded';
 
 export type MoneyAmount =
   | { availability: 'available'; cents: number }
@@ -85,9 +90,10 @@ export interface MoneyTotals {
 export interface MoneyLocationTotals {
   locationId: string;
   /**
-   * The single currency of this location's facts. A location with no facts takes
-   * the report's single currency. `null` when its facts are mixed, or when it has
-   * none and the report has no single currency.
+   * The location's single currency: its own configured currency together with the
+   * currencies its facts were recorded in. `null` when those differ (figures read
+   * "mixed currencies"), when the location has not started, or when there are no
+   * facts and no configured currency (figures read "currency not recorded").
    */
   currencyCode: string | null;
   totals: MoneyTotals;
@@ -162,7 +168,10 @@ export interface MoneyDetailPage {
 /** The first page (a request without a cursor): the whole report. */
 export interface MoneyFirstPageBody {
   continuation: false;
-  /** The single currency of the scoped facts; `null` when there are none or they are mixed. */
+  /**
+   * The single currency of every started location (configured currencies and the
+   * currencies of the facts); `null` when they differ, or when none is known.
+   */
   currencyCode: string | null;
   summary: MoneyTotals;
   /** One per resolved location, in the same order. Additive figures sum to the summary. */

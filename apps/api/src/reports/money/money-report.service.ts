@@ -85,10 +85,11 @@ export class MoneyReportService {
       };
     }
 
-    const [facts, coverage, detail] = await Promise.all([
+    const [facts, coverage, detail, configured] = await Promise.all([
       started.length > 0 ? this.loadFacts(businessId, started) : Promise.resolve(null),
       this.coverage(businessId, started),
       detailView ? this.detailPage(businessId, started, timezoneByLocation, null) : Promise.resolve(null),
+      this.locationCurrencies(businessId, started),
     ]);
 
     const factsByLocation = new Map<string, MoneyFacts>();
@@ -96,28 +97,44 @@ export class MoneyReportService {
       assertScoped(facts, started);
       for (const window of started) factsByLocation.set(window.locationId, splitByLocation(facts, window.locationId));
     }
+    // A location's figures are written in its own configured currency; facts
+    // recorded in any other currency make them "mixed", never silently relabelled.
+    const currenciesByLocation = new Map<string, Set<string>>();
+    for (const window of started) {
+      const currencies = currenciesOf(factsByLocation.get(window.locationId) ?? EMPTY_FACTS);
+      const own = configured.get(window.locationId);
+      if (own !== undefined) currencies.add(own);
+      currenciesByLocation.set(window.locationId, currencies);
+    }
     const summaryFacts = facts === null ? null : combineFacts([...factsByLocation.values()]);
-    const currencies = summaryFacts === null ? new Set<string>() : currenciesOf(summaryFacts);
+    const summaryCurrencies = new Set([...currenciesByLocation.values()].flatMap((currencies) => [...currencies]));
 
-    const currencyCode = singleCurrency(currencies);
     return {
       continuation: false,
-      currencyCode,
-      summary: moneyTotals(summaryFacts),
+      currencyCode: singleCurrency(summaryCurrencies),
+      summary: moneyTotals(summaryFacts, summaryCurrencies),
       locations: scope.windows.map((window) => {
         const locationFacts = window.status === 'not_started' ? null : (factsByLocation.get(window.locationId) ?? EMPTY_FACTS);
-        const own = locationFacts === null ? new Set<string>() : currenciesOf(locationFacts);
+        const currencies = currenciesByLocation.get(window.locationId) ?? new Set<string>();
         return {
           locationId: window.locationId,
-          // A location with no facts writes its zeros in the report's currency.
-          currencyCode: locationFacts === null ? null : own.size === 0 ? currencyCode : singleCurrency(own),
-          totals: moneyTotals(locationFacts),
+          currencyCode: locationFacts === null ? null : singleCurrency(currencies),
+          totals: moneyTotals(locationFacts, currencies),
         };
       }),
       notRecorded: [...MONEY_NOT_RECORDED_CATEGORIES],
       coverage,
       detail,
     };
+  }
+
+  /** The configured currency of each started location (absent when it cannot be determined). */
+  private async locationCurrencies(businessId: string, windows: readonly MoneyWindow[]): Promise<Map<string, string>> {
+    const currencies = new Map<string, string>();
+    for (const chunk of chunks(windows.map((window) => window.locationId), MONEY_ID_CHUNK)) {
+      for (const [locationId, code] of await this.source.locationCurrencies(businessId, chunk)) currencies.set(locationId, code);
+    }
+    return currencies;
   }
 
   /** Every fact in the started windows, read in location chunks. */

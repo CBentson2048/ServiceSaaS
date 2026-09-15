@@ -16,23 +16,24 @@ import { formatCurrency } from '@sheer/utils';
 
 export const NOT_RECORDED = 'Not recorded';
 export const NOT_STARTED = 'Not started';
+export const CURRENCY_NOT_RECORDED = 'Not recorded (currency)';
 
 const UNAVAILABLE_TEXT: Record<MoneyUnavailableReason, string> = {
   not_captured: NOT_RECORDED,
   mixed_currencies: 'Not totalled (mixed currencies)',
   partial_refund_amount_not_recorded: 'Not recorded (partial refund amount)',
   definition_pending: 'Definition pending',
+  currency_not_recorded: CURRENCY_NOT_RECORDED,
 };
 
 /**
- * `currencyCode` is the figure's own currency. It is null only when there are
- * no facts at all, where every available figure is a genuine zero; the
- * platform's default currency is used to write that zero.
+ * `currencyCode` is the figure's own currency, from the API. A figure is never
+ * written in a currency the API did not name: without one it reads as words.
  */
 export function formatMoneyAmount(amount: MoneyAmount, currencyCode: string | null): string {
   switch (amount.availability) {
     case 'available':
-      return formatCurrency(amount.cents, { currency: currencyCode ?? 'GBP', minorUnits: true });
+      return currencyCode === null ? CURRENCY_NOT_RECORDED : formatCurrency(amount.cents, { currency: currencyCode, minorUnits: true });
     case 'unavailable':
       return UNAVAILABLE_TEXT[amount.reason];
     case 'not_started':

@@ -151,13 +151,18 @@ const NOT_STARTED: MoneyAmount = { availability: 'not_started' };
 /**
  * The figures for a set of facts. `null` means no scoped window has started:
  * every measurable figure is then Not started, never zero.
+ *
+ * `currencies` is every currency the figures would be written in — the facts'
+ * own and the configured currency of each location they cover. More than one:
+ * not totalled. None (no facts and no known currency): not written in any.
  */
-export function moneyTotals(facts: MoneyFacts | null): MoneyTotals {
-  const mixed = facts !== null && currenciesOf(facts).size > 1;
+export function moneyTotals(facts: MoneyFacts | null, currencies: ReadonlySet<string>): MoneyTotals {
   const t = facts === null ? null : tally(facts);
+  const blocked: MoneyUnavailableReason | null =
+    t === null ? null : currencies.size > 1 ? 'mixed_currencies' : currencies.size === 0 ? 'currency_not_recorded' : null;
   const amount = (cents: (tally: Tally) => number): MoneyAmount => {
     if (t === null) return NOT_STARTED;
-    if (mixed) return UNAVAILABLE('mixed_currencies');
+    if (blocked !== null) return UNAVAILABLE(blocked);
     return { availability: 'available', cents: cents(t) };
   };
 
@@ -176,7 +181,7 @@ export function moneyTotals(facts: MoneyFacts | null): MoneyTotals {
 
   let refunded: MoneyAmount;
   if (t === null) refunded = NOT_STARTED;
-  else if (mixed) refunded = UNAVAILABLE('mixed_currencies');
+  else if (blocked !== null) refunded = UNAVAILABLE(blocked);
   else if (t.partialRefundInScope) refunded = UNAVAILABLE('partial_refund_amount_not_recorded');
   else refunded = { availability: 'available', cents: t.refunded };
 

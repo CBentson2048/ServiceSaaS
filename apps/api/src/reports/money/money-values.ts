@@ -39,6 +39,13 @@ export function isWindowBound(value: string): boolean {
   return WINDOW_BOUND.test(value);
 }
 
+/** An ISO 4217 code, normalised; `null` for anything that is not one (never a default). */
+export function currencyCodeOf(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const code = value.trim().toUpperCase();
+  return /^[A-Z]{3}$/.test(code) ? code : null;
+}
+
 export function isUuid(value: string): boolean {
   return UUID.test(value);
 }

@@ -13,6 +13,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { MoneyRetailMethodKey } from '@sheer/domain';
 import {
   MoneySourceShapeError,
+  currencyCodeOf,
   instantKey,
   integerCents,
   integerValue,
@@ -127,6 +128,14 @@ export interface MoneySource {
    * webhook can later put the status back to `paid` without clearing it.
    */
   depositsRefunded(businessId: string, windows: readonly MoneyWindow[], after: MoneyAfter | null, limit: number): Promise<DepositEventRow[]>;
+  /**
+   * Each location's own currency: `core.location_settings.currency_code`, or — for
+   * a location with no settings row — `core.businesses.default_currency_code`,
+   * which is what a location's settings are seeded from (the same precedence the
+   * booking flow uses to charge deposits). A location missing from the map has no
+   * determinable currency; there is never a default.
+   */
+  locationCurrencies(businessId: string, locationIds: readonly string[]): Promise<Map<string, string>>;
 }
 
 export const MONEY_SOURCE = Symbol('MONEY_SOURCE');
@@ -373,6 +382,39 @@ export class SupabaseMoneySource implements MoneySource {
       status: oneOf(row.status, DEPOSIT_EVENT_STATUSES, 'deposit status'),
       currencyCode: text(row.currency_code, 'deposit currency'),
     }));
+  }
+
+  async locationCurrencies(businessId: string, locationIds: readonly string[]): Promise<Map<string, string>> {
+    assertUuids(locationIds);
+    const currencies = new Map<string, string>();
+    if (locationIds.length === 0) return currencies;
+    // One settings row per location (unique), so the chunk can never exceed its own size.
+    const settings = await this.run('location_settings', () =>
+      this.admin
+        .schema('core')
+        .from('location_settings')
+        .select('location_id,currency_code')
+        .eq('business_id', businessId)
+        .in('location_id', [...locationIds])
+        .limit(locationIds.length)
+        .returns<Row[]>(),
+    );
+    const withSettings = new Set<string>();
+    for (const row of settings) {
+      const locationId = text(row.location_id, 'settings location');
+      withSettings.add(locationId);
+      // A settings row whose code is unusable is not replaced by a guess.
+      const code = currencyCodeOf(row.currency_code);
+      if (code !== null) currencies.set(locationId, code);
+    }
+    const withoutSettings = locationIds.filter((id) => !withSettings.has(id));
+    if (withoutSettings.length === 0) return currencies;
+    const business = await this.run('businesses', () =>
+      this.admin.schema('core').from('businesses').select('default_currency_code').eq('id', businessId).limit(1).returns<Row[]>(),
+    );
+    const businessCode = business.length === 1 ? currencyCodeOf(business[0].default_currency_code) : null;
+    if (businessCode !== null) for (const id of withoutSettings) currencies.set(id, businessCode);
+    return currencies;
   }
 
   private tillPayment(row: Row): TillPaymentRow {
