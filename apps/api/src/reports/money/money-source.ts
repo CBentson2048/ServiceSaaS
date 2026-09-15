@@ -40,7 +40,16 @@ export type MoneyAfter = { key: string; id: string } | { key: string; op: 'gt' |
 
 export type BillLineType = 'service' | 'product_usage' | 'adjustment' | 'retail' | 'deposit_credit' | 'discount';
 export type TillMethod = 'cash' | 'card_reader';
-export type DepositEventStatus = 'paid' | 'partially_refunded' | 'refunded';
+/** `booking.deposit_status_enum`. */
+export type DepositEventStatus =
+  | 'pending'
+  | 'requires_action'
+  | 'authorized'
+  | 'paid'
+  | 'partially_refunded'
+  | 'refunded'
+  | 'failed'
+  | 'cancelled';
 
 export interface PaidBillRow {
   id: string;
@@ -112,7 +121,11 @@ export interface MoneySource {
   retailSales(businessId: string, windows: readonly MoneyWindow[], after: MoneyAfter | null, limit: number): Promise<RetailSaleRow[]>;
   /** Deposits whose payment was recorded in the window (status paid, partially_refunded or refunded). */
   depositsCollected(businessId: string, windows: readonly MoneyWindow[], after: MoneyAfter | null, limit: number): Promise<DepositEventRow[]>;
-  /** Deposits refunded in the window (status refunded or partially_refunded). */
+  /**
+   * Deposits whose `refunded_at` falls in the window, whatever their status now:
+   * only an in-app full refund sets `refunded_at`, and a re-delivered Stripe
+   * webhook can later put the status back to `paid` without clearing it.
+   */
   depositsRefunded(businessId: string, windows: readonly MoneyWindow[], after: MoneyAfter | null, limit: number): Promise<DepositEventRow[]>;
 }
 
@@ -121,7 +134,16 @@ export const MONEY_SOURCE = Symbol('MONEY_SOURCE');
 const BILL_LINE_TYPES: readonly BillLineType[] = ['service', 'product_usage', 'adjustment', 'retail', 'deposit_credit', 'discount'];
 const TILL_METHODS: readonly TillMethod[] = ['cash', 'card_reader'];
 const RETAIL_METHODS = ['cash', 'card_reader', 'other'] as const;
-const DEPOSIT_EVENT_STATUSES: readonly DepositEventStatus[] = ['paid', 'partially_refunded', 'refunded'];
+const DEPOSIT_EVENT_STATUSES: readonly DepositEventStatus[] = [
+  'pending',
+  'requires_action',
+  'authorized',
+  'paid',
+  'partially_refunded',
+  'refunded',
+  'failed',
+  'cancelled',
+];
 
 /**
  * The PostgREST `or` filter binding each location to its own window, plus the
@@ -318,30 +340,31 @@ export class SupabaseMoneySource implements MoneySource {
   }
 
   depositsRefunded(businessId: string, windows: readonly MoneyWindow[], after: MoneyAfter | null, limit: number): Promise<DepositEventRow[]> {
-    return this.depositEvents('refunded_at', ['partially_refunded', 'refunded'], businessId, windows, after, limit);
+    return this.depositEvents('refunded_at', null, businessId, windows, after, limit);
   }
 
   private async depositEvents(
     column: 'paid_at' | 'refunded_at',
-    statuses: DepositEventStatus[],
+    statuses: DepositEventStatus[] | null,
     businessId: string,
     windows: readonly MoneyWindow[],
     after: MoneyAfter | null,
     limit: number,
   ): Promise<DepositEventRow[]> {
-    const rows = await this.run('deposits', () =>
-      this.admin
+    const rows = await this.run('deposits', () => {
+      let query = this.admin
         .schema('booking')
         .from('deposits')
         .select(`id,location_id,${column},amount,status,currency_code`)
-        .eq('business_id', businessId)
-        .in('status', statuses)
+        .eq('business_id', businessId);
+      if (statuses !== null) query = query.in('status', statuses);
+      return query
         .or(windowFilter(column, windows, after))
         .order(column, { ascending: true })
         .order('id', { ascending: true })
         .limit(limit)
-        .returns<Row[]>(),
-    );
+        .returns<Row[]>();
+    });
     return rows.map((row) => ({
       id: text(row.id, 'deposit id'),
       locationId: text(row.location_id, 'deposit location'),

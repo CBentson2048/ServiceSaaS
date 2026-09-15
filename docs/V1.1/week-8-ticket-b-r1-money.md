@@ -34,7 +34,7 @@ recorded**, never £0.00.
 | Retail sale | `billing.retail_sales` (one row per product line; no status) | `sold_at`, `location_id` | integer pence |
 | Deposit collected | `booking.deposits` with `paid_at` set and status `paid`, `partially_refunded` or `refunded` | `paid_at`, `location_id` | `numeric(12,2)` pounds, converted exactly to pence |
 | Deposit redeemed | `billing.bills.deposit_applied_cents` of paid bills | the bill | integer pence |
-| Deposit refunded | `booking.deposits` with status `refunded` | `refunded_at`, `location_id` | pounds → pence |
+| Deposit refunded | `booking.deposits` with `refunded_at` set, whatever the current status | `refunded_at`, `location_id` | pounds → pence |
 
 Every read filters `business_id` and constrains each location to **its own**
 Ticket A window (`[fromUtc, toUtcExclusive)`); there is no envelope. A location
@@ -62,6 +62,12 @@ browser-local day windows, `allowedLocationIds`, unpaginated reads.
 - Deposits are Stripe-only. Refunds are full refunds made in QLOOQO
   (`refunded_at`); `partially_refunded` is never written; refunds made in the
   Stripe dashboard are invisible. A forfeited deposit leaves no money record.
+- Risk: the deposit webhook is not idempotent on status. A re-delivered
+  `payment_intent.succeeded` for a refunded deposit sets `status` back to `paid`
+  and rewrites `paid_at` (leaving `refunded_at` in place). R1 therefore reads
+  refunds by `refunded_at` regardless of status, so the refund is never lost; the
+  collection moves to the re-delivery day, which R1 cannot detect. The webhook fix
+  belongs to the payments owner, not to R1.
 - `bills.discount_cents` is always written as 0.
 
 ## 3. Definitions
@@ -105,9 +111,10 @@ retail as a percentage of service revenue are R2, not R1.
   happened to them later (a later refund does not rewrite the collection day);
 - `Redeemed` = Σ `bills.deposit_applied_cents` (the same money as *Deposits
   applied* above);
-- `Refunded in QLOOQO` = Σ amount of `refunded` deposits whose `refunded_at` falls
-  in the window. If a `partially_refunded` deposit falls in the window its refund
-  amount is unknown, so the figure is **Not recorded**.
+- `Refunded in QLOOQO` = Σ amount of deposits whose `refunded_at` falls in the
+  window, whatever their current status (see the webhook risk in §2). If a
+  `partially_refunded` deposit falls in the window its refund amount is unknown,
+  so the figure is **Not recorded**.
 
 **Net position** — **definition pending.** No approved product definition exists,
 and no stored source supports an accounting-style net position: discounts, till
@@ -123,16 +130,23 @@ bill snapshot are counted and totalled and shown as a notice: they are real
 money not yet in bill revenue.
 
 **Currency.** If the scoped facts carry more than one currency, money figures are
-unavailable (`mixed_currencies`) rather than summed.
+unavailable (`mixed_currencies`) rather than summed. Each location row carries its
+own `currencyCode` (null when that location has no facts or is itself mixed), and
+the coverage notice carries its own; the web writes each figure in its own
+currency.
 
 ## 4. Detail view
 
 Rows: one per paid bill, retail sale line, deposit collection and deposit refund,
 each with the location, **local** date and time (from the location's timezone,
-never raw UTC), a safe reference (bill number, "Retail sale", "Deposit") and its
-amounts. Ordered by (instant, row kind, id), paged by an opaque keyset cursor with
-no row cap: identical instants never duplicate or skip a row. Instants keep the
-database's microsecond precision.
+never raw UTC), its type, a reference (the bill number for paid bills; other rows
+have no customer-safe reference and show their type only) and its amounts.
+Ordered by (instant, row kind, id), paged by an opaque keyset cursor with no row
+cap: identical instants never duplicate or skip a row. Instants keep the
+database's microsecond precision. Pages hold 50 rows; each source is read by
+keyset until the page is full, so a server row cap cannot shorten a page. When no
+location's window has started, detail says so (`detail.notStarted`) instead of
+"nothing recorded".
 
 ## 5. Contract
 
@@ -142,6 +156,11 @@ database's microsecond precision.
   (`packages/domain/src/money-report.ts`): `summary`, one `locations[]` row per
   resolved location (additive figures sum to the summary), `notRecorded`,
   `coverage`, and `detail` when `view=detail`.
+- A request with a `cursor` returns a **continuation** page:
+  `continuation: true`, `summary: null`, `coverage: null`, `locations: []`, and
+  only the next `detail` rows. The summary is not recomputed for every page.
+- Reads are made for at most ten locations at a time, so request URLs stay
+  bounded for large businesses.
 - Every amount is `{availability:'available', cents}` |
   `{availability:'unavailable', reason}` | `{availability:'not_started'}`.
 - A `cursor` without `view=detail`, or a malformed cursor, is

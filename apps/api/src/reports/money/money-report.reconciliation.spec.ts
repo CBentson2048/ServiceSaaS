@@ -19,12 +19,14 @@
  *   other business, same window                         excluded
  *   retail: card 2500 · cash 1200 (same instant as card) · method null 1000   = 4700
  *   deposits: collected 14T08:00Z 1500 (future booking); collected 14T07:30Z 3000 and refunded
- *             14T16:00Z (3000); the deposit redeemed on #1001 was collected 11 Sep (not in window)
+ *             14T16:00Z (3000); a deposit collected 9 Sep and refunded 14T17:00Z (700) whose status a
+ *             re-delivered Stripe webhook put back to 'paid' (refunded_at still set, so it counts);
+ *             the deposit redeemed on #1001 was collected 11 Sep (not in window)
  *   till payment 14T15:00Z cash 2200 for a visit with NO bill, and the voided #1004's cash 9999
  *   (a payment whose visit has no PAID bill) → coverage notice: 2 payments, 12199
  *   London: gross 35500 net 29667 VAT 5833 | service 32000 colour 3000 adjustment −500 not itemised 1000
  *           cash 8500 card 24000 deposits applied 2000 not itemised 1000 | retail 4700
- *           deposits collected 4500 redeemed 2000 refunded 3000
+ *           deposits collected 4500 redeemed 2000 refunded 3700
  * Tokyo
  *   #2001 14T15:00:00.000000Z (window start, inclusive)  8000   8000     0          0       0   8000
  *   #2000 14T14:59:59.999999Z (Tokyo 14 Sep)            excluded
@@ -40,11 +42,11 @@
  *          (cash 1200 card 2500 other 3300 not recorded 1000) | deposits collected 4500 redeemed 3000
  *          refunded Not recorded (Tokyo's partial refund) | coverage: 2 payments, 12199
  */
-import type { MoneyAmount, MoneyReportBody, MoneyTotals, ReportFilter } from '@sheer/domain';
+import type { MoneyAmount, MoneyTotals, ReportFilter } from '@sheer/domain';
 import type { ReportScope } from '../report-scope.service';
 import { MoneyReportService } from './money-report.service';
 import { MemoryMoneySource, type Ledger, type LedgerBill, type LedgerLine } from './testing/memory-money-source';
-import { instant as at, moneyScope } from './testing/money-scope';
+import { firstPage, instant as at, moneyScope, type FirstPageBody } from './testing/money-scope';
 
 const BIZ = 'biz-1';
 const OTHER_BIZ = 'biz-2';
@@ -111,6 +113,7 @@ function buildLedger(): Ledger {
     { id: uid(), businessId: BIZ, locationId: LONDON, amountCents: 3000, status: 'refunded', paidAt: at('2026-09-14T07:30:00Z'), refundedAt: at('2026-09-14T16:00:00Z'), currencyCode: 'GBP' },
     { id: uid(), businessId: BIZ, locationId: LONDON, amountCents: 2000, status: 'paid', paidAt: at('2026-09-11T10:00:00Z'), refundedAt: null, currencyCode: 'GBP' },
     { id: uid(), businessId: BIZ, locationId: LONDON, amountCents: 4000, status: 'pending', paidAt: null, refundedAt: null, currencyCode: 'GBP' },
+    { id: uid(), businessId: BIZ, locationId: LONDON, amountCents: 700, status: 'paid', paidAt: at('2026-09-09T10:00:00Z'), refundedAt: at('2026-09-14T17:00:00Z'), currencyCode: 'GBP' },
   );
   ledger.payments.push({ id: uid(), businessId: BIZ, visitId: uid(), locationId: LONDON, at: at('2026-09-14T15:00:00Z'), method: 'cash', amountCents: 2200, currencyCode: 'GBP' });
   // Tokyo
@@ -151,9 +154,9 @@ function ledgerView(t: MoneyTotals) {
   };
 }
 
-async function build(filter: ReportFilter = TODAY, serverCap?: number): Promise<{ body: MoneyReportBody; source: MemoryMoneySource }> {
+async function build(filter: ReportFilter = TODAY, serverCap?: number): Promise<{ body: FirstPageBody; source: MemoryMoneySource }> {
   const source = new MemoryMoneySource(buildLedger(), serverCap);
-  const body = await new MoneyReportService(source).build(scopeFor(filter), { cursor: null });
+  const body = firstPage(await new MoneyReportService(source).build(scopeFor(filter), { cursor: null }));
   return { body, source };
 }
 
@@ -177,7 +180,7 @@ describe('R1 Money reconciles to the source ledger', () => {
       collected: 4500,
       redeemed: 2000,
     });
-    expect(london.deposits.refunded).toEqual({ availability: 'available', cents: 3000 });
+    expect(london.deposits.refunded).toEqual({ availability: 'available', cents: 3700 });
   });
 
   it('Tokyo, on its own local date, with the window start inclusive', async () => {
@@ -232,7 +235,9 @@ describe('R1 Money reconciles to the source ledger', () => {
     });
     expect(body.summary.deposits.refunded).toEqual({ availability: 'unavailable', reason: 'partial_refund_amount_not_recorded' });
     expect(body.currencyCode).toBe('GBP');
-    expect(body.coverage).toEqual({ tillPaymentsWithoutBill: { count: 2, amount: { availability: 'available', cents: 12199 } } });
+    expect(body.coverage).toEqual({ tillPaymentsWithoutBill: { count: 2, amount: { availability: 'available', cents: 12199 }, currencyCode: 'GBP' } });
+    expect(body.continuation).toBe(false);
+    expect(body.locations.map((l) => l.currencyCode)).toEqual(['GBP', 'GBP', 'GBP']);
   });
 
   it('the location rows sum to the summary for every additive figure', async () => {
@@ -293,13 +298,12 @@ describe('R1 Money reconciles to the source ledger', () => {
   });
 
   it('a London-only scope reports only London, where refunds are available', async () => {
-    const londonOnly = await new MoneyReportService(new MemoryMoneySource(buildLedgerFresh())).build(
-      scopeFor(TODAY, AS_OF, [LOCATIONS[0]]),
-      { cursor: null },
+    const londonOnly = firstPage(
+      await new MoneyReportService(new MemoryMoneySource(buildLedgerFresh())).build(scopeFor(TODAY, AS_OF, [LOCATIONS[0]]), { cursor: null }),
     );
     expect(londonOnly.locations.map((l) => l.locationId)).toEqual([LONDON]);
     expect(ledgerView(londonOnly.summary).gross).toBe(35500);
-    expect(londonOnly.summary.deposits.refunded).toEqual({ availability: 'available', cents: 3000 });
+    expect(londonOnly.summary.deposits.refunded).toEqual({ availability: 'available', cents: 3700 });
   });
 });
 
@@ -312,7 +316,7 @@ describe('availability', () => {
   it('a window that has not started renders Not started and reads nothing', async () => {
     const source = new MemoryMoneySource(buildLedger());
     const future: ReportFilter = { preset: 'custom', from: '2026-10-01', to: '2026-10-02', locationIds: [], staffProfileIds: [], view: 'summary' };
-    const body = await new MoneyReportService(source).build(scopeFor(future), { cursor: null });
+    const body = firstPage(await new MoneyReportService(source).build(scopeFor(future), { cursor: null }));
     expect(body.summary.paidBills.gross).toEqual({ availability: 'not_started' });
     expect(body.summary.deposits.collected).toEqual({ availability: 'not_started' });
     expect(body.locations.every((l) => l.totals.paidBills.gross.availability === 'not_started')).toBe(true);
@@ -323,16 +327,18 @@ describe('availability', () => {
 
   it('a started location with no facts shows recorded zeros, which are genuine', async () => {
     const source = new MemoryMoneySource({ bills: [], lines: [], payments: [], retail: [], deposits: [] });
-    const body = await new MoneyReportService(source).build(scopeFor(TODAY), { cursor: null });
+    const body = firstPage(await new MoneyReportService(source).build(scopeFor(TODAY), { cursor: null }));
     expect(body.summary.paidBills.gross).toEqual({ availability: 'available', cents: 0 });
   });
 
   it('mixed currencies are never summed', async () => {
     const ledger = buildLedger();
     ledger.retail.push({ id: uid(), businessId: BIZ, locationId: NEW_YORK, at: at('2026-09-14T18:00:00Z'), totalCents: 999, quantity: 1, method: 'card_reader', currencyCode: 'USD' });
-    const body = await new MoneyReportService(new MemoryMoneySource(ledger)).build(scopeFor(TODAY), { cursor: null });
+    const body = firstPage(await new MoneyReportService(new MemoryMoneySource(ledger)).build(scopeFor(TODAY), { cursor: null }));
     expect(body.summary.paidBills.gross).toEqual({ availability: 'unavailable', reason: 'mixed_currencies' });
     expect(body.currencyCode).toBeNull();
+    // Each location row carries its own currency: London is still GBP, New York is mixed.
+    expect(body.locations.map((l) => [l.locationId, l.currencyCode])).toEqual([[LONDON, 'GBP'], [TOKYO, 'GBP'], [NEW_YORK, null]]);
     const london = body.locations.find((l) => l.locationId === LONDON)!.totals;
     expect(london.paidBills.gross).toEqual({ availability: 'available', cents: 35500 });
     const newYork = body.locations.find((l) => l.locationId === NEW_YORK)!.totals;

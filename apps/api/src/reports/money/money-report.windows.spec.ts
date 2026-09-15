@@ -8,7 +8,7 @@ import type { MoneyAmount, ReportFilter } from '@sheer/domain';
 import type { ReportScope } from '../report-scope.service';
 import { MoneyReportService } from './money-report.service';
 import { MemoryMoneySource, type Ledger } from './testing/memory-money-source';
-import { instant, moneyScope } from './testing/money-scope';
+import { firstPage, instant, moneyScope } from './testing/money-scope';
 
 const BIZ = 'biz-1';
 const LONDON = { id: '20000000-0000-4000-8000-000000000001', name: 'London', timezone: 'Europe/London' };
@@ -46,7 +46,7 @@ const gross = (amount: MoneyAmount) => (amount.availability === 'available' ? am
 
 async function run(ledger: Ledger, scope: ReportScope) {
   const source = new MemoryMoneySource(ledger);
-  const body = await new MoneyReportService(source).build(scope, { cursor: null });
+  const body = firstPage(await new MoneyReportService(source).build(scope, { cursor: null }));
   const byLocation = Object.fromEntries(body.locations.map((l) => [l.locationId, gross(l.totals.paidBills.gross)]));
   return { body, source, byLocation };
 }
@@ -150,5 +150,21 @@ describe('Money reads each location inside its own window', () => {
     const { byLocation } = await run(ledger, scope);
     expect(byLocation[NEW_YORK.id]).toBe(110);
     expect(scope.windows[0].status).toBe('complete');
+  });
+
+  it('reads many locations in chunks of at most ten, and still counts every location in its own window', async () => {
+    const many = Array.from({ length: 23 }, (_, i) => ({
+      id: `21000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+      name: `Salon ${i}`,
+      timezone: i % 2 ? 'Europe/London' : 'Asia/Tokyo',
+    }));
+    const scope = moneyScope(BIZ, many, filter(), new Date('2026-09-14T15:30:00Z'));
+    const ledger = ledgerWithBills(many.map((l, i) => ({ locationId: l.id, at: '2026-09-14T16:00:00Z', gross: 100 + i })));
+    const { body, source } = await run(ledger, scope);
+    const billReads = source.reads.filter((r) => r.method === 'paidBills');
+    expect(billReads.every((r) => (r.windows?.length ?? 0) <= 10)).toBe(true);
+    // Each chunk is read until an empty read, so a chunk's windows appear more than once: compare the set.
+    expect([...new Set(billReads.flatMap((r) => r.windows ?? []).map((w) => w.locationId))].sort()).toEqual(many.map((l) => l.id).sort());
+    expect(gross(body.summary.paidBills.gross)).toBe(many.reduce((sum, _l, i) => sum + 100 + i, 0));
   });
 });

@@ -34,6 +34,7 @@ import {
   type MoneyWindow,
   type PaidBillRow,
   type TillPaymentRow,
+  type WindowTillPaymentRow,
 } from './money-source';
 import { EMPTY_FACTS, billFigures, combineFacts, currenciesOf, moneyTotals, type BillFacts, type MoneyFacts } from './money-totals';
 import { localDateTime } from './money-values';
@@ -42,6 +43,12 @@ import { localDateTime } from './money-values';
 export const MONEY_READ_BATCH = 1000;
 /** Ids per `in` filter. */
 export const MONEY_ID_CHUNK = 150;
+/**
+ * Locations per windowed read. Each location adds its own window (and keyset)
+ * clause to the request URL, so reads are split to keep URLs well inside common
+ * request-line limits (about 3.7 KB at 10 locations with a keyset).
+ */
+export const MONEY_LOCATION_CHUNK = 10;
 
 export interface MoneyBuildRequest {
   /** From `?cursor=`; only valid with the detail view. */
@@ -63,10 +70,24 @@ export class MoneyReportService {
       .map((window) => ({ locationId: window.locationId, fromUtc: window.fromUtc, toUtcExclusive: window.toUtcExclusive }));
     const timezoneByLocation = new Map(scope.windows.map((window) => [window.locationId, window.timezone]));
 
+    // A continuation page carries only the next detail rows: the summary was
+    // already delivered with the first page and is not recomputed per page.
+    if (position !== null) {
+      return {
+        continuation: true,
+        currencyCode: null,
+        summary: null,
+        locations: [],
+        notRecorded: [...MONEY_NOT_RECORDED_CATEGORIES],
+        coverage: null,
+        detail: await this.detailPage(businessId, started, timezoneByLocation, position),
+      };
+    }
+
     const [facts, coverage, detail] = await Promise.all([
       started.length > 0 ? this.loadFacts(businessId, started) : Promise.resolve(null),
       this.coverage(businessId, started),
-      detailView ? this.detailPage(businessId, started, timezoneByLocation, position) : Promise.resolve(null),
+      detailView ? this.detailPage(businessId, started, timezoneByLocation, null) : Promise.resolve(null),
     ]);
 
     const factsByLocation = new Map<string, MoneyFacts>();
@@ -78,25 +99,37 @@ export class MoneyReportService {
     const currencies = summaryFacts === null ? new Set<string>() : currenciesOf(summaryFacts);
 
     return {
-      currencyCode: currencies.size === 1 ? [...currencies][0] : null,
+      continuation: false,
+      currencyCode: singleCurrency(currencies),
       summary: moneyTotals(summaryFacts),
-      locations: scope.windows.map((window) => ({
-        locationId: window.locationId,
-        totals: moneyTotals(window.status === 'not_started' ? null : (factsByLocation.get(window.locationId) ?? EMPTY_FACTS)),
-      })),
+      locations: scope.windows.map((window) => {
+        const locationFacts = window.status === 'not_started' ? null : (factsByLocation.get(window.locationId) ?? EMPTY_FACTS);
+        return {
+          locationId: window.locationId,
+          currencyCode: locationFacts === null ? null : singleCurrency(currenciesOf(locationFacts)),
+          totals: moneyTotals(locationFacts),
+        };
+      }),
       notRecorded: [...MONEY_NOT_RECORDED_CATEGORIES],
       coverage,
       detail,
     };
   }
 
-  /** Every fact in the started windows. */
+  /** Every fact in the started windows, read in location chunks. */
   private async loadFacts(businessId: string, windows: readonly MoneyWindow[]): Promise<MoneyFacts> {
+    const everyChunk = async <T extends { at: string; id: string }>(
+      read: (chunk: readonly MoneyWindow[], after: MoneyAfter | null, limit: number) => Promise<T[]>,
+    ): Promise<T[]> => {
+      const rows: T[] = [];
+      for (const chunk of chunks(windows, MONEY_LOCATION_CHUNK)) rows.push(...(await readAll((after, limit) => read(chunk, after, limit))));
+      return rows;
+    };
     const [bills, retail, depositsCollected, depositsRefunded] = await Promise.all([
-      readAll((after, limit) => this.source.paidBills(businessId, windows, after, limit)),
-      readAll((after, limit) => this.source.retailSales(businessId, windows, after, limit)),
-      readAll((after, limit) => this.source.depositsCollected(businessId, windows, after, limit)),
-      readAll((after, limit) => this.source.depositsRefunded(businessId, windows, after, limit)),
+      everyChunk((chunk, after, limit) => this.source.paidBills(businessId, chunk, after, limit)),
+      everyChunk((chunk, after, limit) => this.source.retailSales(businessId, chunk, after, limit)),
+      everyChunk((chunk, after, limit) => this.source.depositsCollected(businessId, chunk, after, limit)),
+      everyChunk((chunk, after, limit) => this.source.depositsRefunded(businessId, chunk, after, limit)),
     ]);
     return { bills: await this.withLinesAndPayments(businessId, bills), retail, depositsCollected, depositsRefunded };
   }
@@ -120,9 +153,12 @@ export class MoneyReportService {
   /** Till payments recorded in the windows whose visit has no paid bill at all. */
   private async coverage(businessId: string, windows: readonly MoneyWindow[]): Promise<MoneyReportBody['coverage']> {
     if (windows.length === 0) {
-      return { tillPaymentsWithoutBill: { count: 0, amount: { availability: 'not_started' } } };
+      return { tillPaymentsWithoutBill: { count: 0, amount: { availability: 'not_started' }, currencyCode: null } };
     }
-    const payments = await readAll((after, limit) => this.source.tillPaymentsInWindows(businessId, windows, after, limit));
+    const payments: WindowTillPaymentRow[] = [];
+    for (const chunk of chunks(windows, MONEY_LOCATION_CHUNK)) {
+      payments.push(...(await readAll((after, limit) => this.source.tillPaymentsInWindows(businessId, chunk, after, limit))));
+    }
     const visitIds = [...new Set(payments.map((payment) => payment.visitId))];
     const billed = new Set<string>();
     for (const chunk of chunks(visitIds, MONEY_ID_CHUNK)) {
@@ -134,7 +170,7 @@ export class MoneyReportService {
       currencies.size > 1
         ? { availability: 'unavailable', reason: 'mixed_currencies' }
         : { availability: 'available', cents: unbilled.reduce((sum, payment) => sum + payment.amountCents, 0) };
-    return { tillPaymentsWithoutBill: { count: unbilled.length, amount } };
+    return { tillPaymentsWithoutBill: { count: unbilled.length, amount, currencyCode: singleCurrency(currencies) } };
   }
 
   private async detailPage(
@@ -143,13 +179,26 @@ export class MoneyReportService {
     timezoneByLocation: ReadonlyMap<string, string>,
     position: DetailPosition | null,
   ): Promise<MoneyDetailPage> {
-    if (windows.length === 0) return { rows: [], nextCursor: null };
-    const size = MONEY_DETAIL_PAGE_SIZE + 1;
+    if (windows.length === 0) return { notStarted: true, rows: [], nextCursor: null };
+    // Each (kind, location chunk) stream contributes its first PAGE+1 rows after
+    // the cursor — topped up read by read, so a low server row cap cannot hide a
+    // row — which always contains the next page of the merged order.
+    const need = MONEY_DETAIL_PAGE_SIZE + 1;
+    const firstRows = async <T extends { at: string; id: string }>(
+      rank: number,
+      read: (chunk: readonly MoneyWindow[], after: MoneyAfter | null, limit: number) => Promise<T[]>,
+    ): Promise<T[]> => {
+      const rows: T[] = [];
+      for (const chunk of chunks(windows, MONEY_LOCATION_CHUNK)) {
+        rows.push(...(await readUpTo(need, keysetAfter(position, rank), (after, limit) => read(chunk, after, limit))));
+      }
+      return rows;
+    };
     const [bills, retail, collected, refunded] = await Promise.all([
-      this.source.paidBills(businessId, windows, keysetAfter(position, DETAIL_KIND_RANK.paid_bill), size),
-      this.source.retailSales(businessId, windows, keysetAfter(position, DETAIL_KIND_RANK.retail_sale), size),
-      this.source.depositsCollected(businessId, windows, keysetAfter(position, DETAIL_KIND_RANK.deposit_collected), size),
-      this.source.depositsRefunded(businessId, windows, keysetAfter(position, DETAIL_KIND_RANK.deposit_refunded), size),
+      firstRows(DETAIL_KIND_RANK.paid_bill, (chunk, after, limit) => this.source.paidBills(businessId, chunk, after, limit)),
+      firstRows(DETAIL_KIND_RANK.retail_sale, (chunk, after, limit) => this.source.retailSales(businessId, chunk, after, limit)),
+      firstRows(DETAIL_KIND_RANK.deposit_collected, (chunk, after, limit) => this.source.depositsCollected(businessId, chunk, after, limit)),
+      firstRows(DETAIL_KIND_RANK.deposit_refunded, (chunk, after, limit) => this.source.depositsRefunded(businessId, chunk, after, limit)),
     ]);
 
     type Candidate = { position: DetailPosition; build: (billFacts: Map<string, BillFacts>) => MoneyDetailRow };
@@ -215,7 +264,7 @@ export class MoneyReportService {
     const { page, next } = mergeDetailPage(candidates, MONEY_DETAIL_PAGE_SIZE);
     const pageBills = bills.filter((bill) => page.some((row) => row.position.rank === DETAIL_KIND_RANK.paid_bill && row.position.id === bill.id));
     const billFacts = new Map((await this.withLinesAndPayments(businessId, pageBills)).map((facts) => [facts.bill.id, facts]));
-    return { rows: page.map((row) => row.build(billFacts)), nextCursor: next === null ? null : encodeDetailCursor(next) };
+    return { notStarted: false, rows: page.map((row) => row.build(billFacts)), nextCursor: next === null ? null : encodeDetailCursor(next) };
   }
 }
 
@@ -245,6 +294,34 @@ function splitByLocation(facts: MoneyFacts, locationId: string): MoneyFacts {
     depositsCollected: facts.depositsCollected.filter((deposit) => deposit.locationId === locationId),
     depositsRefunded: facts.depositsRefunded.filter((deposit) => deposit.locationId === locationId),
   };
+}
+
+function singleCurrency(currencies: ReadonlySet<string>): string | null {
+  return currencies.size === 1 ? [...currencies][0] : null;
+}
+
+/**
+ * Read up to `need` rows starting at `start`, continuing by keyset after each
+ * read, until there are enough rows or a read returns none.
+ */
+export async function readUpTo<T extends { at: string; id: string }>(
+  need: number,
+  start: MoneyAfter | null,
+  read: (after: MoneyAfter | null, limit: number) => Promise<T[]>,
+): Promise<T[]> {
+  const rows: T[] = [];
+  let after = start;
+  while (rows.length < need) {
+    const batch = await read(after, need - rows.length);
+    if (batch.length === 0) break;
+    const last = batch[batch.length - 1];
+    if (after !== null && 'id' in after && !(last.at > after.key || (last.at === after.key && last.id > after.id))) {
+      throw new InternalServerErrorException();
+    }
+    rows.push(...batch);
+    after = { key: last.at, id: last.id };
+  }
+  return rows;
 }
 
 /** Read every row after successive keysets until a read returns none. */

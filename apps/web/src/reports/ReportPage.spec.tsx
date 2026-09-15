@@ -514,11 +514,12 @@ describe('R1 Money body', () => {
     netPosition: { availability: 'unavailable', reason: 'definition_pending' },
   };
   const moneyBody = (detail: MoneyDetailPage | null): MoneyReportBody => ({
+    continuation: false,
     currencyCode: 'GBP',
     summary: totals,
-    locations: [{ locationId: L1, totals }],
+    locations: [{ locationId: L1, currencyCode: 'GBP', totals }],
     notRecorded: ['discounts'],
-    coverage: { tillPaymentsWithoutBill: { count: 0, amount: zero } },
+    coverage: { tillPaymentsWithoutBill: { count: 0, amount: zero, currencyCode: null } },
     detail,
   });
   const detailRow = (n: number): MoneyDetailPage['rows'][number] => ({
@@ -551,8 +552,12 @@ describe('R1 Money body', () => {
     api.getReportOptions.mockResolvedValue(options());
     api.getReportResult
       .mockResolvedValueOnce(moneyResult(null))
-      .mockResolvedValueOnce(moneyResult({ rows: [detailRow(1)], nextCursor: 'm1.next' }))
-      .mockResolvedValueOnce(moneyResult({ rows: [detailRow(2)], nextCursor: null }));
+      .mockResolvedValueOnce(moneyResult({ notStarted: false, rows: [detailRow(1)], nextCursor: 'm1.next' }))
+      .mockResolvedValueOnce({
+        ...moneyResult(null),
+        // A continuation page carries only the next detail rows.
+        body: { ...moneyBody({ notStarted: false, rows: [detailRow(2)], nextCursor: null }), continuation: true, currencyCode: null, summary: null, locations: [], coverage: null },
+      });
     renderAt(`/reports/money?locations=${L1}`);
     await screen.findByRole('region', { name: 'Paid bill revenue' });
     fireEvent.click(screen.getByRole('tab', { name: 'Detail' }));
@@ -563,6 +568,8 @@ describe('R1 Money body', () => {
     await screen.findByText('10:02');
     expect(api.getReportResult.mock.calls[2]).toEqual(['token', 'money', expect.objectContaining({ view: 'detail', locationIds: [L1] }), 'm1.next']);
     expect(screen.getByText('10:01')).toBeTruthy();
+    // The continuation page did not replace the report: the summary is still there.
+    expect(screen.getByText('£355.00')).toBeTruthy();
   });
 });
 

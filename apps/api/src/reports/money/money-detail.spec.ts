@@ -14,7 +14,7 @@ import {
 } from './money-detail';
 import { MoneyReportService } from './money-report.service';
 import { MemoryMoneySource, type Ledger } from './testing/memory-money-source';
-import { instant, moneyScope } from './testing/money-scope';
+import { firstPage, instant, moneyScope } from './testing/money-scope';
 
 const BIZ = 'biz-1';
 const LONDON = { id: '30000000-0000-4000-8000-000000000001', name: 'London', timezone: 'Europe/London' };
@@ -157,6 +157,44 @@ describe('detail paging over identical instants', () => {
     expect(again.rows[0].rowKey).not.toBe(first.rows[first.rows.length - 1].rowKey);
   });
 
+  it('pages completely even when the server caps every read at seven rows', async () => {
+    const source = new MemoryMoneySource(crowdedLedger(), 7);
+    const keys: string[] = [];
+    let cursor: string | null = null;
+    let pages = 0;
+    do {
+      const detail = await page(source, cursor);
+      keys.push(...detail.rows.map((row) => row.rowKey));
+      cursor = detail.nextCursor;
+      pages += 1;
+    } while (cursor !== null && pages < 10);
+    expect(pages).toBe(3);
+    expect(keys).toHaveLength(130);
+    expect(new Set(keys).size).toBe(130);
+  });
+
+  it('a continuation page carries only the next rows and does not recompute the report', async () => {
+    const source = new MemoryMoneySource(crowdedLedger());
+    const first = await page(source, null);
+    const readsBefore = source.reads.length;
+    const scope = moneyScope(BIZ, [LONDON, TOKYO], DETAIL, AS_OF);
+    const body = await new MoneyReportService(source).build(scope, { cursor: first.nextCursor });
+    expect(body.continuation).toBe(true);
+    expect(body.summary).toBeNull();
+    expect(body.coverage).toBeNull();
+    expect(body.locations).toEqual([]);
+    expect(body.detail?.rows).toHaveLength(MONEY_DETAIL_PAGE_SIZE);
+    const continuationReads = source.reads.slice(readsBefore);
+    expect(continuationReads.some((r) => r.method === 'tillPaymentsInWindows')).toBe(false);
+    expect(continuationReads.filter((r) => r.windows).every((r) => r.after !== null)).toBe(true);
+  });
+
+  it('a detail view whose dates have not started says so, with no rows', async () => {
+    const scope = moneyScope(BIZ, [LONDON, TOKYO], { ...DETAIL, preset: 'custom', from: '2026-10-01', to: '2026-10-01' }, AS_OF);
+    const body = firstPage(await new MoneyReportService(new MemoryMoneySource(crowdedLedger())).build(scope, { cursor: null }));
+    expect(body.detail).toEqual({ notStarted: true, rows: [], nextCursor: null });
+  });
+
   it('refuses a cursor without the detail view', async () => {
     const scope = moneyScope(BIZ, [LONDON], { ...DETAIL, view: 'summary' }, AS_OF);
     await expect(new MoneyReportService(new MemoryMoneySource(crowdedLedger())).build(scope, { cursor: 'm1.abc' })).rejects.toMatchObject({
@@ -192,6 +230,7 @@ describe('detail rows explain the money in local time', () => {
     };
     const detail = await page(new MemoryMoneySource(ledger), null);
     expect(detail.nextCursor).toBeNull();
+    expect(detail.notStarted).toBe(false);
     expect(detail.rows).toEqual([
       {
         kind: 'retail_sale',

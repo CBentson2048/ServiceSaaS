@@ -79,6 +79,12 @@ describe('windowFilter', () => {
     expect(windowFilter('sold_at', WINDOWS.slice(1), { key, op: 'gte' })).toContain(`sold_at.gte."${key}")`);
   });
 
+  it('stays well inside common request-line limits for a ten-location chunk with a keyset', () => {
+    const ten: MoneyWindow[] = Array.from({ length: 10 }, (_, i) => ({ ...WINDOWS[0], locationId: `50000000-0000-4000-8000-${String(i).padStart(12, '0')}` }));
+    const filter = windowFilter('refunded_at', ten, { key: '2026-09-14T16:00:00.123456Z', id: ROW_ID });
+    expect(encodeURIComponent(filter).length).toBeLessThan(5000);
+  });
+
   it('accepts a five-digit-year window end (a range ending 9999-12-31)', () => {
     expect(() => windowFilter('occurred_at', [{ ...WINDOWS[0], toUtcExclusive: '10000-01-01T00:00:00.000Z' }], null)).not.toThrow();
   });
@@ -153,7 +159,8 @@ describe('SupabaseMoneySource reads', () => {
     });
     const refundRows = await refunded.source.depositsRefunded(BIZ, WINDOWS, null, 10);
     expect(refunded.queries[0].ops).toContainEqual(['select', ['id,location_id,refunded_at,amount,status,currency_code']]);
-    expect(refunded.queries[0].ops).toContainEqual(['in', ['status', ['partially_refunded', 'refunded']]]);
+    // Refunds are read by refunded_at whatever the status: a re-delivered webhook can reset it to 'paid'.
+    expect(refunded.queries[0].ops.some(([op]) => op === 'in')).toBe(false);
     expect(refunded.queries[0].ops).toContainEqual(['or', [windowFilter('refunded_at', WINDOWS, null)]]);
     expect(refundRows[0].amountCents).toBe(3000);
   });

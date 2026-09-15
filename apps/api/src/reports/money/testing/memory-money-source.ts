@@ -39,7 +39,7 @@ export interface LedgerDeposit {
   businessId: string;
   locationId: string;
   amountCents: number;
-  status: DepositEventStatus | 'pending' | 'failed';
+  status: DepositEventStatus;
   paidAt: string | null;
   refundedAt: string | null;
   currencyCode: string;
@@ -157,12 +157,12 @@ export class MemoryMoneySource implements MoneySource {
 
   async depositsRefunded(businessId: string, windows: readonly MoneyWindow[], after: MoneyAfter | null, limit: number): Promise<DepositEventRow[]> {
     this.reads.push({ method: 'depositsRefunded', businessId, windows, after, limit });
-    return this.depositEvents('refundedAt', ['partially_refunded', 'refunded'], businessId, windows, after, limit);
+    return this.depositEvents('refundedAt', null, businessId, windows, after, limit);
   }
 
   private depositEvents(
     column: 'paidAt' | 'refundedAt',
-    statuses: readonly string[],
+    statuses: readonly string[] | null,
     businessId: string,
     windows: readonly MoneyWindow[],
     after: MoneyAfter | null,
@@ -170,8 +170,8 @@ export class MemoryMoneySource implements MoneySource {
   ): DepositEventRow[] {
     const rows = this.ledger.deposits
       .filter((d): d is LedgerDeposit & Record<typeof column, string> => d[column] !== null)
-      .filter((d) => d.businessId === businessId && statuses.includes(d.status))
-      .map((d) => ({ id: d.id, locationId: d.locationId, at: d[column], amountCents: d.amountCents, status: d.status as DepositEventStatus, currencyCode: d.currencyCode }))
+      .filter((d) => d.businessId === businessId && (statuses === null || statuses.includes(d.status)))
+      .map((d) => ({ id: d.id, locationId: d.locationId, at: d[column], amountCents: d.amountCents, status: d.status, currencyCode: d.currencyCode }))
       .filter((d) => inWindows(d.at, d.locationId, windows) && afterKeyset(d.at, d.id, after))
       .sort(byInstantThenId);
     return this.take(rows, limit);

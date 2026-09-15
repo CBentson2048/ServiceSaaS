@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type {
   MoneyAmount,
+  MoneyCoverage,
   MoneyDetailPage,
   MoneyDetailRow,
   MoneyReportBody,
@@ -18,8 +19,15 @@ import {
   formatMoneyAmount,
 } from './moneyLabels';
 
+/** A first page: the whole report (a continuation page carries only detail rows). */
+export type MoneyFirstPage = MoneyReportBody & { summary: MoneyTotals; coverage: MoneyCoverage };
+
+export function isMoneyFirstPage(body: MoneyReportBody): body is MoneyFirstPage {
+  return !body.continuation && body.summary !== null && body.coverage !== null;
+}
+
 export interface MoneyReportProps {
-  body: MoneyReportBody;
+  body: MoneyFirstPage;
   /** The resolved locations, for names. */
   locations: readonly ResolvedReportLocation[];
   /** Fetch the next detail page for the current filter. */
@@ -37,14 +45,16 @@ export function MoneyReport({ body, locations, loadMore }: MoneyReportProps) {
   const nameOf = (id: string) => locations.find((location) => location.id === id)?.name ?? 'Unknown location';
   const { summary } = body;
   const coverage = body.coverage.tillPaymentsWithoutBill;
+  const coverageMoney = formatMoneyAmount(coverage.amount, coverage.currencyCode);
 
   return (
     <div className="flex flex-col gap-4">
       {coverage.count > 0 ? (
         <AppCard padding="md" variant="warning" elevation="none" role="status">
           <AppText as="p" variant="body">
-            {coverage.count === 1 ? '1 till payment' : `${coverage.count} till payments`} ({money(coverage.amount)}) have no paid
-            bill yet, so they are not in paid bill revenue below.
+            {coverage.count === 1
+              ? `1 till payment (${coverageMoney}) has no paid bill yet, so it is not in paid bill revenue below.`
+              : `${coverage.count} till payments (${coverageMoney}) have no paid bill yet, so they are not in paid bill revenue below.`}
           </AppText>
         </AppCard>
       ) : null}
@@ -161,6 +171,7 @@ function LocationTable({ body, nameOf }: { body: MoneyReportBody; nameOf: (id: s
         </AppText>
         <div className="overflow-x-auto">
           <table className="w-full text-[13px]">
+            <caption className="sr-only">Money by location</caption>
             <thead>
               <tr className="text-left text-text-secondary">
                 <th scope="col" className="py-1 pr-4 font-medium">
@@ -181,7 +192,7 @@ function LocationTable({ body, nameOf }: { body: MoneyReportBody; nameOf: (id: s
                   </th>
                   {LOCATION_COLUMNS.map(([label, pick]) => (
                     <td key={label} className="py-1 pr-4 text-right tabular-nums">
-                      {formatMoneyAmount(pick(row.totals), body.currencyCode)}
+                      {formatMoneyAmount(pick(row.totals), row.currencyCode)}
                     </td>
                   ))}
                 </tr>
@@ -206,9 +217,12 @@ function MoneyDetail({
   const [rows, setRows] = useState<MoneyDetailRow[]>(initial.rows);
   const [cursor, setCursor] = useState<string | null>(initial.nextCursor);
   const [state, setState] = useState<'idle' | 'loading' | 'error'>('idle');
+  /** Bumped on every reset: a Load more that began before it must not append. */
+  const generation = useRef(0);
 
   // A new first page (a new filter or a refresh) starts the list again.
   useEffect(() => {
+    generation.current += 1;
     setRows(initial.rows);
     setCursor(initial.nextCursor);
     setState('idle');
@@ -216,9 +230,11 @@ function MoneyDetail({
 
   const more = () => {
     if (cursor === null) return;
+    const started = generation.current;
     setState('loading');
     loadMore(cursor).then(
       (page) => {
+        if (generation.current !== started) return;
         if (!page) {
           setState('error');
           return;
@@ -227,7 +243,9 @@ function MoneyDetail({
         setCursor(page.nextCursor);
         setState('idle');
       },
-      () => setState('error'),
+      () => {
+        if (generation.current === started) setState('error');
+      },
     );
   };
 
@@ -237,13 +255,18 @@ function MoneyDetail({
         <AppText as="h2" variant="subtitle" weight="medium">
           Detail
         </AppText>
-        {rows.length === 0 ? (
+        {initial.notStarted ? (
+          <AppText as="p" variant="body" tone="secondary">
+            These dates have not started yet.
+          </AppText>
+        ) : rows.length === 0 ? (
           <AppText as="p" variant="body" tone="secondary">
             Nothing was recorded for these dates.
           </AppText>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-[13px]">
+              <caption className="sr-only">Money detail rows</caption>
               <thead>
                 <tr className="text-left text-text-secondary">
                   {['Date', 'Time', 'Location', 'Type', 'Reference', 'Amount', 'Breakdown'].map((label) => (
@@ -269,6 +292,9 @@ function MoneyDetail({
             </table>
           </div>
         )}
+        <p aria-live="polite" className="sr-only">
+          {initial.notStarted ? '' : `Showing ${rows.length} ${rows.length === 1 ? 'row' : 'rows'}`}
+        </p>
         {state === 'error' ? (
           <div role="alert" className="flex items-center gap-3">
             <AppText as="p" variant="caption" tone="danger">

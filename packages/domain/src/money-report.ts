@@ -84,6 +84,8 @@ export interface MoneyTotals {
 
 export interface MoneyLocationTotals {
   locationId: string;
+  /** The single currency of this location's facts; `null` when there are none or they are mixed. */
+  currencyCode: string | null;
   totals: MoneyTotals;
 }
 
@@ -112,7 +114,7 @@ export interface MoneyCoverage {
    * Till payments recorded in the window whose visit has no paid bill snapshot.
    * Real money that is not (yet) in paid bill revenue.
    */
-  tillPaymentsWithoutBill: { count: number; amount: MoneyAmount };
+  tillPaymentsWithoutBill: { count: number; amount: MoneyAmount; currencyCode: string | null };
 }
 
 export type MoneyDetailRowKind = 'paid_bill' | 'retail_sale' | 'deposit_collected' | 'deposit_refunded';
@@ -146,19 +148,27 @@ export type MoneyDetailRow =
   | (MoneyDetailRowBase & { kind: 'deposit_refunded' });
 
 export interface MoneyDetailPage {
+  /** No scoped window has started: there can be no rows yet (not "nothing recorded"). */
+  notStarted: boolean;
   rows: MoneyDetailRow[];
   /** Opaque. Pass back as `cursor` with the same filter for the next page; `null` at the end. */
   nextCursor: string | null;
 }
 
+/**
+ * The first page carries the whole report. A continuation page (a request with a
+ * detail cursor) carries only the next detail rows: its summary, locations and
+ * coverage are not recomputed and are `null`/empty.
+ */
 export interface MoneyReportBody {
+  continuation: boolean;
   /** The single currency of the scoped facts; `null` when there are none or they are mixed. */
   currencyCode: string | null;
-  summary: MoneyTotals;
+  summary: MoneyTotals | null;
   /** One per resolved location, in the same order. Additive figures sum to the summary. */
   locations: MoneyLocationTotals[];
   notRecorded: MoneyNotRecordedCategory[];
-  coverage: MoneyCoverage;
+  coverage: MoneyCoverage | null;
   /** Present when the request asked for the detail view. */
   detail: MoneyDetailPage | null;
 }

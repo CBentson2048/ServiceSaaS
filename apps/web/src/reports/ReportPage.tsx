@@ -14,7 +14,7 @@ import { ApiRequestError, getReportOptions, getReportResult } from '../auth/api'
 import { useAuth } from '../auth/AuthProvider';
 import { AppButton, AppCard, AppText } from '../design';
 import { ReportControlBar, WEEK_START_UNCONFIGURED_MESSAGE } from './ReportControlBar';
-import { MoneyReport } from './money/MoneyReport';
+import { MoneyReport, isMoneyFirstPage, type MoneyFirstPage } from './money/MoneyReport';
 import { LOCAL_CALENDAR_NOTE, groupReportScope } from './reportScopeLine';
 import { useReportFilter, type ReportFilterWriteMode } from './useReportFilter';
 
@@ -260,9 +260,12 @@ export function ReportPage({ definition }: { definition: ReportDefinition }) {
         ) : null}
       </section>
 
-      {result.status === 'ready' && result.data.reportKey === 'money' && result.data.body ? (
+      {result.status === 'ready' &&
+      result.data.reportKey === 'money' &&
+      result.data.body &&
+      isMoneyFirstPage(result.data.body as MoneyReportBody) ? (
         <MoneyReport
-          body={result.data.body as MoneyReportBody}
+          body={result.data.body as MoneyFirstPage}
           locations={result.data.filter.locations}
           loadMore={(cursor) =>
             accessToken
