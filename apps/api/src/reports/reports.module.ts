@@ -7,6 +7,8 @@ import { reportSurfaceProvider } from './report-surface';
 import { ReportsController } from './reports.controller';
 import { MoneyReportService } from './money/money-report.service';
 import { MONEY_SOURCE, SupabaseMoneySource } from './money/money-source';
+import { CashUpReportService } from './cash-up/cash-up-report.service';
+import { CASH_UP_SOURCE, SupabaseCashUpSource } from './cash-up/cash-up-source';
 
 /** QLOOQO 10 report foundation (V1.1 Week 8 Ticket A). */
 @Module({
@@ -19,6 +21,8 @@ import { MONEY_SOURCE, SupabaseMoneySource } from './money/money-source';
     ReportAccessGuard,
     MoneyReportService,
     { provide: MONEY_SOURCE, useClass: SupabaseMoneySource },
+    CashUpReportService,
+    { provide: CASH_UP_SOURCE, useClass: SupabaseCashUpSource },
   ],
   exports: [ReportScopeService],
 })

@@ -9,6 +9,7 @@ import { ReportAvailabilityGuard } from './report-availability.guard';
 import { reportHttpError } from './report-errors';
 import { ReportScopeService } from './report-scope.service';
 import { MoneyReportService } from './money/money-report.service';
+import { CashUpReportService } from './cash-up/cash-up-report.service';
 
 /**
  * QLOOQO 10 report foundation routes.
@@ -27,6 +28,7 @@ export class ReportsController {
   constructor(
     private readonly scope: ReportScopeService,
     private readonly money: MoneyReportService,
+    private readonly cashUp: CashUpReportService,
   ) {}
 
   /** Takes no selection query: it cannot refuse a selection. */
@@ -54,6 +56,10 @@ export class ReportsController {
     const cursor = query.cursor ?? null;
     if (definition.key === 'money') {
       const body = await this.money.build(scope, { cursor });
+      return { reportKey: definition.key, filter: scope.resolved, body };
+    }
+    if (definition.key === 'cash-up') {
+      const body = await this.cashUp.build(scope, { cursor });
       return { reportKey: definition.key, filter: scope.resolved, body };
     }
     // Only a report with a paged detail view accepts a cursor.
