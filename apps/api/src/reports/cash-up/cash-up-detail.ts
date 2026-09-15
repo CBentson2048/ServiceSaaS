@@ -20,13 +20,15 @@ const LOCAL_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const FINGERPRINT = /^[0-9a-f]{16}$/;
 
 /**
- * The windows (and each location's local today, which decides which days have
- * started) a cursor was issued for. Detects staleness, not tampering (FNV-1a).
+ * What decides a page's rows and figures: each location's zone, local dates, UTC
+ * bounds and the last started day (which moves only while the window includes
+ * today — a past window's cursor survives midnight). Detects staleness, not
+ * tampering (FNV-1a).
  */
 export function cashUpFingerprint(windows: readonly CashUpWindow[]): string {
   const canonical = JSON.stringify(
     windows
-      .map((w) => [w.locationId, w.from, w.to, w.localToday])
+      .map((w) => [w.locationId, w.timezone, w.from, w.to, w.fromUtc, w.toUtcExclusive, w.to < w.localToday ? w.to : w.localToday])
       .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)),
   );
   let hash = 0xcbf29ce484222325n;

@@ -10,11 +10,13 @@ import type {
   CashUpDayRecord,
   CashUpDayRow,
   CashUpTakings,
+  CashUpThresholdCheck,
   CashUpTotals,
   CashUpUnavailableReason,
   LocalDate,
 } from '@sheer/domain';
-import { addDays } from '../../payroll/period-dates';
+import { inclusiveDayCount } from '@sheer/domain';
+import { addDays, utcToLocalDate } from '../../payroll/period-dates';
 import type { RetailSaleRow, WindowTillPaymentRow } from '../money/money-source';
 import { localDateTime } from '../money/money-values';
 import type { CashUpRecordRow } from './cash-up-source';
@@ -28,6 +30,9 @@ export interface CashUpWindow {
   localToday: LocalDate;
   from: LocalDate;
   to: LocalDate;
+  /** Ticket A's UTC bounds for the whole window. */
+  fromUtc: string;
+  toUtcExclusive: string;
 }
 
 export interface CashUpLocationContext {
@@ -57,10 +62,14 @@ const isAvailable = (amount: CashUpAmount): amount is { availability: 'available
 export const dayKey = (locationId: string, date: LocalDate): string => `${locationId}:${date}`;
 
 /** Local dates from `from` to the earlier of `to` and today, newest first; and how many later dates are not started. */
-export function locationDays(window: CashUpWindow): { started: LocalDate[]; notStarted: number } {
+export function locationDays(window: Pick<CashUpWindow, 'from' | 'to' | 'localToday'>): { started: LocalDate[]; notStarted: number } {
   const started: LocalDate[] = [];
   let notStarted = 0;
-  for (let date = window.from; date <= window.to; date = addDays(date, 1)) {
+  // Count the days rather than compare date strings: the day after 9999-12-31 is
+  // "10000-01-01", which sorts before it. Ticket A caps a range at 366 days.
+  const days = inclusiveDayCount(window.from, window.to);
+  for (let index = 0; index < days; index += 1) {
+    const date = addDays(window.from, index);
     if (date <= window.localToday) started.push(date);
     else notStarted += 1;
   }
@@ -79,7 +88,8 @@ export function bucketTakings(
 ): Map<string, DayTakings> {
   const days = new Map<string, DayTakings>();
   const day = (locationId: string, at: string): DayTakings => {
-    const key = dayKey(locationId, localDateTime(timezoneOf(locationId), at).localDate);
+    // Instant keys carry microseconds; the local date needs only milliseconds.
+    const key = dayKey(locationId, utcToLocalDate(timezoneOf(locationId), Date.parse(`${at.slice(0, 23)}Z`)));
     let takings = days.get(key);
     if (!takings) days.set(key, (takings = emptyTakings()));
     return takings;
@@ -190,15 +200,18 @@ export function dayFacts(
   const cash = tender(record.expectedCashCents, record.countedCashCents);
   const card = tender(record.expectedCardCents, record.countedCardCents);
   const variance = signed ? stored(record.varianceCents, expectedBlock) : unavailable('not_signed_off');
-  const outsideThreshold =
-    signed && isAvailable(variance) && ctx.thresholdCents !== null ? Math.abs(variance.cents) > ctx.thresholdCents : null;
+  let thresholdCheck: CashUpThresholdCheck;
+  if (!signed) thresholdCheck = 'not_signed_off';
+  else if (!isAvailable(variance)) thresholdCheck = 'not_comparable';
+  else if (ctx.thresholdCents === null) thresholdCheck = 'no_threshold';
+  else thresholdCheck = Math.abs(variance.cents) > ctx.thresholdCents ? 'outside' : 'within';
 
   const recordFigures: CashUpDayRecord = {
     openingFloat: entered(record.openingFloatCents),
     cash,
     card,
     variance,
-    outsideThreshold,
+    thresholdCheck,
     pettyCashOut: entered(record.pettyCashOutCents),
     refundsEntered: entered(record.refundsCents),
     voidsEntered: entered(record.voidsCents),
@@ -234,11 +247,13 @@ export function locationTotals(
   notStarted: number,
   currencies: ReadonlySet<string>,
 ): CashUpTotals {
+  const past = days.filter((d) => !d.row.isToday);
   const counts = {
     started: days.length,
     signedOff: days.filter((d) => d.row.status === 'signed_off').length,
-    open: days.filter((d) => d.row.status === 'open').length,
-    none: days.filter((d) => d.row.status === 'none').length,
+    open: past.filter((d) => d.row.status === 'open').length,
+    none: past.filter((d) => d.row.status === 'none').length,
+    inProgress: days.filter((d) => d.row.isToday && d.row.status !== 'signed_off').length,
     notStarted,
   };
   if (days.length === 0) {
@@ -255,6 +270,7 @@ export function locationTotals(
         voidsEntered: NOT_STARTED,
         daysOutsideThreshold: zeroCount,
         daysUnavailable: 0,
+        unavailableReasons: [],
       },
       sourceCheck: { daysChanged: zeroCount, cashChange: NOT_STARTED, cardChange: NOT_STARTED },
       withoutSignOff: { expectedCash: NOT_STARTED, expectedCard: NOT_STARTED },
@@ -274,18 +290,15 @@ export function locationTotals(
     return available(included.reduce((sum, d) => sum + (pick(d.row) as { cents: number }).cents, 0));
   };
   const record = (row: CashUpDayRow) => row.record as CashUpDayRecord;
-  const signedOffDays = days.filter((d) => d.row.status === 'signed_off');
-  const enteredSum = (pick: (r: CashUpDayRecord) => CashUpAmount): CashUpAmount => {
-    if (block !== null) return unavailable(block);
-    const values = signedOffDays.map((d) => pick(record(d.row))).filter(isAvailable);
-    if (values.length === 0) return unavailable(counts.signedOff === 0 ? 'not_signed_off' : recordedEmpty);
-    return available(values.reduce((sum, a) => sum + a.cents, 0));
-  };
+  // Every recorded figure — tills, petty cash and manual entries — covers the same days.
+  const countOver = (count: () => number, notCountable: CashUpUnavailableReason | null): CashUpCount =>
+    notCountable !== null ? { availability: 'unavailable', reason: notCountable } : { availability: 'available', count: count() };
+  const nothingJudged: CashUpUnavailableReason | null = block ?? (included.length === 0 ? recordedEmpty : null);
 
-  const daysOutsideThreshold: CashUpCount =
-    included.length > 0 && ctx.thresholdCents === null
-      ? { availability: 'unavailable', reason: 'threshold_not_set' }
-      : { availability: 'available', count: included.filter((d) => record(d.row).outsideThreshold === true).length };
+  const daysOutsideThreshold = countOver(
+    () => included.filter((d) => record(d.row).thresholdCheck === 'outside').length,
+    nothingJudged ?? (ctx.thresholdCents === null ? 'threshold_not_set' : null),
+  );
 
   const changes = included.map((d) => d.row.changeSinceSignOff as { cash: CashUpAmount; card: CashUpAmount });
   const changeSum = (pick: (c: { cash: CashUpAmount; card: CashUpAmount }) => CashUpAmount): CashUpAmount => {
@@ -293,17 +306,15 @@ export function locationTotals(
     if (included.length === 0) return unavailable(recordedEmpty);
     return available(changes.reduce((sum, c) => sum + (pick(c) as { cents: number }).cents, 0));
   };
-  const daysChanged: CashUpCount =
-    block !== null
-      ? { availability: 'unavailable', reason: block }
-      : {
-          availability: 'available',
-          count: changes.filter((c) => (c.cash as { cents: number }).cents !== 0 || (c.card as { cents: number }).cents !== 0).length,
-        };
+  const daysChanged = countOver(
+    () => changes.filter((c) => (c.cash as { cents: number }).cents !== 0 || (c.card as { cents: number }).cents !== 0).length,
+    nothingJudged,
+  );
 
   const sourceSum = (rows: readonly DayFacts[], pick: (s: RowSources) => CashUpAmount): CashUpAmount =>
     block !== null ? unavailable(block) : available(rows.reduce((sum, d) => sum + (pick(d.row.sources) as { cents: number }).cents, 0));
   const unsigned = days.filter((d) => d.row.status !== 'signed_off');
+  const unavailableReasons = [...new Set(excluded.map((d) => d.excludedReason as CashUpUnavailableReason))];
 
   return {
     days: counts,
@@ -319,11 +330,12 @@ export function locationTotals(
         variance: recordedSum((r) => record(r).card.variance),
       },
       variance: recordedSum((r) => record(r).variance),
-      pettyCashOut: enteredSum((r) => r.pettyCashOut),
-      refundsEntered: enteredSum((r) => r.refundsEntered),
-      voidsEntered: enteredSum((r) => r.voidsEntered),
+      pettyCashOut: recordedSum((r) => record(r).pettyCashOut),
+      refundsEntered: recordedSum((r) => record(r).refundsEntered),
+      voidsEntered: recordedSum((r) => record(r).voidsEntered),
       daysOutsideThreshold,
       daysUnavailable: excluded.length,
+      unavailableReasons,
     },
     sourceCheck: { daysChanged, cashChange: changeSum((c) => c.cash), cardChange: changeSum((c) => c.card) },
     withoutSignOff: {
@@ -343,10 +355,11 @@ function combineAmounts(amounts: readonly CashUpAmount[], currencies: ReadonlySe
   return reason ? unavailable(reason.reason) : NOT_STARTED;
 }
 
+/** Like money: the locations that can be counted are added; the others are disclosed by their own figures. */
 function combineCounts(counts: readonly CashUpCount[]): CashUpCount {
-  const missing = counts.find((c) => c.availability === 'unavailable');
-  if (missing) return missing;
-  return { availability: 'available', count: counts.reduce((sum, c) => sum + (c as { count: number }).count, 0) };
+  const values = counts.filter((c): c is { availability: 'available'; count: number } => c.availability === 'available');
+  if (values.length > 0) return { availability: 'available', count: values.reduce((sum, c) => sum + c.count, 0) };
+  return counts[0] ?? { availability: 'available', count: 0 };
 }
 
 /** The summary across locations. Money in more than one currency is not totalled. */
@@ -364,6 +377,7 @@ export function combineTotals(all: readonly CashUpTotals[], currencies: Readonly
       signedOff: sum((t) => t.days.signedOff),
       open: sum((t) => t.days.open),
       none: sum((t) => t.days.none),
+      inProgress: sum((t) => t.days.inProgress),
       notStarted: sum((t) => t.days.notStarted),
     },
     recorded: {
@@ -383,6 +397,7 @@ export function combineTotals(all: readonly CashUpTotals[], currencies: Readonly
       voidsEntered: money((t) => t.recorded.voidsEntered),
       daysOutsideThreshold: combineCounts(pick((t) => t.recorded.daysOutsideThreshold)),
       daysUnavailable: sum((t) => t.recorded.daysUnavailable),
+      unavailableReasons: [...new Set(all.flatMap((t) => t.recorded.unavailableReasons))],
     },
     sourceCheck: {
       daysChanged: combineCounts(pick((t) => t.sourceCheck.daysChanged)),

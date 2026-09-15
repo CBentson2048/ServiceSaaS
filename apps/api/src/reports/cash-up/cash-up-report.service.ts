@@ -58,6 +58,8 @@ export class CashUpReportService {
       localToday: w.localToday,
       from: w.from,
       to: w.to,
+      fromUtc: w.fromUtc,
+      toUtcExclusive: w.toUtcExclusive,
     }));
     const fingerprint = cashUpFingerprint(windows);
     const position = request.cursor === null ? null : decodeCashUpCursor(request.cursor, fingerprint);
@@ -96,6 +98,7 @@ export class CashUpReportService {
           location.ctx.thresholdCents === null
             ? ({ availability: 'unavailable', reason: 'threshold_not_set' } as const)
             : ({ availability: 'available', cents: location.ctx.thresholdCents } as const),
+        thresholdCurrencyCode: location.ctx.configuredCurrency,
         totals: locationTotal,
       };
     });

@@ -7,6 +7,7 @@ import type {
   CashUpAmount,
   CashUpCount,
   CashUpDayRow,
+  CashUpThresholdCheck,
   CashUpUnavailableReason,
   MoneyAmount,
   MoneyUnavailableReason,
@@ -23,7 +24,7 @@ const CASH_UP_TEXT: Record<CashUpOnlyReason, string> = {
 };
 
 function isCashUpOnly(reason: CashUpUnavailableReason): reason is CashUpOnlyReason {
-  return reason in CASH_UP_TEXT;
+  return Object.prototype.hasOwnProperty.call(CASH_UP_TEXT, reason);
 }
 
 /** `currencyCode` is the figure's own currency, from the API; there is no default. */
@@ -54,7 +55,30 @@ export function dayStatusLabel(row: Pick<CashUpDayRow, 'status' | 'isToday'>): s
   }
 }
 
-export function thresholdLabel(outsideThreshold: boolean | null): string {
-  if (outsideThreshold === null) return '—';
-  return outsideThreshold ? 'Outside' : 'Within';
+const THRESHOLD_TEXT: Record<CashUpThresholdCheck, string> = {
+  within: 'Within',
+  outside: 'Outside',
+  not_signed_off: 'Not signed off',
+  no_threshold: 'No threshold set',
+  not_comparable: 'Not comparable',
+};
+
+export function thresholdLabel(check: CashUpThresholdCheck): string {
+  return THRESHOLD_TEXT[check];
+}
+
+const EXCLUDED_TEXT: Partial<Record<CashUpUnavailableReason, string>> = {
+  london_trading_day: 'End of Day used a London trading day for the location',
+  currency_mismatch: 'the cash-up is stored in another currency than the location’s',
+  currency_not_recorded: 'the location has no currency set',
+  mixed_currencies: 'the location’s takings are in more than one currency',
+  not_captured: 'a stored figure is missing',
+};
+
+/** Why signed-off days were left out of the recorded figures, in words. */
+export function excludedDaysNote(days: number, reasons: readonly CashUpUnavailableReason[]): string {
+  const why = reasons.map((reason) => EXCLUDED_TEXT[reason] ?? 'a figure can’t be stated').join('; ');
+  return days === 1
+    ? `1 signed-off day is not included in these figures: ${why}.`
+    : `${days} signed-off days are not included in these figures: ${why}.`;
 }

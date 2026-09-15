@@ -15,7 +15,15 @@ const BIZ = 'biz-1';
 const LONDON = { id: '42000000-0000-4000-8000-000000000001', name: 'London', timezone: 'Europe/London' };
 const TOKYO = { id: '42000000-0000-4000-8000-000000000002', name: 'Tokyo', timezone: 'Asia/Tokyo' };
 const DETAIL = (from: string, to: string): ReportFilter => ({ preset: 'custom', from, to, locationIds: [], staffProfileIds: [], view: 'detail' });
-const WINDOW = { locationId: LONDON.id, timezone: 'Europe/London', localToday: '2026-09-14', from: '2026-09-01', to: '2026-09-14' };
+const WINDOW = {
+  locationId: LONDON.id,
+  timezone: 'Europe/London',
+  localToday: '2026-09-14',
+  from: '2026-09-01',
+  to: '2026-09-14',
+  fromUtc: '2026-08-31T23:00:00.000Z',
+  toUtcExclusive: '2026-09-14T23:00:00.000Z',
+};
 
 function expectCursorInvalid(fn: () => unknown): void {
   try {
@@ -36,10 +44,20 @@ describe('cash-up cursor', () => {
     expect(decodeCashUpCursor(encodeCashUpCursor(position, FP), FP)).toEqual(position);
   });
 
-  it('is refused once the location’s local today moves on, or the windows change', () => {
+  it('is refused once a window that includes today moves to a new day, or the windows or zone change', () => {
     const cursor = encodeCashUpCursor({ localDate: '2026-09-10', locationId: LONDON.id }, FP);
-    expectCursorInvalid(() => decodeCashUpCursor(cursor, cashUpFingerprint([{ ...WINDOW, localToday: '2026-09-15' }])));
+    const current = { ...WINDOW, to: '2026-09-30' };
+    const currentCursor = encodeCashUpCursor({ localDate: '2026-09-10', locationId: LONDON.id }, cashUpFingerprint([current]));
+    expectCursorInvalid(() => decodeCashUpCursor(currentCursor, cashUpFingerprint([{ ...current, localToday: '2026-09-15' }])));
     expectCursorInvalid(() => decodeCashUpCursor(cursor, cashUpFingerprint([{ ...WINDOW, from: '2026-09-02' }])));
+    expectCursorInvalid(() => decodeCashUpCursor(cursor, cashUpFingerprint([{ ...WINDOW, timezone: 'Europe/Dublin' }])));
+    expectCursorInvalid(() => decodeCashUpCursor(cursor, cashUpFingerprint([{ ...WINDOW, toUtcExclusive: '2026-09-15T00:00:00.000Z' }])));
+  });
+
+  it('survives midnight for a window that is already in the past', () => {
+    const past = { ...WINDOW, localToday: '2026-09-20' };
+    const cursor = encodeCashUpCursor({ localDate: '2026-09-10', locationId: LONDON.id }, cashUpFingerprint([past]));
+    expect(decodeCashUpCursor(cursor, cashUpFingerprint([{ ...past, localToday: '2026-09-21' }]))).toEqual({ localDate: '2026-09-10', locationId: LONDON.id });
   });
 
   it('refuses anything malformed', () => {
@@ -134,20 +152,52 @@ describe('detail paging over many days', () => {
     const before = sources.cashUp.reads.length;
     const next = await page(sources, first.detail!.nextCursor);
     const recordReads = sources.cashUp.reads.slice(before).filter((r) => r.method === 'records');
+    expect(recordReads.length).toBeGreaterThan(0);
     expect(recordReads.every((r) => r.fromDate === '2026-08-01' && r.toDate === '2026-08-06')).toBe(true);
     expect(next.detail!.rows.map((r) => r.localDate)).toEqual(['2026-08-06', '2026-08-06', '2026-08-05', '2026-08-05', '2026-08-04', '2026-08-04', '2026-08-03', '2026-08-03', '2026-08-02', '2026-08-02', '2026-08-01', '2026-08-01']);
   });
 
-  it('refuses a cursor from before the location’s local midnight, and a cursor without the detail view', async () => {
+  it('refuses a cursor from before local midnight for a range that includes today, and a cursor without the detail view', async () => {
     const sources = { money: new MemoryMoneySource(emptyMoney()), cashUp: new MemoryCashUpSource(ledger()) };
+    const thisMonth = (asOf: Date) =>
+      new CashUpReportService(sources.money, sources.cashUp).build(moneyScope(BIZ, [LONDON, TOKYO], DETAIL('2026-07-01', '2026-09-30'), asOf), {
+        cursor: null,
+      });
+    const current = await thisMonth(AS_OF);
+    const continueAt = (asOf: Date) =>
+      new CashUpReportService(sources.money, sources.cashUp).build(moneyScope(BIZ, [LONDON, TOKYO], DETAIL('2026-07-01', '2026-09-30'), asOf), {
+        cursor: current.detail!.nextCursor,
+      });
+    // Tokyo is on 15 Sep at 15:30Z: its last started day moved, so the page set changed.
+    await expect(continueAt(new Date('2026-09-14T15:30:00Z'))).rejects.toMatchObject({ response: { code: 'report_cursor_invalid' } });
+    // August is entirely past: its cursor still pages after Tokyo's midnight.
     const first = await page(sources, null);
-    // Tokyo is on 15 Sep an hour later: its local today moved, so the page set may have changed.
-    await expect(page(sources, first.detail!.nextCursor, new Date('2026-09-14T15:30:00Z'))).rejects.toMatchObject({
-      response: { code: 'report_cursor_invalid' },
-    });
+    await expect(page(sources, first.detail!.nextCursor, new Date('2026-09-14T15:30:00Z'))).resolves.toMatchObject({ continuation: true });
     const summaryScope = moneyScope(BIZ, [LONDON], { ...DETAIL('2026-08-01', '2026-08-31'), view: 'summary' }, AS_OF);
     await expect(new CashUpReportService(sources.money, sources.cashUp).build(summaryScope, { cursor: first.detail!.nextCursor })).rejects.toMatchObject({
       response: { code: 'report_cursor_invalid' },
+    });
+  });
+
+  it('a day reads the same on a continuation page as on a first page: takings, currencies and who signed off', async () => {
+    const money = emptyMoney();
+    for (let i = 1; i <= 31; i += 1) {
+      const day = String(i).padStart(2, '0');
+      money.payments.push({ id: `46000000-0000-4000-8000-${String(i).padStart(12, '0')}`, businessId: BIZ, visitId: `47000000-0000-4000-8000-${String(i).padStart(12, '0')}`, locationId: LONDON.id, at: instant(`2026-08-${day}T10:00:00Z`), method: 'cash', amountCents: 100 * i, currencyCode: 'GBP' });
+    }
+    const cashUps = ledger();
+    const signer = '48000000-0000-4000-8000-000000000001';
+    cashUps.users[signer] = 'Ava Stone';
+    for (const r of cashUps.records) r.signedOffByUserProfileId = signer;
+    const sources = { money: new MemoryMoneySource(money), cashUp: new MemoryCashUpSource(cashUps) };
+    const first = await page(sources, null);
+    const continuation = await page(sources, first.detail!.nextCursor);
+    const early = await new CashUpReportService(sources.money, sources.cashUp).build(moneyScope(BIZ, [LONDON, TOKYO], DETAIL('2026-08-01', '2026-08-06'), AS_OF), { cursor: null });
+    expect(continuation.detail!.rows).toEqual(early.detail!.rows);
+    expect(continuation.detail!.rows.find((r) => r.rowKey === `${LONDON.id}:2026-08-03`)).toMatchObject({
+      sources: { expectedCash: { availability: 'available', cents: 300 } },
+      record: { signedOffBy: 'Ava Stone' },
+      changeSinceSignOff: { cash: { availability: 'available', cents: 300 } },
     });
   });
 

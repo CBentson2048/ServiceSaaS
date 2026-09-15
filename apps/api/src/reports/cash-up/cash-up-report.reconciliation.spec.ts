@@ -159,8 +159,9 @@ describe('R7 Cash Up reconciles to the source ledger', () => {
     const london = location(body, LONDON);
     expect(london.currencyCode).toBe('GBP');
     expect(london.threshold).toEqual(p(500));
+    expect(london.thresholdCurrencyCode).toBe('GBP');
     expect(london.totals).toEqual({
-      days: { started: 3, signedOff: 2, open: 1, none: 0, notStarted: 1 },
+      days: { started: 3, signedOff: 2, open: 0, none: 0, inProgress: 1, notStarted: 1 },
       recorded: {
         cash: { expected: p(5000), counted: p(5500), variance: p(500) },
         card: { expected: p(26500), counted: p(26500), variance: p(0) },
@@ -170,6 +171,7 @@ describe('R7 Cash Up reconciles to the source ledger', () => {
         voidsEntered: p(0),
         daysOutsideThreshold: count(1),
         daysUnavailable: 0,
+        unavailableReasons: [],
       },
       sourceCheck: { daysChanged: count(1), cashChange: p(500), cardChange: p(0) },
       withoutSignOff: { expectedCash: p(900), expectedCard: p(3000) },
@@ -180,12 +182,16 @@ describe('R7 Cash Up reconciles to the source ledger', () => {
   it('New York: its End of Day snapshot was on a London day, so recorded figures are unavailable, never compared', async () => {
     const { body } = await build();
     const ny = location(body, NEW_YORK).totals;
-    expect(ny.days).toEqual({ started: 3, signedOff: 1, open: 0, none: 2, notStarted: 1 });
+    expect(ny.days).toEqual({ started: 3, signedOff: 1, open: 0, none: 1, inProgress: 1, notStarted: 1 });
     expect(ny.recorded.cash).toEqual({ expected: u('london_trading_day'), counted: u('london_trading_day'), variance: u('london_trading_day') });
     expect(ny.recorded.variance).toEqual(u('london_trading_day'));
-    expect(ny.recorded.pettyCashOut).toEqual(p(300));
+    // Every recorded figure covers the same days, so petty cash is left out with the rest.
+    expect(ny.recorded.pettyCashOut).toEqual(u('london_trading_day'));
     expect(ny.recorded.daysUnavailable).toBe(1);
-    expect(ny.sourceCheck).toEqual({ daysChanged: count(0), cashChange: u('london_trading_day'), cardChange: u('london_trading_day') });
+    expect(ny.recorded.unavailableReasons).toEqual(['london_trading_day']);
+    // Nothing could be judged: the counts are unavailable, never 0.
+    expect(ny.recorded.daysOutsideThreshold).toEqual(u('london_trading_day'));
+    expect(ny.sourceCheck).toEqual({ daysChanged: u('london_trading_day'), cashChange: u('london_trading_day'), cardChange: u('london_trading_day') });
     expect(ny.withoutSignOff).toEqual({ expectedCash: p(0), expectedCard: p(0) });
   });
 
@@ -193,7 +199,10 @@ describe('R7 Cash Up reconciles to the source ledger', () => {
     const { body } = await build();
     const empty = location(body, EMPTY);
     expect(empty.threshold).toEqual(u('threshold_not_set'));
-    expect(empty.totals.days).toEqual({ started: 3, signedOff: 0, open: 0, none: 3, notStarted: 1 });
+    // Today (the 14th) is in progress, not missed.
+    expect(empty.totals.days).toEqual({ started: 3, signedOff: 0, open: 0, none: 2, inProgress: 1, notStarted: 1 });
+    expect(empty.totals.recorded.daysOutsideThreshold).toEqual(u('not_signed_off'));
+    expect(empty.totals.sourceCheck.daysChanged).toEqual(u('not_signed_off'));
     expect(empty.totals.recorded.variance).toEqual(u('not_signed_off'));
     expect(empty.totals.recorded.cash.counted).toEqual(u('not_signed_off'));
     expect(empty.totals.withoutSignOff).toEqual({ expectedCash: p(0), expectedCard: p(0) });
@@ -203,16 +212,17 @@ describe('R7 Cash Up reconciles to the source ledger', () => {
     const { body } = await build();
     expect(body.currencyCode).toBe('GBP');
     expect(body.summary).toEqual({
-      days: { started: 9, signedOff: 3, open: 1, none: 5, notStarted: 3 },
+      days: { started: 9, signedOff: 3, open: 0, none: 3, inProgress: 3, notStarted: 3 },
       recorded: {
         cash: { expected: p(5000), counted: p(5500), variance: p(500) },
         card: { expected: p(26500), counted: p(26500), variance: p(0) },
         variance: p(500),
-        pettyCashOut: p(800),
+        pettyCashOut: p(500),
         refundsEntered: p(1200),
         voidsEntered: p(0),
         daysOutsideThreshold: count(1),
         daysUnavailable: 1,
+        unavailableReasons: ['london_trading_day'],
       },
       sourceCheck: { daysChanged: count(1), cashChange: p(500), cardChange: p(0) },
       withoutSignOff: { expectedCash: p(900), expectedCard: p(3000) },
@@ -242,7 +252,7 @@ describe('R7 Cash Up reconciles to the source ledger', () => {
         cash: { expected: p(4000), counted: p(3800), variance: p(-200) },
         card: { expected: p(26500), counted: p(26500), variance: p(0) },
         variance: p(-200),
-        outsideThreshold: false,
+        thresholdCheck: 'within',
         pettyCashOut: p(500),
         refundsEntered: p(0),
         voidsEntered: p(0),
@@ -255,7 +265,7 @@ describe('R7 Cash Up reconciles to the source ledger', () => {
     });
 
     const thirteenth = row(`${LONDON}:2026-09-13`);
-    expect(thirteenth.record?.outsideThreshold).toBe(true);
+    expect(thirteenth.record?.thresholdCheck).toBe('outside');
     expect(thirteenth.changeSinceSignOff).toEqual({ cash: p(500), card: p(0) });
     expect(thirteenth.sources).toEqual({ expectedCash: p(1500), expectedCard: p(0), retailOther: p(300), retailNotRecorded: p(200) });
 
@@ -264,11 +274,14 @@ describe('R7 Cash Up reconciles to the source ledger', () => {
     expect(today.record?.cash).toEqual({ expected: p(0), counted: p(2000), variance: u('not_signed_off') });
     expect(today.record?.card.counted).toEqual(u('not_captured'));
     expect(today.record?.variance).toEqual(u('not_signed_off'));
+    expect(today.record?.thresholdCheck).toBe('not_signed_off');
     expect(today.sources.expectedCash).toEqual(p(900));
 
     const ny = row(`${NEW_YORK}:2026-09-13`);
     expect(ny.record?.cash).toEqual({ expected: u('london_trading_day'), counted: p(5100), variance: u('london_trading_day') });
     expect(ny.record?.signedOff).toEqual({ localDate: '2026-09-13', localTime: '19:00' });
+    expect(ny.record?.thresholdCheck).toBe('not_comparable');
+    expect(ny.record?.pettyCashOut).toEqual(p(300));
     expect(ny.sources).toMatchObject({ expectedCash: p(5000), expectedCard: p(700) });
 
     expect(row(`${EMPTY}:2026-09-13`)).toMatchObject({ status: 'none', record: null, changeSinceSignOff: null });
@@ -305,7 +318,8 @@ describe('currency and thresholds', () => {
     expect(london.recorded.cash).toEqual({ expected: p(1000), counted: p(1700), variance: p(700) });
     const twelfth = body.detail!.rows.find((r) => r.localDate === '2026-09-12')!;
     expect(twelfth.record?.cash.counted).toEqual(u('currency_mismatch'));
-    expect(twelfth.record?.outsideThreshold).toBeNull();
+    expect(twelfth.record?.thresholdCheck).toBe('not_comparable');
+    expect(london.recorded.unavailableReasons).toEqual(['currency_mismatch']);
   });
 
   it('signed-off days at a location with no threshold setting: days outside threshold is unavailable, not counted against £5', async () => {
@@ -315,7 +329,7 @@ describe('currency and thresholds', () => {
     expect(location(body, EMPTY).totals.recorded.daysOutsideThreshold).toEqual(u('threshold_not_set'));
     expect(location(body, EMPTY).totals.recorded.variance).toEqual(p(-2000));
     // The day itself is not judged against an assumed threshold either.
-    expect(body.detail!.rows.find((r) => r.localDate === '2026-09-12')!.record!.outsideThreshold).toBeNull();
+    expect(body.detail!.rows.find((r) => r.localDate === '2026-09-12')!.record!.thresholdCheck).toBe('no_threshold');
   });
 });
 
@@ -323,7 +337,7 @@ describe('availability', () => {
   it('a range that has not started reads nothing and shows Not started, never zeros', async () => {
     const future: ReportFilter = { ...RANGE, from: '2026-10-01', to: '2026-10-02', view: 'detail' };
     const { body, moneySource, cashUpSource } = await build({ filter: future });
-    expect(body.summary.days).toEqual({ started: 0, signedOff: 0, open: 0, none: 0, notStarted: 6 });
+    expect(body.summary.days).toEqual({ started: 0, signedOff: 0, open: 0, none: 0, inProgress: 0, notStarted: 6 });
     expect(body.summary.recorded.variance).toEqual({ availability: 'not_started' });
     expect(body.summary.withoutSignOff.expectedCash).toEqual({ availability: 'not_started' });
     expect(body.detail).toEqual({ notStarted: true, rows: [], nextCursor: null });

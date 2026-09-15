@@ -19,7 +19,7 @@ const locations: ResolvedReportLocation[] = [
 
 function totals(overrides: Partial<CashUpTotals> = {}): CashUpTotals {
   return {
-    days: { started: 3, signedOff: 2, open: 1, none: 0, notStarted: 1 },
+    days: { started: 3, signedOff: 2, open: 0, none: 0, inProgress: 1, notStarted: 1 },
     recorded: {
       cash: { expected: a(5000), counted: a(5500), variance: a(500) },
       card: { expected: a(26500), counted: a(26500), variance: a(0) },
@@ -29,6 +29,7 @@ function totals(overrides: Partial<CashUpTotals> = {}): CashUpTotals {
       voidsEntered: a(0),
       daysOutsideThreshold: { availability: 'available', count: 1 },
       daysUnavailable: 0,
+      unavailableReasons: [],
     },
     sourceCheck: { daysChanged: { availability: 'available', count: 1 }, cashChange: a(500), cardChange: a(0) },
     withoutSignOff: { expectedCash: a(900), expectedCard: a(3000) },
@@ -38,16 +39,17 @@ function totals(overrides: Partial<CashUpTotals> = {}): CashUpTotals {
 }
 
 const nyTotals = totals({
-  days: { started: 3, signedOff: 1, open: 0, none: 2, notStarted: 1 },
+  days: { started: 3, signedOff: 1, open: 0, none: 1, inProgress: 1, notStarted: 1 },
   recorded: {
     cash: { expected: u('london_trading_day'), counted: u('london_trading_day'), variance: u('london_trading_day') },
     card: { expected: u('london_trading_day'), counted: u('london_trading_day'), variance: u('london_trading_day') },
     variance: u('london_trading_day'),
-    pettyCashOut: a(300),
-    refundsEntered: a(0),
-    voidsEntered: a(0),
-    daysOutsideThreshold: { availability: 'unavailable', reason: 'threshold_not_set' },
+    pettyCashOut: u('london_trading_day'),
+    refundsEntered: u('london_trading_day'),
+    voidsEntered: u('london_trading_day'),
+    daysOutsideThreshold: { availability: 'unavailable', reason: 'london_trading_day' },
     daysUnavailable: 1,
+    unavailableReasons: ['london_trading_day', 'currency_mismatch'],
   },
 });
 
@@ -63,7 +65,7 @@ const signedRow = (date: string, variance: number): CashUpDayRow => ({
     cash: { expected: a(4000), counted: a(4000 + variance), variance: a(variance) },
     card: { expected: a(26500), counted: a(26500), variance: a(0) },
     variance: a(variance),
-    outsideThreshold: false,
+    thresholdCheck: 'within',
     pettyCashOut: a(500),
     refundsEntered: a(0),
     voidsEntered: a(0),
@@ -92,8 +94,8 @@ const body = (overrides: Partial<CashUpFirstPage> = {}): CashUpFirstPage => ({
   currencyCode: 'GBP',
   summary: totals(),
   locations: [
-    { locationId: LONDON, currencyCode: 'GBP', threshold: a(500), totals: totals() },
-    { locationId: NEW_YORK, currencyCode: 'GBP', threshold: u('threshold_not_set'), totals: nyTotals },
+    { locationId: LONDON, currencyCode: 'GBP', threshold: a(500), thresholdCurrencyCode: 'GBP', totals: totals() },
+    { locationId: NEW_YORK, currencyCode: null, threshold: a(1000), thresholdCurrencyCode: 'USD', totals: nyTotals },
   ],
   detail: null,
   ...overrides,
@@ -129,17 +131,27 @@ describe('CashUpReport summary', () => {
     const recorded = section('Signed-off days, as recorded');
     expect(within(recorded).getByRole('rowheader', { name: 'Card' }).parentElement!.textContent).not.toMatch(/£/);
     expect(valueOf(recorded, 'Variance, both tenders')).toBe('Not comparable (London trading day)');
-    expect(valueOf(recorded, 'Days outside threshold')).toBe('No threshold set');
-    expect(recorded.textContent).toContain('1 signed-off day is not included');
+    expect(valueOf(recorded, 'Days outside threshold')).toBe('Not comparable (London trading day)');
+    expect(valueOf(recorded, 'Petty cash out')).toBe('Not comparable (London trading day)');
+    // The note gives the real reasons, not always the London day.
+    expect(recorded.textContent).toContain(
+      '1 signed-off day is not included in these figures: End of Day used a London trading day for the location; the cash-up is stored in another currency than the location’s.',
+    );
   });
 
-  it('lists each location with its own currency, day counts and today’s threshold', () => {
+  it('lists each location with its own figures; the threshold is in the location’s configured currency even when its figures are not', () => {
     render(<CashUpReport body={body()} locations={locations} loadMore={jest.fn()} />);
     const table = section('By location');
-    expect(within(table).getByRole('rowheader', { name: 'London' }).parentElement!.textContent).toBe('London210£5.001£5.00');
+    expect(within(table).getByRole('rowheader', { name: 'London' }).parentElement!.textContent).toBe('London200£5.001£5.00');
     expect(within(table).getByRole('rowheader', { name: 'New York' }).parentElement!.textContent).toBe(
-      'New York102Not comparable (London trading day)No threshold setNo threshold set',
+      'New York101Not comparable (London trading day)Not comparable (London trading day)US$10.00',
     );
+  });
+
+  it('counts today as in progress, not as a missed day', () => {
+    render(<CashUpReport body={body()} locations={locations} loadMore={jest.fn()} />);
+    expect(valueOf(section('Days'), 'Today, not signed off yet')).toBe('1');
+    expect(valueOf(section('Days'), 'No cash-up recorded')).toBe('0');
   });
 });
 
@@ -153,11 +165,35 @@ describe('CashUpReport detail', () => {
     expect(signed.textContent).toContain('-£2.00');
     expect(signed.textContent).toContain('12 Sept 2026 20:30 · Ava Stone');
     expect(signed.textContent).toContain('Within');
+    expect(signed.textContent).toContain('£100.00'); // opening float
+    expect(signed.textContent).toContain('None entered'); // refunds and voids
     const today = within(detail).getByText('Not cashed up yet').closest('tr')!;
     // Takings in the row's own currency; no recorded figures invented.
     expect(today.textContent).toContain('US$7.00');
     expect(today.textContent).not.toMatch(/£/);
     expect(document.body.textContent).not.toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/);
+  });
+
+  it('a draft day never shows a variance or Within: its threshold reads Not signed off', () => {
+    const draft: CashUpDayRow = {
+      ...signedRow('2026-09-13', 0),
+      status: 'open',
+      record: {
+        ...signedRow('2026-09-13', 0).record!,
+        cash: { expected: a(4000), counted: a(4100), variance: u('not_signed_off') },
+        variance: u('not_signed_off'),
+        thresholdCheck: 'not_signed_off',
+        signedOffBy: null,
+        signedOff: null,
+        notes: 'Draft count',
+      },
+      changeSinceSignOff: null,
+    };
+    render(<CashUpReport body={body({ detail: page([draft], null) })} locations={locations} loadMore={jest.fn()} />);
+    const row = within(section('Detail')).getByText('Draft count').closest('tr')!;
+    expect(row.textContent).toContain('Not signed off');
+    expect(row.textContent).not.toContain('Within');
+    expect(row.textContent).not.toContain('£1.00');
   });
 
   it('loads the next page with the cursor and appends it', async () => {
@@ -166,7 +202,7 @@ describe('CashUpReport detail', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
     await screen.findByText('11 Sept 2026');
     expect(loadMore).toHaveBeenCalledWith('c1.cursor');
-    expect(screen.getByText('Showing 2 days')).toBeTruthy();
+    expect(screen.getByText('Showing 2 rows')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
   });
 

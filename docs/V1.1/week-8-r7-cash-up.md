@@ -72,7 +72,8 @@ service's day window, and never uses `allowedLocationIds`.
 - `not_started` — a date after the location's `localToday`. Such days carry no
   figures; a record dated in the future (the API allows it) is ignored.
 
-Today is marked, so an unsigned today reads as in progress, not as missed.
+Today is marked: an unsigned today is counted as **in progress**, never as a
+missed (`open` or `none`) day.
 
 **As recorded (signed-off days only).**
 - Expected cash / expected card: the snapshot stored at sign-off.
@@ -80,13 +81,18 @@ Today is marked, so an unsigned today reads as in progress, not as missed.
 - Cash variance = counted cash − expected cash; card variance likewise; both from
   the stored figures. Variance (combined): the stored `variance_cents`.
 - Petty cash out, refunds entered, voids entered: as entered, summed.
-- Outside threshold: `|variance| > current threshold` for the location. The
-  threshold is not stored at sign-off, so this is **against today's threshold**.
-  With no settings row the threshold is unknown and this count is unavailable —
-  never an assumed £5.00.
+- Threshold check per day: `outside` when `|variance| > current threshold`,
+  otherwise `within`; `not_signed_off`, `not_comparable` (variance unavailable) or
+  `no_threshold` otherwise. The threshold is not stored at sign-off, so this is
+  **against today's threshold**. With no settings row it is `no_threshold` and the
+  count is unavailable — never an assumed £5.00.
 
-A signed-off record with a missing stored value shows that value as Not
-recorded. Open days never contribute to these totals.
+Every recorded figure (tills, petty cash, manual entries) covers the same days:
+signed-off days whose figures are all available. A signed-off day that isn't —
+London trading day, currency mismatch, missing stored value — is left out of all
+of them and counted in *days not included* with its reason. When no day can be
+judged, the counts (days outside threshold, days changed) are unavailable, never
+0. Open days never contribute.
 
 **Source check (signed-off days).** Expected from sources = till tenders by
 `paid_at` + retail by `sold_at` for that local day, per tender, recomputed now.
@@ -102,9 +108,11 @@ sources, summed over started days. Neither is guessed into cash or card.
 
 **London trading day.** For a location whose timezone is not `Europe/London`,
 EOD computed its expected snapshot on a London day, not the location's. Its
-recorded expected figures, variances, threshold flag and source check are
-unavailable (`london_trading_day`). Counted figures, float, petty cash and manual
-entries are still shown.
+recorded expected figures, variances, threshold check and source check are
+unavailable (`london_trading_day`); its counted figures, float, petty cash and
+manual entries are still shown on its day row. The zone must be exactly
+`Europe/London`: aliases (`Europe/Belfast`, `GB`, `Europe/Jersey`…) are treated
+as not London, which errs on the safe side.
 
 **Currency.** Source figures follow R1: the location's configured currency plus
 the currencies the facts carry; more than one is not totalled. Recorded figures
@@ -118,8 +126,11 @@ One row per location per started local day, newest day first, then by location
 id: status, today marker, recorded figures and variances, threshold flag, petty
 cash, manual entries, signed off by and the local date and time of sign-off,
 change since sign-off, and notes. Paged 50 rows at a time by an opaque cursor
-bound to the windows it was issued for (as R1). The rows on a page are known
-from the windows alone, so a continuation page reads only its own days.
+bound to each location's zone, local dates, UTC bounds and last started day (a
+past window's cursor survives midnight). The rows on a page are known from the
+windows alone, so a continuation page reads cash-ups only for its own days; it
+reads its locations' takings for their whole windows, so each location's
+currencies — and therefore its figures — are the same as on the first page.
 
 ## 5. Contract
 

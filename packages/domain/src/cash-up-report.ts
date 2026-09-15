@@ -50,10 +50,23 @@ export interface CashUpDayCounts {
   /** Days on or before the location's local today. */
   started: number;
   signedOff: number;
+  /** Past days with a draft cash-up that was never signed off. */
   open: number;
+  /** Past days with no cash-up recorded. */
   none: number;
+  /** Today, not signed off yet (a draft or nothing yet) — in progress, not missed. */
+  inProgress: number;
   notStarted: number;
 }
+
+/**
+ * The threshold result for one day:
+ * - `within` / `outside`: |variance| against the location's threshold today;
+ * - `not_signed_off`: no variance yet;
+ * - `no_threshold`: the location has no threshold setting;
+ * - `not_comparable`: the recorded variance is unavailable (London trading day, currency, missing value).
+ */
+export type CashUpThresholdCheck = 'within' | 'outside' | 'not_signed_off' | 'no_threshold' | 'not_comparable';
 
 export interface CashUpTenderFigures {
   expected: CashUpAmount;
@@ -74,8 +87,12 @@ export interface CashUpRecordedTotals {
   voidsEntered: CashUpAmount;
   /** Signed-off days whose |variance| exceeds today's threshold for the location. */
   daysOutsideThreshold: CashUpCount;
-  /** Signed-off days whose recorded figures are unavailable (London trading day, currency mismatch). */
+  /**
+   * Signed-off days left out of every recorded figure above, because their figures
+   * can't be stated honestly; `unavailableReasons` says why.
+   */
   daysUnavailable: number;
+  unavailableReasons: CashUpUnavailableReason[];
 }
 
 /** Signed-off days whose money sources changed after sign-off. */
@@ -109,6 +126,8 @@ export interface CashUpLocationTotals {
   currencyCode: string | null;
   /** Today's variance threshold for the location. */
   threshold: CashUpAmount;
+  /** The threshold's currency: the location's configured currency; `null` when unknown. */
+  thresholdCurrencyCode: string | null;
   totals: CashUpTotals;
 }
 
@@ -117,8 +136,7 @@ export interface CashUpDayRecord {
   cash: CashUpTenderFigures;
   card: CashUpTenderFigures;
   variance: CashUpAmount;
-  /** `null` when unknowable (not signed off, unavailable figures or no threshold). */
-  outsideThreshold: boolean | null;
+  thresholdCheck: CashUpThresholdCheck;
   pettyCashOut: CashUpAmount;
   refundsEntered: CashUpAmount;
   voidsEntered: CashUpAmount;

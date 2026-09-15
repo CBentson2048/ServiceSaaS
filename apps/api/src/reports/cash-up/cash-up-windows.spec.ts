@@ -44,15 +44,22 @@ beforeEach(() => {
 
 describe('cash-up days follow each location’s own calendar', () => {
   it('enumerates only started local days, newest first, and counts the rest as not started', () => {
-    expect(locationDays({ locationId: 'x', timezone: 'Europe/London', localToday: '2026-09-14', from: '2026-09-12', to: '2026-09-16' })).toEqual({
+    expect(locationDays({ localToday: '2026-09-14', from: '2026-09-12', to: '2026-09-16' })).toEqual({
       started: ['2026-09-14', '2026-09-13', '2026-09-12'],
       notStarted: 2,
     });
-    expect(locationDays({ locationId: 'x', timezone: 'Europe/London', localToday: '2026-09-14', from: '2026-02-27', to: '2026-03-01' }).started).toEqual([
+    expect(locationDays({ localToday: '2026-09-14', from: '2026-02-27', to: '2026-03-01' }).started).toEqual([
       '2026-03-01',
       '2026-02-28',
       '2026-02-27',
     ]);
+  });
+
+  it('a range that ends on 9999-12-31 (the last date the filter accepts) terminates, with nothing started', async () => {
+    expect(locationDays({ localToday: '2026-09-14', from: '9999-12-30', to: '9999-12-31' })).toEqual({ started: [], notStarted: 2 });
+    const { body } = await run(ledgerWithCash([]), [LONDON], filter({ preset: 'custom', from: '9999-12-31', to: '9999-12-31' }), new Date('2026-09-14T16:30:00Z'));
+    expect(body.summary.days).toEqual({ started: 0, signedOff: 0, open: 0, none: 0, inProgress: 0, notStarted: 1 });
+    expect(body.detail).toEqual({ notStarted: true, rows: [], nextCursor: null });
   });
 
   it('at one instant, London and Tokyo are on different days, and each payment lands on its location’s own day', async () => {
@@ -83,7 +90,7 @@ describe('cash-up days follow each location’s own calendar', () => {
     const ledger = ledgerWithCash([{ location: TOKYO, at: '2026-09-15T01:00:00Z', cents: 700 }]);
     const { body, money } = await run(ledger, [LONDON, TOKYO], filter({ preset: 'custom', from: '2026-09-15', to: '2026-09-15' }), new Date('2026-09-14T16:30:00Z'));
     expect(body.detail!.rows.map((r) => r.rowKey)).toEqual([`${TOKYO.id}:2026-09-15`]);
-    expect(body.locations.find((l) => l.locationId === LONDON.id)!.totals.days).toEqual({ started: 0, signedOff: 0, open: 0, none: 0, notStarted: 1 });
+    expect(body.locations.find((l) => l.locationId === LONDON.id)!.totals.days).toEqual({ started: 0, signedOff: 0, open: 0, none: 0, inProgress: 0, notStarted: 1 });
     for (const read of money.reads.filter((r) => r.windows)) expect(read.windows!.map((w) => w.locationId)).toEqual([TOKYO.id]);
   });
 });
