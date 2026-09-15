@@ -35,6 +35,7 @@ recorded**, never £0.00.
 | Deposit collected | `booking.deposits` with `paid_at` set and status `paid`, `partially_refunded` or `refunded` | `paid_at`, `location_id` | `numeric(12,2)` pounds, converted exactly to pence |
 | Deposit redeemed | `billing.bills.deposit_applied_cents` of paid bills | the bill | integer pence |
 | Deposit refunded | `booking.deposits` with `refunded_at` set, whatever the current status | `refunded_at`, `location_id` | pounds → pence |
+| Location currency | `core.location_settings.currency_code` (one row per location); for a location with no settings row, `core.businesses.default_currency_code` | the location | ISO 4217 code |
 
 Every read filters `business_id` and constrains each location to **its own**
 Ticket A window (`[fromUtc, toUtcExclusive)`); there is no envelope. A location
@@ -62,12 +63,18 @@ browser-local day windows, `allowedLocationIds`, unpaginated reads.
 - Deposits are Stripe-only. Refunds are full refunds made in QLOOQO
   (`refunded_at`); `partially_refunded` is never written; refunds made in the
   Stripe dashboard are invisible. A forfeited deposit leaves no money record.
-- Risk: the deposit webhook is not idempotent on status. A re-delivered
-  `payment_intent.succeeded` for a refunded deposit sets `status` back to `paid`
-  and rewrites `paid_at` (leaving `refunded_at` in place). R1 therefore reads
-  refunds by `refunded_at` regardless of status, so the refund is never lost; the
-  collection moves to the re-delivery day, which R1 cannot detect. The webhook fix
-  belongs to the payments owner, not to R1.
+- Source-integrity defect, **fixed with R1**: a re-delivered
+  `payment_intent.succeeded` set a refunded deposit back to `paid` and rewrote
+  `paid_at`, moving the collection to the re-delivery day. The payment webhook now
+  records a collection only while none is recorded (`paid_at` null, status still
+  awaiting payment), so a repeat changes nothing. R1 still reads refunds by
+  `refunded_at` whatever the status, which keeps any deposit altered before the
+  fix counted as refunded.
+- Location currency is set when a location is created (from the business
+  default) and is not editable through the API. Transactions do not all follow
+  it: service lines are written in GBP and retail sales default to GBP, while
+  deposits use the location's currency. A non-GBP location's figures can
+  therefore read "mixed currencies" until those writers are fixed (outside R1).
 - `bills.discount_cents` is always written as 0.
 
 ## 3. Definitions
@@ -129,13 +136,20 @@ tips, VAT on retail, forfeited deposits, and deposit refunds made outside QLOOQO
 bill snapshot are counted and totalled and shown as a notice: they are real
 money not yet in bill revenue.
 
-**Currency.** If the scoped facts carry more than one currency, money figures are
-unavailable (`mixed_currencies`) rather than summed. Each location row carries its
-own `currencyCode`: a location with no facts takes the report's single currency;
-it is null when the location's own facts are mixed, or when it has no facts and
-the report has no single currency (then its zeros are written in the platform
-default, GBP). The coverage notice carries its own currency. The web writes each
-figure in its own currency.
+**Currency.** There is no default currency anywhere in R1.
+- A location's figures are in its own configured currency (§2). Its currency set
+  is that currency plus every currency its facts were recorded in.
+- One currency: figures are written in it — a location with no activity is a
+  genuine zero in its own currency (£0.00 in London, €0.00 in Dublin).
+- More than one: not totalled (`mixed_currencies`). Facts are never relabelled
+  into the location's currency.
+- None (no facts and no determinable currency): `currency_not_recorded`, shown
+  as words, never a zero in some other currency.
+- The summary's currency set is the union over the started locations, so a scope
+  spanning locations with different currencies is not totalled even when one of
+  them had no activity.
+- Detail rows and the coverage notice carry the currency they were recorded in.
+  The web writes a figure only in the currency the API names.
 
 ## 4. Detail view
 
@@ -181,14 +195,47 @@ taken by R1.
 
 ## 8. Decisions for the product owner
 
-1. **Net position.** Candidates that are exact on stored data, each with the list
-   of what it excludes:
-   - *Paid bills net of VAT* = Σ `net_cents` (already shown);
-   - *Money received* = till payments + retail sales + deposits collected (cash
-     basis, before refunds);
-   - *Money received less deposit refunds in QLOOQO*.
+1. **Net position — not selected; R1 shows "Definition pending".** Three
+   candidates are exact on stored data. None is profit and none is an accounting
+   net position. All sums are per location in its own window.
+
+   **A. Paid bills net of VAT**
+   - Formula: Σ `billing.bills.net_cents` where `status = 'paid'`, by `occurred_at`.
+   - Sources: `billing.bills`. Already shown as *Net of VAT* in Paid bill revenue.
+   - Interpretation: service and colour revenue the salon earned on bills that were
+     paid, excluding VAT — an accrual view of the chair.
+   - Limitations: excludes retail (no VAT is stored for retail, so it has no
+     net-of-VAT figure), unredeemed deposits and till payments whose bill is
+     missing; no costs (commission, wages, stock, rent, card fees); discounts,
+     voids and till refunds are not recorded; a deposit applied to the bill is
+     inside it, so the same money also appears as a deposit collected earlier.
+
+   **B. Money received**
+   - Formula: Σ `billing.salon_payments.amount_cents` by `paid_at`
+     + Σ `billing.retail_sales.total_amount_cents` by `sold_at`
+     + Σ `booking.deposits.amount` collected, by `paid_at`.
+   - Sources: `billing.salon_payments`, `billing.retail_sales`, `booking.deposits`.
+     No overlap: till tenders must equal the bill's service and colour gross less
+     paid deposits, so they include neither retail nor deposits.
+   - Interpretation: cash basis — every payment QLOOQO recorded as taken in the
+     period, VAT included, whether or not a bill exists.
+   - Limitations: includes VAT; a deposit collected for a future appointment is
+     counted when taken (money held, not yet earned); refunds are not deducted;
+     card and Stripe fees, tips, and payments taken outside QLOOQO are not
+     recorded; money is counted when recorded, not when it settles in the bank.
+
+   **C. Money received less deposit refunds in QLOOQO**
+   - Formula: B − Σ `booking.deposits.amount` by `refunded_at` (whatever the
+     current status).
+   - Sources: as B.
+   - Interpretation: cash basis, net of the only refunds QLOOQO records.
+   - Limitations: all of B's; refunds made in the Stripe dashboard and till refunds
+     are invisible; when a partially refunded deposit is in scope its refund amount
+     is unknown, so C is unavailable; a refund in the period for a deposit collected
+     in an earlier period can make C lower than the money taken in the period.
 2. **Forfeited deposits** and **deposit excess over a bill** have no money record;
-   showing them needs a data model (a migration).
+   showing them needs a data model (a migration). For V1.1, forfeited deposits
+   stay **Not recorded** unless expanded scope is approved.
 3. **Average bill** (locked: `bill_lines` only) is not in the R1 ticket's metric
    list and is not built here.
 
