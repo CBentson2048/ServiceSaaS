@@ -7,7 +7,9 @@ import { createClientBookingAccount } from '../auth/api';
 import { BrandLogo } from '../components/BrandLogo';
 import { PasswordInput } from '../design';
 import {
+  type BookingClient,
   readClientBookingSelection,
+  sessionBookingClient,
   updateClientBookingSelection,
 } from './clientBookingFlow';
 
@@ -36,18 +38,20 @@ export function CreateAccountPage() {
   }
 
   if (auth.user) {
-    if (bookingMode && auth.session && auth.user.clientProfileId) {
-      const name = splitFullName(auth.user.profile.fullName);
-      completeBookingAuth(
-        { session: auth.session, user: auth.user },
-        {
-          firstName: name.firstName,
-          lastName: name.lastName,
-          phone: auth.user.profile.phone,
-        },
-      );
+    if (!bookingMode) return <Navigate to="/" replace />;
+    const sessionClient = sessionBookingClient(auth.user, bookingSelection?.location?.businessId);
+    if (!sessionClient || !auth.session) {
+      // Signed in, but not as a client of this salon: the sign-in page explains
+      // and signs the same account in for this booking.
+      return <Navigate to="/login?booking=1" replace />;
     }
-    return <Navigate to={bookingMode ? '/book/review' : '/'} replace />;
+    const name = splitFullName(auth.user.profile.fullName);
+    completeBookingAuth({ session: auth.session, user: auth.user }, sessionClient, {
+      firstName: name.firstName,
+      lastName: name.lastName,
+      phone: auth.user.profile.phone,
+    });
+    return <Navigate to="/book/review" replace />;
   }
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
@@ -68,7 +72,7 @@ export function CreateAccountPage() {
           password,
           communicationPreference,
         });
-        completeBookingAuth(response, {
+        completeBookingAuth(response, response.bookingClient, {
           firstName: trimmedFirstName,
           lastName: trimmedLastName,
           phone: phone.trim() || undefined,
@@ -221,6 +225,7 @@ function Field({
 
 function completeBookingAuth(
   response: LoginResponse,
+  bookingClient: BookingClient,
   client: {
     firstName: string;
     lastName: string;
@@ -228,9 +233,6 @@ function completeBookingAuth(
     communicationPreference?: CommunicationPreference;
   },
 ): void {
-  if (!response.user.clientProfileId) {
-    throw new Error('Client profile could not be linked to this booking.');
-  }
   updateClientBookingSelection({
     client: {
       firstName: client.firstName,
@@ -238,12 +240,12 @@ function completeBookingAuth(
       email: response.user.profile.email,
       phone: client.phone,
     },
-    communicationPreference: client.communicationPreference ?? response.user.clientCommunicationPreference,
+    communicationPreference: client.communicationPreference ?? bookingClient.communicationPreference,
     account: {
       accessToken: response.session.accessToken,
       refreshToken: response.session.refreshToken,
       userProfileId: response.user.id,
-      clientProfileId: response.user.clientProfileId,
+      clientProfileId: bookingClient.clientProfileId,
       email: response.user.profile.email,
     },
   });

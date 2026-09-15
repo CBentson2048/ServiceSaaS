@@ -5,7 +5,7 @@
  * until the Jest data harness exists. `availableSlotsInShift` is pure and
  * exported, so the slot-stepping behaviour is tested directly.
  */
-import { availableSlotsInShift } from './public-booking.service';
+import { availableSlotsInShift, bookingLocationLookup } from './public-booking.service';
 describe('PublicBookingService — availability', () => {
   it.todo('availability uses rota.shifts as the source of bookable time');
   it.todo('availability uses the sum of selected services estimated_duration_minutes as appointment length');
@@ -91,4 +91,45 @@ describe('PublicBookingService — per-stylist service pricing', () => {
   it.todo('applies different prices for the same service across two stylists');
   it.todo('overridden price flows into appointment_services.price_amount and the booking total');
   it.todo('getStylists / getAvailability browsing still show the base "from" price');
+});
+
+describe('PublicBookingService — naming the booking location', () => {
+  const LOCATION_ID = '0b3c7d6e-3f5a-4a8b-9c1d-2e3f4a5b6c7d';
+
+  it('resolves a shared link by Salon Code, whatever case or spacing it was typed in', () => {
+    expect(bookingLocationLookup({ salonCode: 'K7M2QX' })).toEqual({
+      by: 'salonCode',
+      salonCode: 'K7M2QX',
+    });
+    expect(bookingLocationLookup({ salonCode: ' k7m-2qx ' })).toEqual({
+      by: 'salonCode',
+      salonCode: 'K7M2QX',
+    });
+  });
+
+  it('prefers the exact location id, then the Salon Code, then the slugs', () => {
+    expect(
+      bookingLocationLookup({
+        locationId: LOCATION_ID,
+        salonCode: 'K7M2QX',
+        businessSlug: 'loh',
+        locationSlug: 'leeds',
+      }),
+    ).toEqual({ by: 'id', locationId: LOCATION_ID });
+    expect(
+      bookingLocationLookup({ salonCode: 'K7M2QX', businessSlug: 'loh', locationSlug: 'leeds' }),
+    ).toEqual({ by: 'salonCode', salonCode: 'K7M2QX' });
+    expect(bookingLocationLookup({ businessSlug: 'loh', locationSlug: 'leeds' })).toEqual({
+      by: 'slugs',
+      businessSlug: 'loh',
+      locationSlug: 'leeds',
+    });
+  });
+
+  it('names no location when nothing usable was given', () => {
+    expect(bookingLocationLookup({})).toBeNull();
+    // Punctuation only normalises to an empty code, which must not match anything.
+    expect(bookingLocationLookup({ salonCode: '--' })).toBeNull();
+    expect(bookingLocationLookup({ businessSlug: 'loh' })).toBeNull();
+  });
 });

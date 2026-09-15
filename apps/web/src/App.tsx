@@ -51,6 +51,7 @@ import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { RetailSalesPage } from './pages/RetailSalesPage';
+import { SalonBookingLinkPage } from './pages/SalonBookingLinkPage';
 import { BillsPage } from './pages/BillsPage';
 import { EndOfDayPage } from './pages/EndOfDayPage';
 import { RotaPage } from './pages/RotaPage';
@@ -110,6 +111,7 @@ export function App() {
         a session, alongside the privacy-policy and delete-account pages.
       */}
       <Route path="/support" element={<SupportPage />} />
+      <Route path="/s/:salonCode" element={<SalonBookingLinkPage />} />
       <Route path="/book/location" element={<ClientBookingLocationPage />} />
       <Route path="/book/service" element={<ClientBookingServicePage />} />
       <Route path="/book/date-time" element={<ClientBookingDateTimePage />} />

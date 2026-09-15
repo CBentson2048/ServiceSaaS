@@ -28,6 +28,8 @@ export function ClientBookingServicePage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const locationId = searchParams.get('locationId') ?? undefined;
+  // Shared booking links (/s/:salonCode) arrive with the Salon Code instead.
+  const salonCode = searchParams.get('salonCode') ?? undefined;
   const businessSlug = searchParams.get('businessSlug') ?? undefined;
   const locationSlug = searchParams.get('locationSlug') ?? undefined;
   const initialSelection = readClientBookingSelection();
@@ -113,7 +115,12 @@ export function ClientBookingServicePage() {
     setLoadingServices(true);
     setError(null);
     try {
-      const result = await getPublicBookingSelection({ locationId, businessSlug, locationSlug });
+      const result = await getPublicBookingSelection({
+        locationId,
+        salonCode,
+        businessSlug,
+        locationSlug,
+      });
       setLocation(result.location);
       setServices(result.services);
       setFinishingRequirements(result.finishingRequirements);
@@ -126,7 +133,7 @@ export function ClientBookingServicePage() {
     } finally {
       setLoadingServices(false);
     }
-  }, [businessSlug, locationId, locationSlug]);
+  }, [businessSlug, locationId, locationSlug, salonCode]);
 
   useEffect(() => {
     void loadServices();
@@ -149,6 +156,7 @@ export function ClientBookingServicePage() {
       try {
         const result = await getPublicBookingStylists({
           locationId,
+          salonCode,
           businessSlug,
           locationSlug,
           serviceIds,
@@ -166,7 +174,7 @@ export function ClientBookingServicePage() {
     return () => {
       cancelled = true;
     };
-  }, [businessSlug, locationId, locationSlug, selectedServiceIds, unmetRequirements.length]);
+  }, [businessSlug, locationId, locationSlug, salonCode, selectedServiceIds, unmetRequirements.length]);
 
   function selectService(serviceId: string) {
     setSelectedServiceIds((current) =>

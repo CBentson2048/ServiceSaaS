@@ -119,6 +119,7 @@ import type {
   LocationCommunicationSettings,
   LocationCommunicationSettingsResponse,
   LocationDetailResponse,
+  ClientBookingLoginResponse,
   LoginResponse,
   OwnerBookingSettingsResponse,
   OwnerOnboardingBootstrap,
@@ -362,11 +363,13 @@ export async function searchPublicSalons(query: string): Promise<SalonSearchResp
 
 export async function getPublicBookingSelection(params: {
   locationId?: string;
+  salonCode?: string;
   businessSlug?: string;
   locationSlug?: string;
 }): Promise<PublicBookingServiceSelectionResponse> {
   const search = new URLSearchParams();
   if (params.locationId) search.set('locationId', params.locationId);
+  if (params.salonCode) search.set('salonCode', params.salonCode);
   if (params.businessSlug) search.set('businessSlug', params.businessSlug);
   if (params.locationSlug) search.set('locationSlug', params.locationSlug);
   return request<PublicBookingServiceSelectionResponse>(
@@ -377,12 +380,14 @@ export async function getPublicBookingSelection(params: {
 export async function getPublicBookingStylists(params: {
   serviceIds: string[];
   locationId?: string;
+  salonCode?: string;
   businessSlug?: string;
   locationSlug?: string;
 }): Promise<PublicBookingStylistsResponse> {
   const search = new URLSearchParams();
   search.set('serviceIds', params.serviceIds.join(','));
   if (params.locationId) search.set('locationId', params.locationId);
+  if (params.salonCode) search.set('salonCode', params.salonCode);
   if (params.businessSlug) search.set('businessSlug', params.businessSlug);
   if (params.locationSlug) search.set('locationSlug', params.locationSlug);
   return request<PublicBookingStylistsResponse>(`/public/booking/stylists?${search.toString()}`);
@@ -1838,8 +1843,8 @@ export async function createClientBookingAccount(payload: {
   lastName: string;
   phone?: string;
   communicationPreference: 'whatsapp' | 'sms' | 'email';
-}): Promise<LoginResponse> {
-  return request<LoginResponse>('/auth/client-booking/register', {
+}): Promise<ClientBookingLoginResponse> {
+  return request<ClientBookingLoginResponse>('/auth/client-booking/register', {
     method: 'POST',
     body: payload,
   });
@@ -1850,8 +1855,8 @@ export async function loginClientBookingAccount(payload: {
   email: string;
   password: string;
   phone?: string;
-}): Promise<LoginResponse> {
-  return request<LoginResponse>('/auth/client-booking/login', {
+}): Promise<ClientBookingLoginResponse> {
+  return request<ClientBookingLoginResponse>('/auth/client-booking/login', {
     method: 'POST',
     body: payload,
   });

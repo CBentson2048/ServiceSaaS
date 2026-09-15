@@ -45,7 +45,7 @@ import type {
   StartPublicBookingCheckoutRequest,
   StartPublicBookingCheckoutResponse,
 } from '@sheer/domain';
-import { depositForServicePrice, userHasRole } from '@sheer/domain';
+import { depositForServicePrice, normalizeSalonCode, userHasRole } from '@sheer/domain';
 import { AuthService } from '../auth/auth.service';
 import { BookingNotificationService } from '../communications/booking-notification.service';
 import { RebookingService } from '../rebooking/rebooking.service';
@@ -696,8 +696,11 @@ export class PublicBookingService {
     query: PublicBookingSelectionQueryDto,
     options: { allowOfflineBooking?: boolean } = {},
   ): Promise<PublicBookingLocationSummary> {
-    if (!query.locationId && (!query.businessSlug || !query.locationSlug)) {
-      throw new BadRequestException('locationId or businessSlug + locationSlug is required');
+    const lookup = bookingLocationLookup(query);
+    if (!lookup) {
+      throw new BadRequestException(
+        'locationId, salonCode, or businessSlug + locationSlug is required',
+      );
     }
 
     let request = this.admin
@@ -707,12 +710,14 @@ export class PublicBookingService {
       .eq('is_active', true)
       .limit(1);
 
-    if (query.locationId) {
-      request = request.eq('id', query.locationId);
+    if (lookup.by === 'id') {
+      request = request.eq('id', lookup.locationId);
+    } else if (lookup.by === 'salonCode') {
+      request = request.eq('public_code', lookup.salonCode);
     } else {
       request = request
-        .eq('slug', query.locationSlug)
-        .eq('businesses.slug', query.businessSlug);
+        .eq('slug', lookup.locationSlug)
+        .eq('businesses.slug', lookup.businessSlug);
     }
 
     const { data, error } = await request.maybeSingle<LocationRow>();
@@ -2398,6 +2403,31 @@ function toSegmentSummaries(
       durationMinutes: segment.duration_minutes,
       isStylistFree: segment.is_stylist_free ?? false,
     }));
+}
+
+export type BookingLocationLookup =
+  | { by: 'id'; locationId: string }
+  | { by: 'salonCode'; salonCode: string }
+  | { by: 'slugs'; businessSlug: string; locationSlug: string };
+
+/**
+ * How a public booking request names its location, most specific first. A
+ * Salon Code arrives from shared links in whatever case or spacing it was
+ * typed, so it is normalised; one that normalises to nothing names no salon.
+ */
+export function bookingLocationLookup(
+  query: Pick<
+    PublicBookingSelectionQueryDto,
+    'locationId' | 'salonCode' | 'businessSlug' | 'locationSlug'
+  >,
+): BookingLocationLookup | null {
+  if (query.locationId) return { by: 'id', locationId: query.locationId };
+  const salonCode = normalizeSalonCode(query.salonCode ?? '');
+  if (salonCode) return { by: 'salonCode', salonCode };
+  if (query.businessSlug && query.locationSlug) {
+    return { by: 'slugs', businessSlug: query.businessSlug, locationSlug: query.locationSlug };
+  }
+  return null;
 }
 
 function toLocationSummary(row: LocationRow): PublicBookingLocationSummary {
