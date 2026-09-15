@@ -4,7 +4,7 @@
  *
  * Stripe re-delivers `payment_intent.succeeded` until it receives a 2xx and may
  * deliver an event more than once. A repeat must never reverse a later refund or
- * partial refund, move the original collection instant (`paid_at`), or record a
+ * partial refund, move the instant the collection was first recorded (`paid_at`), or record a
  * second collection — R1 Money reads collections by `paid_at` and refunds by
  * `refunded_at` (docs/V1.1/week-8-ticket-b-r1-money.md §2).
  *
@@ -311,7 +311,7 @@ describe('payment_intent.succeeded records the deposit collection once', () => {
     expect(deposit()).toMatchObject({ status: 'partially_refunded', paid_at: COLLECTED_AT, refunded_at: REFUNDED_AT });
   });
 
-  it('5. paid_at remains the original collection instant, however late and however often the repeat arrives', async () => {
+  it('5. paid_at stays the instant the collection was first recorded, however late and however often the repeat arrives', async () => {
     const { service, deposit } = setUp();
     await succeedAt(service, COLLECTED_AT);
     for (const later of ['2026-09-14T09:01:00.000Z', '2026-09-15T00:30:00.000Z', '2026-09-17T09:00:00.000Z']) {
@@ -344,7 +344,7 @@ describe('a declined card, then a successful payment on the same PaymentIntent',
 
     await succeedAt(service, COLLECTED_AT);
     expect(attempt()).toMatchObject({ status: 'confirmed', appointment_id: 'appointment-1' });
-    expect(deposit()).toMatchObject({ status: 'paid', paid_at: COLLECTED_AT, appointment_id: 'appointment-1' });
+    expect(deposit()).toMatchObject({ status: 'paid', paid_at: COLLECTED_AT, appointment_id: 'appointment-1', failure_reason: null });
     expect(appointments()).toEqual(['appointment-1']);
   });
 

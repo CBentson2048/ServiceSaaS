@@ -2154,9 +2154,10 @@ export class PublicBookingService {
    * deliver an event more than once, so this runs again for an attempt that is
    * already confirmed. The update only applies while no collection is recorded
    * (`paid_at` is null and the deposit is still awaiting payment): a repeat never
-   * moves `paid_at`, never records a second collection, and never turns a
-   * refunded or partially refunded deposit back into `paid`. Financial reporting
-   * (R1 Money) reads the collection by `paid_at` and refunds by `refunded_at`.
+   * moves `paid_at` (the instant the collection was first recorded), never records
+   * a second collection, and never turns a refunded or partially refunded deposit
+   * back into `paid`. Financial reporting (R1 Money) reads the collection by
+   * `paid_at` and refunds by `refunded_at`.
    */
   private async markDepositPaid(
     attempt: BookingAttemptRow,
@@ -2172,6 +2173,8 @@ export class PublicBookingService {
         provider_charge_id: chargeId ?? null,
         status: 'paid',
         paid_at: new Date().toISOString(),
+        // A retry after a decline: the earlier failure no longer describes this deposit.
+        failure_reason: null,
         metadata: { stripe_status: paymentIntent.status },
       })
       .eq('booking_attempt_id', attempt.id)
@@ -2185,7 +2188,7 @@ export class PublicBookingService {
     }
     if (!data || data.length === 0) {
       this.logger.log(
-        `Deposit collection already recorded for attempt=${attempt.id} paymentIntent=${paymentIntent.id}; repeated payment_intent.succeeded left it unchanged`,
+        `No deposit awaiting payment for attempt=${attempt.id} paymentIntent=${paymentIntent.id} (already recorded, refunded, or missing); payment_intent.succeeded left deposits unchanged`,
       );
       return;
     }
