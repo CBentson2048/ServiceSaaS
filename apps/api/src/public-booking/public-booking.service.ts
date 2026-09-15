@@ -265,6 +265,13 @@ const BOOKING_ATTEMPT_BUSY_COLUMNS = 'id,stylist_profile_id,selected_start_at,se
  * `refunded` and `cancelled` are never overwritten by a payment webhook.
  */
 const DEPOSIT_AWAITING_PAYMENT_STATUSES = ['pending', 'requires_action', 'authorized', 'failed'];
+/**
+ * Attempt statuses a successful payment may finalize. A declined card leaves the
+ * PaymentIntent reusable (`requires_payment_method`), and the booking page keeps
+ * it: the client can pay the same intent after `payment_intent.payment_failed`
+ * has already marked the attempt `payment_failed`.
+ */
+const BOOKING_ATTEMPT_PAYABLE_STATUSES = ['pending_payment', 'payment_failed'];
 const BOOKING_ATTEMPT_COLUMNS =
   'id,business_id,location_id,service_id,stylist_profile_id,client_profile_id,user_profile_id,appointment_id,staff_request_mode,selected_start_at,selected_end_at,communication_preference,client_note,deposit_amount,currency_code,stripe_payment_intent_id,status,expires_at,metadata';
 const BOOKING_ATTEMPT_SERVICE_COLUMNS =
@@ -655,7 +662,14 @@ export class PublicBookingService {
       await this.markDepositPaid(attempt, paymentIntent);
       return;
     }
-    if (attempt.status !== 'pending_payment') return;
+    if (!BOOKING_ATTEMPT_PAYABLE_STATUSES.includes(attempt.status)) return;
+    // A success after a decline completes the attempt only through its own intent.
+    if (attempt.status === 'payment_failed' && attempt.stripe_payment_intent_id !== paymentIntent.id) {
+      this.logger.warn(
+        `Stripe payment_intent.succeeded for attempt=${attempt.id} paymentIntent=${paymentIntent.id} does not match the attempt's intent; ignored`,
+      );
+      return;
+    }
 
     const appointment = await this.finalizePaidBookingAttempt(attempt, paymentIntent);
     await this.markDepositPaid({ ...attempt, appointment_id: appointment.id }, paymentIntent);
@@ -682,6 +696,8 @@ export class PublicBookingService {
       throw new InternalServerErrorException('Unable to update booking attempt');
     }
 
+    // Never over a recorded collection: a retried payment on the same intent may
+    // already have succeeded when this (earlier) failure is processed.
     const { error: depositError } = await this.admin
       .schema('booking')
       .from('deposits')
@@ -690,7 +706,9 @@ export class PublicBookingService {
         failure_reason: failureReason,
         metadata: { stripe_status: paymentIntent.status },
       })
-      .eq('booking_attempt_id', attempt.id);
+      .eq('booking_attempt_id', attempt.id)
+      .is('paid_at', null)
+      .in('status', DEPOSIT_AWAITING_PAYMENT_STATUSES);
 
     if (depositError) {
       this.logger.error(`handlePaymentIntentFailed update deposit failed: ${depositError.message}`);
@@ -1954,7 +1972,7 @@ export class PublicBookingService {
   ): Promise<AppointmentInsertRow> {
     const latestAttempt = await this.fetchBookingAttemptById(attempt.id);
     if (latestAttempt.appointment_id) return this.fetchAppointmentInsertRow(latestAttempt.appointment_id);
-    if (latestAttempt.status !== 'pending_payment') {
+    if (!BOOKING_ATTEMPT_PAYABLE_STATUSES.includes(latestAttempt.status)) {
       throw new ConflictException('Booking attempt is no longer pending payment');
     }
 
@@ -1982,7 +2000,7 @@ export class PublicBookingService {
       .from('booking_attempts')
       .update({ status: 'confirmed', appointment_id: appointment.id })
       .eq('id', latestAttempt.id)
-      .eq('status', 'pending_payment')
+      .in('status', BOOKING_ATTEMPT_PAYABLE_STATUSES)
       .is('appointment_id', null)
       .select(BOOKING_ATTEMPT_COLUMNS)
       .maybeSingle<BookingAttemptRow>();
