@@ -246,7 +246,8 @@ export function EndOfDayPage() {
               <span className="font-medium text-text-secondary">
                 Variance {signedOff ? '(signed off)' : '(live)'}
                 <span className="ml-1.5 text-[11px] text-text-muted">
-                  threshold {formatMoney(threshold, currency)}
+                  {/* The threshold is not stored at sign-off: this is always today's setting. */}
+                  current threshold {formatMoney(threshold, currency)}
                 </span>
               </span>
               <span
