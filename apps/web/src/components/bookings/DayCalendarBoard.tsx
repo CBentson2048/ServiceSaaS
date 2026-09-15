@@ -120,6 +120,11 @@ interface DayCalendarBoardProps {
   onViewClientProfile?: (booking: StaffBookingSummary) => void;
   /** Tile action menu: mark the client arrived (confirmed → checked in). */
   onCheckIn?: (booking: StaffBookingSummary) => void;
+  /**
+   * Tile action menu: undo a mistaken check-in (checked in → confirmed). Replaces the
+   * greyed-out "Checked in" button once the client is marked as arrived.
+   */
+  onUndoCheckIn?: (booking: StaffBookingSummary) => void;
   /** Tile action menu: open the checkout / payment screen (complete the service). */
   onCheckOut?: (booking: StaffBookingSummary) => void;
   /** Tile action menu: open the reschedule / reassign editor. */
@@ -292,6 +297,7 @@ export function DayCalendarBoard({
   onSelectBooking,
   onViewClientProfile,
   onCheckIn,
+  onUndoCheckIn,
   onCheckOut,
   onEditBooking,
   onCancelBooking,
@@ -323,7 +329,7 @@ export function DayCalendarBoard({
   const [bookingMenu, setBookingMenu] = useState<BookingMenuState | null>(null);
   const createEnabled = Boolean(onAddAppointment || onAddBookout);
   const bookingActionsEnabled = Boolean(
-    onCheckIn || onCheckOut || onEditBooking || onCancelBooking || onMarkNoShow,
+    onCheckIn || onUndoCheckIn || onCheckOut || onEditBooking || onCancelBooking || onMarkNoShow,
   );
   const dragEnabled = Boolean(onMoveBooking || onResizeBooking);
 
@@ -1343,6 +1349,7 @@ export function DayCalendarBoard({
             state={bookingMenu}
             onClose={() => setBookingMenu(null)}
             onCheckIn={onCheckIn ? () => { onCheckIn(bookingMenu.booking); setBookingMenu(null); } : undefined}
+            onUndoCheckIn={onUndoCheckIn ? () => { onUndoCheckIn(bookingMenu.booking); setBookingMenu(null); } : undefined}
             onCheckOut={onCheckOut ? () => { onCheckOut(bookingMenu.booking); setBookingMenu(null); } : undefined}
             onEdit={onEditBooking ? () => { onEditBooking(bookingMenu.booking); setBookingMenu(null); } : undefined}
             onCancel={onCancelBooking ? () => { onCancelBooking(bookingMenu.booking); setBookingMenu(null); } : undefined}
@@ -1584,6 +1591,7 @@ function SlotMenu({
 /** Which tile actions apply to a booking, given its status. */
 function bookingActionAvailability(status: StaffBookingSummary['status']): {
   canCheckIn: boolean;
+  canUndoCheckIn: boolean;
   canCheckOut: boolean;
   canEdit: boolean;
   canCancel: boolean;
@@ -1592,6 +1600,9 @@ function bookingActionAvailability(status: StaffBookingSummary['status']): {
 } {
   return {
     canCheckIn: status === 'accepted',
+    // Only before checkout — the API also refuses once services were changed on the
+    // visit, which this summary cannot see, and explains why.
+    canUndoCheckIn: status === 'checked_in',
     canCheckOut: ['accepted', 'checked_in', 'awaiting_payment'].includes(status),
     canEdit: ['pending', 'accepted', 'checked_in'].includes(status),
     canCancel: ['pending', 'accepted', 'checked_in'].includes(status),
@@ -1609,6 +1620,7 @@ function BookingActionMenu({
   state,
   onClose,
   onCheckIn,
+  onUndoCheckIn,
   onCheckOut,
   onEdit,
   onCancel,
@@ -1617,6 +1629,7 @@ function BookingActionMenu({
   state: BookingMenuState;
   onClose: () => void;
   onCheckIn?: () => void;
+  onUndoCheckIn?: () => void;
   onCheckOut?: () => void;
   onEdit?: () => void;
   onCancel?: () => void;
@@ -1662,7 +1675,14 @@ function BookingActionMenu({
         </div>
 
         <div className="flex flex-col gap-1.5">
-          {onCheckIn ? (
+          {arrived && onUndoCheckIn ? (
+            <BookingMenuButton
+              label="Undo check-in"
+              onClick={onUndoCheckIn}
+              disabled={!availability.canUndoCheckIn}
+              icon={<UndoIcon className="h-4 w-4" />}
+            />
+          ) : onCheckIn ? (
             <BookingMenuButton
               label={arrived ? 'Checked in' : 'Check in'}
               onClick={onCheckIn}
@@ -1810,6 +1830,15 @@ function CheckIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden {...props}>
       <path d="m4 10.5 4 4 8-9" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function UndoIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.6} aria-hidden {...props}>
+      <path d="M7.5 5 4 8.5 7.5 12" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4 8.5h7.5a4.5 4.5 0 0 1 0 9H9" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

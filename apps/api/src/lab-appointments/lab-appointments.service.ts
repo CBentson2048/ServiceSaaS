@@ -364,6 +364,11 @@ const CHECKED_IN_OR_LATER_STATUSES: AppointmentStatus[] = [
   'awaiting_payment',
   'paid',
 ];
+// Once a visit is checked out ('awaiting_payment' onwards) a bill exists, so undoing
+// the arrival is a checkout correction, not a check-in one.
+const CHECKED_OUT_STATUSES: AppointmentStatus[] = ['awaiting_payment', 'paid'];
+const CHECK_IN_UNDO_BLOCKED_BY_SERVICE_CHANGES =
+  'Services on this visit have been changed since check-in, so the check-in can no longer be undone.';
 // Statuses a booking can be cancelled from via the book. 'pending' requests are
 // handled by reject; 'awaiting_payment'/'paid' already have a visit in flight;
 // 'rejected'/'cancelled'/'no_show' are terminal.
@@ -998,6 +1003,18 @@ export class LabAppointmentsService {
     }
 
     if (wonTheTransition) {
+      // Recorded only for the winner, so a double-tap writes one entry. This is the
+      // "who checked this client in, and when" an undo is measured against.
+      await this.audit.record(actor, {
+        action: 'booking.checked_in',
+        entityType: 'booking',
+        entityId: checkedIn.id,
+        locationId: checkedIn.location_id,
+        before: { status: 'accepted' },
+        after: { status: 'checked_in', checkInAt: checkedIn.check_in_at ?? null },
+        metadata: { clientProfileId: checkedIn.client_profile_id },
+      });
+
       // The status write is already committed. `notifyClientArrivedSafe` is
       // contractually non-throwing, and the trailing catch is deliberate belt-and-
       // braces at the boundary: if that contract is ever broken, the client is still
@@ -1010,6 +1027,7 @@ export class LabAppointmentsService {
             location_id: checkedIn.location_id,
             client_profile_id: checkedIn.client_profile_id,
             assigned_staff_profile_id: checkedIn.assigned_staff_profile_id,
+            check_in_at: checkedIn.check_in_at ?? null,
           },
           actor.id,
         )
@@ -1022,6 +1040,157 @@ export class LabAppointmentsService {
 
     const clientsById = await this.fetchClientProfiles(actor.businessId, [checkedIn.client_profile_id]);
     return { appointment: toBookingDetail(checkedIn, clientsById.get(checkedIn.client_profile_id)) };
+  }
+
+  /**
+   * Undo a mistaken check-in: 'checked_in' → 'accepted', clearing check_in_at.
+   *
+   * Check-in carries no money, no visit and no risk signal, so an undo is a status
+   * correction and nothing else. It is open to everyone who can check a client in —
+   * the person most likely to fix a mis-tap is the one who made it — and it is
+   * deliberately narrow:
+   *
+   *   - ONLY FROM `checked_in`. Once checked out a bill exists; that is corrected
+   *     through checkout, never by rewinding the arrival.
+   *   - NOT ONCE THE VISIT HAS BEEN WORKED ON. A service added, removed or reassigned
+   *     after check-in leaves post-check-in lines and append-only history (0110).
+   *     Back in 'accepted', the pre-check-in editor replaces service lines wholesale,
+   *     which that history forbids — the appointment could no longer be edited. So
+   *     any recorded change refuses the undo. History is append-only, so this can
+   *     never become undoable later.
+   *   - CHECK_IN_AT IS CLEARED. Completion copies it into the visit's
+   *     checked_in_at, which CRM, lapse and rebooking read as attendance time; a
+   *     mistaken arrival must not survive into that. The value is kept in the audit
+   *     entry instead.
+   *   - THE STYLIST IS TOLD. The arrival alert cannot be recalled, so a second
+   *     notice corrects it (best-effort, like the arrival itself).
+   *
+   * Idempotent: an appointment already back at 'accepted' is returned unchanged, so a
+   * double-tap or two people undoing at once never errors.
+   */
+  async undoCheckIn(
+    actor: AuthUser,
+    id: string,
+    reason?: string,
+  ): Promise<{ appointment: StaffBookingDetail }> {
+    const appointment = await this.fetchAppointmentForActor(actor, id);
+
+    if (appointment.status === 'accepted') {
+      const clientsById = await this.fetchClientProfiles(actor.businessId, [appointment.client_profile_id]);
+      return { appointment: toBookingDetail(appointment, clientsById.get(appointment.client_profile_id)) };
+    }
+    if (CHECKED_OUT_STATUSES.includes(appointment.status)) {
+      throw new ConflictException(
+        'This appointment has already been checked out, so its check-in cannot be undone.',
+      );
+    }
+    if (appointment.status !== 'checked_in') {
+      throw new ConflictException(`Check-in cannot be undone for an appointment that is ${appointment.status}`);
+    }
+    if (await this.hasPostCheckInServiceChanges(appointment)) {
+      throw new ConflictException(CHECK_IN_UNDO_BLOCKED_BY_SERVICE_CHANGES);
+    }
+
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('appointments')
+      .update({ status: 'accepted', check_in_at: null })
+      .eq('id', appointment.id)
+      .eq('business_id', appointment.business_id)
+      // Concurrency: only the request that still sees the arrival may undo it.
+      .eq('status', 'checked_in')
+      .select(DETAIL_COLUMNS)
+      .maybeSingle<AppointmentRow>();
+    if (error) {
+      this.logger.error(`undoCheckIn failed for ${id}: ${error.message}`);
+      throw new InternalServerErrorException('Unable to undo the check-in');
+    }
+    if (!data) {
+      // Lost the claim. If someone else already undid it, their result satisfies this
+      // request too; anything else (checked out, cancelled) moved on without us.
+      const current = await this.fetchAppointmentById(appointment.id, appointment.business_id);
+      if (current.status !== 'accepted') {
+        throw new ConflictException('Appointment was updated before its check-in could be undone');
+      }
+      const clientsById = await this.fetchClientProfiles(actor.businessId, [current.client_profile_id]);
+      return { appointment: toBookingDetail(current, clientsById.get(current.client_profile_id)) };
+    }
+
+    // CLOSE THE RACE. booking.amend_appointment_services locks the appointment and
+    // refuses anything not checked_in, so a service change that starts after the
+    // update above is refused. One that committed between the check and the update
+    // is not — so look again now, and put the arrival back if one slipped in. Nothing
+    // has been audited or notified yet, so the reversal leaves no trace to explain.
+    if (await this.hasPostCheckInServiceChanges(appointment)) {
+      const { error: restoreError } = await this.admin
+        .schema('booking')
+        .from('appointments')
+        .update({ status: 'checked_in', check_in_at: appointment.check_in_at ?? null })
+        .eq('id', appointment.id)
+        .eq('business_id', appointment.business_id)
+        .eq('status', 'accepted');
+      if (restoreError) {
+        this.logger.error(`undoCheckIn restore failed for ${id}: ${restoreError.message}`);
+      }
+      throw new ConflictException(CHECK_IN_UNDO_BLOCKED_BY_SERVICE_CHANGES);
+    }
+
+    await this.audit.record(actor, {
+      action: 'booking.check_in_undone',
+      entityType: 'booking',
+      entityId: appointment.id,
+      locationId: appointment.location_id,
+      before: { status: 'checked_in', checkInAt: appointment.check_in_at ?? null },
+      after: { status: 'accepted', checkInAt: null },
+      metadata: {
+        clientProfileId: appointment.client_profile_id,
+        reason: reason?.trim() || null,
+      },
+    });
+
+    // The pre-undo row, so the notice is keyed to the check-in it corrects. Never
+    // throws by contract; the catch keeps a broken contract from failing the undo.
+    await this.arrivalNotifications
+      .notifyCheckInUndoneSafe(
+        {
+          id: appointment.id,
+          business_id: appointment.business_id,
+          location_id: appointment.location_id,
+          client_profile_id: appointment.client_profile_id,
+          assigned_staff_profile_id: appointment.assigned_staff_profile_id,
+          check_in_at: appointment.check_in_at ?? null,
+        },
+        actor.id,
+      )
+      .catch((err: unknown) => {
+        this.logger.error(
+          `check-in undone notification threw for appointment ${appointment.id}: ${(err as Error)?.message ?? err}`,
+        );
+      });
+
+    const clientsById = await this.fetchClientProfiles(actor.businessId, [data.client_profile_id]);
+    return { appointment: toBookingDetail(data, clientsById.get(data.client_profile_id)) };
+  }
+
+  /**
+   * Whether any service change has been recorded against this appointment since it
+   * was checked in. Fails closed: an unreadable history refuses the undo rather than
+   * risking an appointment that can no longer be edited.
+   */
+  private async hasPostCheckInServiceChanges(appointment: AppointmentRow): Promise<boolean> {
+    const { data, error } = await this.admin
+      .schema('booking')
+      .from('appointment_service_changes')
+      .select('id')
+      .eq('appointment_id', appointment.id)
+      .eq('business_id', appointment.business_id)
+      .limit(1)
+      .returns<Array<{ id: string }>>();
+    if (error) {
+      this.logger.error(`service change lookup failed for ${appointment.id}: ${error.message}`);
+      throw new InternalServerErrorException('Unable to undo the check-in');
+    }
+    return (data ?? []).length > 0;
   }
 
   /**

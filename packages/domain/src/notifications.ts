@@ -38,6 +38,8 @@
 export const NotificationType = {
   /** A client has arrived and been checked in at the desk. Targets the assigned stylist. */
   ClientArrived: 'client_arrived',
+  /** A mistaken check-in was undone — the client has not arrived. Targets the assigned stylist. */
+  CheckInUndone: 'check_in_undone',
   /** An upcoming appointment reminder surfaced in-app to staff. */
   AppointmentReminder: 'appointment_reminder',
   /** An appointment's time, service or stylist changed. */

@@ -58,6 +58,14 @@ export class MarkNoShowDto {
   reason?: string;
 }
 
+/** Why a check-in is being undone (e.g. "wrong client"). Recorded on the undo's audit entry. */
+export class UndoCheckInDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
+}
+
 /** Reason a no-show is being corrected. Recorded on the correction's audit entry. */
 export class CorrectNoShowDto {
   @IsOptional()
