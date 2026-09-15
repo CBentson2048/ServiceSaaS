@@ -23,7 +23,12 @@ export function ClientBookingShell({
           <div className="flex items-center justify-between gap-3">
             <button
               type="button"
-              onClick={() => navigate(-1)}
+              onClick={() =>
+                // Opened straight from a shared link, this tab has no earlier
+                // QLOOQO page: history back would leave the site (or do nothing
+                // in an Instagram/WhatsApp browser), so go to salon search.
+                hasEarlierPageInApp() ? navigate(-1) : navigate('/book/location')
+              }
               className="text-[13px] font-medium text-white/85"
             >
               Back
@@ -130,4 +135,12 @@ function formatDuration(minutes: number): string {
   const hours = Math.floor(minutes / 60);
   const remainder = minutes % 60;
   return remainder ? `${hours} hr ${remainder} min` : `${hours} hr`;
+}
+
+// React Router keeps this tab's position in its history stack in
+// `history.state.idx`; a redirect (such as /s/:salonCode) replaces the entry and
+// keeps it at 0.
+function hasEarlierPageInApp(): boolean {
+  const state = window.history.state as { idx?: unknown } | null;
+  return typeof state?.idx === 'number' && state.idx > 0;
 }

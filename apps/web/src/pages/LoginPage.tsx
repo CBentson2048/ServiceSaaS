@@ -9,7 +9,12 @@ import { loginRedirectTarget } from '../auth/loginRedirect';
 import { BrandLogo } from '../components/BrandLogo';
 import { PasswordInput } from '../design';
 import { usePageMetadata } from '../hooks/usePageMetadata';
-import { readClientBookingSelection, updateClientBookingSelection } from './clientBookingFlow';
+import {
+  type BookingClient,
+  readClientBookingSelection,
+  sessionBookingClient,
+  updateClientBookingSelection,
+} from './clientBookingFlow';
 
 export function LoginPage() {
   usePageMetadata(
@@ -22,7 +27,9 @@ export function LoginPage() {
   const [searchParams] = useSearchParams();
   const bookingMode = searchParams.get('booking') === '1';
   const bookingSelection = bookingMode ? readClientBookingSelection() : null;
-  const [email, setEmail] = useState('');
+  // Signed in, but not as a client of the salon being booked: offer the same
+  // account for a fresh booking sign-in.
+  const [email, setEmail] = useState(() => (bookingMode ? (auth.user?.profile.email ?? '') : ''));
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -48,17 +55,20 @@ export function LoginPage() {
     );
   }
 
-  if (auth.user) {
-    if (bookingMode && auth.session && auth.user.clientProfileId) {
-      completeBookingAuth({ session: auth.session, user: auth.user });
-    }
+  const sessionClient =
+    auth.user && bookingMode
+      ? sessionBookingClient(auth.user, bookingSelection?.location?.businessId)
+      : null;
+
+  if (auth.user && !bookingMode) {
+    return <Navigate to={from ?? defaultRouteFor(auth.user)} replace />;
+  }
+
+  if (auth.user && auth.session && sessionClient) {
+    completeBookingAuth({ session: auth.session, user: auth.user }, sessionClient);
     return (
       <Navigate
-        to={
-          bookingMode && !auth.user.clientCommunicationPreference
-            ? '/book/preference'
-            : (from ?? defaultRouteFor(auth.user))
-        }
+        to={sessionClient.communicationPreference ? (from ?? '/book/review') : '/book/preference'}
         replace
       />
     );
@@ -76,10 +86,10 @@ export function LoginPage() {
           email,
           password,
         });
-        completeBookingAuth(response);
+        completeBookingAuth(response, response.bookingClient);
         auth.applyAuthenticatedSession(response.session, response.user);
         navigate(
-          response.user.clientCommunicationPreference
+          response.bookingClient.communicationPreference
             ? (from ?? '/book/review')
             : '/book/preference',
           {
@@ -129,6 +139,13 @@ export function LoginPage() {
           {justAcceptedInvitation ? (
             <div className="rounded-input-lg border border-success-border bg-success-soft px-4 py-3 text-sm text-success">
               Invitation accepted. Sign in with the password you just created.
+            </div>
+          ) : null}
+
+          {auth.user && bookingMode ? (
+            <div className="rounded-input-lg border border-border bg-surface-alt px-4 py-3 text-sm text-text-secondary">
+              You are signed in as {auth.user.profile.email}. Sign in again to book at{' '}
+              {bookingSelection?.location?.name ?? 'this salon'}.
             </div>
           ) : null}
 
@@ -229,10 +246,7 @@ function defaultRouteFor(user: AuthUser): string {
   );
 }
 
-function completeBookingAuth(response: LoginResponse): void {
-  if (!response.user.clientProfileId) {
-    throw new Error('Client profile could not be linked to this booking.');
-  }
+function completeBookingAuth(response: LoginResponse, bookingClient: BookingClient): void {
   const profileName = splitFullName(response.user.profile.fullName);
   updateClientBookingSelection({
     client: {
@@ -241,12 +255,12 @@ function completeBookingAuth(response: LoginResponse): void {
       email: response.user.profile.email,
       phone: response.user.profile.phone,
     },
-    communicationPreference: response.user.clientCommunicationPreference,
+    communicationPreference: bookingClient.communicationPreference,
     account: {
       accessToken: response.session.accessToken,
       refreshToken: response.session.refreshToken,
       userProfileId: response.user.id,
-      clientProfileId: response.user.clientProfileId,
+      clientProfileId: bookingClient.clientProfileId,
       email: response.user.profile.email,
     },
   });

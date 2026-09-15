@@ -2,6 +2,7 @@ import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common
 import { ConfigService } from '@nestjs/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { PublicSalonSummary } from '@sheer/domain';
+import { normalizeSalonCode } from '@sheer/domain';
 
 interface SalonRow {
   id: string;
@@ -49,7 +50,7 @@ export class SalonDirectoryService {
 
   /** Resolve exactly one salon from an exact (normalized) Salon Code, or null. */
   async lookupByCode(rawCode: string): Promise<PublicSalonSummary | null> {
-    const code = normalizeCode(rawCode);
+    const code = normalizeSalonCode(rawCode);
     if (!code) return null;
 
     const { data, error } = await this.admin
@@ -69,7 +70,7 @@ export class SalonDirectoryService {
 
   /** Resolve the active salon a currently-active provider's exact Q Code belongs to. */
   async lookupByQCode(rawCode: string): Promise<PublicSalonSummary | null> {
-    const code = normalizeCode(rawCode);
+    const code = normalizeSalonCode(rawCode);
     if (!/^Q[A-Z0-9]{5}$/.test(code)) return null;
 
     const { data: staff, error: staffError } = await this.admin
@@ -112,7 +113,7 @@ export class SalonDirectoryService {
     // Exact-identifier fast path. Salon Codes and provider Q Codes are both
     // 8 chars (Salon Code widened in 0065, Q Code in 0056); 6 is kept so any
     // legacy 6-char Salon Code still resolves exactly during rollout.
-    const code = normalizeCode(query);
+    const code = normalizeSalonCode(query);
     if (code.length === 6 || code.length === 8) {
       const [salonCodeMatch, qCodeMatch] = await Promise.all([
         this.lookupByCode(code),
@@ -209,10 +210,6 @@ function uniqueSalons(
 }
 
 /** Uppercase and strip anything outside the Salon Code alphabet (spaces, dashes). */
-function normalizeCode(value: string): string {
-  return (value ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-}
-
 /** Escape PostgREST ilike wildcards so user input is treated literally. */
 function escapeIlike(value: string): string {
   return value.replace(/[%_,]/g, (match) => `\\${match}`);

@@ -8,6 +8,7 @@ import {
   IsString,
   IsUUID,
   ArrayMinSize,
+  Length,
   MaxLength,
   MinLength,
   ValidateNested,
@@ -30,6 +31,12 @@ export class PublicBookingSelectionQueryDto {
   @IsOptional()
   @IsString()
   locationSlug?: string;
+
+  /** The location's public Salon Code — what shared booking links carry. */
+  @IsOptional()
+  @IsString()
+  @Length(1, 16)
+  salonCode?: string;
 }
 
 export class PublicBookingStylistsQueryDto extends PublicBookingSelectionQueryDto {

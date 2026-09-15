@@ -801,6 +801,21 @@ export interface LoginResponse {
   user: AuthUser;
 }
 
+/**
+ * A booking sign-in (or sign-up) at one salon. `user` is resolved from the
+ * account's highest-role membership, which can belong to a different salon, so
+ * its `clientProfileId` must not be used for this booking; `bookingClient` is
+ * the client profile the sign-in found or created at the booking salon.
+ */
+export interface ClientBookingLoginResponse extends LoginResponse {
+  bookingClient: {
+    businessId: string;
+    clientProfileId: string;
+    clientCode?: string;
+    communicationPreference?: CommunicationPreference;
+  };
+}
+
 export interface CreateAccountResponse extends LoginResponse {}
 
 export interface OwnerOnboardingOwnerInput {
@@ -4138,6 +4153,14 @@ export interface PublicSalonSummary {
   postalCode?: string;
   countryCode?: string;
   phone?: string;
+}
+
+/**
+ * Canonical form of a Salon Code as typed, pasted or put in a link: upper-cased
+ * with separators and spaces removed ("k7m-2qx" → "K7M2QX").
+ */
+export function normalizeSalonCode(value: string): string {
+  return (value ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
 
 /** Resolve a single salon from an exact Salon Code. */

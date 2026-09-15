@@ -13,6 +13,7 @@ import {
 } from '../auth/api';
 import { AppButton, AppCard } from '../design';
 import { usePageMetadata } from '../hooks/usePageMetadata';
+import { bookingServicePath } from './bookingLinks';
 import { ClientBookingShell } from './ClientBookingShell';
 import { writeClientBookingSelection } from './clientBookingFlow';
 
@@ -62,9 +63,7 @@ export function ClientBookingLocationPage() {
           if (result.locations.length === 1) {
             setSelectedLocation(result.locations[0]);
             writeInitialSelection(result.locations[0]);
-            navigate(`/book/service?locationId=${encodeURIComponent(result.locations[0].id)}`, {
-              replace: true,
-            });
+            navigate(bookingServicePath(result.locations[0]), { replace: true });
           }
         }
       } catch (err) {
@@ -126,7 +125,7 @@ export function ClientBookingLocationPage() {
       try {
         const result = await getPublicBookingSelection({ locationId: selectedSalon.locationId });
         writeInitialSelection(result.location);
-        navigate(`/book/service?locationId=${encodeURIComponent(result.location.id)}`);
+        navigate(bookingServicePath(result.location));
       } catch (err) {
         setError(toErrorMessage(err));
       } finally {
@@ -134,9 +133,9 @@ export function ClientBookingLocationPage() {
       }
       return;
     }
-    const id = selectedLocation?.id ?? data?.location.id;
-    if (!id) return;
-    navigate(`/book/service?locationId=${encodeURIComponent(id)}`);
+    const location = selectedLocation ?? data?.location;
+    if (!location) return;
+    navigate(bookingServicePath(location));
   }
 
   return (

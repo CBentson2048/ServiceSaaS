@@ -19,6 +19,8 @@ import type {
   AuthSession,
   AuthUser,
   BusinessTier,
+  ClientBookingLoginResponse,
+  CommunicationPreference,
   CreateAccountRequest,
   CreateAccountResponse,
   LoginResponse,
@@ -237,7 +239,9 @@ export class AuthService {
     }
   }
 
-  async createClientBookingAccount(input: ClientBookingAccountDto): Promise<LoginResponse> {
+  async createClientBookingAccount(
+    input: ClientBookingAccountDto,
+  ): Promise<ClientBookingLoginResponse> {
     const location = await this.fetchBookingLocation(input.locationId);
     const email = input.email.trim().toLowerCase();
     const firstName = input.firstName.trim();
@@ -266,16 +270,21 @@ export class AuthService {
 
       createdUserId = createdUser.user.id;
       await this.createUserProfile(createdUserId, email, fullName, input.phone);
-      await this.ensureClientMembership(location.business_id, createdUserId);
-      await this.ensureClientProfile(location.business_id, input.locationId, createdUserId, {
-        firstName,
-        lastName,
-        email,
-        phone: input.phone,
-        communicationPreference: input.communicationPreference,
-      });
+      const client = await this.ensureClientForBusiness(
+        location.business_id,
+        input.locationId,
+        createdUserId,
+        {
+          firstName,
+          lastName,
+          email,
+          phone: input.phone,
+          communicationPreference: input.communicationPreference,
+        },
+      );
 
-      return this.login(email, input.password, 'sheer_app');
+      const login = await this.login(email, input.password, 'sheer_app');
+      return { ...login, bookingClient: toBookingClient(location.business_id, client) };
     } catch (error) {
       if (createdUserId) {
         await this.rollbackCreatedClientAccount(createdUserId, location.business_id);
@@ -356,24 +365,36 @@ export class AuthService {
       phone?: string;
       communicationPreference?: 'whatsapp' | 'sms' | 'email';
     },
-  ): Promise<{ id: string; clientCode?: string }> {
+  ): Promise<{
+    id: string;
+    clientCode?: string;
+    communicationPreference?: CommunicationPreference;
+  }> {
     await this.ensureClientMembership(businessId, userId);
     await this.ensureClientProfile(businessId, locationId, userId, input);
 
     const { data, error } = await this.admin
       .schema('core')
       .from('client_profiles')
-      .select('id,client_code')
+      .select('id,client_code,communication_preference')
       .eq('business_id', businessId)
       .eq('user_profile_id', userId)
-      .maybeSingle<{ id: string; client_code?: string }>();
+      .maybeSingle<{
+        id: string;
+        client_code?: string;
+        communication_preference?: CommunicationPreference | null;
+      }>();
 
     if (error || !data) {
       this.logger.error(`ensureClientForBusiness lookup failed: ${error?.message ?? 'not found'}`);
       throw new InternalServerErrorException('Unable to resolve client profile');
     }
 
-    return { id: data.id, clientCode: data.client_code };
+    return {
+      id: data.id,
+      clientCode: data.client_code,
+      communicationPreference: data.communication_preference ?? undefined,
+    };
   }
 
   private async rollbackCreatedCustomerAccount(userId: string): Promise<void> {
@@ -381,7 +402,7 @@ export class AuthService {
     await this.admin.auth.admin.deleteUser(userId);
   }
 
-  async loginClientForBooking(input: ClientBookingLoginDto): Promise<LoginResponse> {
+  async loginClientForBooking(input: ClientBookingLoginDto): Promise<ClientBookingLoginResponse> {
     const location = await this.fetchBookingLocation(input.locationId);
     const email = input.email.trim().toLowerCase();
     const { data, error } = await this.sessionClient().auth.signInWithPassword({
@@ -394,13 +415,17 @@ export class AuthService {
     }
 
     const profile = await this.fetchProfile(data.user.id);
-    await this.ensureClientMembership(location.business_id, data.user.id);
-    await this.ensureClientProfile(location.business_id, input.locationId, data.user.id, {
-      firstName: firstNameFromFullName(profile.full_name),
-      lastName: lastNameFromFullName(profile.full_name),
-      email,
-      phone: input.phone ?? profile.phone ?? undefined,
-    });
+    const client = await this.ensureClientForBusiness(
+      location.business_id,
+      input.locationId,
+      data.user.id,
+      {
+        firstName: firstNameFromFullName(profile.full_name),
+        lastName: lastNameFromFullName(profile.full_name),
+        email,
+        phone: input.phone ?? profile.phone ?? undefined,
+      },
+    );
     if (input.phone?.trim()) {
       await this.updateUserProfilePhone(data.user.id, input.phone);
     }
@@ -411,6 +436,7 @@ export class AuthService {
     return {
       session: this.toAuthSession(data.session),
       user,
+      bookingClient: toBookingClient(location.business_id, client),
     };
   }
 
@@ -1513,6 +1539,18 @@ function slugify(value: string): string {
 
 function randomSuffix(): string {
   return Math.random().toString(36).slice(2, 8);
+}
+
+function toBookingClient(
+  businessId: string,
+  client: { id: string; clientCode?: string; communicationPreference?: CommunicationPreference },
+): ClientBookingLoginResponse['bookingClient'] {
+  return {
+    businessId,
+    clientProfileId: client.id,
+    clientCode: client.clientCode,
+    communicationPreference: client.communicationPreference,
+  };
 }
 
 function firstNameFromFullName(fullName: string): string {
