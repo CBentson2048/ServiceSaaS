@@ -71,8 +71,8 @@ export const REPORT_DEFINITIONS: readonly ReportDefinition[] = [
     key: 'team',
     label: 'Team report',
     permission: 'report.performance.view',
-    // R2 switches this on once its staff-scope contract exists (decision S-1d).
-    controls: { staff: false, detail: false },
+    // R2: staff narrow the staff rows only; facts keep their own location (S-1d).
+    controls: { staff: true, detail: false },
     release: 'foundation',
   },
   {

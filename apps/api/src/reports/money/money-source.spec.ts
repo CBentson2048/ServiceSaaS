@@ -181,7 +181,7 @@ describe('SupabaseMoneySource reads', () => {
     const lines = fakeSupabase({ data: [], error: null });
     await lines.source.billLines([ROW_ID], '60000000-0000-4000-8000-000000000000', 1000);
     expect(lines.queries[0].ops).toEqual([
-      ['select', ['id,bill_id,line_type,gross_cents,net_cents,tax_cents']],
+      ['select', ['id,bill_id,line_type,gross_cents,net_cents,tax_cents,staff_profile_id,source_ref']],
       ['in', ['bill_id', [ROW_ID]]],
       ['gt', ['id', '60000000-0000-4000-8000-000000000000']],
       ['order', ['id', { ascending: true }]],

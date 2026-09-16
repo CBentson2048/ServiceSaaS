@@ -49,12 +49,12 @@ describe('report registry', () => {
     }
   });
 
-  it('offers summary/detail only on money and cash-up, and a staff control on no report (S-1d)', () => {
+  it('offers summary/detail only on money and cash-up, and a staff control only on Team (R2, S-1d)', () => {
     const controls = Object.fromEntries(REPORT_DEFINITIONS.map((d) => [d.key, d.controls]));
     expect(controls).toEqual({
       money: { staff: false, detail: true },
       'cash-up': { staff: false, detail: true },
-      team: { staff: false, detail: false },
+      team: { staff: true, detail: false },
       'colour-lab': { staff: false, detail: false },
       pnl: { staff: false, detail: false },
     });

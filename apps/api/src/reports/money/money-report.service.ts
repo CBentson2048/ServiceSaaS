@@ -88,10 +88,10 @@ export class MoneyReportService {
     }
 
     const [facts, coverage, detail, configured] = await Promise.all([
-      started.length > 0 ? this.loadFacts(businessId, started) : Promise.resolve(null),
+      started.length > 0 ? loadMoneyFacts(this.source, businessId, started) : Promise.resolve(null),
       this.coverage(businessId, started),
       detailView ? this.detailPage(businessId, started, timezoneByLocation, null, fingerprint) : Promise.resolve(null),
-      this.locationCurrencies(businessId, started),
+      loadLocationCurrencies(this.source, businessId, started),
     ]);
 
     const factsByLocation = new Map<string, MoneyFacts>();
@@ -99,15 +99,7 @@ export class MoneyReportService {
       assertScoped(facts, started);
       for (const window of started) factsByLocation.set(window.locationId, splitByLocation(facts, window.locationId));
     }
-    // A location's figures are written in its own configured currency; facts
-    // recorded in any other currency make them "mixed", never silently relabelled.
-    const currenciesByLocation = new Map<string, Set<string>>();
-    for (const window of started) {
-      const currencies = currenciesOf(factsByLocation.get(window.locationId) ?? EMPTY_FACTS);
-      const own = configured.get(window.locationId);
-      if (own !== undefined) currencies.add(own);
-      currenciesByLocation.set(window.locationId, currencies);
-    }
+    const currenciesByLocation = locationCurrencySets(factsByLocation, started, configured);
     const summaryFacts = facts === null ? null : combineFacts([...factsByLocation.values()]);
     const summaryCurrencies = new Set([...currenciesByLocation.values()].flatMap((currencies) => [...currencies]));
 
@@ -128,49 +120,6 @@ export class MoneyReportService {
       coverage,
       detail,
     };
-  }
-
-  /** The configured currency of each started location (absent when it cannot be determined). */
-  private async locationCurrencies(businessId: string, windows: readonly MoneyWindow[]): Promise<Map<string, string>> {
-    const currencies = new Map<string, string>();
-    for (const chunk of chunks(windows.map((window) => window.locationId), MONEY_ID_CHUNK)) {
-      for (const [locationId, code] of await this.source.locationCurrencies(businessId, chunk)) currencies.set(locationId, code);
-    }
-    return currencies;
-  }
-
-  /** Every fact in the started windows, read in location chunks. */
-  private async loadFacts(businessId: string, windows: readonly MoneyWindow[]): Promise<MoneyFacts> {
-    const everyChunk = async <T extends { at: string; id: string }>(
-      read: (chunk: readonly MoneyWindow[], after: MoneyAfter | null, limit: number) => Promise<T[]>,
-    ): Promise<T[]> => {
-      const rows: T[] = [];
-      for (const chunk of chunks(windows, MONEY_LOCATION_CHUNK)) rows.push(...(await readAll((after, limit) => read(chunk, after, limit))));
-      return rows;
-    };
-    const [bills, retail, depositsCollected, depositsRefunded] = await Promise.all([
-      everyChunk((chunk, after, limit) => this.source.paidBills(businessId, chunk, after, limit)),
-      everyChunk((chunk, after, limit) => this.source.retailSales(businessId, chunk, after, limit)),
-      everyChunk((chunk, after, limit) => this.source.depositsCollected(businessId, chunk, after, limit)),
-      everyChunk((chunk, after, limit) => this.source.depositsRefunded(businessId, chunk, after, limit)),
-    ]);
-    return { bills: await this.withLinesAndPayments(businessId, bills), retail, depositsCollected, depositsRefunded };
-  }
-
-  private async withLinesAndPayments(businessId: string, bills: readonly PaidBillRow[]): Promise<BillFacts[]> {
-    const [lines, payments] = await Promise.all([
-      readAllByIds(bills.map((bill) => bill.id), (ids, afterId, limit) => this.source.billLines(ids, afterId, limit)),
-      readAllByIds(bills.map((bill) => bill.visitId), (ids, afterId, limit) =>
-        this.source.tillPaymentsForVisits(businessId, ids, afterId, limit),
-      ),
-    ]);
-    const linesByBill = groupBy(lines, (line: BillLineRow) => line.billId);
-    const paymentsByVisit = groupBy(payments, (payment: TillPaymentRow) => payment.visitId);
-    return bills.map((bill) => ({
-      bill,
-      lines: linesByBill.get(bill.id) ?? [],
-      payments: paymentsByVisit.get(bill.visitId) ?? [],
-    }));
   }
 
   /** Till payments recorded in the windows whose visit has no paid bill at all. */
@@ -291,13 +240,79 @@ export class MoneyReportService {
 
     const { page, next } = mergeDetailPage(candidates, MONEY_DETAIL_PAGE_SIZE);
     const pageBills = bills.filter((bill) => page.some((row) => row.position.rank === DETAIL_KIND_RANK.paid_bill && row.position.id === bill.id));
-    const billFacts = new Map((await this.withLinesAndPayments(businessId, pageBills)).map((facts) => [facts.bill.id, facts]));
+    const billFacts = new Map((await withLinesAndPayments(this.source, businessId, pageBills)).map((facts) => [facts.bill.id, facts]));
     return { notStarted: false, rows: page.map((row) => row.build(billFacts)), nextCursor: next === null ? null : encodeDetailCursor(next, fingerprint) };
   }
 }
 
+/**
+ * Every R1 fact in the started windows, read in location chunks: the paid-bill
+ * universe (bills with their lines and payments), retail sales and deposits. R2
+ * Team reads money through this same loader, so the two reports share one universe.
+ */
+export async function loadMoneyFacts(source: MoneySource, businessId: string, windows: readonly MoneyWindow[]): Promise<MoneyFacts> {
+  const everyChunk = async <T extends { at: string; id: string }>(
+    read: (chunk: readonly MoneyWindow[], after: MoneyAfter | null, limit: number) => Promise<T[]>,
+  ): Promise<T[]> => {
+    const rows: T[] = [];
+    for (const chunk of chunks(windows, MONEY_LOCATION_CHUNK)) rows.push(...(await readAll((after, limit) => read(chunk, after, limit))));
+    return rows;
+  };
+  const [bills, retail, depositsCollected, depositsRefunded] = await Promise.all([
+    everyChunk((chunk, after, limit) => source.paidBills(businessId, chunk, after, limit)),
+    everyChunk((chunk, after, limit) => source.retailSales(businessId, chunk, after, limit)),
+    everyChunk((chunk, after, limit) => source.depositsCollected(businessId, chunk, after, limit)),
+    everyChunk((chunk, after, limit) => source.depositsRefunded(businessId, chunk, after, limit)),
+  ]);
+  return { bills: await withLinesAndPayments(source, businessId, bills), retail, depositsCollected, depositsRefunded };
+}
+
+async function withLinesAndPayments(source: MoneySource, businessId: string, bills: readonly PaidBillRow[]): Promise<BillFacts[]> {
+  const [lines, payments] = await Promise.all([
+    readAllByIds(bills.map((bill) => bill.id), (ids, afterId, limit) => source.billLines(ids, afterId, limit)),
+    readAllByIds(bills.map((bill) => bill.visitId), (ids, afterId, limit) => source.tillPaymentsForVisits(businessId, ids, afterId, limit)),
+  ]);
+  const linesByBill = groupBy(lines, (line: BillLineRow) => line.billId);
+  const paymentsByVisit = groupBy(payments, (payment: TillPaymentRow) => payment.visitId);
+  return bills.map((bill) => ({
+    bill,
+    lines: linesByBill.get(bill.id) ?? [],
+    payments: paymentsByVisit.get(bill.visitId) ?? [],
+  }));
+}
+
+/** The configured currency of each started location (absent when it cannot be determined). */
+export async function loadLocationCurrencies(source: MoneySource, businessId: string, windows: readonly MoneyWindow[]): Promise<Map<string, string>> {
+  const currencies = new Map<string, string>();
+  for (const chunk of chunks(windows.map((window) => window.locationId), MONEY_ID_CHUNK)) {
+    for (const [locationId, code] of await source.locationCurrencies(businessId, chunk)) currencies.set(locationId, code);
+  }
+  return currencies;
+}
+
+/**
+ * Each started location's currencies: its own configured currency together with
+ * the currencies its facts were recorded in. A location's figures are written in
+ * its own configured currency; facts in any other currency make them "mixed",
+ * never silently relabelled.
+ */
+export function locationCurrencySets(
+  factsByLocation: ReadonlyMap<string, MoneyFacts>,
+  windows: readonly MoneyWindow[],
+  configured: ReadonlyMap<string, string>,
+): Map<string, Set<string>> {
+  const currenciesByLocation = new Map<string, Set<string>>();
+  for (const window of windows) {
+    const currencies = currenciesOf(factsByLocation.get(window.locationId) ?? EMPTY_FACTS);
+    const own = configured.get(window.locationId);
+    if (own !== undefined) currencies.add(own);
+    currenciesByLocation.set(window.locationId, currencies);
+  }
+  return currenciesByLocation;
+}
+
 /** Every fact must belong to a started, scoped location — the provider invariant. */
-function assertScoped(facts: MoneyFacts, windows: readonly MoneyWindow[]): void {
+export function assertScoped(facts: MoneyFacts, windows: readonly MoneyWindow[]): void {
   const scoped = new Set(windows.map((window) => window.locationId));
   const locations = [
     ...facts.bills.map((bill) => bill.bill.locationId),
@@ -315,7 +330,7 @@ function requiredTimezone(timezoneByLocation: ReadonlyMap<string, string>, locat
   return timezone;
 }
 
-function splitByLocation(facts: MoneyFacts, locationId: string): MoneyFacts {
+export function splitByLocation(facts: MoneyFacts, locationId: string): MoneyFacts {
   return {
     bills: facts.bills.filter((bill) => bill.bill.locationId === locationId),
     retail: facts.retail.filter((sale) => sale.locationId === locationId),
@@ -324,7 +339,7 @@ function splitByLocation(facts: MoneyFacts, locationId: string): MoneyFacts {
   };
 }
 
-function singleCurrency(currencies: ReadonlySet<string>): string | null {
+export function singleCurrency(currencies: ReadonlySet<string>): string | null {
   return currencies.size === 1 ? [...currencies][0] : null;
 }
 

@@ -6,7 +6,8 @@
  *   never falls back to role defaults, never uses the fail-open guards.
  * - Reporting is read-only.
  * - There is one clock read per request, in the controller.
- * - Ticket A has no staff scope (decision S-1d): no staff-location source.
+ * - Staff scope (decision S-1d) lives only in R2 Team, from memberships and facts —
+ *   never `primary_location_id`.
  * - The domain contract is browser-safe: no clock, no Intl, no day boundaries.
  */
 import { readdirSync, readFileSync } from 'node:fs';
@@ -49,6 +50,7 @@ const MERGED_USER_READ = [
 
 const MONEY_DIR = join(__dirname, 'money');
 const CASH_UP_DIR = join(__dirname, 'cash-up');
+const TEAM_DIR = join(__dirname, 'team');
 const reportFiles = [
   ...readdirSync(__dirname)
     .filter((file) => file.endsWith('.ts') && !file.endsWith('.spec.ts'))
@@ -61,11 +63,18 @@ const reportFiles = [
   ...readdirSync(CASH_UP_DIR)
     .filter((file) => file.endsWith('.ts') && !file.endsWith('.spec.ts'))
     .map((file) => read(join(CASH_UP_DIR, file))),
+  // R2 Team. Test support under team/testing is not app code.
+  ...readdirSync(TEAM_DIR)
+    .filter((file) => file.endsWith('.ts') && !file.endsWith('.spec.ts'))
+    .map((file) => read(join(TEAM_DIR, file))),
 ];
 const moneyFiles = reportFiles.filter((file) => file.name.includes('/reports/money/'));
 const cashUpFiles = reportFiles.filter((file) => file.name.includes('/reports/cash-up/'));
+const teamFiles = reportFiles.filter((file) => file.name.includes('/reports/team/'));
 const grantResolver = read(join(API_SRC, 'auth', 'membership-grants.ts'));
-const domainContract = ['reporting.ts', 'local-date.ts', 'money-report.ts', 'cash-up-report.ts'].map((file) => read(join(DOMAIN_SRC, file)));
+const domainContract = ['reporting.ts', 'local-date.ts', 'money-report.ts', 'cash-up-report.ts', 'team-report.ts'].map((file) =>
+  read(join(DOMAIN_SRC, file)),
+);
 
 function offenders(files: Array<{ name: string; code: string }>, pattern: RegExp): string[] {
   return files.filter((file) => pattern.test(file.code)).map((file) => file.name);
@@ -93,6 +102,12 @@ describe('report foundation source boundaries', () => {
       'report-window.ts',
       'reports.controller.ts',
       'reports.module.ts',
+      'team-commission.ts',
+      'team-future-booking.ts',
+      'team-money.ts',
+      'team-report.service.ts',
+      'team-source.ts',
+      'team-utilisation.ts',
     ]);
   });
 
@@ -143,8 +158,49 @@ describe('report foundation source boundaries', () => {
     expect(offenders(reportFiles, /new Date\s*\(/)).toEqual(['apps/api/src/reports/reports.controller.ts']);
   });
 
-  it('has no staff scope in Ticket A (S-1d): no staff-location source and no primary location', () => {
-    expect(offenders(reportFiles, /primary_location_id|staff_profiles|user_memberships|['"]shifts['"]|['"]appointments['"]|appointment_services/)).toEqual([]);
+  it('never uses primary_location_id or appointment service prices, and reads staff sources only in R2 Team (S-1d)', () => {
+    expect(offenders(reportFiles, /primary_location_id|appointment_services/)).toEqual([]);
+    const outsideTeam = reportFiles.filter((file) => !teamFiles.includes(file));
+    expect(offenders(outsideTeam, /staff_profiles|user_memberships|['"]shifts['"]|['"]appointments['"]/)).toEqual([]);
+    // Within Team, only the source adapter touches the database.
+    expect(offenders(teamFiles, /\.from\(/)).toEqual(['apps/api/src/reports/team/team-source.ts']);
+  });
+
+  it('R2 Team reads money through R1 and never a legacy calculation, calculator or merged scope', () => {
+    expect(teamFiles).toHaveLength(6);
+    expect(
+      offenders(
+        teamFiles,
+        /visit_line_items|price_amount|rebooking_outcomes|client_next_bookings|\bKpiService\b|\bUtilisationService\b|kpi\.calc|payroll\.calc|calculatePaySummary|computeCommission|\bDashboardService\b|PayrollInputsService|\bEodService\b/,
+      ),
+    ).toEqual([]);
+    // Money is R1's loader and R1's universe: Team reads no bill, retail or deposit table itself.
+    const tables = [...new Set([...teamFiles.map((f) => f.code).join('\n').matchAll(/\.from\('([a-z_]+)'\)/g)].map((m) => m[1]))].sort();
+    expect(tables).toEqual([
+      'absence_events',
+      'appointments',
+      'book_out_types',
+      'leave_requests',
+      'pay_periods',
+      'pay_summaries',
+      'shift_breaks',
+      'shifts',
+      'staff_profiles',
+      'user_memberships',
+      'visits',
+    ]);
+    expect(offenders(teamFiles, /loadMoneyFacts\(/)).toEqual(['apps/api/src/reports/team/team-report.service.ts']);
+    // Windows come from the Ticket A scope; Team never resolves one or reads the clock.
+    expect(offenders(teamFiles, /resolveReportWindows|periodUtcWindow|resolveLocalRange|new Date\s*\(|Date\.now/)).toEqual([]);
+    // Finalised commission only: locked or paid calculation periods, never approved, review or draft.
+    const teamSource = teamFiles.find((file) => file.name.endsWith('team-source.ts'))!.code;
+    expect(teamSource).toContain(".eq('kind', 'calculation')");
+    expect(teamSource).toContain(".in('status', ['locked', 'paid'])");
+    expect(offenders(teamFiles, /'ready_for_review'|'draft'/)).toEqual([]);
+    // 'approved' appears once: approved leave, which reduces rostered time.
+    expect([...teamSource.matchAll(/'approved'/g)]).toHaveLength(1);
+    expect(teamSource).toContain(".eq('status', 'approved')\n        .in('staff_profile_id'");
+    expect(offenders(teamFiles, /['"`]GBP['"`]/)).toEqual([]);
   });
 
   it('R1 Money reads only its canonical sources, never a legacy revenue calculation', () => {

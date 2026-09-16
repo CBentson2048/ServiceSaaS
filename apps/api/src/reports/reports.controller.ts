@@ -10,6 +10,7 @@ import { reportHttpError } from './report-errors';
 import { ReportScopeService } from './report-scope.service';
 import { MoneyReportService } from './money/money-report.service';
 import { CashUpReportService } from './cash-up/cash-up-report.service';
+import { TeamReportService } from './team/team-report.service';
 
 /**
  * QLOOQO 10 report foundation routes.
@@ -29,6 +30,7 @@ export class ReportsController {
     private readonly scope: ReportScopeService,
     private readonly money: MoneyReportService,
     private readonly cashUp: CashUpReportService,
+    private readonly team: TeamReportService,
   ) {}
 
   /** Takes no selection query: it cannot refuse a selection. */
@@ -64,6 +66,10 @@ export class ReportsController {
     }
     // Only a report with a paged detail view accepts a cursor.
     if (cursor !== null) throw reportHttpError('report_cursor_invalid');
+    if (definition.key === 'team') {
+      const body = await this.team.build(scope);
+      return { reportKey: definition.key, filter: scope.resolved, body };
+    }
     return { reportKey: definition.key, filter: scope.resolved, body: null };
   }
 

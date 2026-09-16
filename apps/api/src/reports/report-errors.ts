@@ -11,6 +11,7 @@ const STATUS: Record<ReportErrorCode, number> = {
   report_timezone_invalid: HttpStatus.UNPROCESSABLE_ENTITY,
   report_week_start_unconfigured: HttpStatus.CONFLICT,
   report_cursor_invalid: HttpStatus.BAD_REQUEST,
+  report_staff_out_of_scope: HttpStatus.FORBIDDEN,
 };
 
 // Messages are fixed per code and never echo request values: an out-of-scope
@@ -26,6 +27,7 @@ const MESSAGE: Record<ReportErrorCode, string> = {
   report_timezone_invalid: 'A selected location has a time zone that needs fixing',
   report_week_start_unconfigured: 'This business has no week start configured',
   report_cursor_invalid: 'The report page cursor is not valid',
+  report_staff_out_of_scope: 'One or more selected staff are not available to you for this report',
 };
 
 export function reportHttpError(
