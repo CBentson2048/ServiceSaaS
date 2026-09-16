@@ -12,6 +12,7 @@ import {
   type CashUpReportBody,
   type MoneyReportBody,
   type TeamReportBody,
+  type TeamStaffOption,
 } from '@sheer/domain';
 import { ApiRequestError, getReportOptions, getReportResult } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
@@ -21,6 +22,7 @@ import { MoneyReport, isMoneyFirstPage, type MoneyFirstPage } from './money/Mone
 import { CashUpReport, isCashUpFirstPage, type CashUpFirstPage } from './cash-up/CashUpReport';
 import { ReportMultiSelect } from './ReportMultiSelect';
 import { TeamReport } from './team/TeamReport';
+import { formerStaffLabel } from './team/teamLabels';
 import { LOCAL_CALENDAR_NOTE, groupReportScope } from './reportScopeLine';
 import { useReportFilter, type ReportFilterWriteMode } from './useReportFilter';
 
@@ -222,19 +224,27 @@ export function ReportPage({ definition }: { definition: ReportDefinition }) {
   // The staff picker is the reportable staff for the dates and locations shown: it comes
   // with the Team result, so it is never wider than what the server would accept.
   const teamBody = result.status === 'ready' && result.data.reportKey === 'team' ? (result.data.body as TeamReportBody | null) : null;
+  // After a staff refusal the last picker stays usable, so a person can untick just the
+  // staff member who is no longer reportable instead of clearing the whole selection.
+  const lastStaffOptions = useRef<TeamStaffOption[] | null>(null);
+  if (teamBody) lastStaffOptions.current = teamBody.staffOptions;
+  const staffRefused = result.status === 'error' && reportErrorOf(result.error)?.code === 'report_staff_out_of_scope';
+  const pickerOptions = teamBody?.staffOptions ?? (staffRefused ? lastStaffOptions.current : null);
+  const locationNames = new Map((optionsData?.locations ?? []).map((location) => [location.id, location.name]));
   const staffControl = definition.controls.staff ? (
     <ReportMultiSelect
       label="Staff"
       allLabel="All staff"
       pluralNoun="staff"
-      options={(teamBody?.staffOptions ?? []).map((option) => ({
+      options={(pickerOptions ?? []).map((option) => ({
         id: option.staffProfileId,
-        label: option.name ?? 'Former staff (profile removed)',
+        label: option.name ?? formerStaffLabel(option.staffProfileId),
         group: option.kind === 'staff' ? 'Staff' : 'Former staff',
+        note: option.locationIds.map((id) => locationNames.get(id)).filter((name): name is string => Boolean(name)).join(', ') || undefined,
       }))}
       value={filter.staffProfileIds}
       maxSelected={MAX_REPORT_IDS}
-      disabled={options.status !== 'ready' || teamBody === null}
+      disabled={options.status !== 'ready' || pickerOptions === null}
       onCommit={(next) => setFilter({ ...filter, staffProfileIds: next }, 'push')}
     />
   ) : undefined;
@@ -422,7 +432,7 @@ function resultNotice(error: unknown, handlers: NoticeHandlers): ReactNode {
       return (
         <Notice
           key="result"
-          message="This link includes staff you can’t report on for these dates and locations."
+          message="The selected staff aren’t all available to you for these dates and locations."
           action={button('Show all staff', () => write({ ...filter, staffProfileIds: [] }, 'push'))}
         />
       );

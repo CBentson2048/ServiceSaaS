@@ -564,11 +564,42 @@ describe('R2 Team body and staff filter', () => {
     expect(within(table).queryByRole('rowheader', { name: /^Alice/ })).toBeNull();
   });
 
+  it('the staff picker waits for the result, and lists each option’s locations', async () => {
+    const pending = deferred<ReportResult>();
+    api.getReportOptions.mockResolvedValue({ ...options(), reportKey: 'team' });
+    api.getReportResult.mockReturnValue(pending.promise);
+    renderAt('/reports/team');
+    await waitFor(() => expect((screen.getByRole('button', { name: /^Staff/ }) as HTMLButtonElement).disabled).toBe(true));
+    await act(async () => pending.resolve(teamResult([])));
+    await screen.findByRole('region', { name: 'Staff performance' });
+    expect((screen.getByRole('button', { name: /^Staff/ }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: /^Staff/ }));
+    expect(screen.getByRole('option', { name: /Alice/ }).textContent).toContain('London');
+  });
+
+  it('after a staff refusal the last picker stays usable, so one member can be unticked', async () => {
+    api.getReportOptions.mockResolvedValue({ ...options(), reportKey: 'team' });
+    api.getReportResult.mockImplementation((_token: string, _key: string, filter: { staffProfileIds: string[] }) =>
+      filter.staffProfileIds.includes(ALICE) ? Promise.reject(reportError(403, 'report_staff_out_of_scope')) : Promise.resolve(teamResult(filter.staffProfileIds)),
+    );
+    renderAt(`/reports/team?staff=${BEN}`);
+    await screen.findByRole('region', { name: 'Selected staff' });
+    fireEvent.click(screen.getByRole('button', { name: /^Staff/ }));
+    fireEvent.click(screen.getByRole('option', { name: /Alice/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    await screen.findByText('The selected staff aren’t all available to you for these dates and locations.');
+    fireEvent.click(screen.getByRole('button', { name: /^Staff/ }));
+    fireEvent.click(screen.getByRole('option', { name: /Alice/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(currentSearch).toBe(`?staff=${BEN}`));
+    await screen.findByRole('region', { name: 'Selected staff' });
+  });
+
   it('a staff refusal says so and offers to show all staff, never an empty report', async () => {
     api.getReportOptions.mockResolvedValue({ ...options(), reportKey: 'team' });
     api.getReportResult.mockRejectedValueOnce(reportError(403, 'report_staff_out_of_scope')).mockResolvedValue(teamResult([]));
     renderAt(`/reports/team?staff=${ALICE}`);
-    await screen.findByText('This link includes staff you can’t report on for these dates and locations.');
+    await screen.findByText('The selected staff aren’t all available to you for these dates and locations.');
     expect(screen.queryByRole('region', { name: 'Staff performance' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Show all staff' }));
     await waitFor(() => expect(currentSearch).toBe(''));

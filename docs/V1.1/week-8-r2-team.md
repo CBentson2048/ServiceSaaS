@@ -21,7 +21,7 @@ report window.
 | Service revenue (gross incl. VAT; net alongside) | Available |
 | Colour | Available |
 | Average bill | Available |
-| Utilisation | Available (unstated for a staff-day covered by leave recorded at another location) |
+| Utilisation | Available; unavailable for a staff row — and its location and team totals — when a rostered day is covered by leave recorded at another location |
 | Future Booking (and confirmed-only) | Available, as at generation |
 | Retail revenue | Available |
 | Retail share of service revenue | Available, team and location only |

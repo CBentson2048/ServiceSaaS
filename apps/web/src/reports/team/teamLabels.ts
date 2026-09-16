@@ -4,6 +4,7 @@
  * subtracts, divides or derives one. An unavailable figure is words, never 0.
  */
 import type {
+  LocalDate,
   MoneyAmount,
   MoneyUnavailableReason,
   TeamAmount,
@@ -11,6 +12,7 @@ import type {
   TeamCount,
   TeamEmploymentStatus,
   TeamGreaterOf,
+  TeamLocalDateTime,
   TeamRatio,
   TeamStaffIdentity,
   TeamUnavailableMetric,
@@ -18,6 +20,7 @@ import type {
   TeamUnavailableReason,
 } from '@sheer/domain';
 import { NOT_STARTED, formatMoneyAmount } from '../money/moneyLabels';
+import { formatReportDate } from '../reportScopeLine';
 
 type TeamOnlyReason = Exclude<TeamUnavailableReason, MoneyUnavailableReason>;
 
@@ -64,10 +67,12 @@ export function formatTeamCount(count: TeamCount): string {
  * digits — "1020" is "10.2%" — so the browser never divides.
  */
 export function basisPointsText(basisPoints: number): string {
-  const digits = String(basisPoints).padStart(3, '0');
+  const text = String(basisPoints);
+  const sign = text.startsWith('-') ? '-' : '';
+  const digits = text.replace('-', '').padStart(3, '0');
   const whole = digits.slice(0, -2);
   const fraction = digits.slice(-2).replace(/0+$/, '');
-  return `${whole}${fraction ? `.${fraction}` : ''}%`;
+  return `${sign}${whole}${fraction ? `.${fraction}` : ''}%`;
 }
 
 export function formatTeamRatio(ratio: TeamRatio): string {
@@ -81,13 +86,33 @@ export function formatTeamRatio(ratio: TeamRatio): string {
   }
 }
 
-/** "4 of 10" beside a percentage, when the parts are known. */
-export function ratioParts(ratio: TeamRatio, noun: string): string | null {
-  return ratio.availability === 'available' ? `${grouped(ratio.numerator)} of ${grouped(ratio.denominator)} ${noun}` : null;
+/** "4 of 10 clients" beside a percentage, only when the parts are known. */
+export function clientsParts(ratio: TeamRatio): string | null {
+  if (ratio.availability !== 'available') return null;
+  return `${grouped(ratio.numerator)} of ${grouped(ratio.denominator)} ${ratio.denominator === 1 ? 'client' : 'clients'}`;
+}
+
+/** "2 bills", only when the count is known. */
+export function billsText(count: TeamCount): string | null {
+  if (count.availability !== 'available') return null;
+  return count.count === 1 ? '1 bill' : `${grouped(count.count)} bills`;
 }
 
 export function formatMinutes(count: TeamCount): string {
   return count.availability === 'available' ? `${grouped(count.count)} min` : formatTeamCount(count);
+}
+
+/** "120 min booked of 420 min" when both are known; otherwise the reason, once. */
+export function bookedOfRostered(booked: TeamCount, available: TeamCount): string {
+  if (booked.availability === 'available' && available.availability === 'available') {
+    return `${formatMinutes(booked)} booked of ${formatMinutes(available)}`;
+  }
+  return formatTeamCount(available.availability !== 'available' ? available : booked);
+}
+
+/** "16 Sept 2026, 11:00": a location's local date and time. */
+export function asAtWhen(at: TeamLocalDateTime): string {
+  return `${formatReportDate(at.localDate as LocalDate)}, ${at.localTime}`;
 }
 
 const EMPLOYMENT_TEXT: Record<TeamEmploymentStatus, string> = {
@@ -102,10 +127,15 @@ export function staffName(staff: TeamStaffIdentity): string {
     case 'staff':
       return staff.name;
     case 'former':
-      return 'Former staff (profile removed)';
+      return formerStaffLabel(staff.staffProfileId);
     case 'unattributed':
       return 'Unattributed';
   }
+}
+
+/** Former staff have no name left: a short reference keeps two of them apart. */
+export function formerStaffLabel(staffProfileId: string): string {
+  return `Former staff (profile removed, ref ${staffProfileId.slice(-4)})`;
 }
 
 /** Today's status, always labelled as current — never as where someone worked in the period. */

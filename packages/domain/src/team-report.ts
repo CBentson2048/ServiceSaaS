@@ -191,6 +191,8 @@ export interface TeamCommissionPeriod {
   total: TeamAmount;
   /** The statements' single currency; `null` when they differ or there are none. */
   currencyCode: string | null;
+  /** Live statements in the period, whatever the staff filter. */
+  statements: number;
 }
 
 /** Why some pay periods are not shown to this viewer — stated whether or not any exist. */

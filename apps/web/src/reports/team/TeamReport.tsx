@@ -1,7 +1,6 @@
 import type {
   ResolvedReportLocation,
   TeamCommissionPeriod,
-  TeamLocalDateTime,
   TeamMetrics,
   TeamReportBody,
   TeamStaffRow,
@@ -14,12 +13,15 @@ import {
   COMMISSION_RESTRICTION_TEXT,
   GREATER_OF_TEXT,
   UNAVAILABLE_METRIC_LABELS,
+  asAtWhen,
+  billsText,
+  bookedOfRostered,
+  clientsParts,
   currentStatusText,
-  formatMinutes,
   formatTeamAmount,
   formatTeamCount,
   formatTeamRatio,
-  ratioParts,
+  formerStaffLabel,
   staffName,
   unavailableMetricText,
 } from './teamLabels';
@@ -39,25 +41,28 @@ export interface TeamReportProps {
 export function TeamReport({ body, locations }: TeamReportProps) {
   const nameOf = (id: string) => locations.find((location) => location.id === id)?.name ?? 'Unknown location';
   const asAt = asAtText(body, nameOf);
+  const asAtByLocation = new Map(body.locations.map((location) => [location.locationId, asAtWhen(location.futureBookingAsAt)]));
+  // One time for the whole report when every location shares it; otherwise each location states its own.
+  const overviewAsAt = new Set(asAtByLocation.values()).size === 1 ? `As at ${[...asAtByLocation.values()][0]}` : 'As at each location’s time below';
 
   return (
     <div className="flex flex-col gap-4">
       <div className="grid gap-4 lg:grid-cols-2">
         <Section title="Team overview">
-          <MetricsFigures metrics={body.summary} currencyCode={body.currencyCode} totals={body.summary} />
+          <MetricsFigures metrics={body.summary} currencyCode={body.currencyCode} totals={body.summary} asAt={overviewAsAt} />
           <Note>Every location in this report, whatever the staff filter. Team figures are worked out from all the facts, never averaged from staff.</Note>
         </Section>
         {body.selectedStaff ? (
           <Section title="Selected staff">
-            <MetricsFigures metrics={body.selectedStaff} currencyCode={body.currencyCode} />
+            <MetricsFigures metrics={body.selectedStaff} currencyCode={body.currencyCode} asAt={overviewAsAt} />
             <Note>The staff chosen in the filter, across every location in this report. A client or bill they share counts once.</Note>
           </Section>
         ) : null}
       </div>
 
-      {body.locations.length > 1 ? <LocationTable body={body} nameOf={nameOf} /> : null}
+      {body.locations.length > 1 ? <LocationTable body={body} nameOf={nameOf} asAtByLocation={asAtByLocation} /> : null}
 
-      <StaffTable body={body} nameOf={nameOf} />
+      <StaffTable body={body} nameOf={nameOf} asAtByLocation={asAtByLocation} />
 
       <Section title="Future Booking">
         <AppText as="p" variant="body">
@@ -71,16 +76,18 @@ export function TeamReport({ body, locations }: TeamReportProps) {
 
       <CommissionSection body={body} nameOf={nameOf} />
 
-      <Section title="Not available yet">
-        <dl className="flex flex-col gap-2 text-[14px]">
-          {body.unavailableMetrics.map((metric) => (
-            <div key={metric.metric}>
-              <dt className="font-medium text-text-primary">{UNAVAILABLE_METRIC_LABELS[metric.metric]}</dt>
-              <dd className="text-text-secondary">{unavailableMetricText(metric)}</dd>
-            </div>
-          ))}
-        </dl>
-      </Section>
+      {body.unavailableMetrics.length > 0 ? (
+        <Section title="Not available yet">
+          <dl className="flex flex-col gap-2 text-[14px]">
+            {body.unavailableMetrics.map((metric) => (
+              <div key={metric.metric}>
+                <dt className="font-medium text-text-primary">{UNAVAILABLE_METRIC_LABELS[metric.metric]}</dt>
+                <dd className="text-text-secondary">{unavailableMetricText(metric)}</dd>
+              </div>
+            ))}
+          </dl>
+        </Section>
+      ) : null}
 
       <DataQuality body={body} />
     </div>
@@ -88,22 +95,23 @@ export function TeamReport({ body, locations }: TeamReportProps) {
 }
 
 function asAtText(body: TeamReportBody, nameOf: (id: string) => string): string {
-  const label = (at: TeamLocalDateTime) => `${formatReportDate(at.localDate)}, ${at.localTime}`;
-  const labels = [...new Set(body.locations.map((location) => label(location.futureBookingAsAt)))];
+  const labels = [...new Set(body.locations.map((location) => asAtWhen(location.futureBookingAsAt)))];
   if (labels.length === 1) return `As at ${labels[0]}`;
-  return `As at ${body.locations.map((location) => `${label(location.futureBookingAsAt)} (${nameOf(location.locationId)})`).join('; ')}`;
+  return `As at ${body.locations.map((location) => `${asAtWhen(location.futureBookingAsAt)} (${nameOf(location.locationId)})`).join('; ')}`;
 }
 
-function MetricsFigures({ metrics, currencyCode, totals }: { metrics: TeamMetrics; currencyCode: string | null; totals?: TeamTotals }) {
+function MetricsFigures({ metrics, currencyCode, totals, asAt }: { metrics: TeamMetrics; currencyCode: string | null; totals?: TeamTotals; asAt: string }) {
   const money = (amount: TeamMetrics['retailRevenue']) => formatTeamAmount(amount, currencyCode);
+  const utilisation = metrics.utilisation;
+  const future = metrics.futureBooking;
   const rows: Array<[string, string, string | null]> = [
     ['Service revenue (incl. VAT)', money(metrics.serviceRevenue.gross), null],
     ['Service revenue, net of VAT', money(metrics.serviceRevenue.netOfVat), null],
     ['Colour', money(metrics.colour.gross), null],
-    ['Average bill', money(metrics.averageBill.average), `${formatTeamCount(metrics.averageBill.bills)} bills`],
-    ['Utilisation', formatTeamRatio(metrics.utilisation.utilisation), `${formatMinutes(metrics.utilisation.bookedMinutes)} booked of ${formatMinutes(metrics.utilisation.availableMinutes)}`],
-    ['Future Booking', formatTeamRatio(metrics.futureBooking.withFutureBooking), ratioParts(metrics.futureBooking.withFutureBooking, 'clients')],
-    ['Future Booking, confirmed only', formatTeamRatio(metrics.futureBooking.withConfirmedFutureBooking), null],
+    ['Average bill', money(metrics.averageBill.average), metrics.averageBill.average.availability === 'available' ? billsText(metrics.averageBill.bills) : null],
+    ['Utilisation', formatTeamRatio(utilisation.utilisation), utilisation.utilisation.availability === 'available' ? bookedOfRostered(utilisation.bookedMinutes, utilisation.availableMinutes) : null],
+    ['Future Booking', formatTeamRatio(future.withFutureBooking), [clientsParts(future.withFutureBooking), future.withFutureBooking.availability === 'not_started' ? null : asAt].filter(Boolean).join(' · ') || null],
+    ['Future Booking, confirmed only', formatTeamRatio(future.withConfirmedFutureBooking), null],
     ['Retail revenue', money(metrics.retailRevenue), null],
   ];
   if (totals) rows.push(['Retail as a share of service revenue', formatTeamRatio(totals.retailShareOfServiceRevenue), null]);
@@ -124,7 +132,7 @@ function MetricsFigures({ metrics, currencyCode, totals }: { metrics: TeamMetric
 
 const STAFF_COLUMNS = [
   'Staff',
-  'Service revenue',
+  'Service revenue (incl. VAT)',
   'Net of VAT',
   'Colour',
   'Average bill',
@@ -136,7 +144,7 @@ const STAFF_COLUMNS = [
   'Retail revenue',
 ];
 
-function StaffTable({ body, nameOf }: { body: TeamReportBody; nameOf: (id: string) => string }) {
+function StaffTable({ body, nameOf, asAtByLocation }: { body: TeamReportBody; nameOf: (id: string) => string; asAtByLocation: ReadonlyMap<string, string> }) {
   const filtered = body.selectedStaff !== null;
   return (
     <AppCard padding="md">
@@ -161,8 +169,9 @@ function StaffTable({ body, nameOf }: { body: TeamReportBody; nameOf: (id: strin
               return (
                 <tbody key={location.locationId}>
                   <tr className="border-t border-border-strong">
-                    <th scope="colgroup" colSpan={STAFF_COLUMNS.length} className="pt-3 pb-1 text-left text-[13px] font-semibold text-text-primary">
+                    <th scope="rowgroup" colSpan={STAFF_COLUMNS.length} className="pt-3 pb-1 text-left text-[13px] font-semibold text-text-primary">
                       {nameOf(location.locationId)}
+                      <span className="ml-2 text-[11px] font-normal text-text-muted">Future Booking as at {asAtByLocation.get(location.locationId)}</span>
                     </th>
                   </tr>
                   {rows.length === 0 ? (
@@ -231,7 +240,7 @@ function MetricsRow({
       {cell(money(metrics.averageBill.average))}
       {cell(formatTeamCount(metrics.averageBill.bills))}
       {cell(formatTeamRatio(metrics.utilisation.utilisation))}
-      {cell(`${formatMinutes(metrics.utilisation.bookedMinutes)} / ${formatMinutes(metrics.utilisation.availableMinutes)}`)}
+      {cell(bookedOfRostered(metrics.utilisation.bookedMinutes, metrics.utilisation.availableMinutes))}
       {cell(formatTeamRatio(metrics.futureBooking.withFutureBooking))}
       {cell(formatTeamCount(metrics.futureBooking.clientsSeen))}
       {cell(money(metrics.retailRevenue))}
@@ -239,8 +248,8 @@ function MetricsRow({
   );
 }
 
-function LocationTable({ body, nameOf }: { body: TeamReportBody; nameOf: (id: string) => string }) {
-  const columns = ['Location', 'Service revenue', 'Average bill', 'Utilisation', 'Future Booking', 'Retail revenue', 'Retail share', 'Not itemised'];
+function LocationTable({ body, nameOf, asAtByLocation }: { body: TeamReportBody; nameOf: (id: string) => string; asAtByLocation: ReadonlyMap<string, string> }) {
+  const columns = ['Location', 'Service revenue (incl. VAT)', 'Average bill', 'Utilisation', 'Future Booking', 'Retail revenue', 'Retail share', 'Not itemised'];
   return (
     <AppCard padding="md">
       <section aria-label="By location" className="flex flex-col gap-2">
@@ -279,6 +288,7 @@ function LocationTable({ body, nameOf }: { body: TeamReportBody; nameOf: (id: st
                     ].map((value, index) => (
                       <td key={index} className="py-1 pr-4 text-right tabular-nums whitespace-nowrap">
                         {value}
+                        {index === 3 ? <span className="block text-[11px] text-text-muted">as at {asAtByLocation.get(location.locationId)}</span> : null}
                       </td>
                     ))}
                   </tr>
@@ -302,7 +312,7 @@ function CommissionSection({ body, nameOf }: { body: TeamReportBody; nameOf: (id
           No locked or paid pay periods overlap these dates.
         </AppText>
       ) : (
-        periods.map((period) => <CommissionPeriod key={period.payPeriodId} period={period} nameOf={nameOf} />)
+        periods.map((period) => <CommissionPeriod key={period.payPeriodId} period={period} nameOf={nameOf} filtered={body.selectedStaff !== null} />)
       )}
       {restrictions.map((restriction) => (
         <Note key={restriction}>{COMMISSION_RESTRICTION_TEXT[restriction]}</Note>
@@ -311,7 +321,7 @@ function CommissionSection({ body, nameOf }: { body: TeamReportBody; nameOf: (id
   );
 }
 
-function CommissionPeriod({ period, nameOf }: { period: TeamCommissionPeriod; nameOf: (id: string) => string }) {
+function CommissionPeriod({ period, nameOf, filtered }: { period: TeamCommissionPeriod; nameOf: (id: string) => string; filtered: boolean }) {
   const title = `${period.label ?? 'Pay period'} · ${formatReportDate(period.periodStart)} – ${formatReportDate(period.periodEnd)} · ${
     period.scope.kind === 'business' ? 'Whole business' : nameOf(period.scope.locationId)
   } · ${period.status === 'paid' ? 'Paid' : 'Locked'}`;
@@ -336,27 +346,33 @@ function CommissionPeriod({ period, nameOf }: { period: TeamCommissionPeriod; na
             {period.lines.length === 0 ? (
               <tr>
                 <td colSpan={4} className="py-1 text-text-secondary">
-                  None of the selected staff are on this pay period.
+                  {period.statements === 0
+                    ? 'No pay statements in this pay period.'
+                    : filtered
+                      ? 'None of the selected staff are on this pay period.'
+                      : 'No pay statements to show.'}
                 </td>
               </tr>
             ) : null}
             {period.lines.map((line) => (
               <tr key={line.staff.staffProfileId} className="border-t border-border">
                 <th scope="row" className="py-1 pr-4 text-left font-medium">
-                  {line.staff.kind === 'staff' ? line.staff.name : 'Former staff (profile removed)'}
+                  {line.staff.kind === 'staff' ? line.staff.name : formerStaffLabel(line.staff.staffProfileId)}
                 </th>
                 <td className="py-1 pr-4 text-right tabular-nums">{formatTeamAmount(line.commission, line.currencyCode)}</td>
                 <td className="py-1 pr-4 text-right tabular-nums">{formatTeamAmount(line.adjustments, line.currencyCode)}</td>
                 <td className="py-1 pr-4 text-right">{GREATER_OF_TEXT[line.greaterOf]}</td>
               </tr>
             ))}
-            <tr className="border-t border-border font-medium">
-              <th scope="row" className="py-1 pr-4 text-left">
-                Pay period commission (all staff)
-              </th>
-              <td className="py-1 pr-4 text-right tabular-nums">{formatTeamAmount(period.total, period.currencyCode)}</td>
-              <td colSpan={2} />
-            </tr>
+            {period.statements > 0 ? (
+              <tr className="border-t border-border font-medium">
+                <th scope="row" className="py-1 pr-4 text-left">
+                  Pay period commission (all staff)
+                </th>
+                <td className="py-1 pr-4 text-right tabular-nums">{formatTeamAmount(period.total, period.currencyCode)}</td>
+                <td colSpan={2} />
+              </tr>
+            ) : null}
           </tbody>
         </table>
       </div>

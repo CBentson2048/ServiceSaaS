@@ -98,6 +98,7 @@ describe('R2 finalised commission', () => {
     ]);
     expect(p1.total).toEqual(gbp(5700));
     expect(p1.currencyCode).toBe('GBP');
+    expect(p1.statements).toBe(3);
   });
 
   it('a manager with a commission grant at London sees London’s period only; business-wide periods are owner-only', async () => {
