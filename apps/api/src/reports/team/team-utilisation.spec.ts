@@ -27,7 +27,7 @@ const booked = (locationId: string, start: string, end: string, staffProfileId =
   occupiedRanges,
 });
 const facts = (partial: Partial<UtilisationFacts>): UtilisationFacts => ({ shifts: [], breaks: [], absences: [], bookOutTypes: [], leave: [], appointments: [], ...partial });
-const window = (locationId: string, timezone: string, from: string, to = from): UtilisationWindow => ({ locationId, timezone, from, to });
+const window = (locationId: string, timezone: string, from: string, to = from, localToday = '2026-12-31'): UtilisationWindow => ({ locationId, timezone, from, to, localToday });
 const minutes = (ms: number) => ms / 60_000;
 
 describe('R2 utilisation assembler: location-local days', () => {
@@ -160,6 +160,29 @@ describe('R2 utilisation in the report', () => {
     expect(body.locations.find((location) => location.locationId === OTHER)!.totals.utilisation.utilisation).toEqual(ambiguous);
     expect(body.summary.utilisation.utilisation).toEqual(ambiguous);
     expect(body.dataQuality.leaveAtAnotherLocation).toBe(1);
+  });
+
+  it('a custom range running past today counts no future rota or bookings, and a stylist with only future shifts has no row', async () => {
+    const team = ledger((l) => {
+      l.shifts.push(
+        { ...shift(LONDON, '2026-09-15T08:00:00Z', '2026-09-15T10:00:00Z', BEN), businessId: BIZ },
+        // After London's today (16 Sep): not started.
+        { ...shift(LONDON, '2026-09-20T08:00:00Z', '2026-09-20T16:00:00Z', BEN), businessId: BIZ },
+        { ...shift(LONDON, '2026-09-21T08:00:00Z', '2026-09-21T16:00:00Z', STYLIST), businessId: BIZ },
+      );
+      l.appointments.push({ id: uid(), businessId: BIZ, locationId: LONDON, clientProfileId: uid(), staffProfileId: BEN, status: 'accepted', startAt: at('2026-09-20T09:00:00Z'), endAt: at('2026-09-20T10:00:00Z'), occupiedRanges: null });
+    });
+    const body = await new TeamReportService(new MemoryMoneySource(EMPTY_MONEY), new MemoryTeamSource(team)).build(
+      teamScope(BIZ, [LOCATIONS[0]], { ...DAY, from: '2026-09-14', to: '2026-09-30' }, AS_OF),
+    );
+    const ben = body.staffRows.find((row) => row.rowKey === `${LONDON}:${BEN}`)!;
+    expect(ben.metrics.utilisation).toEqual({
+      availableMinutes: { availability: 'available', count: 120 },
+      bookedMinutes: { availability: 'available', count: 0 },
+      utilisation: { availability: 'available', numerator: 0, denominator: 120, basisPoints: 0 },
+    });
+    expect(body.staffRows.map((row) => row.rowKey)).not.toContain(`${LONDON}:${STYLIST}`);
+    expect(body.dataQuality.bookedWithoutRota).toBe(0);
   });
 
   it('a location’s figures do not depend on which other locations are selected', async () => {

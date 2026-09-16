@@ -28,6 +28,8 @@ export interface UtilisationWindow {
   /** Inclusive local dates. */
   from: string;
   to: string;
+  /** The location's local today: later days have not started and are never counted. */
+  localToday: string;
 }
 
 export interface UtilisationFacts {
@@ -81,7 +83,10 @@ export function keyMs(key: string): number {
 
 function localDays(window: UtilisationWindow): LocalDay[] {
   const days: LocalDay[] = [];
-  const count = inclusiveDayCount(window.from, window.to);
+  // Days after the location's today have not started: future rota and bookings are not utilisation.
+  const last = window.to < window.localToday ? window.to : window.localToday;
+  if (last < window.from) return days;
+  const count = inclusiveDayCount(window.from, last);
   for (let index = 0; index < count; index += 1) {
     const date = addDays(window.from, index);
     days.push({
@@ -113,7 +118,9 @@ function* overlapping(days: readonly LocalDay[], startMs: number, endMs: number)
 }
 
 export function assembleUtilisation(windows: readonly UtilisationWindow[], facts: UtilisationFacts): UtilisationResult {
-  const daysByLocation = new Map(windows.map((window) => [window.locationId, localDays(window)]));
+  const daysByLocation = new Map(
+    windows.map((window) => [window.locationId, localDays(window)] as const).filter(([, days]) => days.length > 0),
+  );
   const staffDays = new Map<string, StaffDay>();
   const keyOf = (locationId: string, staffId: string, date: string) => `${locationId}|${staffId}|${date}`;
 

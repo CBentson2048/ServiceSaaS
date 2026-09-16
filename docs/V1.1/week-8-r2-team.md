@@ -93,7 +93,9 @@ The formula is the shared pure `computeDailyUtilisation`: available = rostered
 shift time − (breaks ∪ reducing book-outs ∪ leave); booked = occupied appointment
 time; per staff-day. R2 has its own assembler (`team-utilisation.ts`):
 
-- staff-days are each location's **local** days, DST-safe, inside its window;
+- staff-days are each location's **local** days, DST-safe, inside its window and
+  never after its local today (a custom range running into the future counts no
+  future rota or bookings);
 - shifts, book-outs and bookings count only at their own location (as before);
 - **approved leave removes a staff-day only where it was recorded.** Leave recorded
   at another location marks that staff-day ambiguous: its row, its location total and
@@ -224,6 +226,15 @@ U-11 staff universe as §6 · U-12 retail share team/location only.
 - A V1 commission calculator (`kpi.calc`) still serves `/kpi/stylists`.
 - Rebooking writers link later bookings to earlier visits with no time bound.
 - Shared utilisation defects noted in §4.
+- `pay_summaries.currency_code` has a database default of `'GBP'`: a statement's
+  currency may be that default rather than a recorded one — check before the
+  finalised-commission G5.
+- The cross-location leave note tells a location's viewer that a stylist rostered
+  there has approved leave recorded at another location (a count, no detail). It is
+  the price of figures that do not depend on the selection; confirm at G5.
+- Performance follow-ups (no migration in base R2): `booking.visits` has no index on
+  `(business_id, location_id, completed_at)`; id-chunk reads run one after another
+  (e.g. future appointments for many thousands of clients).
 
 ## 12. Prerequisite tickets (after base R2)
 

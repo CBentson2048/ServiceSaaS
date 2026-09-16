@@ -269,7 +269,7 @@ export class SupabaseMoneySource implements MoneySource {
       let query = this.admin
         .schema('billing')
         .from('bill_lines')
-        .select('id,bill_id,line_type,gross_cents,net_cents,tax_cents,staff_profile_id,source_ref')
+        .select('id,bill_id,line_type,gross_cents,net_cents,tax_cents,staff_profile_id,appointment_service_id:source_ref->>appointment_service_id')
         .in('bill_id', [...billIds]);
       if (afterId !== null) query = query.gt('id', afterId);
       return query.order('id', { ascending: true }).limit(limit).returns<Row[]>();
@@ -282,7 +282,7 @@ export class SupabaseMoneySource implements MoneySource {
       netCents: integerCents(row.net_cents, 'line net'),
       taxCents: integerCents(row.tax_cents, 'line tax'),
       staffProfileId: nullableText(row.staff_profile_id, 'line staff'),
-      perService: typeof (row.source_ref as { appointment_service_id?: unknown } | null)?.appointment_service_id === 'string',
+      perService: typeof row.appointment_service_id === 'string' && row.appointment_service_id.length > 0,
     }));
   }
 

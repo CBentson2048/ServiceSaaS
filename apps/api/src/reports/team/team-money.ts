@@ -154,6 +154,32 @@ export function staffMoneySums(money: TeamMoneyFacts, keys: ReadonlySet<StaffKey
   return sums;
 }
 
+/** Every staff key's own sums in one pass over the bills — the same figures as `staffMoneySums` for one key. */
+export function staffMoneyIndex(money: TeamMoneyFacts): Map<StaffKey, StaffMoneySums> {
+  const index = new Map<StaffKey, StaffMoneySums>();
+  const entry = (key: StaffKey) => {
+    let sums = index.get(key);
+    if (!sums) {
+      sums = { serviceGross: 0, serviceNet: 0, colourGross: 0, colourNet: 0, averageBillTotal: 0, averageBillBills: 0, retail: 0 };
+      index.set(key, sums);
+    }
+    return sums;
+  };
+  for (const bill of money.bills) {
+    for (const [key, line] of bill.byStaff) {
+      const sums = entry(key);
+      sums.serviceGross += line.serviceGross;
+      sums.serviceNet += line.serviceNet;
+      sums.colourGross += line.colourGross;
+      sums.colourNet += line.colourNet;
+      sums.averageBillTotal += line.serviceGross + line.colourGross;
+      sums.averageBillBills += 1;
+    }
+  }
+  for (const [key, cents] of money.retailBySeller) entry(key).retail += cents;
+  return index;
+}
+
 /** Combine the facts of several locations (bills are per location, so bill counts add). */
 export function combineMoney(all: readonly TeamMoneyFacts[]): TeamMoneyFacts {
   const retailBySeller = new Map<StaffKey, number>();

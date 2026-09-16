@@ -42,7 +42,16 @@ import { EMPTY_FACTS, type MoneyFacts } from '../money/money-totals';
 import { instantKey, localDateTime } from '../money/money-values';
 import { commissionPeriods, commissionStaff, visiblePayPeriods } from './team-commission';
 import { futureBookingCounts, futureBookingStaffKeys, indexFutureBooking, type FutureBookingCounts } from './team-future-booking';
-import { attributeMoney, combineMoney, moneyStaffKeys, staffMoneySums, type StaffKey, type StaffMoneySums, type TeamMoneyFacts } from './team-money';
+import {
+  attributeMoney,
+  combineMoney,
+  moneyStaffKeys,
+  staffMoneyIndex,
+  staffMoneySums,
+  type StaffKey,
+  type StaffMoneySums,
+  type TeamMoneyFacts,
+} from './team-money';
 import {
   TEAM_SOURCE,
   type FutureAppointmentRow,
@@ -72,9 +81,7 @@ export class TeamReportService {
       .map((window) => ({ locationId: window.locationId, fromUtc: window.fromUtc, toUtcExclusive: window.toUtcExclusive }));
     const startedIds = new Set(started.map((window) => window.locationId));
     const resolvedIds = scope.windows.map((window) => window.locationId);
-    const startedRanges: LocalDateRange[] = scope.windows
-      .filter((window) => startedIds.has(window.locationId))
-      .map((window) => ({ from: window.from, to: window.to }));
+    const startedRanges = distinctRanges(scope.windows.filter((window) => startedIds.has(window.locationId)));
 
     // 1. Everything that depends only on the scope.
     const [facts, configured, visits, shifts, absences, appointments, bookOutTypes, memberships, payPeriods] = await Promise.all([
@@ -87,12 +94,7 @@ export class TeamReportService {
       started.length > 0 ? this.source.bookOutTypes(businessId) : Promise.resolve([]),
       readByIdChunks(resolvedIds, (chunk, afterId, limit) => this.source.activeMemberships(businessId, chunk, afterId, limit)),
       readByIdKeyset((afterId, limit) =>
-        this.source.finalisedPayPeriods(
-          businessId,
-          scope.windows.map((window) => ({ from: window.from, to: window.to })),
-          afterId,
-          limit,
-        ),
+        this.source.finalisedPayPeriods(businessId, distinctRanges(scope.windows), afterId, limit),
       ),
     ]);
     const commissionVisibility = visiblePayPeriods(
@@ -190,10 +192,17 @@ export class TeamReportService {
         ),
       );
 
+    // One pass per location for every staff member's own sums, so a staff row never re-walks the bills.
+    const staffSumsByLocation = new Map([...moneyByLocation].map(([locationId, money]) => [locationId, staffMoneyIndex(money)]));
     const metricsFor = (locationIds: readonly string[], keys: ReadonlySet<StaffKey>): TeamMetrics => {
       const state = stateOf(locationIds);
-      const money = combineMoney(locationIds.flatMap((id) => (moneyByLocation.has(id) ? [moneyByLocation.get(id)!] : [])));
-      return teamMetrics(state, staffMoneySums(money, keys), utilisationOf(locationIds, keys), futureBookingCounts(futureIndex, locationIds, keys));
+      let sums: StaffMoneySums;
+      if (locationIds.length === 1 && keys.size === 1) {
+        sums = staffSumsByLocation.get(locationIds[0])?.get([...keys][0]) ?? staffMoneySums(combineMoney([]), keys);
+      } else {
+        sums = staffMoneySums(combineMoney(locationIds.flatMap((id) => (moneyByLocation.has(id) ? [moneyByLocation.get(id)!] : []))), keys);
+      }
+      return teamMetrics(state, sums, utilisationOf(locationIds, keys), futureBookingCounts(futureIndex, locationIds, keys));
     };
 
     const totalsFor = (locationIds: readonly string[]): TeamTotals => {
@@ -417,6 +426,13 @@ function buildStaffOptions(
     const byName = (a.name ?? '').localeCompare(b.name ?? '', 'en');
     return byName !== 0 ? byName : a.staffProfileId < b.staffProfileId ? -1 : 1;
   });
+}
+
+/** The windows' distinct local date ranges: locations usually share one, so filters stay short. */
+function distinctRanges(windows: ReadonlyArray<{ from: string; to: string }>): LocalDateRange[] {
+  const seen = new Map<string, LocalDateRange>();
+  for (const window of windows) seen.set(`${window.from}|${window.to}`, { from: window.from, to: window.to });
+  return [...seen.values()];
 }
 
 /** Every non-money fact must belong to a started, scoped location — the provider invariant. */

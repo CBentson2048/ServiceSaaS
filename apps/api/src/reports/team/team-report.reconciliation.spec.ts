@@ -203,6 +203,23 @@ describe('R2 Team money reconciles with R1 Money', () => {
     expect(body.summary.notItemised).toEqual({ availability: 'available', cents: 5000 });
   });
 
+  it('paging: a server cap of one row per read changes nothing', async () => {
+    const capped = await new TeamReportService(new MemoryMoneySource(moneyLedger(), 1), new MemoryTeamSource(teamLedger(), 1)).build(teamScope(BIZ, LOCATIONS, DAY, AS_OF));
+    const uncapped = await team();
+    expect(capped).toEqual(uncapped);
+  });
+
+  it('more locations than one read carries: London and Other are unchanged beside ten more', async () => {
+    const extra = Array.from({ length: 10 }, (_, i) => ({ id: `20000000-0000-4000-8000-0000000001${String(i).padStart(2, '0')}`, name: `Extra ${i}`, timezone: 'Europe/London' }));
+    const service = new TeamReportService(new MemoryMoneySource(moneyLedger()), new MemoryTeamSource(teamLedger()));
+    const wide = await service.build(teamScope(BIZ, [...LOCATIONS, ...extra], DAY, AS_OF));
+    const narrow = await team();
+    for (const locationId of [LONDON, OTHER]) {
+      expect(wide.locations.find((l) => l.locationId === locationId)).toEqual(narrow.locations.find((l) => l.locationId === locationId));
+    }
+    expect(wide.locations).toHaveLength(12);
+  });
+
   it('counts rolled-up service lines as a data-quality note', async () => {
     expect((await team()).dataQuality.rolledUpServiceLines).toBe(1);
   });
