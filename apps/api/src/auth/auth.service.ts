@@ -1088,13 +1088,22 @@ export class AuthService {
     // Union the locations across EVERY role the user holds — a manager@A who is
     // also a stylist@B must see both A and B, not just their primary role's
     // locations.
-    return [
-      ...new Set(
-        memberships
-          .filter((m) => m.location_id)
-          .map((m) => m.location_id as string),
-      ),
-    ];
+    const membershipLocationIds = new Set(
+      memberships.filter((m) => m.location_id).map((m) => m.location_id as string),
+    );
+
+    // Order by the business's own `sort_order` rather than by whatever order the
+    // membership rows came back in (that query is unordered). Callers treat
+    // `allowedLocationIds[0]` as a stable default location, and it has to agree
+    // with `locations[0]` — which is sorted — instead of drifting between logins.
+    const ordered = businessLocations
+      .filter((location) => membershipLocationIds.has(location.id))
+      .map((location) => location.id);
+
+    // A membership pointing at a location the business no longer lists keeps its
+    // place in the scope; dropping it here would silently narrow access.
+    const orphans = [...membershipLocationIds].filter((id) => !ordered.includes(id));
+    return [...ordered, ...orphans];
   }
 
   private async fetchProfile(userId: string): Promise<ProfileRow> {
