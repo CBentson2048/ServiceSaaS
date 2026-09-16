@@ -1,9 +1,9 @@
 # QLOOQO V1.1 Week 8 — R7 Cash Up
 
 **Status:** G1–G4 accepted 2026-09-15 (product decisions and pre-G5 End of Day
-source fixes in §8, §9, §11). Proposed for integration into develop on 2026-09-16,
-with hosted G5 **deferred** to a combined R1 Money + R7 Cash Up acceptance session
-(§13).
+source fixes in §8, §9, §11). **Integrated into develop on 2026-09-16** via PR #38
+(merge `1daee93`, 09:08 UTC). Hosted G5 is **deferred, not done**: it moves to a
+combined R1 Money + R7 Cash Up acceptance session (§13).
 Both reports stay `foundation`. Builds on
 [Ticket A](week-8-ticket-a-foundation.md) (report registry, fail-closed access,
 per-location windows) and uses the fact definitions of
@@ -372,8 +372,22 @@ Superseded on 2026-09-16: the user deferred R1 hosted G5 (not waived) and asked
 for R7 to be integrated without waiting for it: rebase onto current develop
 (`0f4a35e`, unchanged since R7 branched), a clean rebuild and full retest (R1 and
 R7 regression groups, foreign-timezone runs), then a PR to develop, merged only
-after a clean review. The results are recorded in the PR, not here. Neither report
-is released.
+after a clean review. Neither report is released.
+
+- **Merged:** PR #38, merge commit `1daee93`, 2026-09-16 09:08 UTC. Its tree is
+  identical to the reviewed and tested branch head `6e7a8f5`.
+- **Post-merge verification** on develop `8e4d58d` (the R7 merge plus the rota
+  location-scoping commit, which changes no report, End of Day or R1 file). All of
+  it passed, from a clean rebuild with Jest's cache off:
+  - domain, API and web build and typecheck;
+  - full API suite: 151 suites, 3039 passed, 226 todo;
+  - full web suite: 39 suites, 498 passed;
+  - R1 Money, reconciliation, permissions and timezone;
+  - R7 reconciliation, End of Day (API and page), permissions, timezone and paging;
+  - report and End of Day suites under `TZ=Pacific/Kiritimati` and
+    `TZ=America/Los_Angeles`.
+- R1 and R7 totals and semantics are unchanged by the merge. No migration, ZAC or
+  Dashboard file was added, and `money` and `cash-up` both stay `foundation`.
 
 ### Combined hosted acceptance (deferred G5)
 
@@ -381,3 +395,19 @@ One controlled hosted UAT session covers **R1 Money and R7 Cash Up** on the same
 test-day ledger: U1–U9 permissions, the R1 expected-vs-actual ledger, R1 browser
 checks, R7 signed / open / no-cash-up cases (data plan above), and production
 shell-off verification. The stray-row query above is run first.
+
+## 14. Non-blocking follow-ups (recorded 2026-09-16)
+
+End of Day page UX points from the pre-merge review. None is a correctness defect
+covered by a failing test; none blocks G5.
+
+- **Petty cash error text.** The API's "Petty cash was recorded, but the day could
+  not be reloaded. Reload the day before adding it again." still asks for a manual
+  reload, although the page now reloads the day by itself after a failed add.
+- **Concurrent petty cash adds.** The page clears the form when the day's entry
+  count grew after a failed add. If someone else adds an entry at the same moment,
+  the form can clear even though this entry was not saved (the error message is
+  still shown).
+- **Switching location during an add.** The reload after a failed add uses the
+  location and date from when Add was clicked, so switching location while the
+  request is in flight can briefly show the previous location's day.
