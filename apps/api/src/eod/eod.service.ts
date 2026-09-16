@@ -166,7 +166,7 @@ export class EodService {
         expectedCardCents: expected.expectedCardCents,
       },
     });
-    return this.buildDayResponse(actor, data);
+    return this.reloadAfterWrite(actor, data, 'The trading day was opened, but it could not be reloaded. Reload the page.');
   }
 
   /** The day (or null when not yet opened) plus its live context. */
@@ -225,7 +225,7 @@ export class EodService {
     const { row } = await this.fetchDayById(actor, id);
     this.assertOpen(row);
     const updated = await this.applyExpected(row);
-    return this.buildDayResponse(actor, updated);
+    return this.reloadAfterWrite(actor, updated, 'Expected figures were refreshed, but the day could not be reloaded. Reload the page.');
   }
 
   async updateDay(actor: AuthUser, id: string, input: UpdateEodDayDto): Promise<EodDayResponse> {
@@ -241,7 +241,7 @@ export class EodService {
     if (Object.keys(patch).length === 0) return this.buildDayResponse(actor, row);
 
     const updated = await this.updateRow(row.id, patch);
-    return this.buildDayResponse(actor, updated);
+    return this.reloadAfterWrite(actor, updated, 'Your changes were saved, but the day could not be reloaded. Reload the page before editing again.');
   }
 
   async addPettyCash(
@@ -277,7 +277,8 @@ export class EodService {
       const total = await this.fetchPettyCashTotal(row.id);
       const updated = await this.updateRow(row.id, { petty_cash_out_cents: total });
       return await this.buildDayResponse(actor, updated);
-    } catch {
+    } catch (error) {
+      this.logger.error(`addPettyCash after save failed: ${describeError(error)}`);
       throw new InternalServerErrorException(
         'Petty cash was recorded, but the day could not be reloaded. Reload the day before adding it again.',
       );
@@ -328,7 +329,7 @@ export class EodService {
         pettyCashOutCents: refreshed.petty_cash_out_cents,
       },
     });
-    return this.buildDayResponse(actor, updated);
+    return this.reloadAfterWrite(actor, updated, 'The day was signed off, but it could not be reloaded. Reload the page to see it.');
   }
 
   // -------------------------------------------------------------------------
@@ -387,6 +388,20 @@ export class EodService {
       depositsRedeemedCents: Number(row?.deposits_redeemed_cents ?? 0),
       openVisits: Number(row?.open_visits ?? 0),
     };
+  }
+
+  /**
+   * The response after a write has landed. A failed reload must not read as a
+   * failed write (a retry would repeat or be refused), so it says the write was
+   * saved.
+   */
+  private async reloadAfterWrite(actor: AuthUser, row: EodRow, message: string): Promise<EodDayResponse> {
+    try {
+      return await this.buildDayResponse(actor, row);
+    } catch (error) {
+      this.logger.error(`reload after write failed: ${describeError(error)}`);
+      throw new InternalServerErrorException(message);
+    }
   }
 
   private async buildDayResponse(actor: AuthUser, row: EodRow): Promise<EodDayResponse> {
@@ -520,7 +535,8 @@ export class EodService {
    * location. A location of another business and an unknown id get the same 403.
    */
   private async resolveLocation(actor: AuthUser, locationId: string): Promise<EodLocation> {
-    if (!userHasRole(actor, 'owner') && !actor.allowedLocationIds.includes(locationId)) {
+    const wanted = locationId.toLowerCase();
+    if (!userHasRole(actor, 'owner') && !actor.allowedLocationIds.some((id) => id.toLowerCase() === wanted)) {
       throw new ForbiddenException('Location is outside your scope');
     }
     const { data, error } = await this.admin
@@ -539,6 +555,10 @@ export class EodService {
     }
     return { id: data.id, timezone: data.timezone };
   }
+}
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /** Today's date at the location, YYYY-MM-DD, in the location's own timezone. */

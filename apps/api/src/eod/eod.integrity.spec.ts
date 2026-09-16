@@ -559,10 +559,14 @@ describe('D-6: End of Day holds every actor to their own business’s locations'
     expect(db.rows('eod_petty_cash_entries')).toEqual([]);
   });
 
-  it('an owner may spell the location id in capitals; the day is stored under the location’s own id', async () => {
+  it('an owner or a manager may spell the location id in capitals; the day is stored under the location’s own id', async () => {
     const response = await http.open('owner-a', { locationId: LONDON.toUpperCase(), businessDate: '2026-09-15' });
     expect(response.status).toBe(201);
-    expect(db.rows('eod_reconciliations').map((r) => [r.location_id, r.currency_code])).toEqual([[LONDON, 'GBP']]);
+    expect((await http.open('manager-a', { locationId: LONDON.toUpperCase(), businessDate: '2026-09-14' })).status).toBe(201);
+    expect(db.rows('eod_reconciliations').map((r) => [r.location_id, r.business_date, r.currency_code])).toEqual([
+      [LONDON, '2026-09-15', 'GBP'],
+      [LONDON, '2026-09-14', 'GBP'],
+    ]);
   });
 
   it('a row the old defect wrote (this business, another business’s location) can no longer be read or changed', async () => {
@@ -804,5 +808,38 @@ describe('D-5: a failed petty cash read never becomes a recorded £0.00', () => 
     db.failNext('eod_petty_cash_entries', 'read');
     expect((await http.days('owner-a', LONDON)).status).toBe(500);
     expect((await http.day('owner-a', { locationId: LONDON, businessDate: '2026-09-15' })).body.day.pettyCash).toHaveLength(1);
+  });
+});
+
+describe('a write that landed is never reported as a failed write when only the reload fails', () => {
+  const DAY_ID = 'a2000000-0000-4000-8000-000000000030';
+  beforeEach(() => {
+    db.rows('eod_reconciliations').push(
+      storedDay({ id: DAY_ID, business_id: BIZ_A, location_id: LONDON, business_date: '2026-09-15', counted_cash_cents: 5000, counted_card_cents: 0 }),
+    );
+  });
+
+  it('sign-off: the day is signed off and the answer says so', async () => {
+    db.failNext('eod_petty_cash_entries', 'read', 1); // the read before the write succeeds; the reload's fails
+    const response = await http.signOff('owner-a', DAY_ID);
+    expect(response.status).toBe(500);
+    expect(response.body.message).toBe('The day was signed off, but it could not be reloaded. Reload the page to see it.');
+    expect(dayRow(LONDON, '2026-09-15')).toMatchObject({ status: 'signed_off', signed_off_by_user_profile_id: OWNER_A });
+  });
+
+  it('Refresh, an edit and opening a day say their change was saved', async () => {
+    db.failNext('eod_petty_cash_entries', 'read', 1);
+    const refreshed = await http.refresh('owner-a', DAY_ID);
+    expect([refreshed.status, refreshed.body.message]).toEqual([500, 'Expected figures were refreshed, but the day could not be reloaded. Reload the page.']);
+
+    db.failNext('eod_petty_cash_entries', 'read');
+    const edited = await http.patch('owner-a', DAY_ID, { notes: 'till drawer sticks' });
+    expect([edited.status, edited.body.message]).toEqual([500, 'Your changes were saved, but the day could not be reloaded. Reload the page before editing again.']);
+    expect(dayRow(LONDON, '2026-09-15')!.notes).toBe('till drawer sticks');
+
+    db.failNext('eod_petty_cash_entries', 'read');
+    const opened = await http.open('owner-a', { locationId: LONDON, businessDate: '2026-09-16' });
+    expect([opened.status, opened.body.message]).toEqual([500, 'The trading day was opened, but it could not be reloaded. Reload the page.']);
+    expect(dayRow(LONDON, '2026-09-16')).toMatchObject({ status: 'open', currency_code: 'GBP' });
   });
 });

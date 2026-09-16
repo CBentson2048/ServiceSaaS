@@ -1,10 +1,12 @@
 # QLOOQO V1.1 Week 8 — R7 Cash Up
 
-**Status:** G1 definition, 2026-09-15; product decisions and pre-G5 End of Day
-source fixes 2026-09-15 (§8, §9, §11). Builds on
+**Status:** G1–G4 accepted 2026-09-15 (product decisions and pre-G5 End of Day
+source fixes in §8, §9, §11). Integrated into develop on 2026-09-16 with hosted
+G5 **deferred** to a combined R1 Money + R7 Cash Up acceptance session (§13).
+Both reports stay `foundation`. Builds on
 [Ticket A](week-8-ticket-a-foundation.md) (report registry, fail-closed access,
 per-location windows) and uses the fact definitions of
-[R1 Money](week-8-ticket-b-r1-money.md). R7 is COMPLETE only after its own G5.
+[R1 Money](week-8-ticket-b-r1-money.md). R7 is COMPLETE only after its G5.
 
 **Ownership.** Cosan owns this ticket. No ZAC file and no Dashboard file changes.
 The End of Day API received the approved no-migration source fixes D-2, D-5, D-6
@@ -40,7 +42,8 @@ R7 cannot state honestly is unavailable with a reason, never a zero.
 | Retail takings | `billing.retail_sales` by payment method — R1's `retailSales` | `sold_at`, `location_id` | integer pence |
 | Location currency | R1's `locationCurrencies` | the location | ISO 4217 |
 
-Every source read filters `business_id`. Source facts are read inside each
+Every cash-up, settings and takings read filters `business_id`; the names of the
+people who signed off are then looked up by the ids on those records. Source facts are read inside each
 location's own Ticket A window and placed on a day by the location's own
 timezone. R7 never calls `billing.eod_expected_figures`, never reuses the EOD
 service's day window, and never uses `allowedLocationIds`.
@@ -156,7 +159,8 @@ currencies — and therefore its figures — are the same as on the first page.
 ## 6. Release
 
 Cash up stays `release: 'foundation'` until R7 G1–G5 pass; the flip is a
-separate commit.
+separate commit. G5 is deferred (2026-09-16) and remains mandatory before any
+production release; the production report shell stays off.
 
 ## 7. Migrations
 
@@ -190,7 +194,7 @@ plan is approved.
 | D-2 | `currency_code` never set on open (always the GBP default); expected figures summed across currencies | **Fixed for new days** (2026-09-15): open stores the location's currency by R1's rule (settings row, else business default); a location with no usable currency can't open a day. Historical rows are not rewritten. The RPC still sums across currencies (a migration). | P-9 still refuses a record whose currency isn't the location's; mixed takings are not comparable |
 | D-3 | Sign-off immutability is API-only: an edit, Refresh or petty cash add that read the row before sign-off can land after it; sign-off is two separate updates | **HIGH PRIORITY / MUST FIX BEFORE PILOT.** Not solved inside R7 G5. After R7 G5, a separate transactional / database-integrity proposal covering the edit vs sign-off race, the Refresh vs sign-off race and a petty cash write after sign-off: a signed-off record must be immutable **by invariant**, not by API convention. | A changed signed-off row is not detectable from the row |
 | D-4 | Row edits and Refresh are not audited; only sign-off is | Tracked as a cash-up audit/history improvement. | History of counts can't be rebuilt |
-| D-5 | A failed petty-cash read writes a petty-cash total of 0 | **Fixed** (2026-09-15): a failed read never writes a total. Adding petty cash saves (and audits) the entry first; if the re-read or the reload then fails, no total is written, the day keeps its previous total and the answer says the entry was recorded, so it isn't added twice. Refresh and sign-off read the entries before writing anything, so a signed-off total is the entries' sum at sign-off (subject to D-3). Reading a day or the history fails instead of showing no entries. | An open day's draft petty cash can be behind its entries after a failed re-read, until Refresh or sign-off |
+| D-5 | A failed petty-cash read writes a petty-cash total of 0 | **Fixed** (2026-09-15): a failed read never writes a total. Adding petty cash saves (and audits) the entry first. If the re-read or the total update then fails, no new total is written and the day keeps its previous total; if only the reload fails, the new total is already saved. Either way the answer says the entry was recorded, and the End of Day page reloads the day and clears the form once the entry is there, so it isn't added twice. Refresh and sign-off read the entries before writing anything, so a signed-off total is the entries' sum at sign-off (subject to D-3). Reading a day or the history fails instead of showing no entries. | An open day's draft petty cash can be behind its entries after a failed re-read, until Refresh or sign-off |
 | D-6 | An owner can open a day for a location of another business (no ownership check) | **Fixed** (2026-09-15): every route checks the location belongs to the actor's business, owners included; a foreign location and an unknown id get the same 403; a stray row of another business's location can't be read or changed. Not fixable without a data fix: a stray row the old defect already wrote still holds `unique(location_id, business_date)`, so the owning business gets a 500 opening that date. See §13 for the read-only check and what to do if it returns rows. | R7 filters `business_id` and `location_id` |
 | D-7 | EOD deposits collected count only current `paid` deposits; redeemed has no bill-status filter | Not part of R7 (R7 does not consume the EOD deposit calculation). | Not used |
 | D-8 | Future dates can be opened and signed off | **Fixed** (2026-09-15): opening or signing off a day after the location's own local today is refused (400); an omitted date defaults to the location's own today; an invalid location timezone is refused, never guessed. | Ignored (P-4) |
@@ -264,7 +268,9 @@ then the writer is unchanged and R7 keeps its legacy behaviour.
    must never be presented as one. A legacy row at a non-`Europe/London` location
    stays **Not comparable** (P-8). A legacy row at a `Europe/London` location
    keeps today's treatment, which rests on the writer's history rather than on the
-   row — R7 says which rule it applied.
+   row. *Requirement for the versioning work (not in R7 today):* R7 must say which
+   rule it applied to such a row. Today R7 treats every `Europe/London` row as
+   comparable and does not label it.
 3. **Writer, two deploys.**
    - Step 1: every expected snapshot (open, Refresh, sign-off) writes the marker
      with the current London window. No change in meaning.
@@ -300,20 +306,26 @@ from the figures (both guess, per C).
   given the day is the location's own today (it was London's); a new day is stored
   in the location's currency; a location with no usable currency or an invalid
   timezone can't open a day.
-- End of Day page: unchanged apart from the threshold label, which now reads
-  "current threshold". Its date picker still defaults to, and is capped at, the
+- End of Day page: the threshold label now reads "current threshold"; after a
+  failed petty cash add it reloads the day and clears the form when the entry was
+  saved (typed counts are kept). Its date picker still defaults to, and is capped at, the
   **browser's** date. A browser ahead of the location (for example after London
   midnight for a New York location) defaults to a date the API now refuses, with
   the message "This trading day has not started yet at this location"; a browser
   behind the location can't pick the location's today. For the UK dev-test
   business and a UK browser the dates agree. The fix belongs with §11 step 4.
-- End of Day, sign-off: refused for a day after the location's own today; the
-  petty cash total is re-read from its entries. Refresh re-reads it too.
+- End of Day, sign-off: refused for a day after the location's own today, and for
+  any day while the location's timezone is invalid (an already open day included);
+  the petty cash total is re-read from its entries. Refresh re-reads it too.
+- End of Day, any write (open, edit, Refresh, sign-off): if the write lands but the
+  reload fails, the answer says the change was saved ("The day was signed off, but
+  it could not be reloaded…"), never a plain failure that invites a retry.
 - End of Day, petty cash add: a failure after the entry is saved answers "Petty
   cash was recorded, but the day could not be reloaded. Reload the day before
   adding it again." The audit event is written as soon as the entry is saved.
 - End of Day, every route: a location outside the actor's business is refused
-  (403) for owners as well as managers.
+  (403) for owners as well as managers. Location ids are matched regardless of
+  letter case.
 - End of Day, reads: a failed petty cash read is an error (500), not an empty list.
 - R7: totals and the reconciliation fixture are unchanged. Wording only: manual
   entries read "£0.00 recorded" for a stored zero, and the threshold is labelled
@@ -355,9 +367,15 @@ anywhere a figure is unavailable.
 
 ### Branch sequencing
 
-R7 is based on develop `0f4a35e`. It is not pushed. After R1 G5 completes and R1
-is accepted and merged: rebase onto the accepted develop, resolve conflicts with
-care, confirm no R1 canonical behaviour is overwritten, rebuild clean, and rerun
-the full API and web suites plus the R7 reconciliation, End of Day, permission,
-timezone and paging tests. Report the updated SHA and results, and only then
-prepare the R7 PR.
+Superseded on 2026-09-16: the user deferred R1 hosted G5 (not waived) and asked
+for R7 to be integrated without waiting for it. R7 was rebased onto current
+develop (`0f4a35e`, unchanged since R7 branched), rebuilt clean and fully retested
+(R1 and R7 regression groups, foreign-timezone runs) and proposed as a PR to
+develop, to be merged after review. Neither report is released.
+
+### Combined hosted acceptance (deferred G5)
+
+One controlled hosted UAT session covers **R1 Money and R7 Cash Up** on the same
+test-day ledger: U1–U9 permissions, the R1 expected-vs-actual ledger, R1 browser
+checks, R7 signed / open / no-cash-up cases (data plan above), and production
+shell-off verification. The stray-row query above is run first.

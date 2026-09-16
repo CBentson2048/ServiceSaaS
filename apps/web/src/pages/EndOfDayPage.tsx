@@ -84,7 +84,11 @@ export function EndOfDayPage() {
     };
   }, [accessToken, resolvedLocationId, businessDate, adoptResponse]);
 
-  async function run(action: () => Promise<EodDayResponse>, successNotice?: string) {
+  async function run(
+    action: () => Promise<EodDayResponse>,
+    successNotice?: string,
+    afterFailure?: () => Promise<void>,
+  ) {
     if (busy) return;
     setBusy(true);
     setError(null);
@@ -94,8 +98,27 @@ export function EndOfDayPage() {
       if (successNotice) setNotice(successNotice);
     } catch (err: unknown) {
       setError(messageFrom(err, 'Could not update the trading day'));
+      if (afterFailure) await afterFailure();
     } finally {
       setBusy(false);
+    }
+  }
+
+  /**
+   * A failed add may still have saved the entry (the API then says "Petty cash
+   * was recorded…"). Show the stored day, and clear the form when the entry is
+   * there, so one more click doesn't add it twice. Typed counts are kept.
+   */
+  async function reloadAfterPettyCashFailure(entriesBefore: number) {
+    try {
+      const reloaded = await getEodDay(accessToken!, { locationId: resolvedLocationId, businessDate });
+      setData(reloaded);
+      if ((reloaded.day?.pettyCash.length ?? 0) > entriesBefore) {
+        setPettyAmount('');
+        setPettyReason('');
+      }
+    } catch {
+      // The error already shown asks the user to reload the day.
     }
   }
 
@@ -378,17 +401,22 @@ export function EndOfDayPage() {
                 <button
                   type="button"
                   disabled={busy || !poundsToCents(pettyAmount) || !pettyReason.trim()}
-                  onClick={() =>
-                    void run(async () => {
-                      const response = await addEodPettyCash(accessToken!, day.id, {
-                        amountCents: poundsToCents(pettyAmount)!,
-                        reason: pettyReason.trim(),
-                      });
-                      setPettyAmount('');
-                      setPettyReason('');
-                      return response;
-                    }, 'Petty cash recorded.')
-                  }
+                  onClick={() => {
+                    const entriesBefore = day.pettyCash.length;
+                    void run(
+                      async () => {
+                        const response = await addEodPettyCash(accessToken!, day.id, {
+                          amountCents: poundsToCents(pettyAmount)!,
+                          reason: pettyReason.trim(),
+                        });
+                        setPettyAmount('');
+                        setPettyReason('');
+                        return response;
+                      },
+                      'Petty cash recorded.',
+                      () => reloadAfterPettyCashFailure(entriesBefore),
+                    );
+                  }}
                   className="h-10 rounded-pill border border-border-strong bg-surface px-4 text-[13px] font-medium text-text-secondary transition hover:bg-surface-alt disabled:opacity-60"
                 >
                   Add
