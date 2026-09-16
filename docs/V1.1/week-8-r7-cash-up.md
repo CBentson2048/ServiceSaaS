@@ -1,8 +1,9 @@
 # QLOOQO V1.1 Week 8 — R7 Cash Up
 
 **Status:** G1–G4 accepted 2026-09-15 (product decisions and pre-G5 End of Day
-source fixes in §8, §9, §11). Integrated into develop on 2026-09-16 with hosted
-G5 **deferred** to a combined R1 Money + R7 Cash Up acceptance session (§13).
+source fixes in §8, §9, §11). Proposed for integration into develop on 2026-09-16,
+with hosted G5 **deferred** to a combined R1 Money + R7 Cash Up acceptance session
+(§13).
 Both reports stay `foundation`. Builds on
 [Ticket A](week-8-ticket-a-foundation.md) (report registry, fail-closed access,
 per-location windows) and uses the fact definitions of
@@ -368,10 +369,11 @@ anywhere a figure is unavailable.
 ### Branch sequencing
 
 Superseded on 2026-09-16: the user deferred R1 hosted G5 (not waived) and asked
-for R7 to be integrated without waiting for it. R7 was rebased onto current
-develop (`0f4a35e`, unchanged since R7 branched), rebuilt clean and fully retested
-(R1 and R7 regression groups, foreign-timezone runs) and proposed as a PR to
-develop, to be merged after review. Neither report is released.
+for R7 to be integrated without waiting for it: rebase onto current develop
+(`0f4a35e`, unchanged since R7 branched), a clean rebuild and full retest (R1 and
+R7 regression groups, foreign-timezone runs), then a PR to develop, merged only
+after a clean review. The results are recorded in the PR, not here. Neither report
+is released.
 
 ### Combined hosted acceptance (deferred G5)
 
