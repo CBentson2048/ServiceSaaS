@@ -35,6 +35,7 @@ function stripComments(source: string, fileName = 'file.tsx'): string {
 const reportsDir = __dirname;
 const moneyDir = join(__dirname, 'money');
 const cashUpDir = join(__dirname, 'cash-up');
+const teamDir = join(__dirname, 'team');
 const configDir = join(__dirname, '..', 'config');
 const sources = (dir: string) =>
   readdirSync(dir)
@@ -45,6 +46,7 @@ const files = [
   ...sources(reportsDir),
   ...sources(moneyDir),
   ...sources(cashUpDir),
+  ...sources(teamDir),
   join(configDir, 'reportsFoundationShell.ts'),
   join(configDir, 'reportsFoundationShellPolicy.ts'),
 ].map((path) => ({ name: path.split('/src/')[1], code: stripComments(readFileSync(path, 'utf8'), path) }));
@@ -66,6 +68,8 @@ describe('web report foundation source boundaries', () => {
       'reports/reportNav.ts',
       'reports/reportRoutes.tsx',
       'reports/reportScopeLine.ts',
+      'reports/team/TeamReport.tsx',
+      'reports/team/teamLabels.ts',
       'reports/usePagedDetail.ts',
       'reports/useReportFilter.ts',
     ]);
@@ -136,5 +140,19 @@ describe('web report foundation source boundaries', () => {
     expect(cashUp.filter((file) => /formatCurrency\(|Intl\./.test(file.code)).map((file) => file.name)).toEqual([]);
     expect(cashUp.filter((file) => /['"`]GBP['"`]/.test(file.code)).map((file) => file.name)).toEqual([]);
     expect(cashUp.find((file) => file.name === 'reports/cash-up/cashUpLabels.ts')!.code).toMatch(/formatMoneyAmount\(/);
+  });
+
+  it('R2 Team: React formats money, percentages, counts and minutes and never calculates one', () => {
+    const team = files.filter((file) => file.name.startsWith('reports/team/'));
+    expect(team).toHaveLength(2);
+    // No sums, averages, divisions or conversions: every figure arrives from the API.
+    const arithmetic =
+      /\.reduce\s*\(|\b(cents|count|numerator|denominator|basisPoints|availableMinutes|bookedMinutes)\s*[-+*/%]|[-+*/%]=?\s*[\w.]*\b(cents|count|numerator|denominator|basisPoints)\b|\bMath\.|parseFloat|parseInt|Number\s*\(|toFixed\s*\(/;
+    expect(team.filter((file) => arithmetic.test(file.code)).map((file) => file.name)).toEqual([]);
+    expect(team.filter((file) => /formatCurrency\(/.test(file.code)).map((file) => file.name)).toEqual([]);
+    expect(team.filter((file) => /['"`]GBP['"`]/.test(file.code)).map((file) => file.name)).toEqual([]);
+    expect(team.find((file) => file.name === 'reports/team/teamLabels.ts')!.code).toMatch(/formatMoneyAmount\(/);
+    // The two measures are never merged or abbreviated.
+    expect(team.filter((file) => /Rebooking(?! At Source)/.test(file.code)).map((file) => file.name)).toEqual([]);
   });
 });

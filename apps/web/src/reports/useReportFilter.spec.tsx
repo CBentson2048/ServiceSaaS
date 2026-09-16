@@ -119,6 +119,11 @@ describe('useReportFilter', () => {
     expect(search()).toBe('?utm=mail&preset=yesterday');
   });
 
+  it('keeps a staff filter on Team, the one report with a staff control', () => {
+    const { search } = setup(`/reports/team?staff=${L1}&preset=yesterday`, team);
+    expect(search()).toBe(`?preset=yesterday&staff=${L1}`);
+  });
+
   it('strips detail on a report without detail', () => {
     const { search } = setup('/reports/team?view=detail&preset=this_week', team);
     expect(actions).toEqual(['REPLACE']);

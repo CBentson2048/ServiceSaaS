@@ -214,11 +214,11 @@ describe('optional controls and slots', () => {
     expect(onChange).toHaveBeenCalledWith({ ...base, view: 'detail' }, 'push');
   });
 
-  it('renders the staff slot only on a report that supports a staff control (none yet)', () => {
-    const { unmount } = renderBar({ definition: team, staffControl: <span>Staff picker</span> });
+  it('renders the staff slot only on a report that supports a staff control (Team)', () => {
+    const { unmount } = renderBar({ staffControl: <span>Staff picker</span> });
     expect(screen.queryByText('Staff picker')).toBeNull();
     unmount();
-    renderBar({ definition: { ...team, controls: { staff: true, detail: false } }, staffControl: <span>Staff picker</span> });
+    renderBar({ definition: team, staffControl: <span>Staff picker</span> });
     expect(screen.getByText('Staff picker')).toBeTruthy();
   });
 

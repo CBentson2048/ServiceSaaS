@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
+  MAX_REPORT_IDS,
   isReportErrorBody,
   type ReportDefinition,
   type ReportErrorBody,
@@ -10,6 +11,7 @@ import {
   type ReportResult,
   type CashUpReportBody,
   type MoneyReportBody,
+  type TeamReportBody,
 } from '@sheer/domain';
 import { ApiRequestError, getReportOptions, getReportResult } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
@@ -17,6 +19,8 @@ import { AppButton, AppCard, AppText } from '../design';
 import { ReportControlBar, WEEK_START_UNCONFIGURED_MESSAGE } from './ReportControlBar';
 import { MoneyReport, isMoneyFirstPage, type MoneyFirstPage } from './money/MoneyReport';
 import { CashUpReport, isCashUpFirstPage, type CashUpFirstPage } from './cash-up/CashUpReport';
+import { ReportMultiSelect } from './ReportMultiSelect';
+import { TeamReport } from './team/TeamReport';
 import { LOCAL_CALENDAR_NOTE, groupReportScope } from './reportScopeLine';
 import { useReportFilter, type ReportFilterWriteMode } from './useReportFilter';
 
@@ -49,6 +53,7 @@ const FILTER_ACTION_CODES = new Set<ReportErrorCode>([
   'report_location_out_of_scope',
   'report_timezone_invalid',
   'report_week_start_unconfigured',
+  'report_staff_out_of_scope',
 ]);
 
 const DEFAULT_FILTER: ReportFilter = { preset: 'today', locationIds: [], staffProfileIds: [], view: 'summary' };
@@ -214,6 +219,26 @@ export function ReportPage({ definition }: { definition: ReportDefinition }) {
 
   const groups = resolved ? groupReportScope(resolved.locations) : [];
 
+  // The staff picker is the reportable staff for the dates and locations shown: it comes
+  // with the Team result, so it is never wider than what the server would accept.
+  const teamBody = result.status === 'ready' && result.data.reportKey === 'team' ? (result.data.body as TeamReportBody | null) : null;
+  const staffControl = definition.controls.staff ? (
+    <ReportMultiSelect
+      label="Staff"
+      allLabel="All staff"
+      pluralNoun="staff"
+      options={(teamBody?.staffOptions ?? []).map((option) => ({
+        id: option.staffProfileId,
+        label: option.name ?? 'Former staff (profile removed)',
+        group: option.kind === 'staff' ? 'Staff' : 'Former staff',
+      }))}
+      value={filter.staffProfileIds}
+      maxSelected={MAX_REPORT_IDS}
+      disabled={options.status !== 'ready' || teamBody === null}
+      onCommit={(next) => setFilter({ ...filter, staffProfileIds: next }, 'push')}
+    />
+  ) : undefined;
+
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-6 lg:px-8">
       <header className="mb-4">
@@ -234,6 +259,7 @@ export function ReportPage({ definition }: { definition: ReportDefinition }) {
           resolvedLocations={resolved?.locations ?? null}
           disabled={options.status !== 'ready'}
           onChange={setFilter}
+          staffControl={staffControl}
         />
       </AppCard>
 
@@ -312,6 +338,8 @@ export function ReportPage({ definition }: { definition: ReportDefinition }) {
               : Promise.resolve(null)
           }
         />
+      ) : teamBody ? (
+        <TeamReport body={teamBody} locations={result.status === 'ready' ? result.data.filter.locations : []} />
       ) : resolved && definition.release === 'foundation' ? (
         <AppCard padding="md" variant="warning" elevation="none">
           <AppText as="p" variant="body" weight="medium">
@@ -388,6 +416,14 @@ function resultNotice(error: unknown, handlers: NoticeHandlers): ReactNode {
           key="result"
           message="This link includes a location you can’t report on."
           action={button('Reset locations', () => write({ ...filter, locationIds: [] }, 'push'))}
+        />
+      );
+    case 'report_staff_out_of_scope':
+      return (
+        <Notice
+          key="result"
+          message="This link includes staff you can’t report on for these dates and locations."
+          action={button('Show all staff', () => write({ ...filter, staffProfileIds: [] }, 'push'))}
         />
       );
     case 'report_no_locations_in_scope':
