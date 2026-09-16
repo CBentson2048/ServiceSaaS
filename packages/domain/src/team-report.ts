@@ -189,6 +189,8 @@ export interface TeamCommissionPeriod {
   lines: TeamCommissionLine[];
   /** Σ commission over every statement in the period (unfiltered); unavailable when currencies differ. */
   total: TeamAmount;
+  /** The statements' single currency; `null` when they differ or there are none. */
+  currencyCode: string | null;
 }
 
 /** Why some pay periods are not shown to this viewer — stated whether or not any exist. */

@@ -87,6 +87,7 @@ export function commissionPeriods(
       status: period.status,
       lines,
       total,
+      currencyCode: currencies.size === 1 ? [...currencies][0] : null,
     };
   });
 }
