@@ -24,6 +24,7 @@ export * from './local-date';
 export * from './reporting';
 export * from './money-report';
 export * from './cash-up-report';
+export * from './team-report';
 import type { AppointmentBillingTax } from './tax';
 import type { FormulaChangeAssessment } from './formula-change';
 import type { NoShowRiskSignal, SpendTrendSignal } from './operational-signals';
