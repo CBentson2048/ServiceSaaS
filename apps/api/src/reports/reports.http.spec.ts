@@ -20,6 +20,7 @@ import { ReportScopeService } from './report-scope.service';
 import { REPORT_SURFACE } from './report-surface';
 import { ReportsController } from './reports.controller';
 import { MoneyReportService } from './money/money-report.service';
+import { CashUpReportService } from './cash-up/cash-up-report.service';
 
 const A = '00000000-0000-4000-8000-00000000000a';
 
@@ -87,6 +88,7 @@ async function appWith(surface: ReportSurface) {
     resolve: jest.fn().mockResolvedValue({ resolved: { reportKey: 'money', filter: {}, weekStartDay: null, locations: [] } }),
   };
   const money = { build: jest.fn().mockResolvedValue({ currencyCode: 'GBP' }) };
+  const cashUp = { build: jest.fn().mockResolvedValue({ continuation: false }) };
   const auth = {
     verifyAccessToken: jest.fn(async (token: string) => {
       const user = users[token];
@@ -100,6 +102,7 @@ async function appWith(surface: ReportSurface) {
       { provide: REPORT_SURFACE, useValue: surface },
       { provide: ReportScopeService, useValue: scope },
       { provide: MoneyReportService, useValue: money },
+      { provide: CashUpReportService, useValue: cashUp },
       { provide: AuthService, useValue: auth },
       SupabaseAuthGuard,
       ReportAvailabilityGuard,
@@ -110,7 +113,7 @@ async function appWith(surface: ReportSurface) {
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }));
   app.setGlobalPrefix('api');
   await app.init();
-  return { app, scope, money, auth };
+  return { app, scope, money, cashUp, auth };
 }
 
 describe('report routes with the foundation shell OFF (production)', () => {
@@ -138,9 +141,10 @@ describe('report routes with the foundation shell ON (dev-test)', () => {
   let app: INestApplication;
   let scope: { options: jest.Mock; resolve: jest.Mock };
   let money: { build: jest.Mock };
+  let cashUp: { build: jest.Mock };
 
   beforeAll(async () => {
-    ({ app, scope, money } = await appWith({ foundationShell: true }));
+    ({ app, scope, money, cashUp } = await appWith({ foundationShell: true }));
   });
   afterAll(() => app.close());
   beforeEach(() => {
@@ -180,6 +184,24 @@ describe('report routes with the foundation shell ON (dev-test)', () => {
       money.build.mockClear();
       const response = await get('/api/reports/money/result', token);
       outcomes.push([token, response.status, money.build.mock.calls.length ? 'body built' : response.body.code]);
+    }
+    expect(outcomes).toEqual([
+      ['owner', 200, 'body built'],
+      ['manager', 200, 'body built'],
+      ['manager-a-stylist-b', 200, 'body built'],
+      ['null-level-manager', 403, 'report_forbidden'],
+      ['receptionist', 403, 'report_forbidden'],
+      ['stylist', 403, 'report_forbidden'],
+      ['no-financials', 403, 'report_forbidden'],
+    ]);
+  });
+
+  it('R7 Cash up actor matrix: the same decision as Money (report.financials.view), and only then is the body built', async () => {
+    const outcomes: Array<[string, number, string | undefined]> = [];
+    for (const token of ['owner', 'manager', 'manager-a-stylist-b', 'null-level-manager', 'receptionist', 'stylist', 'no-financials']) {
+      cashUp.build.mockClear();
+      const response = await get('/api/reports/cash-up/result', token);
+      outcomes.push([token, response.status, cashUp.build.mock.calls.length ? 'body built' : response.body.code]);
     }
     expect(outcomes).toEqual([
       ['owner', 200, 'body built'],

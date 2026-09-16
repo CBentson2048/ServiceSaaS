@@ -48,6 +48,7 @@ const MERGED_USER_READ = [
 ];
 
 const MONEY_DIR = join(__dirname, 'money');
+const CASH_UP_DIR = join(__dirname, 'cash-up');
 const reportFiles = [
   ...readdirSync(__dirname)
     .filter((file) => file.endsWith('.ts') && !file.endsWith('.spec.ts'))
@@ -56,10 +57,15 @@ const reportFiles = [
   ...readdirSync(MONEY_DIR)
     .filter((file) => file.endsWith('.ts') && !file.endsWith('.spec.ts'))
     .map((file) => read(join(MONEY_DIR, file))),
+  // R7 Cash Up. Test support under cash-up/testing is not app code.
+  ...readdirSync(CASH_UP_DIR)
+    .filter((file) => file.endsWith('.ts') && !file.endsWith('.spec.ts'))
+    .map((file) => read(join(CASH_UP_DIR, file))),
 ];
 const moneyFiles = reportFiles.filter((file) => file.name.includes('/reports/money/'));
+const cashUpFiles = reportFiles.filter((file) => file.name.includes('/reports/cash-up/'));
 const grantResolver = read(join(API_SRC, 'auth', 'membership-grants.ts'));
-const domainContract = ['reporting.ts', 'local-date.ts', 'money-report.ts'].map((file) => read(join(DOMAIN_SRC, file)));
+const domainContract = ['reporting.ts', 'local-date.ts', 'money-report.ts', 'cash-up-report.ts'].map((file) => read(join(DOMAIN_SRC, file)));
 
 function offenders(files: Array<{ name: string; code: string }>, pattern: RegExp): string[] {
   return files.filter((file) => pattern.test(file.code)).map((file) => file.name);
@@ -68,6 +74,10 @@ function offenders(files: Array<{ name: string; code: string }>, pattern: RegExp
 describe('report foundation source boundaries', () => {
   it('scans the files it claims to', () => {
     expect(reportFiles.map((file) => file.name.split('/').pop()).sort()).toEqual([
+      'cash-up-days.ts',
+      'cash-up-detail.ts',
+      'cash-up-report.service.ts',
+      'cash-up-source.ts',
       'dto.ts',
       'money-detail.ts',
       'money-report.service.ts',
@@ -148,6 +158,18 @@ describe('report foundation source boundaries', () => {
     expect(sourceTables).toEqual(['bill_lines', 'bills', 'businesses', 'deposits', 'location_settings', 'retail_sales', 'salon_payments']);
     // A figure's currency always comes from data: there is no default currency.
     expect(offenders(moneyFiles, /['"`]GBP['"`]/)).toEqual([]);
+  });
+
+  it('R7 Cash Up reads cash-ups as recorded and takings through R1 — never End of Day’s own calculations', () => {
+    expect(cashUpFiles).toHaveLength(4);
+    // Never the EOD RPC, service or London day window; never a merged location list.
+    expect(offenders(cashUpFiles, /eod_expected_figures|\bEodService\b|businessDayWindow|EOD_TIMEZONE|visit_line_items|\bDashboardService\b/)).toEqual([]);
+    // Days come from the Ticket A scope: Cash Up never resolves a window or reads the clock.
+    expect(offenders(cashUpFiles, /resolveReportWindows|localDateStartUtc|periodUtcWindow|resolveLocalRange|new Date\s*\(|Date\.now/)).toEqual([]);
+    const tables = [...new Set([...cashUpFiles.map((f) => f.code).join('\n').matchAll(/\.from\('([a-z_]+)'\)/g)].map((m) => m[1]))].sort();
+    expect(tables).toEqual(['eod_reconciliations', 'location_settings', 'user_profiles']);
+    // A figure's currency always comes from data: there is no default currency, and no default threshold.
+    expect(offenders(cashUpFiles, /['"`]GBP['"`]|\b500\b/)).toEqual([]);
   });
 
   it('keeps the domain contract browser-safe: no clock, no Intl, no day boundaries', () => {

@@ -34,6 +34,7 @@ function stripComments(source: string, fileName = 'file.tsx'): string {
 
 const reportsDir = __dirname;
 const moneyDir = join(__dirname, 'money');
+const cashUpDir = join(__dirname, 'cash-up');
 const configDir = join(__dirname, '..', 'config');
 const sources = (dir: string) =>
   readdirSync(dir)
@@ -43,6 +44,7 @@ const sources = (dir: string) =>
 const files = [
   ...sources(reportsDir),
   ...sources(moneyDir),
+  ...sources(cashUpDir),
   join(configDir, 'reportsFoundationShell.ts'),
   join(configDir, 'reportsFoundationShellPolicy.ts'),
 ].map((path) => ({ name: path.split('/src/')[1], code: stripComments(readFileSync(path, 'utf8'), path) }));
@@ -57,11 +59,14 @@ describe('web report foundation source boundaries', () => {
       'reports/ReportControlBar.tsx',
       'reports/ReportMultiSelect.tsx',
       'reports/ReportPage.tsx',
+      'reports/cash-up/CashUpReport.tsx',
+      'reports/cash-up/cashUpLabels.ts',
       'reports/money/MoneyReport.tsx',
       'reports/money/moneyLabels.ts',
       'reports/reportNav.ts',
       'reports/reportRoutes.tsx',
       'reports/reportScopeLine.ts',
+      'reports/usePagedDetail.ts',
       'reports/useReportFilter.ts',
     ]);
   });
@@ -120,5 +125,16 @@ describe('web report foundation source boundaries', () => {
     expect(labels).toMatch(/case 'not_started'/);
     // A figure is written only in the currency the API names: no default currency.
     expect(money.filter((file) => /['"`]GBP['"`]/.test(file.code)).map((file) => file.name)).toEqual([]);
+  });
+
+  it('R7 Cash Up: React formats figures through the Money formatter and never calculates them', () => {
+    const cashUp = files.filter((file) => file.name.startsWith('reports/cash-up/'));
+    expect(cashUp).toHaveLength(2);
+    const arithmetic = /\.reduce\s*\(|\bcents\s*[-+*/%]|[-+*/%]=?\s*[\w.]*\bcents\b|\bcount\s*[-+*/%]|\bMath\.|parseFloat|parseInt|Number\s*\(/;
+    expect(cashUp.filter((file) => arithmetic.test(file.code)).map((file) => file.name)).toEqual([]);
+    // No formatter of its own and no default currency: every figure goes through formatMoneyAmount.
+    expect(cashUp.filter((file) => /formatCurrency\(|Intl\./.test(file.code)).map((file) => file.name)).toEqual([]);
+    expect(cashUp.filter((file) => /['"`]GBP['"`]/.test(file.code)).map((file) => file.name)).toEqual([]);
+    expect(cashUp.find((file) => file.name === 'reports/cash-up/cashUpLabels.ts')!.code).toMatch(/formatMoneyAmount\(/);
   });
 });

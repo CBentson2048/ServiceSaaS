@@ -14,6 +14,7 @@
 import type { MembershipGrant, Permission, UserRole } from './index';
 import { inclusiveDayCount, isLocalDate, type LocalDate } from './local-date';
 import type { MoneyReportBody } from './money-report';
+import type { CashUpReportBody } from './cash-up-report';
 
 // ===========================================================================
 // Registry
@@ -495,6 +496,8 @@ export interface ResolvedReportFilter {
 export interface ReportBodyMap {
   /** R1 Money (Ticket B). */
   money: MoneyReportBody;
+  /** R7 Cash Up. */
+  'cash-up': CashUpReportBody;
 }
 
 export type ReportBody<K extends ReportKey> = K extends keyof ReportBodyMap ? ReportBodyMap[K] : null;

@@ -20,6 +20,7 @@ import { ReportAvailabilityGuard } from './report-availability.guard';
 import type { ReportScope, ReportScopeService } from './report-scope.service';
 import { ReportsController } from './reports.controller';
 import type { MoneyReportService } from './money/money-report.service';
+import type { CashUpReportService } from './cash-up/cash-up-report.service';
 
 const GUARDS_KEY = '__guards__';
 const HANDLER_METADATA_KEYS = ['sheer:roles', 'sheer:permissions', 'sheer:location-param', GUARDS_KEY];
@@ -88,9 +89,15 @@ describe('ReportsController handlers', () => {
     };
     const moneyBody = { summary: 'money-body' };
     const money = { build: jest.fn().mockResolvedValue(moneyBody) };
-    const controller = new ReportsController(scope as unknown as ReportScopeService, money as unknown as MoneyReportService);
+    const cashUpBody = { summary: 'cash-up-body' };
+    const cashUp = { build: jest.fn().mockResolvedValue(cashUpBody) };
+    const controller = new ReportsController(
+      scope as unknown as ReportScopeService,
+      money as unknown as MoneyReportService,
+      cashUp as unknown as CashUpReportService,
+    );
     const response = { setHeader: jest.fn() };
-    return { controller, scope, money, moneyBody, response, options, resolved };
+    return { controller, scope, money, moneyBody, cashUp, cashUpBody, response, options, resolved };
   }
 
   it('result creates one instant, passes a report actor, and returns the Money body built on that scope', async () => {
@@ -120,6 +127,19 @@ describe('ReportsController handlers', () => {
     await expect(
       controller.result({ auth, reportDefinition: team } as ReportRequest, { cursor: 'm1.abc' }, response as never),
     ).rejects.toMatchObject({ response: { code: 'report_cursor_invalid' } });
+    expect(money.build).not.toHaveBeenCalled();
+  });
+
+  it('builds the Cash up body on the same scope and passes its cursor through', async () => {
+    const { controller, money, cashUp, cashUpBody, response, resolved } = setup();
+    const cashUpDefinition = getReportDefinition('cash-up');
+    const result = await controller.result(
+      { auth, reportDefinition: cashUpDefinition } as ReportRequest,
+      { view: 'detail', cursor: 'c1.xyz' },
+      response as never,
+    );
+    expect(result).toEqual({ reportKey: 'cash-up', filter: resolved, body: cashUpBody });
+    expect(cashUp.build.mock.calls[0][1]).toEqual({ cursor: 'c1.xyz' });
     expect(money.build).not.toHaveBeenCalled();
   });
 

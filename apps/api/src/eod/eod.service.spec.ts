@@ -39,7 +39,8 @@ function createService(results: Array<{ data: unknown; error?: unknown }>) {
   mockedCreateClient.mockReturnValue({ schema: () => chain } as never);
   const config = { getOrThrow: jest.fn(() => 'test') } as unknown as ConfigService;
   const audit = { record: jest.fn(async () => undefined) } as unknown as AuditService;
-  return { service: new EodService(config, audit), captured, audit };
+  const currencies = { locationCurrencies: jest.fn(async () => new Map([['location_1', 'GBP']])) };
+  return { service: new EodService(config, audit, currencies), captured, audit };
 }
 
 function actor(overrides: Partial<AuthUser> = {}): AuthUser {
@@ -81,6 +82,8 @@ function dayRow(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
+
+const locationRow = { data: { id: 'location_1', business_id: 'business_1', timezone: 'Europe/London' } };
 
 const expectedFigures = (cash: number, card: number) => ({
   data: [
@@ -132,6 +135,7 @@ describe('EodService — scoping and lifecycle', () => {
   it('refuses to change a signed-off day', async () => {
     const { service } = createService([
       { data: dayRow({ status: 'signed_off' }) }, // fetchDayById
+      locationRow,                                // same-business location check
     ]);
     await expect(
       service.updateDay(actor(), 'eod_1', { countedCashCents: 1000 }),
@@ -149,6 +153,8 @@ describe('EodService — scoping and lifecycle', () => {
     const signedOff = { ...refreshed, status: 'signed_off', variance_cents: 500 };
     const { service, captured, audit } = createService([
       { data: counted },                    // fetchDayById
+      locationRow,                          // same-business location check
+      { data: [] },                         // applyExpected → petty cash entries
       expectedFigures(9000, 20500),         // applyExpected → rpc
       { data: refreshed },                  // applyExpected → update.single
       { data: signedOff },                  // sign-off update.single
@@ -174,7 +180,7 @@ describe('EodService — scoping and lifecycle', () => {
   });
 
   it('refuses to sign off before counted amounts are entered', async () => {
-    const { service } = createService([{ data: dayRow() }]);
+    const { service } = createService([{ data: dayRow() }, locationRow]);
     await expect(service.signOff(actor(), 'eod_1')).rejects.toThrow(
       'Enter the counted cash and card amounts',
     );

@@ -8,6 +8,7 @@ import {
   type ReportFilterIssueCode,
   type ReportOptions,
   type ReportResult,
+  type CashUpReportBody,
   type MoneyReportBody,
 } from '@sheer/domain';
 import { ApiRequestError, getReportOptions, getReportResult } from '../auth/api';
@@ -15,6 +16,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { AppButton, AppCard, AppText } from '../design';
 import { ReportControlBar, WEEK_START_UNCONFIGURED_MESSAGE } from './ReportControlBar';
 import { MoneyReport, isMoneyFirstPage, type MoneyFirstPage } from './money/MoneyReport';
+import { CashUpReport, isCashUpFirstPage, type CashUpFirstPage } from './cash-up/CashUpReport';
 import { LOCAL_CALENDAR_NOTE, groupReportScope } from './reportScopeLine';
 import { useReportFilter, type ReportFilterWriteMode } from './useReportFilter';
 
@@ -278,6 +280,30 @@ export function ReportPage({ definition }: { definition: ReportDefinition }) {
                     // The filter now names other dates (a relative preset past local midnight) or
                     // other locations: the page is stale, so reload it rather than append rows
                     // from other dates.
+                    if (reportErrorOf(error)?.code !== 'report_cursor_invalid') throw error;
+                    setResultAttempt((n) => n + 1);
+                    return 'reloading' as const;
+                  },
+                )
+              : Promise.resolve(null)
+          }
+        />
+      ) : result.status === 'ready' &&
+        result.data.reportKey === 'cash-up' &&
+        result.data.body &&
+        isCashUpFirstPage(result.data.body as CashUpReportBody) ? (
+        <CashUpReport
+          body={result.data.body as CashUpFirstPage}
+          locations={result.data.filter.locations}
+          loadMore={(cursor) =>
+            accessToken
+              ? getReportResult(accessToken, 'cash-up', requestFilter, cursor).then(
+                  (next) => {
+                    const nextBody = next.reportKey === 'cash-up' ? (next.body as CashUpReportBody | null) : null;
+                    return nextBody?.continuation ? nextBody.detail : null;
+                  },
+                  (error: unknown) => {
+                    // As for Money: a cursor for dates the filter no longer names reloads the report.
                     if (reportErrorOf(error)?.code !== 'report_cursor_invalid') throw error;
                     setResultAttempt((n) => n + 1);
                     return 'reloading' as const;
