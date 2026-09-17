@@ -1,7 +1,7 @@
 import type React from 'react';
 import { StyleSheet, Text as RNText, type StyleProp, type TextProps, type TextStyle } from 'react-native';
 
-import { theme } from '../theme/theme';
+import { labTheme as theme } from '../theme/labTheme';
 import { numericStyle, type TypeToken } from '../theme/tokens';
 
 export type TextTone = 'primary' | 'secondary' | 'muted' | 'faint' | 'brand' | 'success' | 'warning' | 'danger' | 'onBrand';

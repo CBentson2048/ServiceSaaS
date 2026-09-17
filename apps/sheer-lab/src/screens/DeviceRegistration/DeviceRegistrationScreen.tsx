@@ -75,7 +75,7 @@ export function DeviceRegistrationScreen(): React.JSX.Element {
           <Text style={styles.reviewModeLabel}>App Store review — start here</Text>
           <Text style={styles.reviewModeCopy}>
             No device token is needed to review the app. Tap the button below to open the Kensington demo, then enter
-            demo PIN 2222 on the next screen.
+            the PIN supplied with this build on the next screen.
           </Text>
           <LabButton label="Enter demo (Kensington)" onPress={enterReviewMode} disabled={busy} />
         </View>

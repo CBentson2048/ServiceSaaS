@@ -1,7 +1,7 @@
 import type React from 'react';
 import { Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 
-import { theme } from '../theme/theme';
+import { labTheme as theme } from '../theme/labTheme';
 import { Icon } from './icons';
 import { Text } from './Text';
 

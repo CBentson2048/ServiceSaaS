@@ -9,16 +9,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
-  RefreshControl,
-  ScrollView,
-  StatusBar,
   StyleSheet,
   Text,
   TextInput,
   useWindowDimensions,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { RootStackParamList } from '../../app/navigation/routes';
 import { getLabAnalyticsSummaryForSession } from '../../features/analytics/analyticsApi';
@@ -36,7 +32,7 @@ import {
   type LabSessionBillingBreakdown,
 } from '../../features/formulas/formulasApi';
 import { formulaDraftStore } from '../../features/formulas/formulaDraftStore';
-import { getActiveLabSession, logoutLabSession } from '../../features/sheer-lab/labSession';
+import { getActiveLabSession } from '../../features/sheer-lab/labSession';
 import { appConfig } from '../../config/appConfig';
 import {
   activeStatusBadge,
@@ -53,10 +49,11 @@ import {
   sumProductUsageGrams,
   type StatusTone,
 } from '../Home/dashboardHelpers';
-import { featureFlags } from '../../config/featureFlags';
-import { labTheme } from '../../theme/labTheme';
+import { labTheme, tone as resolveTone, type ToneTriple } from '../../theme/labTheme';
+import { Icon } from '../../ui/icons/Icon';
+import type { IconName } from '../../ui/icons/paths';
 import { useBleScale } from '../../features/ble/hooks/useBleScale';
-import { TopBar } from '../shared/LabShell';
+import { LabShell, useLabLayout } from '../shared/LabShell';
 
 const T = labTheme;
 const C = T.colors;
@@ -105,101 +102,19 @@ interface HistoryMetric {
   label: string;
   value: string;
   hint?: string;
-  glyph: string;
+  icon: IconName;
   tone?: ChipTone;
   locked?: boolean;
 }
 
 // ---------------------------------------------------------------------------
-// Responsive layout — mirrors the Formula console breakpoints.
+// The one layout number this screen owns: the width of the session-audit rail,
+// a share of the viewport. Everything else about the frame — breakpoints, pad,
+// gap, sidebar — is resolved by `useLabLayout` inside the shared shell.
 // ---------------------------------------------------------------------------
-
-interface HistoryLayout {
-  mode: 'phone' | 'tablet' | 'wide';
-  sidebarWidth: number;
-  railWidth: number;
-  pad: number;
-  gap: number;
-  showSidebar: boolean;
-  showRail: boolean;
-}
-
-function getLayout(width: number): HistoryLayout {
-  if (width >= 1024) {
-    const large = width >= 1280;
-    return {
-      mode: 'wide',
-      sidebarWidth: large ? 248 : 216,
-      railWidth: clampNumber(Math.round(width * 0.32), 340, 420),
-      pad: large ? T.spacing.xl : T.spacing.base,
-      gap: T.spacing.lg,
-      showSidebar: true,
-      showRail: true,
-    };
-  }
-  if (width >= 700) {
-    return {
-      mode: 'tablet',
-      sidebarWidth: 208,
-      railWidth: 0,
-      pad: T.spacing.base,
-      gap: T.spacing.base,
-      showSidebar: true,
-      showRail: false,
-    };
-  }
-  return {
-    mode: 'phone',
-    sidebarWidth: 0,
-    railWidth: 0,
-    pad: T.spacing.base,
-    gap: T.spacing.base,
-    showSidebar: false,
-    showRail: false,
-  };
-}
 
 function clampNumber(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
-}
-
-// ---------------------------------------------------------------------------
-// Sidebar navigation model (dark shell) — History is the current screen.
-// ---------------------------------------------------------------------------
-
-type WorkingRoute = 'Home' | 'NewMix' | 'FormulaHistory' | 'Inventory';
-type NavTarget = { kind: 'route'; route: WorkingRoute } | { kind: 'soon' } | { kind: 'current' };
-
-interface NavEntry {
-  key: string;
-  label: string;
-  glyph: string;
-  target: NavTarget;
-}
-
-// Inventory management is owner/manager-only (stylists get a lock screen), so it
-// only becomes a live destination for those roles.
-function buildNavItems(canManageInventory: boolean): NavEntry[] {
-  return ([
-    { key: 'dashboard', label: 'Dashboard', glyph: '▦', target: { kind: 'route', route: 'Home' } },
-    { key: 'new-mix', label: 'New Mix', glyph: '🧪', target: { kind: 'route', route: 'NewMix' } },
-    { key: 'history', label: 'History', glyph: '🕘', target: { kind: 'current' } },
-    {
-      key: 'inventory',
-      label: 'Inventory',
-      glyph: '📦',
-      target: canManageInventory ? { kind: 'route', route: 'Inventory' } : { kind: 'soon' },
-    },
-    { key: 'billing', label: 'Billing Rules', glyph: '🧾', target: { kind: 'soon' } },
-    { key: 'audit', label: 'Audit Trail', glyph: '🛡️', target: { kind: 'soon' } },
-    // Billing Rules and Audit Trail are hidden from the nav behind feature flags
-    // for every role; their entries stay so the feature can be restored later.
-  ] satisfies NavEntry[]).filter(
-    (item) =>
-      (item.key !== 'inventory' || canManageInventory) &&
-      (item.key !== 'billing' || featureFlags.billingRules) &&
-      (item.key !== 'audit' || featureFlags.auditTrail),
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -208,7 +123,8 @@ function buildNavItems(canManageInventory: boolean): NavEntry[] {
 
 export function FormulaHistoryScreen({ navigation }: FormulaHistoryScreenProps): React.JSX.Element {
   const { width } = useWindowDimensions();
-  const layout = getLayout(width);
+  const layout = useLabLayout();
+  const railWidth = clampNumber(Math.round(width * 0.32), 340, 420);
 
   const [session, setSession] = useState<PinUnlockResponse | undefined>();
   const ble = useBleScale();
@@ -223,6 +139,17 @@ export function FormulaHistoryScreen({ navigation }: FormulaHistoryScreenProps):
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const [period, setPeriod] = useState<LabPeriod>('today');
+  /**
+   * The period the DATA on screen was fetched for — not the one selected.
+   *
+   * Every heading and metric label used to derive from `period`, which flips
+   * synchronously the instant a chip is tapped, while the numbers underneath
+   * kept the previous period's values until the refetch landed. Tapping "Month"
+   * therefore produced a table headed "Completed this month" containing today's
+   * three sessions, and "Billed this month" showing today's revenue. On a slow
+   * connection an owner could read, and act on, a figure whose label was wrong.
+   */
+  const [loadedPeriod, setLoadedPeriod] = useState<LabPeriod>('today');
   const [customRange, setCustomRange] = useState<LabCustomRange>({ from: '', to: '' });
   const [selectedId, setSelectedId] = useState<string | undefined>();
   const [now, setNow] = useState<Date>(() => new Date());
@@ -235,11 +162,12 @@ export function FormulaHistoryScreen({ navigation }: FormulaHistoryScreenProps):
 
   // Period-aware copy ("today" / "this week" / …) and a flag for the in-between
   // state where Custom is picked but both dates aren't chosen yet.
-  const suffix = periodSuffix(period);
+  const suffix = periodSuffix(loadedPeriod);
   const awaitingCustom = period === 'custom' && !resolveLabCustomWindow(customRange);
 
   const load = useCallback(async () => {
     setError(undefined);
+    setLoading(true);
     try {
       const activeSession = await getActiveLabSession();
       if (!activeSession) {
@@ -254,6 +182,7 @@ export function FormulaHistoryScreen({ navigation }: FormulaHistoryScreenProps):
       if (period === 'custom' && !customWindow) {
         setBookings([]);
         setAnalytics(undefined);
+        setLoadedPeriod(period);
         return;
       }
 
@@ -264,6 +193,7 @@ export function FormulaHistoryScreen({ navigation }: FormulaHistoryScreenProps):
 
       setBookings(appointments.status === 'fulfilled' ? appointments.value.bookings : []);
       setAnalytics(analyticsResult.status === 'fulfilled' ? analyticsResult.value : undefined);
+      setLoadedPeriod(period);
 
       if (appointments.status === 'rejected') {
         setError('Could not load sessions for this period. Pull to refresh to try again.');
@@ -425,232 +355,103 @@ export function FormulaHistoryScreen({ navigation }: FormulaHistoryScreenProps):
     [filtered, analytics, canSeeFinance, suffix],
   );
 
-  const canManageInventory = session?.role === 'owner' || session?.role === 'manager';
-  const navItems = useMemo(() => buildNavItems(canManageInventory), [canManageInventory]);
-
-  const goToRoute = useCallback(
-    (target: NavTarget) => {
-      if (target.kind !== 'route') return;
-      navigation.navigate(target.route);
-    },
-    [navigation],
-  );
-
-  const handleSignOut = useCallback(async () => {
-    const sid = session?.sessionId;
-    if (sid) {
-      try {
-        await logoutLabSession(sid);
-      } catch {
-        // Best effort — always return the device to the lock screen.
-      }
-    }
-    navigation.reset({ index: 0, routes: [{ name: 'Auth' }] });
-  }, [navigation, session?.sessionId]);
-
   if (loading && !session) {
     return (
-      <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
-        <StatusBar barStyle="light-content" backgroundColor={C.surface} />
+      <LabShell session={session} bleStatus={ble.status}>
         <View style={styles.centerFill}>
           <ActivityIndicator color={C.primary} />
           <Text style={styles.emptyText}>Loading formula history…</Text>
         </View>
-      </SafeAreaView>
+      </LabShell>
     );
   }
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
-      <StatusBar barStyle="light-content" backgroundColor={C.surface} />
-      <TopBar session={session} bleStatus={ble.status} />
-
-      <View style={[styles.body, layout.showSidebar ? styles.bodyRow : styles.bodyColumn]}>
-        {layout.showSidebar ? (
-          <Sidebar width={layout.sidebarWidth} items={navItems} onNav={goToRoute} onSignOut={handleSignOut} />
-        ) : null}
-
-        <View style={styles.mainArea}>
-          <ScrollView
-            style={styles.scroll}
-            contentContainerStyle={{ padding: layout.pad, paddingBottom: T.spacing.xl }}
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={C.primary} />}
-          >
-            <View style={[styles.contentWrap, { gap: layout.gap }]}>
-              {!layout.showSidebar ? <NavScroller items={navItems} onNav={goToRoute} onSignOut={handleSignOut} /> : null}
-
-              <HistoryHeader
-                search={search}
-                onSearchChange={setSearch}
-                onRefresh={handleRefresh}
-                period={period}
-                onPeriodChange={setPeriod}
-                customRange={customRange}
-                onCustomRangeChange={setCustomRange}
-                subtitle={`Review ${periodPossessive(period)} mixing sessions, appointment status, and billing performance.`}
-              />
-
-              {error ? <Text style={styles.errorText}>{error}</Text> : null}
-
-              {layout.showRail ? (
-                <View style={[styles.columns, { gap: layout.gap }]}>
-                  <View style={styles.listColumn}>
-                    <SessionList
-                    groups={groups}
-                    pagination={pagination}
-                    pageSizeOptions={PAGE_SIZE_OPTIONS}
-                    onPageChange={setPage}
-                    onPageSizeChange={(size) => {
-                      setPageSize(size);
-                      setPage(1);
-                    }}
-                    selectedId={selected?.id}
-                    onSelect={setSelectedId}
-                    periodSuffix={suffix}
-                    awaitingCustom={awaitingCustom}
-                  />
-                  </View>
-                  <View style={{ width: layout.railWidth }}>
-                    <SessionAuditCard
-                      booking={selected}
-                      now={now}
-                      billing={selectedBilling}
-                      remixSourceId={remixSourceId}
-                      onUpdateFormula={handleUpdateFormula}
-                    />
-                  </View>
-                </View>
-              ) : (
-                <View style={[styles.column, { gap: layout.gap }]}>
-                  <SessionList
-                    groups={groups}
-                    pagination={pagination}
-                    pageSizeOptions={PAGE_SIZE_OPTIONS}
-                    onPageChange={setPage}
-                    onPageSizeChange={(size) => {
-                      setPageSize(size);
-                      setPage(1);
-                    }}
-                    selectedId={selected?.id}
-                    onSelect={setSelectedId}
-                    periodSuffix={suffix}
-                    awaitingCustom={awaitingCustom}
-                  />
-                  <SessionAuditCard
-                    booking={selected}
-                    now={now}
-                    billing={selectedBilling}
-                    remixSourceId={remixSourceId}
-                    onUpdateFormula={handleUpdateFormula}
-                  />
-                </View>
-              )}
-
-              <MetricsRow metrics={metrics} />
-
-              <Footer now={now} online={session?.status === 'active'} />
-            </View>
-          </ScrollView>
-        </View>
-      </View>
-    </SafeAreaView>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Chrome — top bar, sidebar, mobile nav, footer
-// ---------------------------------------------------------------------------
-
-
-function Sidebar({
-  width,
-  items,
-  onNav,
-  onSignOut,
-}: {
-  width: number;
-  items: NavEntry[];
-  onNav: (target: NavTarget) => void;
-  onSignOut: () => void;
-}): React.JSX.Element {
-  return (
-    <View style={[styles.sidebar, { width }]}>
-      <View style={styles.sidebarNav}>
-        {items.map((item) => {
-          const active = item.target.kind === 'current';
-          const soon = item.target.kind === 'soon';
-          return (
-            <Pressable
-              key={item.key}
-              accessibilityRole="button"
-              disabled={soon || active}
-              onPress={() => onNav(item.target)}
-              style={[styles.navItem, active && styles.navItemActive, soon && styles.navItemSoon]}
-            >
-              <Text style={styles.navGlyph}>{item.glyph}</Text>
-              <Text style={[styles.navLabel, active && styles.navLabelActive]} numberOfLines={1}>
-                {item.label}
-              </Text>
-              {soon ? <Text style={styles.soonTag}>Soon</Text> : null}
-            </Pressable>
-          );
-        })}
-      </View>
-      <Pressable accessibilityRole="button" onPress={onSignOut} style={styles.signOut}>
-        <Text style={styles.signOutGlyph}>⏻</Text>
-        <Text style={styles.signOutLabel}>Sign Out</Text>
-      </Pressable>
-    </View>
-  );
-}
-
-function NavScroller({
-  items,
-  onNav,
-  onSignOut,
-}: {
-  items: NavEntry[];
-  onNav: (target: NavTarget) => void;
-  onSignOut: () => void;
-}): React.JSX.Element {
-  return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={styles.navScroller}
-      style={styles.navScrollerWrap}
+    <LabShell
+      session={session}
+      bleStatus={ble.status}
+      refreshing={refreshing}
+      onRefresh={handleRefresh}
+      footer={<Footer now={now} online={session?.status === 'active'} />}
     >
-      {items.map((item) => {
-        const active = item.target.kind === 'current';
-        const soon = item.target.kind === 'soon';
-        return (
-          <Pressable
-            key={item.key}
-            accessibilityRole="button"
-            disabled={soon || active}
-            onPress={() => onNav(item.target)}
-            style={[styles.navChip, active && styles.navChipActive, soon && styles.navItemSoon]}
-          >
-            <Text style={styles.navGlyph}>{item.glyph}</Text>
-            <Text style={[styles.navChipLabel, active && styles.navLabelActive]}>{item.label}</Text>
-            {soon ? <Text style={styles.soonTag}>Soon</Text> : null}
-          </Pressable>
-        );
-      })}
-      <Pressable accessibilityRole="button" onPress={onSignOut} style={styles.navChip}>
-        <Text style={styles.navGlyph}>⏻</Text>
-        <Text style={styles.navChipLabel}>Sign Out</Text>
-      </Pressable>
-    </ScrollView>
+      <HistoryHeader
+        search={search}
+        onSearchChange={setSearch}
+        period={period}
+        onPeriodChange={setPeriod}
+        customRange={customRange}
+        onCustomRangeChange={setCustomRange}
+        subtitle={`Review ${periodPossessive(period)} mixing sessions, appointment status, and billing performance.`}
+      />
+
+      {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+      {layout.isWide ? (
+        <View style={[styles.columns, { gap: layout.gap }]}>
+          <View style={styles.listColumn}>
+            <SessionList
+              groups={groups}
+              pagination={pagination}
+              pageSizeOptions={PAGE_SIZE_OPTIONS}
+              onPageChange={setPage}
+              onPageSizeChange={(size) => {
+                setPageSize(size);
+                setPage(1);
+              }}
+              selectedId={selected?.id}
+              onSelect={setSelectedId}
+              periodSuffix={suffix}
+              awaitingCustom={awaitingCustom}
+            />
+          </View>
+          <View style={{ width: railWidth }}>
+            <SessionAuditCard
+              booking={selected}
+              now={now}
+              billing={selectedBilling}
+              remixSourceId={remixSourceId}
+              onUpdateFormula={handleUpdateFormula}
+            />
+          </View>
+        </View>
+      ) : (
+        <View style={[styles.column, { gap: layout.gap }]}>
+          <SessionList
+            groups={groups}
+            pagination={pagination}
+            pageSizeOptions={PAGE_SIZE_OPTIONS}
+            onPageChange={setPage}
+            onPageSizeChange={(size) => {
+              setPageSize(size);
+              setPage(1);
+            }}
+            selectedId={selected?.id}
+            onSelect={setSelectedId}
+            periodSuffix={suffix}
+            awaitingCustom={awaitingCustom}
+          />
+          <SessionAuditCard
+            booking={selected}
+            now={now}
+            billing={selectedBilling}
+            remixSourceId={remixSourceId}
+            onUpdateFormula={handleUpdateFormula}
+          />
+        </View>
+      )}
+
+      <MetricsRow metrics={metrics} />
+    </LabShell>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Header and footer
+// ---------------------------------------------------------------------------
 
 function HistoryHeader({
   search,
   onSearchChange,
-  onRefresh,
   period,
   onPeriodChange,
   customRange,
@@ -659,7 +460,6 @@ function HistoryHeader({
 }: {
   search: string;
   onSearchChange: (value: string) => void;
-  onRefresh: () => void;
   period: LabPeriod;
   onPeriodChange: (next: LabPeriod) => void;
   customRange: LabCustomRange;
@@ -670,7 +470,7 @@ function HistoryHeader({
     <View style={styles.header}>
       <View style={styles.headerTitleRow}>
         <View style={styles.headerGlyph}>
-          <Text style={styles.headerGlyphText}>🕘</Text>
+          <Icon name="history" size={18} tone="primary" />
         </View>
         <View style={styles.flexItem}>
           <Text style={styles.headerTitle}>Formula History</Text>
@@ -687,7 +487,7 @@ function HistoryHeader({
 
       <View style={styles.searchRow}>
         <View style={styles.searchField}>
-          <Text style={styles.searchGlyph}>⌕</Text>
+          <Icon name="search" size="sm" tone="muted" />
           <TextInput
             autoCapitalize="none"
             onChangeText={onSearchChange}
@@ -697,7 +497,6 @@ function HistoryHeader({
             value={search}
           />
         </View>
-        <IconButton glyph="⟳" onPress={onRefresh} />
       </View>
     </View>
   );
@@ -831,7 +630,12 @@ function SessionPagination({
           Showing {firstRow}–{lastRow} of {total}
         </Text>
         <View style={styles.pageNav}>
-          <PageNavButton label="‹" disabled={page <= 1} onPress={() => onPageChange(page - 1)} />
+          <PageNavButton
+            icon="chevronLeft"
+            accessibilityLabel="Previous page"
+            disabled={page <= 1}
+            onPress={() => onPageChange(page - 1)}
+          />
           {pages.map((entry, index) =>
             entry === 'ellipsis' ? (
               <Text key={`gap-${index}`} style={styles.pageEllipsis}>
@@ -847,7 +651,8 @@ function SessionPagination({
             ),
           )}
           <PageNavButton
-            label="›"
+            icon="chevronRight"
+            accessibilityLabel="Next page"
             disabled={page >= pageCount}
             onPress={() => onPageChange(page + 1)}
           />
@@ -857,25 +662,37 @@ function SessionPagination({
   );
 }
 
+// Either a numbered page button (`label`) or a prev/next control (`icon`), in
+// which case the Pressable carries the accessible name and the icon is hidden
+// from the accessibility tree.
 function PageNavButton({
   label,
+  icon,
+  accessibilityLabel,
   active = false,
   disabled = false,
   onPress,
 }: {
-  label: string;
+  label?: string;
+  icon?: IconName;
+  accessibilityLabel?: string;
   active?: boolean;
   disabled?: boolean;
   onPress: () => void;
 }): React.JSX.Element {
   return (
     <Pressable
+      accessibilityLabel={accessibilityLabel}
       accessibilityRole="button"
       disabled={disabled}
       onPress={onPress}
       style={[styles.pageBtn, active && styles.pageBtnActive, disabled && styles.pageBtnDisabled]}
     >
-      <Text style={[styles.pageBtnText, active && styles.pageBtnTextActive]}>{label}</Text>
+      {icon ? (
+        <Icon name={icon} size="xs" tone="inherit" color={active ? C.textOnPrimary : C.textSecondary} />
+      ) : (
+        <Text style={[styles.pageBtnText, active && styles.pageBtnTextActive]}>{label}</Text>
+      )}
     </Pressable>
   );
 }
@@ -993,7 +810,10 @@ function SessionAuditCard({
               !remixSourceId && styles.updateButtonDisabled,
             ]}
           >
-            <Text style={styles.updateButtonText}>Update Formula →</Text>
+            <View style={styles.updateButtonRow}>
+              <Text style={styles.updateButtonText}>Update Formula</Text>
+              <Icon name="arrowRight" size="xs" tone="inherit" color={C.textOnPrimary} />
+            </View>
           </Pressable>
           <Text style={styles.updateHint}>
             {remixSourceId
@@ -1130,7 +950,7 @@ function MetricsRow({ metrics }: { metrics: HistoryMetric[] }): React.JSX.Elemen
       {metrics.map((metric) => (
         <View key={metric.key} style={styles.metricCard}>
           <View style={styles.metricGlyph}>
-            <Text style={styles.metricGlyphText}>{metric.glyph}</Text>
+            <Icon name={metric.icon} size={18} tone="brand" />
           </View>
           <View style={styles.flexItem}>
             <Text style={styles.metricLabel}>{metric.label}</Text>
@@ -1157,8 +977,14 @@ function buildMetrics(
   suffix: string,
 ): HistoryMetric[] {
   const metrics: HistoryMetric[] = [
-    { key: 'active', label: 'In the chair', value: String(activeCount), glyph: '◷', tone: 'brand' },
-    { key: 'completed', label: `Completed ${suffix}`, value: String(completedCount), glyph: '✓', tone: 'success' },
+    { key: 'active', label: 'In the chair', value: String(activeCount), icon: 'clock', tone: 'brand' },
+    {
+      key: 'completed',
+      label: `Completed ${suffix}`,
+      value: String(completedCount),
+      icon: 'checkCircle',
+      tone: 'success',
+    },
   ];
 
   if (analytics) {
@@ -1168,7 +994,7 @@ function buildMetrics(
       label: 'Product used',
       value: formatGrams(grams),
       hint: `${analytics.summary.formulasMixed} ${analytics.summary.formulasMixed === 1 ? 'mix' : 'mixes'}`,
-      glyph: '⚗',
+      icon: 'flask',
     });
     metrics.push({
       key: 'billed',
@@ -1176,21 +1002,26 @@ function buildMetrics(
       value: formatMoney(analytics.summary.colourRevenueCents, analytics.summary.currencyCode),
       hint: `${formatPercent(analytics.summary.grossMarginPercent)} margin`,
       tone: 'success',
-      glyph: '▤',
+      icon: 'note',
     });
   } else {
+    // This `else` covers three unrelated causes — not loaded yet, load failed,
+    // and a genuine 403 — and it used to hardcode "Managers only" with no role
+    // check. An owner was therefore told a metric was restricted to managers,
+    // which they are, and would reasonably conclude their role was wrong rather
+    // than that a request had failed. Mirrors the `billed` tile below.
     metrics.push({
       key: 'grams',
       label: 'Product used',
-      value: 'Managers only',
-      glyph: '⚗',
+      value: canSeeFinance ? 'Unavailable' : 'Managers only',
+      icon: 'flask',
       locked: true,
     });
     metrics.push({
       key: 'billed',
       label: `Billed ${suffix}`,
       value: canSeeFinance ? 'Unavailable' : 'Managers only',
-      glyph: '▤',
+      icon: 'note',
       locked: true,
     });
   }
@@ -1288,19 +1119,11 @@ function humanize(value: string): string {
 // Shared primitives
 // ---------------------------------------------------------------------------
 
-function chipToneStyle(tone: ChipTone): { text: string; bg: string; border: string } {
-  switch (tone) {
-    case 'brand':
-      return { text: C.primary, bg: C.primarySoft, border: C.primary };
-    case 'success':
-      return { text: C.success.text, bg: C.success.bg, border: C.success.border };
-    case 'warning':
-      return { text: C.warning.text, bg: C.warning.bg, border: C.warning.border };
-    case 'danger':
-      return { text: C.danger.text, bg: C.danger.bg, border: C.danger.border };
-    default:
-      return { text: C.textSecondary, bg: C.inputBg, border: C.borderStrong };
-  }
+function chipToneStyle(tone: ChipTone): ToneTriple {
+  // Delegates to the ONE implementation in src/theme/labTheme.ts. This was a
+  // five-case switch, and it existed in four copies that had drifted apart on
+  // `brand` and `neutral`.
+  return resolveTone(tone);
 }
 
 function deltaColor(tone?: ChipTone): string {
@@ -1319,117 +1142,17 @@ function StatusChip({ label, tone }: { label: string; tone: ChipTone }): React.J
   );
 }
 
-function IconButton({ glyph, onPress }: { glyph: string; onPress: () => void }): React.JSX.Element {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={onPress}
-      style={({ pressed }) => [styles.iconButton, pressed && styles.iconButtonPressed]}
-      hitSlop={6}
-    >
-      <Text style={styles.iconButtonGlyph}>{glyph}</Text>
-    </Pressable>
-  );
-}
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: C.background },
-  centerFill: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: T.spacing.sm },
-  body: { flex: 1 },
-  bodyRow: { flexDirection: 'row' },
-  bodyColumn: { flexDirection: 'column' },
-  mainArea: { flex: 1 },
-  scroll: { flex: 1 },
-  contentWrap: { width: '100%', maxWidth: 1600, alignSelf: 'center' },
+  // The loading block now sits inside the scroll area of the shared shell,
+  // where a flex-1 child of a scroll content container collapses to zero
+  // height. Padded instead, matching the loading block on the other shell
+  // screens.
+  centerFill: { paddingVertical: T.spacing['2xl'], alignItems: 'center', justifyContent: 'center', gap: T.spacing.sm },
   column: { width: '100%' },
   columns: { flexDirection: 'row', alignItems: 'flex-start' },
   listColumn: { flex: 1 },
   flexItem: { flex: 1 },
-
-  // Top bar
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: T.spacing.base,
-    paddingVertical: T.spacing.md,
-    backgroundColor: C.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-  },
-  topSideLeft: { flex: 1, alignItems: 'flex-start' },
-  topSideRight: { flex: 1, alignItems: 'flex-end' },
-  brandRow: { flexDirection: 'row', alignItems: 'center', gap: T.spacing.sm },
-  brandText: { color: C.textPrimary, fontSize: 17, fontWeight: '800', letterSpacing: 1 },
-  userRow: { flexDirection: 'row', alignItems: 'center', gap: T.spacing.sm, maxWidth: 220 },
-  userText: { alignItems: 'flex-end' },
-  userName: { color: C.textPrimary, fontWeight: '700', fontSize: 13 },
-  userRole: { color: C.textMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 },
-  avatar: {
-    width: 36,
-    height: 36,
-    borderRadius: T.radius.full,
-    backgroundColor: C.primarySoft,
-    borderWidth: 1,
-    borderColor: C.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: { color: C.primary, fontWeight: '800', fontSize: 13 },
-
-  // Sidebar
-  sidebar: {
-    backgroundColor: C.surface,
-    borderRightWidth: 1,
-    borderRightColor: C.border,
-    paddingVertical: T.spacing.lg,
-    paddingHorizontal: T.spacing.md,
-    justifyContent: 'space-between',
-  },
-  sidebarNav: { gap: T.spacing.xs },
-  navItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: T.spacing.md,
-    paddingVertical: T.spacing.md,
-    paddingHorizontal: T.spacing.md,
-    borderRadius: T.radius.card,
-  },
-  // Active item reads as a solid brand pill (rounded via `navItem.borderRadius`)
-  // with white text, rather than the older soft-tinted fill.
-  navItemActive: { backgroundColor: C.sidebarActive },
-  navItemSoon: { opacity: 0.5 },
-  navGlyph: { fontSize: 16 },
-  navLabel: { flex: 1, color: C.textSecondary, fontSize: 13, fontWeight: '700' },
-  navLabelActive: { color: C.sidebarActiveText },
-  soonTag: { color: C.textMuted, fontSize: 11, fontWeight: '700' },
-  signOut: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: T.spacing.md,
-    paddingVertical: T.spacing.md,
-    paddingHorizontal: T.spacing.md,
-    borderRadius: T.radius.card,
-    borderWidth: 1,
-    borderColor: C.border,
-  },
-  signOutGlyph: { fontSize: 16, color: C.danger.text },
-  signOutLabel: { color: C.textPrimary, fontWeight: '700', fontSize: 13 },
-
-  navScrollerWrap: { marginBottom: T.spacing.xs },
-  navScroller: { flexDirection: 'row', gap: T.spacing.sm, paddingVertical: T.spacing.xs },
-  navChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: T.spacing.xs,
-    paddingVertical: T.spacing.sm,
-    paddingHorizontal: T.spacing.md,
-    borderRadius: T.radius.full,
-    borderWidth: 1,
-    borderColor: C.border,
-    backgroundColor: C.surface,
-  },
-  navChipActive: { backgroundColor: C.primarySoft, borderColor: C.primary },
-  navChipLabel: { color: C.textSecondary, fontSize: 13, fontWeight: '700' },
 
   // Header
   header: { gap: T.spacing.md },
@@ -1444,7 +1167,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  headerGlyphText: { fontSize: 18 },
   headerTitle: { color: C.textPrimary, fontSize: 26, fontWeight: '800', letterSpacing: -0.5 },
   headerSubtitle: { color: C.textMuted, fontSize: 13, marginTop: 2 },
 
@@ -1462,7 +1184,6 @@ const styles = StyleSheet.create({
     borderRadius: T.radius.inputLg,
     backgroundColor: C.inputBg,
   },
-  searchGlyph: { color: C.textMuted, fontSize: 16, fontWeight: '700' },
   searchInput: { flex: 1, color: C.textPrimary, fontSize: 15 },
 
   // Session list
@@ -1600,6 +1321,7 @@ const styles = StyleSheet.create({
   },
   updateButtonPressed: { backgroundColor: C.primaryPressed },
   updateButtonDisabled: { backgroundColor: C.textSecondary },
+  updateButtonRow: { flexDirection: 'row', alignItems: 'center', gap: T.spacing.xs },
   updateButtonText: { color: C.textOnPrimary, fontSize: 14, fontWeight: '800' },
   updateHint: { color: C.textMuted, fontSize: 11, lineHeight: 16 },
 
@@ -1679,7 +1401,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  metricGlyphText: { fontSize: 18, color: C.primary },
   metricLabel: { color: C.textMuted, fontSize: 11, fontWeight: '700', letterSpacing: 0.4, textTransform: 'uppercase' },
   metricValue: { color: C.textPrimary, fontSize: 22, fontWeight: '800', letterSpacing: -0.5, marginTop: 2 },
   metricValueLocked: { color: C.textMuted, fontSize: 13, fontWeight: '700', letterSpacing: 0 },

@@ -10,6 +10,7 @@
     "ios": "react-native run-ios",
     "lint": "eslint \"src/**/*.{ts,tsx}\" App.tsx",
     "typecheck": "tsc --noEmit",
+    "test": "jest",
     "prebuild": "pnpm --filter \"@sheer/domain\" --filter \"@sheer/lab-core\" --filter \"@sheer/api-client\" --filter \"@sheer/design-tokens\" --filter \"@sheer/utils\" --filter \"@sheer/auth\" run build",
     "build": "echo \"Sheer Lab native builds use React Native CLI: pnpm --filter @sheer/sheer-lab ios|android\"",
     "pods": "cd ios && pod install"

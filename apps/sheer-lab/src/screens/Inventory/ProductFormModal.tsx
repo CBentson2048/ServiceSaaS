@@ -3,6 +3,7 @@ import type React from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { Icon } from '../../ui/icons/Icon';
 import { t, c } from '../shared/LabShell';
 import { formatMoney } from '../Home/dashboardHelpers';
 
@@ -54,6 +55,13 @@ interface ProductFormModalProps {
   onArchive?: () => void;
   onClose: () => void;
   onSave: (payload: ProductSavePayload) => void;
+  /**
+   * A failure from the save/archive request. It has to come back IN here: the
+   * screen behind this modal has its own error banner, and a server error shown
+   * there is invisible while the modal is open — the operator saw the button go
+   * "Saving…" and then back, with no reason given anywhere they could see.
+   */
+  submitError?: string;
 }
 
 export function ProductFormModal({
@@ -65,6 +73,7 @@ export function ProductFormModal({
   onArchive,
   onClose,
   onSave,
+  submitError,
 }: ProductFormModalProps): React.JSX.Element {
   const isEdit = Boolean(product);
   const [form, setForm] = useState<ProductFormValues>(EMPTY);
@@ -93,6 +102,18 @@ export function ProductFormModal({
       setError('Product range / name is required.');
       return;
     }
+    // `?? 0` used to swallow a typo here, and a threshold of 0 never fires a
+    // low-stock alert — so the product silently stopped being monitored while
+    // the operator was shown a success notice. An empty field is still fine
+    // (it means "don't alert on this one"); unparseable text is not.
+    if (form.reorderLevel.trim().length > 0 && parseDecimal(form.reorderLevel) === undefined) {
+      setError('Reorder level must be a number, or left empty for no alert.');
+      return;
+    }
+    if (form.costPerGram.trim().length > 0 && parseDecimal(form.costPerGram) === undefined) {
+      setError('Cost per gram must be a number, or left empty.');
+      return;
+    }
     onSave({
       brand: nullable(form.brand),
       name: form.name.trim(),
@@ -114,13 +135,21 @@ export function ProductFormModal({
               <Text style={styles.title}>{isEdit ? 'Edit product details' : 'Add product'}</Text>
               <Text style={styles.subtitle}>Configure product specifications, financial rules, and stock thresholds.</Text>
             </View>
-            <Pressable accessibilityRole="button" onPress={onClose} hitSlop={10} style={styles.close}>
-              <Text style={styles.closeGlyph}>✕</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+              onPress={onClose}
+              hitSlop={10}
+              style={styles.close}
+            >
+              <Icon name="close" size="xs" tone="secondary" />
             </Pressable>
           </View>
 
           <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent} showsVerticalScrollIndicator={false}>
-            {error ? <Text style={styles.error}>{error}</Text> : null}
+            {error ?? submitError ? (
+              <Text style={styles.error}>{error ?? submitError}</Text>
+            ) : null}
 
             <View style={styles.grid}>
               <FieldInput label="Brand name" value={form.brand} onChangeText={set('brand')} placeholder="L'Oréal Professionnel" />
@@ -354,7 +383,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: c.surfaceAlt,
   },
-  closeGlyph: { color: c.textSecondary, fontSize: 14, fontWeight: '700' },
   body: { maxHeight: 460 },
   bodyContent: { padding: t.spacing.lg, gap: t.spacing.base },
   error: {

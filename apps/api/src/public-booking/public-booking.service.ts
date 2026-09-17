@@ -45,7 +45,7 @@ import type {
   StartPublicBookingCheckoutRequest,
   StartPublicBookingCheckoutResponse,
 } from '@sheer/domain';
-import { depositForServicePrice, userHasRole } from '@sheer/domain';
+import { depositForServicePrice, normalizeSalonCode, userHasRole } from '@sheer/domain';
 import { AuthService } from '../auth/auth.service';
 import { BookingNotificationService } from '../communications/booking-notification.service';
 import { RebookingService } from '../rebooking/rebooking.service';
@@ -259,6 +259,19 @@ const SHIFT_COLUMNS = 'id,staff_profile_id,scheduled_start_at,scheduled_end_at';
 const BREAK_COLUMNS = 'shift_id,started_at,ended_at';
 const APPOINTMENT_COLUMNS = 'assigned_staff_profile_id,scheduled_start_at,scheduled_end_at,occupied_ranges';
 const BOOKING_ATTEMPT_BUSY_COLUMNS = 'id,stylist_profile_id,selected_start_at,selected_end_at,occupied_ranges';
+/**
+ * `booking.deposit_status_enum` values that precede a collection. A successful
+ * payment is recorded only from one of these; `paid`, `partially_refunded`,
+ * `refunded` and `cancelled` are never overwritten by a payment webhook.
+ */
+const DEPOSIT_AWAITING_PAYMENT_STATUSES = ['pending', 'requires_action', 'authorized', 'failed'];
+/**
+ * Attempt statuses a successful payment may finalize. A declined card leaves the
+ * PaymentIntent reusable (`requires_payment_method`), and the booking page keeps
+ * it: the client can pay the same intent after `payment_intent.payment_failed`
+ * has already marked the attempt `payment_failed`.
+ */
+const BOOKING_ATTEMPT_PAYABLE_STATUSES = ['pending_payment', 'payment_failed'];
 const BOOKING_ATTEMPT_COLUMNS =
   'id,business_id,location_id,service_id,stylist_profile_id,client_profile_id,user_profile_id,appointment_id,staff_request_mode,selected_start_at,selected_end_at,communication_preference,client_note,deposit_amount,currency_code,stripe_payment_intent_id,status,expires_at,metadata';
 const BOOKING_ATTEMPT_SERVICE_COLUMNS =
@@ -649,7 +662,14 @@ export class PublicBookingService {
       await this.markDepositPaid(attempt, paymentIntent);
       return;
     }
-    if (attempt.status !== 'pending_payment') return;
+    if (!BOOKING_ATTEMPT_PAYABLE_STATUSES.includes(attempt.status)) return;
+    // A success after a decline completes the attempt only through its own intent.
+    if (attempt.status === 'payment_failed' && attempt.stripe_payment_intent_id !== paymentIntent.id) {
+      this.logger.warn(
+        `Stripe payment_intent.succeeded for attempt=${attempt.id} paymentIntent=${paymentIntent.id} does not match the attempt's intent; ignored`,
+      );
+      return;
+    }
 
     const appointment = await this.finalizePaidBookingAttempt(attempt, paymentIntent);
     await this.markDepositPaid({ ...attempt, appointment_id: appointment.id }, paymentIntent);
@@ -676,6 +696,8 @@ export class PublicBookingService {
       throw new InternalServerErrorException('Unable to update booking attempt');
     }
 
+    // Never over a recorded collection: a retried payment on the same intent may
+    // already have succeeded when this (earlier) failure is processed.
     const { error: depositError } = await this.admin
       .schema('booking')
       .from('deposits')
@@ -684,7 +706,9 @@ export class PublicBookingService {
         failure_reason: failureReason,
         metadata: { stripe_status: paymentIntent.status },
       })
-      .eq('booking_attempt_id', attempt.id);
+      .eq('booking_attempt_id', attempt.id)
+      .is('paid_at', null)
+      .in('status', DEPOSIT_AWAITING_PAYMENT_STATUSES);
 
     if (depositError) {
       this.logger.error(`handlePaymentIntentFailed update deposit failed: ${depositError.message}`);
@@ -696,8 +720,11 @@ export class PublicBookingService {
     query: PublicBookingSelectionQueryDto,
     options: { allowOfflineBooking?: boolean } = {},
   ): Promise<PublicBookingLocationSummary> {
-    if (!query.locationId && (!query.businessSlug || !query.locationSlug)) {
-      throw new BadRequestException('locationId or businessSlug + locationSlug is required');
+    const lookup = bookingLocationLookup(query);
+    if (!lookup) {
+      throw new BadRequestException(
+        'locationId, salonCode, or businessSlug + locationSlug is required',
+      );
     }
 
     let request = this.admin
@@ -707,12 +734,14 @@ export class PublicBookingService {
       .eq('is_active', true)
       .limit(1);
 
-    if (query.locationId) {
-      request = request.eq('id', query.locationId);
+    if (lookup.by === 'id') {
+      request = request.eq('id', lookup.locationId);
+    } else if (lookup.by === 'salonCode') {
+      request = request.eq('public_code', lookup.salonCode);
     } else {
       request = request
-        .eq('slug', query.locationSlug)
-        .eq('businesses.slug', query.businessSlug);
+        .eq('slug', lookup.locationSlug)
+        .eq('businesses.slug', lookup.businessSlug);
     }
 
     const { data, error } = await request.maybeSingle<LocationRow>();
@@ -1948,7 +1977,7 @@ export class PublicBookingService {
   ): Promise<AppointmentInsertRow> {
     const latestAttempt = await this.fetchBookingAttemptById(attempt.id);
     if (latestAttempt.appointment_id) return this.fetchAppointmentInsertRow(latestAttempt.appointment_id);
-    if (latestAttempt.status !== 'pending_payment') {
+    if (!BOOKING_ATTEMPT_PAYABLE_STATUSES.includes(latestAttempt.status)) {
       throw new ConflictException('Booking attempt is no longer pending payment');
     }
 
@@ -1976,7 +2005,7 @@ export class PublicBookingService {
       .from('booking_attempts')
       .update({ status: 'confirmed', appointment_id: appointment.id })
       .eq('id', latestAttempt.id)
-      .eq('status', 'pending_payment')
+      .in('status', BOOKING_ATTEMPT_PAYABLE_STATUSES)
       .is('appointment_id', null)
       .select(BOOKING_ATTEMPT_COLUMNS)
       .maybeSingle<BookingAttemptRow>();
@@ -2118,13 +2147,25 @@ export class PublicBookingService {
     }
   }
 
+  /**
+   * Records the deposit's collection exactly once.
+   *
+   * Stripe re-delivers `payment_intent.succeeded` until it gets a 2xx, and may
+   * deliver an event more than once, so this runs again for an attempt that is
+   * already confirmed. The update only applies while no collection is recorded
+   * (`paid_at` is null and the deposit is still awaiting payment): a repeat never
+   * moves `paid_at` (the instant the collection was first recorded), never records
+   * a second collection, and never turns a refunded or partially refunded deposit
+   * back into `paid`. Financial reporting (R1 Money) reads the collection by
+   * `paid_at` and refunds by `refunded_at`.
+   */
   private async markDepositPaid(
     attempt: BookingAttemptRow,
     paymentIntent: StripePaymentIntent,
   ): Promise<void> {
     const chargeId =
       typeof paymentIntent.latest_charge === 'string' ? paymentIntent.latest_charge : paymentIntent.latest_charge?.id;
-    const { error } = await this.admin
+    const { data, error } = await this.admin
       .schema('booking')
       .from('deposits')
       .update({
@@ -2132,13 +2173,24 @@ export class PublicBookingService {
         provider_charge_id: chargeId ?? null,
         status: 'paid',
         paid_at: new Date().toISOString(),
+        // A retry after a decline: the earlier failure no longer describes this deposit.
+        failure_reason: null,
         metadata: { stripe_status: paymentIntent.status },
       })
-      .eq('booking_attempt_id', attempt.id);
+      .eq('booking_attempt_id', attempt.id)
+      .is('paid_at', null)
+      .in('status', DEPOSIT_AWAITING_PAYMENT_STATUSES)
+      .select('id');
 
     if (error) {
       this.logger.error(`markDepositPaid failed: ${error.message}`);
       throw new InternalServerErrorException('Unable to mark deposit paid');
+    }
+    if (!data || data.length === 0) {
+      this.logger.log(
+        `No deposit awaiting payment for attempt=${attempt.id} paymentIntent=${paymentIntent.id} (already recorded, refunded, or missing); payment_intent.succeeded left deposits unchanged`,
+      );
+      return;
     }
     this.logger.log(
       `Marked booking deposit paid for attempt=${attempt.id} appointment=${attempt.appointment_id ?? 'pending'} paymentIntent=${paymentIntent.id}`,
@@ -2398,6 +2450,31 @@ function toSegmentSummaries(
       durationMinutes: segment.duration_minutes,
       isStylistFree: segment.is_stylist_free ?? false,
     }));
+}
+
+export type BookingLocationLookup =
+  | { by: 'id'; locationId: string }
+  | { by: 'salonCode'; salonCode: string }
+  | { by: 'slugs'; businessSlug: string; locationSlug: string };
+
+/**
+ * How a public booking request names its location, most specific first. A
+ * Salon Code arrives from shared links in whatever case or spacing it was
+ * typed, so it is normalised; one that normalises to nothing names no salon.
+ */
+export function bookingLocationLookup(
+  query: Pick<
+    PublicBookingSelectionQueryDto,
+    'locationId' | 'salonCode' | 'businessSlug' | 'locationSlug'
+  >,
+): BookingLocationLookup | null {
+  if (query.locationId) return { by: 'id', locationId: query.locationId };
+  const salonCode = normalizeSalonCode(query.salonCode ?? '');
+  if (salonCode) return { by: 'salonCode', salonCode };
+  if (query.businessSlug && query.locationSlug) {
+    return { by: 'slugs', businessSlug: query.businessSlug, locationSlug: query.locationSlug };
+  }
+  return null;
 }
 
 function toLocationSummary(row: LocationRow): PublicBookingLocationSummary {

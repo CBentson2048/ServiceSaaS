@@ -19,6 +19,8 @@ import type {
   AuthSession,
   AuthUser,
   BusinessTier,
+  ClientBookingLoginResponse,
+  CommunicationPreference,
   CreateAccountRequest,
   CreateAccountResponse,
   LoginResponse,
@@ -40,6 +42,7 @@ import {
 import type { ClientBookingAccountDto, ClientBookingLoginDto, CreateCustomerAccountDto } from './dto';
 import { normalizeE164 } from '../communications/phone';
 import { VerifiedTokenCache } from './verified-token.cache';
+import { resolveMembershipGrants, type GrantSecurityLevel } from './membership-grants';
 import { EmailService } from '../email/email.service';
 import { renderPasswordResetEmail } from '../email/templates/password-reset.template';
 
@@ -69,6 +72,7 @@ interface MembershipRow {
 
 interface SecurityLevelPermissionsRow {
   id: string;
+  business_id: string;
   permissions: unknown;
 }
 
@@ -235,7 +239,9 @@ export class AuthService {
     }
   }
 
-  async createClientBookingAccount(input: ClientBookingAccountDto): Promise<LoginResponse> {
+  async createClientBookingAccount(
+    input: ClientBookingAccountDto,
+  ): Promise<ClientBookingLoginResponse> {
     const location = await this.fetchBookingLocation(input.locationId);
     const email = input.email.trim().toLowerCase();
     const firstName = input.firstName.trim();
@@ -264,16 +270,21 @@ export class AuthService {
 
       createdUserId = createdUser.user.id;
       await this.createUserProfile(createdUserId, email, fullName, input.phone);
-      await this.ensureClientMembership(location.business_id, createdUserId);
-      await this.ensureClientProfile(location.business_id, input.locationId, createdUserId, {
-        firstName,
-        lastName,
-        email,
-        phone: input.phone,
-        communicationPreference: input.communicationPreference,
-      });
+      const client = await this.ensureClientForBusiness(
+        location.business_id,
+        input.locationId,
+        createdUserId,
+        {
+          firstName,
+          lastName,
+          email,
+          phone: input.phone,
+          communicationPreference: input.communicationPreference,
+        },
+      );
 
-      return this.login(email, input.password, 'sheer_app');
+      const login = await this.login(email, input.password, 'sheer_app');
+      return { ...login, bookingClient: toBookingClient(location.business_id, client) };
     } catch (error) {
       if (createdUserId) {
         await this.rollbackCreatedClientAccount(createdUserId, location.business_id);
@@ -354,24 +365,36 @@ export class AuthService {
       phone?: string;
       communicationPreference?: 'whatsapp' | 'sms' | 'email';
     },
-  ): Promise<{ id: string; clientCode?: string }> {
+  ): Promise<{
+    id: string;
+    clientCode?: string;
+    communicationPreference?: CommunicationPreference;
+  }> {
     await this.ensureClientMembership(businessId, userId);
     await this.ensureClientProfile(businessId, locationId, userId, input);
 
     const { data, error } = await this.admin
       .schema('core')
       .from('client_profiles')
-      .select('id,client_code')
+      .select('id,client_code,communication_preference')
       .eq('business_id', businessId)
       .eq('user_profile_id', userId)
-      .maybeSingle<{ id: string; client_code?: string }>();
+      .maybeSingle<{
+        id: string;
+        client_code?: string;
+        communication_preference?: CommunicationPreference | null;
+      }>();
 
     if (error || !data) {
       this.logger.error(`ensureClientForBusiness lookup failed: ${error?.message ?? 'not found'}`);
       throw new InternalServerErrorException('Unable to resolve client profile');
     }
 
-    return { id: data.id, clientCode: data.client_code };
+    return {
+      id: data.id,
+      clientCode: data.client_code,
+      communicationPreference: data.communication_preference ?? undefined,
+    };
   }
 
   private async rollbackCreatedCustomerAccount(userId: string): Promise<void> {
@@ -379,7 +402,7 @@ export class AuthService {
     await this.admin.auth.admin.deleteUser(userId);
   }
 
-  async loginClientForBooking(input: ClientBookingLoginDto): Promise<LoginResponse> {
+  async loginClientForBooking(input: ClientBookingLoginDto): Promise<ClientBookingLoginResponse> {
     const location = await this.fetchBookingLocation(input.locationId);
     const email = input.email.trim().toLowerCase();
     const { data, error } = await this.sessionClient().auth.signInWithPassword({
@@ -392,13 +415,17 @@ export class AuthService {
     }
 
     const profile = await this.fetchProfile(data.user.id);
-    await this.ensureClientMembership(location.business_id, data.user.id);
-    await this.ensureClientProfile(location.business_id, input.locationId, data.user.id, {
-      firstName: firstNameFromFullName(profile.full_name),
-      lastName: lastNameFromFullName(profile.full_name),
-      email,
-      phone: input.phone ?? profile.phone ?? undefined,
-    });
+    const client = await this.ensureClientForBusiness(
+      location.business_id,
+      input.locationId,
+      data.user.id,
+      {
+        firstName: firstNameFromFullName(profile.full_name),
+        lastName: lastNameFromFullName(profile.full_name),
+        email,
+        phone: input.phone ?? profile.phone ?? undefined,
+      },
+    );
     if (input.phone?.trim()) {
       await this.updateUserProfilePhone(data.user.id, input.phone);
     }
@@ -409,6 +436,7 @@ export class AuthService {
     return {
       session: this.toAuthSession(data.session),
       user,
+      bookingClient: toBookingClient(location.business_id, client),
     };
   }
 
@@ -632,7 +660,20 @@ export class AuthService {
       allowedLocationIds.includes(location.id),
     );
 
-    const permissions = await this.resolveEffectivePermissions(roles, sameBusinessMemberships);
+    const securityLevels = await this.fetchMembershipSecurityLevels(roles, sameBusinessMemberships);
+    const permissions = this.resolveEffectivePermissions(
+      roles,
+      sameBusinessMemberships,
+      securityLevels,
+    );
+    // Reporting reads these, never `permissions`: see membership-grants.ts.
+    const membershipGrants = resolveMembershipGrants({
+      businessId: business.id,
+      roles,
+      memberships: sameBusinessMemberships,
+      levels: securityLevels,
+      businessLocationIds: new Set(businessLocations.map((location) => location.id)),
+    });
 
     await this.admin
       .schema('core')
@@ -681,6 +722,7 @@ export class AuthService {
       clientCommunicationPreference: clientProfile?.communication_preference ?? undefined,
       timezone: profile.timezone ?? undefined,
       permissions,
+      ...(membershipGrants ? { membershipGrants } : {}),
     };
   }
 
@@ -730,20 +772,14 @@ export class AuthService {
    * assigned security level — or the base-role defaults when no level is set
    * (which is exactly V1 behaviour for un-migrated members).
    */
-  private async resolveEffectivePermissions(
+  private resolveEffectivePermissions(
     roles: UserRole[],
     memberships: MembershipRow[],
-  ): Promise<Permission[]> {
+    levels: ReadonlyMap<string, GrantSecurityLevel>,
+  ): Permission[] {
     if (roles.includes('owner')) {
       return [...ALL_PERMISSIONS];
     }
-
-    const levelIds = [
-      ...new Set(memberships.map((m) => m.security_level_id).filter(isString)),
-    ];
-    const levelPermissions = levelIds.length
-      ? await this.fetchSecurityLevelPermissions(levelIds)
-      : new Map<string, Permission[]>();
 
     const effective = new Set<Permission>();
     for (const membership of memberships) {
@@ -751,7 +787,7 @@ export class AuthService {
       // role when the referenced level is missing would silently restore broader
       // V1 manager access after a stale/deleted assignment.
       const perms = membership.security_level_id
-        ? (levelPermissions.get(membership.security_level_id) ?? [])
+        ? (levels.get(membership.security_level_id)?.permissions ?? [])
         : (DEFAULT_ROLE_PERMISSIONS[membership.role] ?? []);
       for (const perm of perms) effective.add(perm);
     }
@@ -762,17 +798,34 @@ export class AuthService {
     return expandPermissions(effective);
   }
 
+  /**
+   * The security levels referenced by a non-owner's memberships. Owners resolve
+   * every permission through their role, so no level is read for them.
+   */
+  private async fetchMembershipSecurityLevels(
+    roles: UserRole[],
+    memberships: MembershipRow[],
+  ): Promise<Map<string, GrantSecurityLevel>> {
+    if (roles.includes('owner')) {
+      return new Map();
+    }
+    const levelIds = [
+      ...new Set(memberships.map((m) => m.security_level_id).filter(isString)),
+    ];
+    return levelIds.length ? this.fetchSecurityLevelPermissions(levelIds) : new Map();
+  }
+
   private async fetchSecurityLevelPermissions(
     levelIds: string[],
-  ): Promise<Map<string, Permission[]>> {
+  ): Promise<Map<string, GrantSecurityLevel>> {
     const { data, error } = await this.admin
       .schema('core')
       .from('security_levels')
-      .select('id,permissions')
+      .select('id,business_id,permissions')
       .in('id', levelIds)
       .returns<SecurityLevelPermissionsRow[]>();
 
-    const map = new Map<string, Permission[]>();
+    const map = new Map<string, GrantSecurityLevel>();
     if (error || !data) {
       throw new ForbiddenException('Unable to resolve security level permissions');
     }
@@ -781,7 +834,7 @@ export class AuthService {
       const perms = Array.isArray(row.permissions)
         ? (row.permissions.filter((p): p is Permission => typeof p === 'string' && valid.has(p)))
         : [];
-      map.set(row.id, perms);
+      map.set(row.id, { businessId: row.business_id, permissions: perms });
     }
     return map;
   }
@@ -1035,13 +1088,22 @@ export class AuthService {
     // Union the locations across EVERY role the user holds — a manager@A who is
     // also a stylist@B must see both A and B, not just their primary role's
     // locations.
-    return [
-      ...new Set(
-        memberships
-          .filter((m) => m.location_id)
-          .map((m) => m.location_id as string),
-      ),
-    ];
+    const membershipLocationIds = new Set(
+      memberships.filter((m) => m.location_id).map((m) => m.location_id as string),
+    );
+
+    // Order by the business's own `sort_order` rather than by whatever order the
+    // membership rows came back in (that query is unordered). Callers treat
+    // `allowedLocationIds[0]` as a stable default location, and it has to agree
+    // with `locations[0]` — which is sorted — instead of drifting between logins.
+    const ordered = businessLocations
+      .filter((location) => membershipLocationIds.has(location.id))
+      .map((location) => location.id);
+
+    // A membership pointing at a location the business no longer lists keeps its
+    // place in the scope; dropping it here would silently narrow access.
+    const orphans = [...membershipLocationIds].filter((id) => !ordered.includes(id));
+    return [...ordered, ...orphans];
   }
 
   private async fetchProfile(userId: string): Promise<ProfileRow> {
@@ -1486,6 +1548,18 @@ function slugify(value: string): string {
 
 function randomSuffix(): string {
   return Math.random().toString(36).slice(2, 8);
+}
+
+function toBookingClient(
+  businessId: string,
+  client: { id: string; clientCode?: string; communicationPreference?: CommunicationPreference },
+): ClientBookingLoginResponse['bookingClient'] {
+  return {
+    businessId,
+    clientProfileId: client.id,
+    clientCode: client.clientCode,
+    communicationPreference: client.communicationPreference,
+  };
 }
 
 function firstNameFromFullName(fullName: string): string {

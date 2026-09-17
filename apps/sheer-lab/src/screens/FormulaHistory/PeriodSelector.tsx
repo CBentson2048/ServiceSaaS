@@ -4,6 +4,7 @@ import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 
 import type { LabCustomRange, LabPeriod } from '../../features/analytics/period';
 import { labTheme } from '../../theme/labTheme';
+import { Icon } from '../../ui/icons/Icon';
 
 const T = labTheme;
 const C = T.colors;
@@ -140,23 +141,25 @@ function CalendarModal({
 
           <View style={styles.monthNav}>
             <Pressable
+              accessibilityLabel="Previous month"
               accessibilityRole="button"
               hitSlop={8}
               onPress={() => setCursor(addMonths(cursor, -1))}
               style={styles.monthArrow}
             >
-              <Text style={styles.monthArrowText}>‹</Text>
+              <Icon name="chevronLeft" size={18} tone="primary" />
             </Pressable>
             <Text style={styles.monthLabel}>
               {MONTHS[cursor.getMonth()]} {cursor.getFullYear()}
             </Text>
             <Pressable
+              accessibilityLabel="Next month"
               accessibilityRole="button"
               hitSlop={8}
               onPress={() => canNext && setCursor(addMonths(cursor, 1))}
               style={[styles.monthArrow, !canNext && styles.monthArrowDisabled]}
             >
-              <Text style={styles.monthArrowText}>›</Text>
+              <Icon name="chevronRight" size={18} tone="primary" />
             </Pressable>
           </View>
 
@@ -317,7 +320,6 @@ const styles = StyleSheet.create({
     borderColor: C.border,
   },
   monthArrowDisabled: { opacity: 0.35 },
-  monthArrowText: { color: C.textPrimary, fontSize: 18, fontWeight: '800' },
   monthLabel: { color: C.textPrimary, fontSize: 15, fontWeight: '800' },
   weekRow: { flexDirection: 'row' },
   weekday: {

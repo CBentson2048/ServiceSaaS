@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { ApiRequestError, createNewWeek, getWeeklyRota, previewNewWeek } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
+import { useLocationScope } from '../components/LocationScopeContext';
 import { AppButton, AppCard, AppText, StatusBadge } from '../design';
 import { ShiftEditorModal } from '../components/rota/ShiftEditorModal';
 import {
@@ -52,20 +53,27 @@ export function NewWeekRotaPage() {
   const [shiftEditor, setShiftEditor] = useState<ShiftEditorState>({ open: false });
 
   const role = auth.user?.primaryRole;
-  const locations = useMemo(() => auth.user?.locations ?? [], [auth.user?.locations]);
-  const managerLocationId = role === 'manager' ? auth.user?.allowedLocationIds[0] ?? null : null;
 
-  // Owners pick which location's week they're building; managers are fixed to theirs.
-  const [ownerLocationId, setOwnerLocationId] = useState<string>('');
-  useEffect(() => {
-    if (role === 'owner' && !ownerLocationId && locations.length > 0) {
-      setOwnerLocationId(locations[0].id);
-    }
-  }, [role, ownerLocationId, locations]);
+  // The week is built for the location in the shared sidebar scope — owners
+  // across the business, managers across the locations they're assigned to. The
+  // in-page picker below writes back to the same scope so the two never drift.
+  const { locations, resolvedLocationId, setSelectedLocationId } = useLocationScope();
 
-  const effectiveLocationId = role === 'owner' ? ownerLocationId || null : managerLocationId;
+  const effectiveLocationId = resolvedLocationId || null;
   const locationName =
     locations.find((loc) => loc.id === effectiveLocationId)?.name ?? 'Current location';
+
+  // Switching salons must never carry the previous location's draft into the
+  // new one. Both loaders re-run off `effectiveLocationId`, but drop the stale
+  // workspace immediately rather than rendering it until they land.
+  const previousLocationId = useRef(effectiveLocationId);
+  useEffect(() => {
+    if (previousLocationId.current === effectiveLocationId) return;
+    previousLocationId.current = effectiveLocationId;
+    setWorkspacePlan(null);
+    setDraftShifts([]);
+    setActionMessage(null);
+  }, [effectiveLocationId]);
 
   const weekDates = useMemo(() => {
     const start = new Date(`${weekStart}T00:00:00`);
@@ -176,18 +184,12 @@ export function NewWeekRotaPage() {
     return <Navigate to="/unauthorized" replace />;
   }
 
-  if (role === 'owner' && locations.length === 0) {
+  if (locations.length === 0) {
     return (
       <div className="mx-auto w-full max-w-3xl px-4 py-10 text-center text-[13px] text-text-secondary">
-        No locations found for your business yet. Create a location before building a rota week.
-      </div>
-    );
-  }
-
-  if (role === 'manager' && !managerLocationId) {
-    return (
-      <div className="mx-auto w-full max-w-3xl px-4 py-10 text-center text-[13px] text-text-secondary">
-        Your account is not assigned to a location yet.
+        {role === 'owner'
+          ? 'No locations found for your business yet. Create a location before building a rota week.'
+          : 'Your account is not assigned to a location yet.'}
       </div>
     );
   }
@@ -310,26 +312,16 @@ export function NewWeekRotaPage() {
               Location / Team
             </AppText>
           <select
-            value={role === 'owner' ? ownerLocationId : managerLocationId ?? 'current'}
-            onChange={(event) => {
-              if (role !== 'owner') return;
-              setOwnerLocationId(event.target.value);
-              setWorkspacePlan(null);
-              setDraftShifts([]);
-              setActionMessage(null);
-            }}
-            disabled={role !== 'owner'}
+            value={effectiveLocationId ?? ''}
+            onChange={(event) => setSelectedLocationId(event.target.value)}
+            disabled={locations.length < 2}
               className="mt-1 h-9 w-full rounded-input-lg border border-border-strong bg-surface px-3 text-[13px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:opacity-70"
           >
-            {role === 'owner' ? (
-              locations.map((location) => (
-                <option key={location.id} value={location.id}>
-                  {location.name}
-                </option>
-              ))
-            ) : (
-              <option value={managerLocationId ?? 'current'}>{locationName}</option>
-            )}
+            {locations.map((location) => (
+              <option key={location.id} value={location.id}>
+                {location.name}
+              </option>
+            ))}
           </select>
           </label>
           <label>

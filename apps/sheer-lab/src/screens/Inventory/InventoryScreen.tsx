@@ -25,6 +25,9 @@ import {
   updateManagedProduct,
 } from '../../features/inventory/inventoryManagementApi';
 import { getActiveLabSession } from '../../features/sheer-lab/labSession';
+import { confirmDestructive } from '../../lib/confirm';
+import { Banner } from '../../ui';
+import { Icon } from '../../ui/icons/Icon';
 import { LabShell, Pill, t, c, useLabLayout } from '../shared/LabShell';
 import { formatGrams, formatMoney, formatRelativeTime, getInventoryTier, stockFill } from '../Home/dashboardHelpers';
 import { ProductFormModal, type ProductSavePayload } from './ProductFormModal';
@@ -54,6 +57,14 @@ export function InventoryScreen({ navigation }: InventoryScreenProps): React.JSX
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  /**
+   * A failure from a save/adjust/archive request, shown INSIDE the modal that
+   * caused it. `error` renders in the screen's banner, which sits behind the
+   * modal — so a rejected save used to be completely invisible: the button went
+   * "Saving…", came back, and the reason was on a surface the operator could
+   * not see. Repeated taps then repeated the failing request.
+   */
+  const [submitError, setSubmitError] = useState<string | undefined>();
   const [notice, setNotice] = useState<string | undefined>();
   const [forbidden, setForbidden] = useState(false);
 
@@ -98,10 +109,30 @@ export function InventoryScreen({ navigation }: InventoryScreenProps): React.JSX
       if (categoryRes.status === 'fulfilled') setCategories(categoryRes.value.categories);
       if (lowStockRes.status === 'fulfilled') setLowStockCount(lowStockRes.value.alerts.length);
 
-      const failed = [productRes, stockRes].some((result) => result.status === 'rejected');
+      // Was `[productRes, stockRes]` — so a failed movements, categories or
+      // low-stock call left the screen looking fully loaded and healthy. The
+      // worst of those is low-stock: "Low-stock alerts 0" after a failed alerts
+      // call is the number the owner opens this screen to read.
+      const sources = [
+        ['products', productRes],
+        ['stock levels', stockRes],
+        ['stock movements', movementRes],
+        ['categories', categoryRes],
+        ['low-stock alerts', lowStockRes],
+      ] as const;
+      const failedNames = sources
+        .filter(([, result]) => result.status === 'rejected')
+        .map(([name]) => name);
+      const failed = failedNames.length > 0;
       if (failed) {
-        const reason = [productRes, stockRes].find((r) => r.status === 'rejected') as PromiseRejectedResult | undefined;
-        setError(reason?.reason instanceof Error ? reason.reason.message : 'Could not load inventory. Pull to refresh.');
+        // Name what is stale. "Could not load inventory" over a screen showing
+        // a full product table and "0 alerts" tells the operator nothing about
+        // which number they should not trust.
+        const reason = sources.find(([, r]) => r.status === 'rejected')?.[1] as
+          | PromiseRejectedResult
+          | undefined;
+        const detail = reason?.reason instanceof Error ? `${reason.reason.message} ` : '';
+        setError(`${detail}Could not load ${failedNames.join(', ')}. Pull to refresh.`);
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not load inventory');
@@ -156,6 +187,7 @@ export function InventoryScreen({ navigation }: InventoryScreenProps): React.JSX
       if (!session) return;
       setSaving(true);
       setError(undefined);
+      setSubmitError(undefined);
       setNotice(undefined);
       try {
         const body = {
@@ -186,7 +218,7 @@ export function InventoryScreen({ navigation }: InventoryScreenProps): React.JSX
         setEditing(undefined);
         await load();
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : 'Could not save product');
+        setSubmitError(err instanceof Error ? err.message : 'Could not save product');
       } finally {
         setSaving(false);
       }
@@ -204,6 +236,7 @@ export function InventoryScreen({ navigation }: InventoryScreenProps): React.JSX
       }
       setSaving(true);
       setError(undefined);
+      setSubmitError(undefined);
       setNotice(undefined);
       try {
         if (!adjustTarget.isStocked) {
@@ -228,7 +261,7 @@ export function InventoryScreen({ navigation }: InventoryScreenProps): React.JSX
         setAdjustTarget(undefined);
         await load();
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : 'Could not update stock');
+        setSubmitError(err instanceof Error ? err.message : 'Could not update stock');
       } finally {
         setSaving(false);
       }
@@ -239,8 +272,18 @@ export function InventoryScreen({ navigation }: InventoryScreenProps): React.JSX
   const handleArchive = useCallback(
     async (product: InventoryProduct) => {
       if (!session) return;
+      // Archiving removes the product from every picker at every station. It
+      // used to fire from one tap on a ghost button beside Save.
+      const confirmed = await confirmDestructive({
+        title: `Archive ${product.name}?`,
+        message:
+          'It will stop appearing in product pickers at every station. Existing formulas that used it are unaffected.',
+        confirmLabel: 'Archive',
+      });
+      if (!confirmed) return;
       setSaving(true);
       setError(undefined);
+      setSubmitError(undefined);
       try {
         await archiveManagedProduct(session.sessionId, product.id);
         setNotice(`${product.name} archived.`);
@@ -248,7 +291,7 @@ export function InventoryScreen({ navigation }: InventoryScreenProps): React.JSX
         setEditing(undefined);
         await load();
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : 'Could not archive product');
+        setSubmitError(err instanceof Error ? err.message : 'Could not archive product');
       } finally {
         setSaving(false);
       }
@@ -281,9 +324,9 @@ export function InventoryScreen({ navigation }: InventoryScreenProps): React.JSX
 
   if (forbidden) {
     return (
-      <LabShell active="inventory" session={session} bleStatus={ble.status}>
+      <LabShell session={session} bleStatus={ble.status}>
         <View style={styles.lockCard}>
-          <Text style={styles.lockGlyph}>🔒</Text>
+          <Icon name="lock" size="xl" tone="primary" />
           <Text style={styles.lockTitle}>Inventory is owner & manager only</Text>
           <Text style={styles.lockBody}>
             Ask an owner or manager to sign in on this station to manage products, stock and pricing.
@@ -295,7 +338,6 @@ export function InventoryScreen({ navigation }: InventoryScreenProps): React.JSX
 
   return (
     <LabShell
-      active="inventory"
       session={session}
       bleStatus={ble.status}
       refreshing={refreshing}
@@ -308,13 +350,24 @@ export function InventoryScreen({ navigation }: InventoryScreenProps): React.JSX
         </View>
         {canManage ? (
           <Pressable accessibilityRole="button" onPress={openAdd} style={styles.addBtn}>
-            <Text style={styles.addBtnLabel}>＋ Add product</Text>
+            <View style={styles.addBtnRow}>
+              <Icon name="plus" size="xs" tone="inherit" color={c.textOnPrimary} />
+              <Text style={styles.addBtnLabel}>Add product</Text>
+            </View>
           </Pressable>
         ) : null}
       </View>
 
-      {notice ? <Text style={styles.notice}>{notice}</Text> : null}
-      {error ? <Text style={styles.errorBanner}>{error}</Text> : null}
+      {/* THE first adoption of src/ui. This recipe — tone-coloured fill, tone
+          border, 1px, input radius, md/sm padding — was hand-copied
+          byte-for-byte into this screen and Billing Rules, and again (as
+          `error`) into both Inventory modals, while five other screens rendered
+          a bare coloured line in four different size/weight pairs. `Banner`
+          renders the same block from the same tone triple and adds the tone
+          icon, and a dismiss for the success notice, which previously stayed on
+          screen after the state it described had been refetched. */}
+      {notice ? <Banner message={notice} tone="success" onDismiss={() => setNotice(undefined)} /> : null}
+      {error ? <Banner message={error} tone="danger" /> : null}
 
       {/* KPI strip */}
       <View style={styles.kpiRow}>
@@ -400,10 +453,12 @@ export function InventoryScreen({ navigation }: InventoryScreenProps): React.JSX
         categories={categories}
         currentOnHandGrams={editing ? stockByProduct.get(editing.id)?.quantityOnHandGrams : undefined}
         saving={saving}
+        submitError={submitError}
         onArchive={editing && session?.role === 'owner' ? () => void handleArchive(editing) : undefined}
         onClose={() => {
           setShowProductForm(false);
           setEditing(undefined);
+          setSubmitError(undefined);
         }}
         onSave={handleSaveProduct}
       />
@@ -411,9 +466,11 @@ export function InventoryScreen({ navigation }: InventoryScreenProps): React.JSX
         visible={showAdjust}
         item={adjustTarget}
         saving={saving}
+        submitError={submitError}
         onClose={() => {
           setShowAdjust(false);
           setAdjustTarget(undefined);
+          setSubmitError(undefined);
         }}
         onSubmit={handleAdjust}
       />
@@ -580,28 +637,9 @@ const styles = StyleSheet.create({
   h1: { color: c.textPrimary, fontSize: t.typography.fontSize.heading, fontWeight: '700' },
   sub: { color: c.textSecondary, fontSize: t.typography.fontSize.small, marginTop: 2 },
   addBtn: { backgroundColor: c.primary, paddingHorizontal: t.spacing.base, minHeight: 42, borderRadius: t.radius.full, alignItems: 'center', justifyContent: 'center' },
+  addBtnRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   addBtnLabel: { color: c.textOnPrimary, fontWeight: '800', fontSize: t.typography.fontSize.small },
 
-  notice: {
-    color: c.successText,
-    backgroundColor: c.successBg,
-    borderColor: c.successBorder,
-    borderWidth: 1,
-    borderRadius: t.radius.input,
-    paddingHorizontal: t.spacing.md,
-    paddingVertical: t.spacing.sm,
-    fontSize: t.typography.fontSize.small,
-  },
-  errorBanner: {
-    color: c.dangerText,
-    backgroundColor: c.dangerBg,
-    borderColor: c.dangerBorder,
-    borderWidth: 1,
-    borderRadius: t.radius.input,
-    paddingHorizontal: t.spacing.md,
-    paddingVertical: t.spacing.sm,
-    fontSize: t.typography.fontSize.small,
-  },
 
   kpiRow: { flexDirection: 'row', flexWrap: 'wrap', gap: t.spacing.base },
   kpiCard: {
@@ -702,7 +740,6 @@ const styles = StyleSheet.create({
   empty: { color: c.textMuted, fontSize: t.typography.fontSize.small, textAlign: 'center', padding: t.spacing.xl },
 
   lockCard: { alignItems: 'center', justifyContent: 'center', gap: t.spacing.sm, padding: t.spacing['2xl'], backgroundColor: c.surface, borderRadius: t.radius.cardLg, borderWidth: 1, borderColor: c.border },
-  lockGlyph: { fontSize: 34 },
   lockTitle: { color: c.textPrimary, fontSize: t.typography.fontSize.subtitle, fontWeight: '700', textAlign: 'center' },
   lockBody: { color: c.textSecondary, fontSize: t.typography.fontSize.small, textAlign: 'center', maxWidth: 320 },
 });

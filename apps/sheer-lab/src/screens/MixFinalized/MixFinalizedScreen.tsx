@@ -2,16 +2,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { PinUnlockResponse } from '@sheer/domain';
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  Pressable,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  useWindowDimensions,
-  View,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Pressable, StyleSheet, Text, View, type TextStyle } from 'react-native';
 
 import type { RootStackParamList } from '../../app/navigation/routes';
 import { useBleScale } from '../../features/ble/hooks/useBleScale';
@@ -20,90 +11,21 @@ import { draftHasDurableContext } from '../../features/formulas/formulaDraftType
 import { formulaDraftStore } from '../../features/formulas/formulaDraftStore';
 import { finalizeFormulaForLabSession, saveDraftFormulaForLabSession } from '../../features/formulas/formulasApi';
 import { useFormulaDraft } from '../../features/formulas/useFormulaDraft';
-import { getActiveLabSession, logoutLabSession, refreshActiveLabSession } from '../../features/sheer-lab/labSession';
+import { getActiveLabSession, refreshActiveLabSession } from '../../features/sheer-lab/labSession';
 import { appConfig } from '../../config/appConfig';
 import { formatClock, formatMoney } from '../Home/dashboardHelpers';
-import { featureFlags } from '../../config/featureFlags';
 import { labTheme } from '../../theme/labTheme';
-import { TopBar } from '../shared/LabShell';
+import { Icon } from '../../ui/icons/Icon';
+import type { IconName } from '../../ui/icons/paths';
+import { LabShell } from '../shared/LabShell';
 
 const T = labTheme;
 const C = T.colors;
 
+/** Progress reads muted, success reads green, failure reads red. */
+type NoticeTone = 'progress' | 'success' | 'danger';
+
 type MixFinalizedScreenProps = NativeStackScreenProps<RootStackParamList, 'MixFinalized'>;
-
-// ---------------------------------------------------------------------------
-// Responsive layout — mirrors the Formula / Build Formula breakpoints.
-// ---------------------------------------------------------------------------
-
-interface FinalizeLayout {
-  mode: 'phone' | 'tablet' | 'wide';
-  sidebarWidth: number;
-  contentWidth: number;
-  pad: number;
-  gap: number;
-  showSidebar: boolean;
-}
-
-function getLayout(width: number): FinalizeLayout {
-  if (width >= 1024) {
-    const large = width >= 1280;
-    return {
-      mode: 'wide',
-      sidebarWidth: large ? 248 : 216,
-      // Single full-width column, capped for readable line lengths on desktop.
-      contentWidth: 920,
-      pad: large ? T.spacing.xl : T.spacing.base,
-      gap: T.spacing.lg,
-      showSidebar: true,
-    };
-  }
-  if (width >= 700) {
-    return {
-      mode: 'tablet',
-      sidebarWidth: 208,
-      contentWidth: 720,
-      pad: T.spacing.base,
-      gap: T.spacing.base,
-      showSidebar: true,
-    };
-  }
-  return {
-    mode: 'phone',
-    sidebarWidth: 0,
-    contentWidth: 0,
-    pad: T.spacing.base,
-    gap: T.spacing.base,
-    showSidebar: false,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Sidebar navigation model
-// ---------------------------------------------------------------------------
-
-type WorkingRoute = 'Home' | 'NewMix' | 'FormulaHistory';
-type NavTarget = { kind: 'route'; route: WorkingRoute } | { kind: 'soon' } | { kind: 'current' };
-
-interface NavEntry {
-  key: string;
-  label: string;
-  glyph: string;
-  target: NavTarget;
-}
-
-const NAV_ITEMS: NavEntry[] = ([
-  { key: 'dashboard', label: 'Dashboard', glyph: '▦', target: { kind: 'route', route: 'Home' } },
-  { key: 'new-mix', label: 'New Mix', glyph: '🧪', target: { kind: 'current' } },
-  { key: 'history', label: 'History', glyph: '🕘', target: { kind: 'route', route: 'FormulaHistory' } },
-  { key: 'inventory', label: 'Inventory', glyph: '📦', target: { kind: 'soon' } },
-  { key: 'billing', label: 'Billing Rules', glyph: '🧾', target: { kind: 'soon' } },
-  { key: 'audit', label: 'Audit Trail', glyph: '🛡️', target: { kind: 'soon' } },
-  // Billing Rules and Audit Trail are hidden from the nav behind feature flags
-  // for every role; their entries stay so the feature can be restored later.
-] satisfies NavEntry[]).filter(
-  (item) => (item.key !== 'billing' || featureFlags.billingRules) && (item.key !== 'audit' || featureFlags.auditTrail),
-);
 
 /** A captured ingredient projected onto the lab-report table row. */
 interface ReportLine {
@@ -119,8 +41,6 @@ interface ReportLine {
 // ---------------------------------------------------------------------------
 
 export function MixFinalizedScreen({ navigation }: MixFinalizedScreenProps): React.JSX.Element {
-  const { width } = useWindowDimensions();
-  const layout = getLayout(width);
   const ble = useBleScale();
   const scaleConnected = ble.status === 'connected';
 
@@ -131,7 +51,18 @@ export function MixFinalizedScreen({ navigation }: MixFinalizedScreenProps): Rea
 
   const [busy, setBusy] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
-  const [message, setMessage] = useState<string | undefined>();
+  /**
+   * The engine notice, WITH A TONE. See the same change in FormulaScreen.
+   *
+   * "Sending billing and reconciling inventory…", "Draft saved to salon
+   * records" and "Could not send the mix to the front desk." all rendered in
+   * one muted 12pt grey line — so on the screen that actually moves money and
+   * stock, a failed send was indistinguishable from a completed one.
+   */
+  const [notice, setNotice] = useState<{ text: string; tone: NoticeTone } | undefined>();
+  const say = useCallback((text: string, tone: NoticeTone = 'progress') => {
+    setNotice({ text, tone });
+  }, []);
   const [completed, setCompleted] = useState<{ totalCents: number; ref: string } | undefined>();
 
   useEffect(() => {
@@ -170,28 +101,10 @@ export function MixFinalizedScreen({ navigation }: MixFinalizedScreenProps): Rea
     [draft.createdAt, draft.finalizedAt, now],
   );
 
-  const goToRoute = useCallback(
-    (target: NavTarget) => {
-      if (target.kind !== 'route') return;
-      navigation.navigate(target.route);
-    },
-    [navigation],
-  );
-
-  const handleSignOut = useCallback(async () => {
-    const sid = session?.sessionId ?? draft.labSessionId;
-    try {
-      await logoutLabSession(sid);
-    } catch {
-      // Best effort — always return the device to the lock screen.
-    }
-    navigation.reset({ index: 0, routes: [{ name: 'Auth' }] });
-  }, [draft.labSessionId, navigation, session?.sessionId]);
-
   const handleSaveDraft = useCallback(async () => {
     if (savingDraft) return;
     setSavingDraft(true);
-    setMessage('Saving draft…');
+    say('Saving draft…');
     try {
       const saved = saveDraft();
       // Persist to the salon record whenever the draft belongs to a real
@@ -200,19 +113,19 @@ export function MixFinalizedScreen({ navigation }: MixFinalizedScreenProps): Rea
         const active = await getActiveLabSession();
         if (active) {
           await saveDraftFormulaForLabSession(active.sessionId, toSavePayload());
-          setMessage(`Draft saved to salon records ${formatTime(saved.savedAt)} · no billing applied yet`);
+          say(`Draft saved to salon records ${formatTime(saved.savedAt)} · no billing applied yet`, 'success');
           return;
         }
       }
-      setMessage(`Draft saved on this station only ${formatTime(saved.savedAt)} · no billing applied yet`);
+      say(`Draft saved on this station only ${formatTime(saved.savedAt)} · no billing applied yet`, 'success');
     } catch (err: unknown) {
       // The local save already succeeded — only the salon-record sync failed.
       const reason = err instanceof Error ? err.message : 'network error';
-      setMessage(`Draft kept on this station — could not sync to salon records (${reason})`);
+      say(`Draft kept on this station — could not sync to salon records (${reason})`, 'danger');
     } finally {
       setSavingDraft(false);
     }
-  }, [saveDraft, savingDraft, toSavePayload]);
+  }, [say, saveDraft, savingDraft, toSavePayload]);
 
   const handleEdit = useCallback(() => {
     navigation.goBack();
@@ -221,11 +134,11 @@ export function MixFinalizedScreen({ navigation }: MixFinalizedScreenProps): Rea
   const handleComplete = useCallback(async () => {
     if (busy) return;
     setBusy(true);
-    setMessage('Sending billing and reconciling inventory…');
+    say('Sending billing and reconciling inventory…');
     try {
       const active = await refreshActiveLabSession();
       if (!active) {
-        setMessage('Qlooqo Lab session expired. Unlock Qlooqo Lab again, then send to desk.');
+        say('Qlooqo Lab session expired. Unlock Qlooqo Lab again, then send to desk.', 'danger');
         return;
       }
       const payload = {
@@ -247,11 +160,11 @@ export function MixFinalizedScreen({ navigation }: MixFinalizedScreenProps): Rea
         ref: reportRef,
       });
     } catch (err: unknown) {
-      setMessage(err instanceof Error ? err.message : 'Could not send the mix to the front desk.');
+      say(err instanceof Error ? err.message : 'Could not send the mix to the front desk.', 'danger');
     } finally {
       setBusy(false);
     }
-  }, [busy, draft.billableChargeCents, markFinalized, reportRef, toFinalSavePayload]);
+  }, [say, busy, draft.billableChargeCents, markFinalized, reportRef, toFinalSavePayload]);
 
   const sessionLabReport = (
     <SessionLabReport
@@ -279,7 +192,7 @@ export function MixFinalizedScreen({ navigation }: MixFinalizedScreenProps): Rea
       hasMissingCost={draft.hasMissingCost}
       busy={busy}
       savingDraft={savingDraft}
-      message={message}
+      notice={notice}
       onComplete={() => void handleComplete()}
       onSaveDraft={() => void handleSaveDraft()}
       onEdit={handleEdit}
@@ -287,60 +200,31 @@ export function MixFinalizedScreen({ navigation }: MixFinalizedScreenProps): Rea
   );
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
-      <StatusBar barStyle="light-content" backgroundColor={C.surface} />
-      <TopBar session={session} bleStatus={ble.status} />
+    <LabShell
+      session={session}
+      bleStatus={ble.status}
+      labSessionId={draft.labSessionId}
+      contentWidth="reading"
+      footer={<Footer now={now} scaleConnected={scaleConnected} online={session?.status === 'active'} />}
+    >
+      <FinalizedHero />
 
-      <View style={[styles.body, layout.showSidebar ? styles.bodyRow : styles.bodyColumn]}>
-        {layout.showSidebar ? (
-          <Sidebar
-            width={layout.sidebarWidth}
-            onNav={goToRoute}
-            onSignOut={handleSignOut}
-            canManageOps={session?.role === 'owner' || session?.role === 'manager'}
-          />
-        ) : null}
-
-        <View style={styles.mainArea}>
-          <ScrollView
-            style={styles.scroll}
-            contentContainerStyle={{ padding: layout.pad, paddingBottom: T.spacing.xl }}
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-          >
-            <View style={[styles.contentWrap, { gap: layout.gap, maxWidth: layout.contentWidth || undefined }]}>
-              {!layout.showSidebar ? (
-                <NavScroller
-                  onNav={goToRoute}
-                  onSignOut={handleSignOut}
-                  canManageOps={session?.role === 'owner' || session?.role === 'manager'}
-                />
-              ) : null}
-
-              <FinalizedHero />
-
-              {completed ? (
-                <CompletedPanel
-                  totalCents={completed.totalCents}
-                  reportRef={completed.ref}
-                  currencyCode={draft.currencyCode}
-                  clientName={draft.client.clientName}
-                  onDashboard={() => navigation.reset({ index: 0, routes: [{ name: 'Home' }] })}
-                  onNewMix={() => navigation.reset({ index: 0, routes: [{ name: 'NewMix' }] })}
-                />
-              ) : (
-                <>
-                  {sessionLabReport}
-                  {actions}
-                </>
-              )}
-
-              <Footer now={now} scaleConnected={scaleConnected} online={session?.status === 'active'} />
-            </View>
-          </ScrollView>
-        </View>
-      </View>
-    </SafeAreaView>
+      {completed ? (
+        <CompletedPanel
+          totalCents={completed.totalCents}
+          reportRef={completed.ref}
+          currencyCode={draft.currencyCode}
+          clientName={draft.client.clientName}
+          onDashboard={() => navigation.reset({ index: 0, routes: [{ name: 'Home' }] })}
+          onNewMix={() => navigation.reset({ index: 0, routes: [{ name: 'NewMix' }] })}
+        />
+      ) : (
+        <>
+          {sessionLabReport}
+          {actions}
+        </>
+      )}
+    </LabShell>
   );
 }
 
@@ -352,7 +236,10 @@ function FinalizedHero(): React.JSX.Element {
   return (
     <View style={styles.hero}>
       <View style={styles.heroBadge}>
-        <Text style={styles.heroBadgeGlyph}>✓</Text>
+        {/* Was a 26pt Unicode '✓'. The badge View already draws the filled
+            success circle, so this is the bare tick rather than `checkCircle`,
+            which would stroke a second ring inside it. */}
+        <Icon name="check" size="lg" tone="success" />
       </View>
       <Text style={styles.heroTitle}>Mix Finalized</Text>
       <Text style={styles.heroSubtitle}>
@@ -473,30 +360,32 @@ function SessionLabReport({
 
       <View style={styles.statRow}>
         <StatTile
-          glyph="⚖"
+          icon="scale"
           value={formatGramsDecimal(totalWeightGrams)}
           label={remixBaseline ? 'Weighed in this remix' : 'Actual used weight'}
           caption={remixBaseline ? 'This Remix' : 'Total Weight'}
         />
         {remixBaseline ? (
           <StatTile
-            glyph="∑"
+            icon="chart"
             value={formatGramsDecimal(remixBaseline.totalGrams + totalWeightGrams)}
             label={`Incl. previous mix (${formatGramsDecimal(remixBaseline.totalGrams)})`}
             caption="Total Used"
           />
         ) : null}
         <StatTile
-          glyph="◷"
+          icon="currency"
           value={pricesReady ? formatMoney(billableChargeCents, currencyCode) : '—'}
           label="Colour charge for this mix"
           caption="Colour Charge"
         />
-        <StatTile glyph="⏱" value={durationLabel} label="Total scale active time" caption="Mix Duration" />
+        <StatTile icon="clock" value={durationLabel} label="Total scale active time" caption="Mix Duration" />
       </View>
 
       <View style={styles.auditCard}>
-        <Text style={styles.auditGlyph}>🛡️</Text>
+        {/* Was 🛡️ — a full-colour emoji that ignored the card's tint and that
+            VoiceOver announced as "shield" rather than the policy it marks. */}
+        <Icon name="shield" size="sm" tone="primary" />
         <View style={styles.auditText}>
           <Text style={styles.auditTitle}>Audit policy active</Text>
           <Text style={styles.auditBody}>
@@ -510,12 +399,12 @@ function SessionLabReport({
 }
 
 function StatTile({
-  glyph,
+  icon,
   value,
   label,
   caption,
 }: {
-  glyph: string;
+  icon: IconName;
   value: string;
   label: string;
   caption: string;
@@ -523,7 +412,7 @@ function StatTile({
   return (
     <View style={styles.statTile}>
       <View style={styles.statCaptionRow}>
-        <Text style={styles.statGlyph}>{glyph}</Text>
+        <Icon name={icon} size="xs" tone="muted" />
         <Text style={styles.statCaption}>{caption}</Text>
       </View>
       <Text style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit>
@@ -544,7 +433,7 @@ function SendToDeskActions({
   hasMissingCost,
   busy,
   savingDraft,
-  message,
+  notice,
   onComplete,
   onSaveDraft,
   onEdit,
@@ -552,7 +441,7 @@ function SendToDeskActions({
   hasMissingCost: boolean;
   busy: boolean;
   savingDraft: boolean;
-  message?: string;
+  notice?: { text: string; tone: NoticeTone };
   onComplete: () => void;
   onSaveDraft: () => void;
   onEdit: () => void;
@@ -575,7 +464,14 @@ function SendToDeskActions({
           busy && styles.primaryButtonDisabled,
         ]}
       >
-        <Text style={styles.primaryButtonText}>{busy ? 'Sending…' : '✓  Complete & Send to Desk'}</Text>
+        {busy ? (
+          <Text style={styles.primaryButtonText}>Sending…</Text>
+        ) : (
+          <View style={styles.primaryButtonContent}>
+            <Icon name="check" size="sm" tone="inherit" color={C.textOnPrimary} />
+            <Text style={styles.primaryButtonText}>Complete &amp; Send to Desk</Text>
+          </View>
+        )}
       </Pressable>
 
       <Pressable
@@ -588,10 +484,15 @@ function SendToDeskActions({
       </Pressable>
 
       <Pressable accessibilityRole="button" disabled={busy} onPress={onEdit} style={styles.textButton}>
-        <Text style={styles.textButtonText}>‹ Edit Formula</Text>
+        <View style={styles.textButtonContent}>
+          <Icon name="chevronLeft" size="xs" tone="secondary" />
+          <Text style={styles.textButtonText}>Edit Formula</Text>
+        </View>
       </Pressable>
 
-      {message ? <Text style={styles.engineMessage}>{message}</Text> : null}
+      {notice ? (
+        <Text style={[styles.engineMessage, NOTICE_TONE_STYLE[notice.tone]]}>{notice.text}</Text>
+      ) : null}
     </View>
   );
 }
@@ -618,7 +519,8 @@ function CompletedPanel({
   return (
     <View style={styles.completedCard}>
       <View style={styles.completedBadge}>
-        <Text style={styles.completedBadgeGlyph}>✓</Text>
+        {/* Was a 30pt Unicode '✓' — same reasoning as the hero badge. */}
+        <Icon name="check" size="lg" tone="success" />
       </View>
       <Text style={styles.completedTitle}>Sent to the front desk</Text>
       <Text style={styles.completedSubtitle}>
@@ -643,94 +545,6 @@ function CompletedPanel({
         </Pressable>
       </View>
     </View>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Chrome — top bar, sidebar, mobile nav, footer
-// ---------------------------------------------------------------------------
-
-
-function Sidebar({
-  width,
-  onNav,
-  onSignOut,
-  canManageOps,
-}: {
-  width: number;
-  onNav: (target: NavTarget) => void;
-  onSignOut: () => void;
-  canManageOps: boolean;
-}): React.JSX.Element {
-  return (
-    <View style={[styles.sidebar, { width }]}>
-      <View style={styles.sidebarNav}>
-        {NAV_ITEMS.filter((item) => item.key !== 'inventory' || canManageOps).map((item) => {
-          const active = item.target.kind === 'current';
-          const soon = item.target.kind === 'soon';
-          return (
-            <Pressable
-              key={item.key}
-              accessibilityRole="button"
-              disabled={soon || active}
-              onPress={() => onNav(item.target)}
-              style={[styles.navItem, active && styles.navItemActive, soon && styles.navItemSoon]}
-            >
-              <Text style={styles.navGlyph}>{item.glyph}</Text>
-              <Text style={[styles.navLabel, active && styles.navLabelActive]} numberOfLines={1}>
-                {item.label}
-              </Text>
-              {soon ? <Text style={styles.soonTag}>Soon</Text> : null}
-            </Pressable>
-          );
-        })}
-      </View>
-      <Pressable accessibilityRole="button" onPress={onSignOut} style={styles.signOut}>
-        <Text style={styles.signOutGlyph}>⏻</Text>
-        <Text style={styles.signOutLabel}>Sign Out</Text>
-      </Pressable>
-    </View>
-  );
-}
-
-function NavScroller({
-  onNav,
-  onSignOut,
-  canManageOps,
-}: {
-  onNav: (target: NavTarget) => void;
-  onSignOut: () => void;
-  canManageOps: boolean;
-}): React.JSX.Element {
-  return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={styles.navScroller}
-      style={styles.navScrollerWrap}
-    >
-      {NAV_ITEMS.filter((item) => item.key !== 'inventory' || canManageOps).map((item) => {
-        const active = item.target.kind === 'current';
-        const soon = item.target.kind === 'soon';
-        return (
-          <Pressable
-            key={item.key}
-            accessibilityRole="button"
-            disabled={soon || active}
-            onPress={() => onNav(item.target)}
-            style={[styles.navChip, active && styles.navChipActive, soon && styles.navItemSoon]}
-          >
-            <Text style={styles.navGlyph}>{item.glyph}</Text>
-            <Text style={[styles.navChipLabel, active && styles.navLabelActive]}>{item.label}</Text>
-            {soon ? <Text style={styles.soonTag}>Soon</Text> : null}
-          </Pressable>
-        );
-      })}
-      <Pressable accessibilityRole="button" onPress={onSignOut} style={styles.navChip}>
-        <Text style={styles.navGlyph}>⏻</Text>
-        <Text style={styles.navChipLabel}>Sign Out</Text>
-      </Pressable>
-    </ScrollView>
   );
 }
 
@@ -811,99 +625,6 @@ function formatDuration(startIso: string, endIso: string): string {
 // ---------------------------------------------------------------------------
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: C.background },
-  body: { flex: 1 },
-  bodyRow: { flexDirection: 'row' },
-  bodyColumn: { flexDirection: 'column' },
-  mainArea: { flex: 1 },
-  scroll: { flex: 1 },
-  contentWrap: { width: '100%', alignSelf: 'center' },
-
-
-  // Top bar
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: T.spacing.base,
-    paddingVertical: T.spacing.md,
-    backgroundColor: C.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-  },
-  topSideLeft: { flex: 1, alignItems: 'flex-start' },
-  topSideRight: { flex: 1, alignItems: 'flex-end' },
-  brandRow: { flexDirection: 'row', alignItems: 'center', gap: T.spacing.sm },
-  brandText: { color: C.textPrimary, fontSize: 17, fontWeight: '800', letterSpacing: 1 },
-  userRow: { flexDirection: 'row', alignItems: 'center', gap: T.spacing.sm, maxWidth: 220 },
-  userText: { alignItems: 'flex-end' },
-  userName: { color: C.textPrimary, fontWeight: '700', fontSize: 13 },
-  userRole: { color: C.textMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 },
-  avatar: {
-    width: 36,
-    height: 36,
-    borderRadius: T.radius.full,
-    backgroundColor: C.primarySoft,
-    borderWidth: 1,
-    borderColor: C.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: { color: C.primary, fontWeight: '800', fontSize: 13 },
-
-  // Sidebar
-  sidebar: {
-    backgroundColor: C.surface,
-    borderRightWidth: 1,
-    borderRightColor: C.border,
-    paddingVertical: T.spacing.lg,
-    paddingHorizontal: T.spacing.md,
-    justifyContent: 'space-between',
-  },
-  sidebarNav: { gap: T.spacing.xs },
-  navItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: T.spacing.md,
-    paddingVertical: T.spacing.md,
-    paddingHorizontal: T.spacing.md,
-    borderRadius: T.radius.card,
-  },
-  // Active item reads as a solid brand pill with white text (was a soft fill).
-  navItemActive: { backgroundColor: C.sidebarActive },
-  navItemSoon: { opacity: 0.5 },
-  navGlyph: { fontSize: 16 },
-  navLabel: { flex: 1, color: C.textSecondary, fontSize: 13, fontWeight: '700' },
-  navLabelActive: { color: C.sidebarActiveText },
-  soonTag: { color: C.textMuted, fontSize: 11, fontWeight: '700' },
-  signOut: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: T.spacing.md,
-    paddingVertical: T.spacing.md,
-    paddingHorizontal: T.spacing.md,
-    borderRadius: T.radius.card,
-    borderWidth: 1,
-    borderColor: C.border,
-  },
-  signOutGlyph: { fontSize: 16, color: C.danger.text },
-  signOutLabel: { color: C.textPrimary, fontWeight: '700', fontSize: 13 },
-
-  // Mobile nav scroller
-  navScrollerWrap: { marginBottom: T.spacing.xs },
-  navScroller: { flexDirection: 'row', gap: T.spacing.sm, paddingVertical: T.spacing.xs },
-  navChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: T.spacing.xs,
-    paddingVertical: T.spacing.sm,
-    paddingHorizontal: T.spacing.md,
-    borderRadius: T.radius.full,
-    borderWidth: 1,
-    borderColor: C.border,
-    backgroundColor: C.surface,
-  },
-  navChipActive: { backgroundColor: C.primarySoft, borderColor: C.primary },
-  navChipLabel: { color: C.textSecondary, fontSize: 13, fontWeight: '700' },
 
   // Hero
   hero: { alignItems: 'center', gap: T.spacing.sm, paddingVertical: T.spacing.sm },
@@ -917,7 +638,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  heroBadgeGlyph: { color: C.success.text, fontSize: 26, fontWeight: '900' },
   heroTitle: { color: C.textPrimary, fontSize: 30, fontWeight: '900', letterSpacing: -0.5, textAlign: 'center' },
   heroSubtitle: {
     color: C.textMuted,
@@ -1013,7 +733,6 @@ const styles = StyleSheet.create({
     backgroundColor: C.inputBg,
   },
   statCaptionRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  statGlyph: { color: C.textMuted, fontSize: 13 },
   statCaption: { color: C.textMuted, fontSize: 10, fontWeight: '800', letterSpacing: 0.5, textTransform: 'uppercase' },
   statValue: { color: C.textPrimary, fontSize: 20, fontWeight: '900', letterSpacing: -0.5 },
   statLabel: { color: C.textMuted, fontSize: 11, fontWeight: '600' },
@@ -1028,7 +747,6 @@ const styles = StyleSheet.create({
     borderColor: C.primarySoft,
     backgroundColor: C.primarySoft,
   },
-  auditGlyph: { fontSize: 16 },
   auditText: { flex: 1, gap: 2 },
   auditTitle: { color: C.textPrimary, fontSize: 13, fontWeight: '800' },
   auditBody: { color: C.textSecondary, fontSize: 12, lineHeight: 17 },
@@ -1050,6 +768,8 @@ const styles = StyleSheet.create({
   primaryButtonPressed: { backgroundColor: C.primaryPressed },
   primaryButtonDisabled: { backgroundColor: C.surfaceAlt },
   primaryButtonText: { color: C.textOnPrimary, fontSize: 15, fontWeight: '900' },
+  /** Tick + label row: an icon has no text baseline, so the label needs a row. */
+  primaryButtonContent: { flexDirection: 'row', alignItems: 'center', gap: T.spacing.sm },
   secondaryButton: {
     minHeight: 48,
     paddingHorizontal: T.spacing.lg,
@@ -1064,7 +784,10 @@ const styles = StyleSheet.create({
   secondaryButtonText: { color: C.textPrimary, fontSize: 14, fontWeight: '800' },
   textButton: { alignItems: 'center', paddingVertical: T.spacing.sm },
   textButtonText: { color: C.textSecondary, fontSize: 13, fontWeight: '700' },
+  textButtonContent: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   engineMessage: { color: C.textMuted, fontSize: 12, fontWeight: '600', textAlign: 'center' },
+  engineSuccess: { color: C.successText },
+  engineDanger: { color: C.dangerText },
 
   // Completed panel
   completedCard: {
@@ -1089,7 +812,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  completedBadgeGlyph: { color: C.success.text, fontSize: 30, fontWeight: '900' },
   completedTitle: { color: C.textPrimary, fontSize: 22, fontWeight: '900', textAlign: 'center' },
   completedSubtitle: { color: C.textSecondary, fontSize: 14, lineHeight: 20, textAlign: 'center' },
   completedRef: { color: C.textMuted, fontSize: 12, fontWeight: '700', letterSpacing: 0.4 },
@@ -1124,6 +846,10 @@ const styles = StyleSheet.create({
     borderRadius: T.radius.full,
     borderWidth: 1,
   },
-  pillDot: { width: 7, height: 7, borderRadius: T.radius.full },
-  pillText: { fontSize: 11, fontWeight: '800', letterSpacing: 0.5, textTransform: 'uppercase' },
 });
+
+const NOTICE_TONE_STYLE: Record<NoticeTone, TextStyle | undefined> = {
+  progress: undefined,
+  success: styles.engineSuccess,
+  danger: styles.engineDanger,
+};

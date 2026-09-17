@@ -2,19 +2,17 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { InventoryProduct, LocationProductBillingSettings, PinUnlockResponse } from '@sheer/domain';
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { StyleProp, ViewStyle } from 'react-native';
+import type { StyleProp, TextStyle, ViewStyle } from 'react-native';
 import {
   Modal,
   Pressable,
   ScrollView,
-  StatusBar,
   StyleSheet,
   Text,
   TextInput,
   useWindowDimensions,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { RootStackParamList } from '../../app/navigation/routes';
 import { useBleScale } from '../../features/ble/hooks/useBleScale';
@@ -30,71 +28,52 @@ import type {
 import { draftHasDurableContext, toLabCoreFormulaDraft } from '../../features/formulas/formulaDraftTypes';
 import { useFormulaDraft } from '../../features/formulas/useFormulaDraft';
 import { listLabInventoryProducts } from '../../features/inventory/productsApi';
-import { getActiveLabSession, logoutLabSession } from '../../features/sheer-lab/labSession';
+import { getActiveLabSession } from '../../features/sheer-lab/labSession';
 import { appConfig } from '../../config/appConfig';
 import { formatClock } from '../Home/dashboardHelpers';
-import { featureFlags } from '../../config/featureFlags';
-import { labTheme } from '../../theme/labTheme';
-import { TopBar } from '../shared/LabShell';
+import { labTheme, tone as resolveTone, type ToneTriple } from '../../theme/labTheme';
+import { Icon } from '../../ui/icons/Icon';
+import type { IconName } from '../../ui/icons/paths';
+import { confirmDestructive } from '../../lib/confirm';
+import { DecimalInput } from '../shared/DecimalInput';
+import type { LayoutMode } from '../shared/LabShell';
+import { LabShell, useLabLayout } from '../shared/LabShell';
 
 const T = labTheme;
 const C = T.colors;
+
+/** Progress reads muted, success reads green, failure reads red. */
+type NoticeTone = 'progress' | 'success' | 'danger';
 
 type ManualInputState = Record<string, string>;
 type FormulaScreenProps = NativeStackScreenProps<RootStackParamList, 'Formula'>;
 type ChipTone = 'neutral' | 'brand' | 'success' | 'warning' | 'danger';
 
 // ---------------------------------------------------------------------------
-// Responsive layout — mirrors the Build Formula / dashboard breakpoints.
+// Content metrics — the console's own numbers. Sidebar width, page padding and
+// the content gap come from LabShell's `useLabLayout()`; only the dial size,
+// the rail width and the two-column switch belong to this screen.
 // ---------------------------------------------------------------------------
 
-interface ConsoleLayout {
-  mode: 'phone' | 'tablet' | 'wide';
-  sidebarWidth: number;
+interface ConsoleMetrics {
+  /** Width of the right-hand queue/progress rail; 0 when the columns stack. */
   railWidth: number;
-  pad: number;
-  gap: number;
-  showSidebar: boolean;
   twoColumn: boolean;
   ringSize: number;
 }
 
-function getLayout(width: number): ConsoleLayout {
-  if (width >= 1024) {
-    const large = width >= 1280;
+function consoleMetrics(width: number, mode: LayoutMode): ConsoleMetrics {
+  if (mode === 'wide') {
     return {
-      mode: 'wide',
-      sidebarWidth: large ? 248 : 216,
       railWidth: clampNumber(Math.round(width * 0.3), 320, 400),
-      pad: large ? T.spacing.xl : T.spacing.base,
-      gap: T.spacing.lg,
-      showSidebar: true,
       twoColumn: true,
       ringSize: 256,
     };
   }
-  if (width >= 700) {
-    return {
-      mode: 'tablet',
-      sidebarWidth: 208,
-      railWidth: 0,
-      pad: T.spacing.base,
-      gap: T.spacing.base,
-      showSidebar: true,
-      twoColumn: false,
-      ringSize: 264,
-    };
+  if (mode === 'tablet') {
+    return { railWidth: 0, twoColumn: false, ringSize: 264 };
   }
-  return {
-    mode: 'phone',
-    sidebarWidth: 0,
-    railWidth: 0,
-    pad: T.spacing.base,
-    gap: T.spacing.base,
-    showSidebar: false,
-    twoColumn: false,
-    ringSize: Math.min(248, Math.round(width * 0.62)),
-  };
+  return { railWidth: 0, twoColumn: false, ringSize: Math.min(248, Math.round(width * 0.62)) };
 }
 
 function clampNumber(value: number, min: number, max: number): number {
@@ -102,39 +81,13 @@ function clampNumber(value: number, min: number, max: number): number {
 }
 
 // ---------------------------------------------------------------------------
-// Sidebar navigation model (dark shell)
-// ---------------------------------------------------------------------------
-
-type WorkingRoute = 'Home' | 'NewMix' | 'FormulaHistory';
-type NavTarget = { kind: 'route'; route: WorkingRoute } | { kind: 'soon' } | { kind: 'current' };
-
-interface NavEntry {
-  key: string;
-  label: string;
-  glyph: string;
-  target: NavTarget;
-}
-
-const NAV_ITEMS: NavEntry[] = ([
-  { key: 'dashboard', label: 'Dashboard', glyph: '▦', target: { kind: 'route', route: 'Home' } },
-  { key: 'new-mix', label: 'New Mix', glyph: '🧪', target: { kind: 'route', route: 'NewMix' } },
-  { key: 'history', label: 'History', glyph: '🕘', target: { kind: 'route', route: 'FormulaHistory' } },
-  { key: 'inventory', label: 'Inventory', glyph: '📦', target: { kind: 'soon' } },
-  { key: 'billing', label: 'Billing Rules', glyph: '🧾', target: { kind: 'soon' } },
-  { key: 'audit', label: 'Audit Trail', glyph: '🛡️', target: { kind: 'soon' } },
-  // Billing Rules and Audit Trail are hidden from the nav behind feature flags
-  // for every role; their entries stay so the feature can be restored later.
-] satisfies NavEntry[]).filter(
-  (item) => (item.key !== 'billing' || featureFlags.billingRules) && (item.key !== 'audit' || featureFlags.auditTrail),
-);
-
-// ---------------------------------------------------------------------------
 // Screen
 // ---------------------------------------------------------------------------
 
 export function FormulaScreen({ navigation, route }: FormulaScreenProps): React.JSX.Element {
   const { width } = useWindowDimensions();
-  const layout = getLayout(width);
+  const layout = useLabLayout();
+  const metrics = consoleMetrics(width, layout.mode);
   const ble = useBleScale();
   const scaleConnected = ble.status === 'connected';
 
@@ -158,7 +111,23 @@ export function FormulaScreen({ navigation, route }: FormulaScreenProps): React.
 
   const [session, setSession] = useState<PinUnlockResponse | undefined>();
   const [manualInputs, setManualInputs] = useState<ManualInputState>({});
-  const [draftMessage, setDraftMessage] = useState('Local draft not saved yet');
+  /**
+   * The console notice, WITH A TONE.
+   *
+   * One muted 12pt grey line used to carry nine different outcomes: progress
+   * ("Saving draft..."), success ("Draft saved to salon records"), and hard
+   * failure ("Could not send the mix to the front desk"). The operator is
+   * trained to ignore that strip, because it is where "Saving…" appears — so a
+   * failed send-to-desk looked exactly like a completed one, on the screen that
+   * moves money. Failure now reads as failure.
+   */
+  const [notice, setNotice] = useState<{ text: string; tone: NoticeTone }>({
+    text: 'Local draft not saved yet',
+    tone: 'progress',
+  });
+  const say = useCallback((text: string, tone: NoticeTone = 'progress') => {
+    setNotice({ text, tone });
+  }, []);
   const [savingDraft, setSavingDraft] = useState(false);
   const [previousFormula, setPreviousFormula] = useState<SavedFormulaRecord | undefined>();
   const [productSearch, setProductSearch] = useState('');
@@ -393,7 +362,7 @@ export function FormulaScreen({ navigation, route }: FormulaScreenProps): React.
 
   async function handleSaveDraft(): Promise<void> {
     setSavingDraft(true);
-    setDraftMessage('Saving draft...');
+    say('Saving draft...');
     try {
       const saved = saveDraft();
       // Persist to the salon record whenever the draft belongs to a real
@@ -402,19 +371,21 @@ export function FormulaScreen({ navigation, route }: FormulaScreenProps): React.
         const active = await getActiveLabSession();
         if (active) {
           await saveDraftFormulaForLabSession(active.sessionId, toSavePayload());
-          setDraftMessage(
+          say(
             `Draft saved to salon records ${formatTime(saved.savedAt)} · ${saved.rows.length} rows · no billing or inventory changes yet`,
+            'success',
           );
           return;
         }
       }
-      setDraftMessage(
+      say(
         `Draft saved on this station only ${formatTime(saved.savedAt)} · ${saved.rows.length} rows · no billing or inventory changes yet`,
+        'success',
       );
     } catch (err: unknown) {
       // The local save above already succeeded — only the salon-record sync failed.
       const reason = err instanceof Error ? err.message : 'network error';
-      setDraftMessage(`Draft kept on this station — could not sync to salon records (${reason})`);
+      say(`Draft kept on this station — could not sync to salon records (${reason})`, 'danger');
     } finally {
       setSavingDraft(false);
     }
@@ -422,7 +393,7 @@ export function FormulaScreen({ navigation, route }: FormulaScreenProps): React.
 
   function handleReviewAndBill(): void {
     if (!hasCapturedWeight) {
-      setDraftMessage('Weigh at least one ingredient before reviewing the bill.');
+      say('Weigh at least one ingredient before reviewing the bill.', 'danger');
       return;
     }
     // Hand off to the Mix Finalized review screen, which owns billing and the
@@ -430,48 +401,50 @@ export function FormulaScreen({ navigation, route }: FormulaScreenProps): React.
     navigation.navigate('MixFinalized');
   }
 
-  function handleLoadDraft(): void {
+  async function handleLoadDraft(): Promise<void> {
+    // `loadDraft` replaces the live draft wholesale, so every gram captured
+    // since the last manual save is gone — and this button sits immediately
+    // beside "Save draft" on a four-button row. Captured weights are the one
+    // irreversible thing on this screen, so ask first, and only when there is
+    // in-flight work to lose.
+    const capturedNow = draft.rows.filter((row) => row.capturedGrams != null).length;
+    if (capturedNow > 0) {
+      const confirmed = await confirmDestructive({
+        title: 'Reopen the saved draft?',
+        message:
+          capturedNow === 1
+            ? 'The 1 weight captured since the last save will be discarded and replaced by the saved draft.'
+            : `The ${capturedNow} weights captured since the last save will be discarded and replaced by the saved draft.`,
+        confirmLabel: 'Discard and reopen',
+      });
+      if (!confirmed) return;
+    }
     const loaded = loadDraft();
-    setDraftMessage(loaded ? `Draft reopened ${formatTime(loaded.savedAt)}` : 'No saved draft in this session');
+    say(
+      loaded ? `Draft reopened ${formatTime(loaded.savedAt)}` : 'No saved draft in this session',
+      loaded ? 'success' : 'danger',
+    );
   }
 
   function handleLastFormula(): void {
     const latest = getLatestFormulaForClient();
     setPreviousFormula(latest);
-    setDraftMessage(
+    say(
       latest
         ? `Loaded latest formula from ${new Date(latest.savedAt).toLocaleDateString()}`
         : 'No previous formula saved for this client yet',
+      latest ? 'success' : 'progress',
     );
   }
 
   function handleDuplicatePreviousFormula(): void {
     if (!previousFormula) return;
     const duplicated = duplicateFormula(previousFormula.id);
-    setDraftMessage(
+    say(
       duplicated ? 'Duplicated previous formula into editable draft' : 'Could not duplicate that formula in this session',
+      duplicated ? 'success' : 'danger',
     );
   }
-
-  const goToRoute = useCallback(
-    (target: NavTarget) => {
-      if (target.kind !== 'route') return;
-      navigation.navigate(target.route);
-    },
-    [navigation],
-  );
-
-  const handleSignOut = useCallback(async () => {
-    const sid = entryContext?.labSessionId ?? session?.sessionId;
-    if (sid) {
-      try {
-        await logoutLabSession(sid);
-      } catch {
-        // Best effort — always return the device to the lock screen.
-      }
-    }
-    navigation.reset({ index: 0, routes: [{ name: 'Auth' }] });
-  }, [entryContext?.labSessionId, navigation, session?.sessionId]);
 
   const isFinalized = draft.status === 'saved';
   const hasCapturedWeight = draft.rows.some((row) => row.capturedGrams != null);
@@ -479,7 +452,7 @@ export function FormulaScreen({ navigation, route }: FormulaScreenProps): React.
   const consoleColumn = (
     <View style={[styles.column, { gap: layout.gap }]}>
       <ScaleConsoleCard
-        ringSize={layout.ringSize}
+        ringSize={metrics.ringSize}
         weightLabel={activeWeightLabel}
         ringState={ringState}
         progress={ringProgress}
@@ -531,85 +504,30 @@ export function FormulaScreen({ navigation, route }: FormulaScreenProps): React.
     </View>
   );
 
-  return (
-    <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
-      <StatusBar barStyle="light-content" backgroundColor={C.surface} />
-      <TopBar session={session} bleStatus={ble.status} />
-
-      <View style={[styles.body, layout.showSidebar ? styles.bodyRow : styles.bodyColumn]}>
-        {layout.showSidebar ? (
-          <Sidebar
-            width={layout.sidebarWidth}
-            onNav={goToRoute}
-            onSignOut={handleSignOut}
-            canManageOps={session?.role === 'owner' || session?.role === 'manager'}
-          />
-        ) : null}
-
-        <View style={styles.mainArea}>
-          <ScrollView
-            style={styles.scroll}
-            contentContainerStyle={{ padding: layout.pad, paddingBottom: T.spacing.xl }}
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-          >
-            <View style={[styles.contentWrap, { gap: layout.gap }]}>
-              {!layout.showSidebar ? (
-                <NavScroller
-                  onNav={goToRoute}
-                  onSignOut={handleSignOut}
-                  canManageOps={session?.role === 'owner' || session?.role === 'manager'}
-                />
-              ) : null}
-
-              <ContextHeader
-                formulaId={draft.id}
-                title={activeRow ? formatRowDisplayName(activeRow) : 'Select an ingredient'}
-                detail={activeRow?.developer}
-                stepIndex={activeIndex}
-                stepCount={draft.rows.length}
-                scaleConnected={scaleConnected}
-                scaleName={ble.connectedDevice?.name}
-                scaleStatus={ble.error ?? ble.status}
-              />
-
-              {layout.twoColumn ? (
-                <View style={[styles.columns, { gap: layout.gap }]}>
-                  <View style={styles.consoleColumn}>{consoleColumn}</View>
-                  <View style={{ width: layout.railWidth }}>{railColumn}</View>
-                </View>
-              ) : (
-                <View style={[styles.column, { gap: layout.gap }]}>
-                  {consoleColumn}
-                  {railColumn}
-                </View>
-              )}
-
-              <Footer now={now} scaleConnected={scaleConnected} online={session?.status === 'active'} />
-            </View>
-          </ScrollView>
-
-          <View style={styles.noticeBar}>
-            <Text style={styles.noticeText} numberOfLines={2}>
-              {draftMessage}
-            </Text>
-          </View>
-
-          <BottomBar
-            totalCaptured={sessionTotals.totalCaptured}
-            chargeCents={draft.billableChargeCents}
-            pricesReady={billingSettings != null}
-            currencyCode={draft.currencyCode}
-            savingDraft={savingDraft}
-            reviewDisabled={savingDraft || !hasCapturedWeight}
-            finalized={isFinalized}
-            onAddProduct={handleAddProduct}
-            onSaveDraft={() => void handleSaveDraft()}
-            onReopenDraft={handleLoadDraft}
-            onReview={handleReviewAndBill}
-          />
-        </View>
+  // The notice strip and the live weighing bar both stay pinned below the
+  // scroll area. The product picker rides along: it renders as an overlay, so
+  // it belongs outside the scrolling content, exactly where it sat before.
+  const pinnedBar = (
+    <>
+      <View style={styles.noticeBar}>
+        <Text style={[styles.noticeText, NOTICE_TONE_STYLE[notice.tone]]} numberOfLines={2}>
+          {notice.text}
+        </Text>
       </View>
+
+      <BottomBar
+        totalCaptured={sessionTotals.totalCaptured}
+        chargeCents={draft.billableChargeCents}
+        pricesReady={billingSettings != null}
+        currencyCode={draft.currencyCode}
+        savingDraft={savingDraft}
+        reviewDisabled={savingDraft || !hasCapturedWeight}
+        finalized={isFinalized}
+        onAddProduct={handleAddProduct}
+        onSaveDraft={() => void handleSaveDraft()}
+        onReopenDraft={() => void handleLoadDraft()}
+        onReview={handleReviewAndBill}
+      />
 
       <ProductPickerModal
         visible={Boolean(pickerRow)}
@@ -627,97 +545,46 @@ export function FormulaScreen({ navigation, route }: FormulaScreenProps): React.
           selectProductForRow(pickerRow.id, product);
         }}
       />
-    </SafeAreaView>
+    </>
   );
-}
 
-// ---------------------------------------------------------------------------
-// Chrome — top bar, sidebar, mobile nav, footer
-// ---------------------------------------------------------------------------
-
-
-function Sidebar({
-  width,
-  onNav,
-  onSignOut,
-  canManageOps,
-}: {
-  width: number;
-  onNav: (target: NavTarget) => void;
-  onSignOut: () => void;
-  canManageOps: boolean;
-}): React.JSX.Element {
   return (
-    <View style={[styles.sidebar, { width }]}>
-      <View style={styles.sidebarNav}>
-        {NAV_ITEMS.filter((item) => item.key !== 'inventory' || canManageOps).map((item) => {
-          const active = item.target.kind === 'current';
-          const soon = item.target.kind === 'soon';
-          return (
-            <Pressable
-              key={item.key}
-              accessibilityRole="button"
-              disabled={soon || active}
-              onPress={() => onNav(item.target)}
-              style={[styles.navItem, active && styles.navItemActive, soon && styles.navItemSoon]}
-            >
-              <Text style={styles.navGlyph}>{item.glyph}</Text>
-              <Text style={[styles.navLabel, active && styles.navLabelActive]} numberOfLines={1}>
-                {item.label}
-              </Text>
-              {soon ? <Text style={styles.soonTag}>Soon</Text> : null}
-            </Pressable>
-          );
-        })}
-      </View>
-      <Pressable accessibilityRole="button" onPress={onSignOut} style={styles.signOut}>
-        <Text style={styles.signOutGlyph}>⏻</Text>
-        <Text style={styles.signOutLabel}>Sign Out</Text>
-      </Pressable>
-    </View>
-  );
-}
-
-function NavScroller({
-  onNav,
-  onSignOut,
-  canManageOps,
-}: {
-  onNav: (target: NavTarget) => void;
-  onSignOut: () => void;
-  canManageOps: boolean;
-}): React.JSX.Element {
-  return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={styles.navScroller}
-      style={styles.navScrollerWrap}
+    <LabShell
+      session={session}
+      bleStatus={ble.status}
+      labSessionId={entryContext?.labSessionId}
+      footer={<Footer now={now} scaleConnected={scaleConnected} online={session?.status === 'active'} />}
+      bottomBar={pinnedBar}
     >
-      {NAV_ITEMS.filter((item) => item.key !== 'inventory' || canManageOps).map((item) => {
-        const active = item.target.kind === 'current';
-        const soon = item.target.kind === 'soon';
-        return (
-          <Pressable
-            key={item.key}
-            accessibilityRole="button"
-            disabled={soon || active}
-            onPress={() => onNav(item.target)}
-            style={[styles.navChip, active && styles.navChipActive, soon && styles.navItemSoon]}
-          >
-            <Text style={styles.navGlyph}>{item.glyph}</Text>
-            <Text style={[styles.navChipLabel, active && styles.navLabelActive]}>{item.label}</Text>
-            {soon ? <Text style={styles.soonTag}>Soon</Text> : null}
-          </Pressable>
-        );
-      })}
-      <Pressable accessibilityRole="button" onPress={onSignOut} style={styles.navChip}>
-        <Text style={styles.navGlyph}>⏻</Text>
-        <Text style={styles.navChipLabel}>Sign Out</Text>
-      </Pressable>
-    </ScrollView>
+      <ContextHeader
+        formulaId={draft.id}
+        title={activeRow ? formatRowDisplayName(activeRow) : 'Select an ingredient'}
+        detail={activeRow?.developer}
+        stepIndex={activeIndex}
+        stepCount={draft.rows.length}
+        scaleConnected={scaleConnected}
+        scaleName={ble.connectedDevice?.name}
+        scaleStatus={ble.error ?? ble.status}
+      />
+
+      {metrics.twoColumn ? (
+        <View style={[styles.columns, { gap: layout.gap }]}>
+          <View style={styles.consoleColumn}>{consoleColumn}</View>
+          <View style={{ width: metrics.railWidth }}>{railColumn}</View>
+        </View>
+      ) : (
+        <View style={[styles.column, { gap: layout.gap }]}>
+          {consoleColumn}
+          {railColumn}
+        </View>
+      )}
+    </LabShell>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Chrome — context header and footer (LabShell owns the top bar and nav)
+// ---------------------------------------------------------------------------
 
 function ContextHeader({
   formulaId,
@@ -831,17 +698,27 @@ function ScaleConsoleCard({
       <ScaleDial size={ringSize} accent={accent} progress={progress} weightLabel={weightLabel} caption={caption} />
 
       <View style={styles.consoleButtons}>
-        <ConsoleButton glyph="⊘" label="Tare" onPress={onTare} disabled={!hasActiveRow} />
-        <ConsoleButton glyph="↻" label="Reweigh" onPress={onReweigh} disabled={!hasActiveRow} />
+        <ConsoleButton icon="minus" label="Tare" onPress={onTare} disabled={!hasActiveRow} />
+        <ConsoleButton icon="refresh" label="Reweigh" onPress={onReweigh} disabled={!hasActiveRow} />
       </View>
 
       <View style={styles.consoleFooter}>
-        <Text style={styles.consoleFooterText}>
-          {savedAt ? `✓ Saved automatically ${formatTime(savedAt)}` : 'Auto-save ready'}
-        </Text>
-        <Text style={[styles.consoleFooterText, stable && styles.consoleFooterStable]}>
-          {stable ? '⚖ Stable weight detected' : 'Awaiting stable weight'}
-        </Text>
+        <View style={styles.consoleFooterItem}>
+          {savedAt ? <Icon name="check" size="xs" tone="muted" /> : null}
+          <Text style={styles.consoleFooterText}>
+            {/* NOT automatic. `saveDraft()` has exactly two call sites in the
+                app and both are explicit button handlers, so this said "Saved
+                automatically" over work that was only in memory — on the one
+                screen where the operator's captured grams are irreversible. */}
+            {savedAt ? `Draft saved ${formatTime(savedAt)}` : 'Not saved yet — use Save draft'}
+          </Text>
+        </View>
+        <View style={styles.consoleFooterItem}>
+          {stable ? <Icon name="scale" size="xs" tone="success" /> : null}
+          <Text style={[styles.consoleFooterText, stable && styles.consoleFooterStable]}>
+            {stable ? 'Stable weight detected' : 'Awaiting stable weight'}
+          </Text>
+        </View>
       </View>
     </View>
   );
@@ -955,12 +832,12 @@ function ProgressRing({
 }
 
 function ConsoleButton({
-  glyph,
+  icon,
   label,
   onPress,
   disabled,
 }: {
-  glyph: string;
+  icon: IconName;
   label: string;
   onPress: () => void;
   disabled?: boolean;
@@ -976,7 +853,7 @@ function ConsoleButton({
         disabled && styles.consoleButtonDisabled,
       ]}
     >
-      <Text style={styles.consoleButtonGlyph}>{glyph}</Text>
+      <Icon name={icon} size="sm" tone="primary" />
       <Text style={styles.consoleButtonLabel}>{label}</Text>
     </Pressable>
   );
@@ -1040,24 +917,31 @@ function ActiveIngredientCard({
                 value={row.brand ?? ''}
               />
             </Field>
-            <Field label="Cost / g (pence)" style={styles.fieldNarrow}>
-              <TextInput
-                keyboardType="decimal-pad"
-                onChangeText={(value) => {
-                  const parsed = Number(value);
+            {/* POUNDS, not pence. This field used to take pence while the
+                inventory product form takes pounds behind a £ prefix — both
+                writing the same `costPerGramCents`. An operator who had just
+                typed 0.12 there (twelve pence) and typed 0.12 here priced the
+                ingredient at 0.12 PENCE per gram: a 100x under-charge, accepted
+                in silence. One convention, and it is the one with the £ on it. */}
+            <Field label="Cost / g (£)" style={styles.fieldNarrow}>
+              <DecimalInput
+                accessibilityLabel="Cost per gram in pounds"
+                style={styles.input}
+                value={
+                  row.costBasis.source === 'manual_cost' && row.costBasis.costPerGramCents != null
+                    ? row.costBasis.costPerGramCents / 100
+                    : undefined
+                }
+                onChangeNumber={(pounds) =>
                   onMetadataChange({
                     ...row,
                     costBasis: {
-                      source: value.trim().length > 0 && !Number.isNaN(parsed) ? 'manual_cost' : 'missing',
-                      costPerGramCents: value.trim().length > 0 && !Number.isNaN(parsed) ? parsed : undefined,
+                      source: pounds == null ? 'missing' : 'manual_cost',
+                      costPerGramCents: pounds == null ? undefined : Math.round(pounds * 100),
                       currencyCode: row.costBasis.currencyCode,
                     },
-                  });
-                }}
-                placeholder="0"
-                placeholderTextColor={C.inputPlaceholder}
-                style={styles.input}
-                value={row.costBasis.source === 'manual_cost' ? row.costBasis.costPerGramCents?.toString() ?? '' : ''}
+                  })
+                }
               />
             </Field>
           </View>
@@ -1093,19 +977,11 @@ function ActiveIngredientCard({
           />
         </Field>
         <Field label="Waste (g)" style={styles.fieldNarrow}>
-          <TextInput
-            keyboardType="decimal-pad"
-            onChangeText={(value) => {
-              const parsed = Number(value);
-              onMetadataChange({
-                ...row,
-                wasteGrams: value.trim().length > 0 && !Number.isNaN(parsed) ? parsed : undefined,
-              });
-            }}
-            placeholder="0"
-            placeholderTextColor={C.inputPlaceholder}
+          <DecimalInput
+            accessibilityLabel="Waste in grams"
             style={styles.input}
-            value={row.wasteGrams?.toString() ?? ''}
+            value={row.wasteGrams}
+            onChangeNumber={(wasteGrams) => onMetadataChange({ ...row, wasteGrams })}
           />
         </Field>
       </View>
@@ -1185,7 +1061,7 @@ function FormulaQueueCard({
         ))}
       </View>
 
-      <OutlineButton glyph="🕘" label="Load last formula" onPress={onLastFormula} />
+      <OutlineButton icon="history" label="Load last formula" onPress={onLastFormula} />
     </View>
   );
 }
@@ -1204,7 +1080,7 @@ function QueueRow({
   const captured = row.captureStatus === 'captured';
   const live = active && row.captureStatus !== 'captured';
   const tone: ChipTone = captured ? 'success' : live ? 'brand' : 'neutral';
-  const icon = captured ? '✓' : live ? '◆' : String(index + 1);
+  const stepIcon: IconName | undefined = captured ? 'check' : live ? 'dot' : undefined;
   const palette = chipToneStyle(tone);
   const name = formatRowDisplayName(row);
   const sub = [row.brand, row.developer].filter(Boolean).join(' · ');
@@ -1219,7 +1095,11 @@ function QueueRow({
       style={[styles.queueRow, active && styles.queueRowActive]}
     >
       <View style={[styles.queueIcon, { backgroundColor: palette.bg, borderColor: palette.border }]}>
-        <Text style={[styles.queueIconText, { color: palette.text }]}>{icon}</Text>
+        {stepIcon ? (
+          <Icon name={stepIcon} size="xs" tone="inherit" color={palette.text} />
+        ) : (
+          <Text style={[styles.queueIconText, { color: palette.text }]}>{String(index + 1)}</Text>
+        )}
       </View>
       <View style={styles.queueInfo}>
         <Text style={styles.queueName} numberOfLines={1}>
@@ -1286,7 +1166,7 @@ function MixTipCard(): React.JSX.Element {
   return (
     <View style={styles.tipCard}>
       <View style={styles.tipHead}>
-        <Text style={styles.tipGlyph}>💡</Text>
+        <Icon name="info" size="sm" tone="primary" />
         <Text style={styles.tipTitle}>Mix tip</Text>
       </View>
       <Text style={styles.tipBody}>
@@ -1336,8 +1216,8 @@ function BottomBar({
         </Text>
       </View>
       <View style={styles.bottomActions}>
-        <BottomButton glyph="＋" label="Add product" onPress={onAddProduct} />
-        <BottomButton glyph="🖫" label={savingDraft ? 'Saving…' : 'Save draft'} onPress={onSaveDraft} disabled={savingDraft} />
+        <BottomButton icon="plus" label="Add product" onPress={onAddProduct} />
+        <BottomButton icon="archive" label={savingDraft ? 'Saving…' : 'Save draft'} onPress={onSaveDraft} disabled={savingDraft} />
         <BottomButton label="Reopen" onPress={onReopenDraft} />
         <Pressable
           accessibilityRole="button"
@@ -1349,7 +1229,8 @@ function BottomBar({
             reviewDisabled && styles.completeButtonDisabled,
           ]}
         >
-          <Text style={styles.completeButtonText}>{finalized ? 'View Bill →' : 'Review & Bill →'}</Text>
+          <Text style={styles.completeButtonText}>{finalized ? 'View Bill' : 'Review & Bill'}</Text>
+          <Icon name="arrowRight" size="xs" tone="inherit" color={C.textOnPrimary} />
         </Pressable>
       </View>
     </View>
@@ -1357,12 +1238,12 @@ function BottomBar({
 }
 
 function BottomButton({
-  glyph,
+  icon,
   label,
   onPress,
   disabled,
 }: {
-  glyph?: string;
+  icon?: IconName;
   label: string;
   onPress: () => void;
   disabled?: boolean;
@@ -1378,7 +1259,7 @@ function BottomButton({
         disabled && styles.bottomButtonDisabled,
       ]}
     >
-      {glyph ? <Text style={styles.bottomButtonGlyph}>{glyph}</Text> : null}
+      {icon ? <Icon name={icon} size="xs" tone="secondary" /> : null}
       <Text style={styles.bottomButtonLabel}>{label}</Text>
     </Pressable>
   );
@@ -1425,8 +1306,14 @@ function ProductPickerModal({
               <Text style={styles.cardEyebrow}>Select product</Text>
               <Text style={styles.modalTitle}>{row?.productName || 'Inventory catalogue'}</Text>
             </View>
-            <Pressable accessibilityRole="button" onPress={onClose} style={styles.closeButton} hitSlop={8}>
-              <Text style={styles.closeButtonText}>✕</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+              onPress={onClose}
+              style={styles.closeButton}
+              hitSlop={8}
+            >
+              <Icon name="close" size="sm" tone="secondary" />
             </Pressable>
           </View>
           <TextInput
@@ -1569,19 +1456,11 @@ function ringStateColor(state: RingState): string {
   }
 }
 
-function chipToneStyle(tone: ChipTone): { text: string; bg: string; border: string } {
-  switch (tone) {
-    case 'brand':
-      return { text: C.primary, bg: C.primarySoft, border: C.primary };
-    case 'success':
-      return { text: C.success.text, bg: C.success.bg, border: C.success.border };
-    case 'warning':
-      return { text: C.warning.text, bg: C.warning.bg, border: C.warning.border };
-    case 'danger':
-      return { text: C.danger.text, bg: C.danger.bg, border: C.danger.border };
-    default:
-      return { text: C.textSecondary, bg: C.inputBg, border: C.borderStrong };
-  }
+function chipToneStyle(tone: ChipTone): ToneTriple {
+  // Delegates to the ONE implementation in src/theme/labTheme.ts. This was a
+  // five-case switch, and it existed in four copies that had drifted apart on
+  // `brand` and `neutral`.
+  return resolveTone(tone);
 }
 
 function StatusChip({ label, tone }: { label: string; tone: ChipTone }): React.JSX.Element {
@@ -1599,12 +1478,12 @@ function StatusChip({ label, tone }: { label: string; tone: ChipTone }): React.J
 function OutlineButton({
   label,
   onPress,
-  glyph,
+  icon,
   disabled,
 }: {
   label: string;
   onPress: () => void;
-  glyph?: string;
+  icon?: IconName;
   disabled?: boolean;
 }): React.JSX.Element {
   return (
@@ -1618,7 +1497,7 @@ function OutlineButton({
         disabled && styles.outlineButtonDisabled,
       ]}
     >
-      {glyph ? <Text style={styles.outlineButtonGlyph}>{glyph}</Text> : null}
+      {icon ? <Icon name={icon} size="xs" tone="primary" /> : null}
       <Text style={styles.outlineButtonText}>{label}</Text>
     </Pressable>
   );
@@ -1681,101 +1560,10 @@ function formatCaptureStatus(status: FormulaIngredientRow['captureStatus']): str
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: C.background },
-  body: { flex: 1 },
-  bodyRow: { flexDirection: 'row' },
-  bodyColumn: { flexDirection: 'column' },
-  mainArea: { flex: 1 },
-  scroll: { flex: 1 },
-  contentWrap: { width: '100%', maxWidth: 1600, alignSelf: 'center' },
   column: { width: '100%' },
 
   columns: { flexDirection: 'row', alignItems: 'flex-start' },
   consoleColumn: { flex: 1 },
-
-  // Top bar
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: T.spacing.base,
-    paddingVertical: T.spacing.md,
-    backgroundColor: C.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-  },
-  topSideLeft: { flex: 1, alignItems: 'flex-start' },
-  topSideRight: { flex: 1, alignItems: 'flex-end' },
-  brandRow: { flexDirection: 'row', alignItems: 'center', gap: T.spacing.sm },
-  brandText: { color: C.textPrimary, fontSize: 17, fontWeight: '800', letterSpacing: 1 },
-  userRow: { flexDirection: 'row', alignItems: 'center', gap: T.spacing.sm, maxWidth: 220 },
-  userText: { alignItems: 'flex-end' },
-  userName: { color: C.textPrimary, fontWeight: '700', fontSize: 13 },
-  userRole: { color: C.textMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 },
-  avatar: {
-    width: 36,
-    height: 36,
-    borderRadius: T.radius.full,
-    backgroundColor: C.primarySoft,
-    borderWidth: 1,
-    borderColor: C.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: { color: C.primary, fontWeight: '800', fontSize: 13 },
-
-  // Sidebar
-  sidebar: {
-    backgroundColor: C.surface,
-    borderRightWidth: 1,
-    borderRightColor: C.border,
-    paddingVertical: T.spacing.lg,
-    paddingHorizontal: T.spacing.md,
-    justifyContent: 'space-between',
-  },
-  sidebarNav: { gap: T.spacing.xs },
-  navItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: T.spacing.md,
-    paddingVertical: T.spacing.md,
-    paddingHorizontal: T.spacing.md,
-    borderRadius: T.radius.card,
-  },
-  // Active item reads as a solid brand pill with white text (was a soft fill).
-  navItemActive: { backgroundColor: C.sidebarActive },
-  navItemSoon: { opacity: 0.5 },
-  navGlyph: { fontSize: 16 },
-  navLabel: { flex: 1, color: C.textSecondary, fontSize: 13, fontWeight: '700' },
-  navLabelActive: { color: C.sidebarActiveText },
-  soonTag: { color: C.textMuted, fontSize: 11, fontWeight: '700' },
-  signOut: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: T.spacing.md,
-    paddingVertical: T.spacing.md,
-    paddingHorizontal: T.spacing.md,
-    borderRadius: T.radius.card,
-    borderWidth: 1,
-    borderColor: C.border,
-  },
-  signOutGlyph: { fontSize: 16, color: C.danger.text },
-  signOutLabel: { color: C.textPrimary, fontWeight: '700', fontSize: 13 },
-
-  navScrollerWrap: { marginBottom: T.spacing.xs },
-  navScroller: { flexDirection: 'row', gap: T.spacing.sm, paddingVertical: T.spacing.xs },
-  navChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: T.spacing.xs,
-    paddingVertical: T.spacing.sm,
-    paddingHorizontal: T.spacing.md,
-    borderRadius: T.radius.full,
-    borderWidth: 1,
-    borderColor: C.border,
-    backgroundColor: C.surface,
-  },
-  navChipActive: { backgroundColor: C.primarySoft, borderColor: C.primary },
-  navChipLabel: { color: C.textSecondary, fontSize: 13, fontWeight: '700' },
 
   // Context header
   contextHeader: {
@@ -1872,7 +1660,6 @@ const styles = StyleSheet.create({
   },
   consoleButtonPressed: { opacity: 0.7 },
   consoleButtonDisabled: { opacity: 0.4 },
-  consoleButtonGlyph: { color: C.textPrimary, fontSize: 16, fontWeight: '800' },
   consoleButtonLabel: { color: C.textPrimary, fontSize: 14, fontWeight: '800' },
   consoleFooter: {
     flexDirection: 'row',
@@ -1882,6 +1669,7 @@ const styles = StyleSheet.create({
     gap: T.spacing.sm,
     flexWrap: 'wrap',
   },
+  consoleFooterItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   consoleFooterText: { color: C.textMuted, fontSize: 11, fontWeight: '700' },
   consoleFooterStable: { color: C.success.text },
 
@@ -1980,7 +1768,6 @@ const styles = StyleSheet.create({
     backgroundColor: C.primarySoft,
   },
   tipHead: { flexDirection: 'row', alignItems: 'center', gap: T.spacing.sm },
-  tipGlyph: { fontSize: 16 },
   tipTitle: { color: C.textPrimary, fontSize: 14, fontWeight: '800' },
   tipBody: { color: C.textSecondary, fontSize: 13, lineHeight: 19 },
 
@@ -2004,6 +1791,10 @@ const styles = StyleSheet.create({
     borderTopColor: C.border,
   },
   noticeText: { color: C.textMuted, fontSize: 12, fontWeight: '600' },
+  // Only the colour changes: the strip keeps its size and position, so nothing
+  // reflows as the tone changes mid-action.
+  noticeSuccess: { color: C.successText },
+  noticeDanger: { color: C.dangerText },
 
   // Bottom bar
   bottomBar: {
@@ -2034,9 +1825,10 @@ const styles = StyleSheet.create({
   },
   bottomButtonPressed: { opacity: 0.7 },
   bottomButtonDisabled: { opacity: 0.45 },
-  bottomButtonGlyph: { color: C.textSecondary, fontSize: 14 },
   bottomButtonLabel: { color: C.textPrimary, fontSize: 13, fontWeight: '800' },
   completeButton: {
+    flexDirection: 'row',
+    gap: 6,
     minHeight: 48,
     paddingHorizontal: T.spacing.xl,
     borderRadius: T.radius.inputLg,
@@ -2088,7 +1880,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  closeButtonText: { color: C.textSecondary, fontSize: 15, fontWeight: '700' },
   searchInput: {
     minHeight: 52,
     paddingHorizontal: T.spacing.md,
@@ -2148,6 +1939,11 @@ const styles = StyleSheet.create({
   },
   outlineButtonPressed: { opacity: 0.7 },
   outlineButtonDisabled: { opacity: 0.45 },
-  outlineButtonGlyph: { color: C.textSecondary, fontSize: 14 },
   outlineButtonText: { color: C.textPrimary, fontSize: 13, fontWeight: '800' },
 });
+
+const NOTICE_TONE_STYLE: Record<NoticeTone, TextStyle | undefined> = {
+  progress: undefined,
+  success: styles.noticeSuccess,
+  danger: styles.noticeDanger,
+};

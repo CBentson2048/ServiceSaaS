@@ -1,0 +1,33 @@
+import { Module } from '@nestjs/common';
+import { AuthModule } from '../auth/auth.module';
+import { ReportAccessGuard } from './report-access.guard';
+import { ReportAvailabilityGuard } from './report-availability.guard';
+import { ReportScopeService } from './report-scope.service';
+import { reportSurfaceProvider } from './report-surface';
+import { ReportsController } from './reports.controller';
+import { MoneyReportService } from './money/money-report.service';
+import { MONEY_SOURCE, SupabaseMoneySource } from './money/money-source';
+import { CashUpReportService } from './cash-up/cash-up-report.service';
+import { CASH_UP_SOURCE, SupabaseCashUpSource } from './cash-up/cash-up-source';
+import { TeamReportService } from './team/team-report.service';
+import { SupabaseTeamSource, TEAM_SOURCE } from './team/team-source';
+
+/** QLOOQO 10 report foundation (V1.1 Week 8 Ticket A). */
+@Module({
+  imports: [AuthModule],
+  controllers: [ReportsController],
+  providers: [
+    reportSurfaceProvider,
+    ReportScopeService,
+    ReportAvailabilityGuard,
+    ReportAccessGuard,
+    MoneyReportService,
+    { provide: MONEY_SOURCE, useClass: SupabaseMoneySource },
+    CashUpReportService,
+    { provide: CASH_UP_SOURCE, useClass: SupabaseCashUpSource },
+    TeamReportService,
+    { provide: TEAM_SOURCE, useClass: SupabaseTeamSource },
+  ],
+  exports: [ReportScopeService],
+})
+export class ReportsModule {}

@@ -34,10 +34,9 @@ interface AbsenceModalState {
 }
 
 /**
- * Rota management page for owners and managers. Managers are scoped to their
- * single assigned location; owners get a location switcher and full access to
- * every location in their business (the backend already authorises owners for
- * all rota operations).
+ * Rota management page for owners and managers. The location comes from the
+ * shared sidebar picker for both: owners can reach every location in their
+ * business, managers only the ones they're assigned to.
  */
 export function RotaPage() {
   const auth = useAuth();
@@ -67,22 +66,21 @@ export function RotaPage() {
   // shift/absence/week management requires `rota.manage`.
   const canManage = userHasPermission(auth.user, 'rota.manage');
   const locations = useMemo(() => auth.user?.locations ?? [], [auth.user?.locations]);
-  const managerLocationId =
-    role === 'manager' ? auth.user?.allowedLocationIds[0] ?? null : null;
 
-  // Owners pick a location from the shared sidebar scope. The weekly rota board
-  // is single-location, so "All" resolves to the first location. Managers are
-  // scoped to their single assigned location regardless of the picker.
+  // Everyone picks the location from the shared sidebar scope. For a non-owner
+  // `user.locations` IS their allowed set, so the picker can never offer one the
+  // API would refuse. The weekly board is single-location, so "All" resolves to
+  // the first location.
   const { resolvedLocationId } = useLocationScope();
 
-  // The location whose rota we load: owner's selected one, or the manager's assigned one.
-  const requestLocationId = role === 'owner' ? resolvedLocationId || null : managerLocationId;
+  // The location whose rota we load.
+  const requestLocationId = resolvedLocationId || null;
   const targetLocationId = requestLocationId ?? data?.locationId ?? null;
 
   const reload = useCallback(async (options: { background?: boolean } = {}) => {
     if (!accessToken) return;
-    // Owners must have a location selected before the rota can load.
-    if (role === 'owner' && !requestLocationId) {
+    // A location has to resolve before the rota can load.
+    if (!requestLocationId) {
       setData(null);
       setLoading(false);
       return;
@@ -102,7 +100,7 @@ export function RotaPage() {
     } finally {
       if (!options.background) setLoading(false);
     }
-  }, [accessToken, role, requestLocationId, weekStart]);
+  }, [accessToken, requestLocationId, weekStart]);
 
   useEffect(() => {
     void reload();
@@ -118,19 +116,12 @@ export function RotaPage() {
     return <Navigate to="/unauthorized" replace />;
   }
 
-  if (role === 'owner' && locations.length === 0) {
+  if (locations.length === 0) {
     return (
       <div className="mx-auto w-full max-w-3xl px-4 py-10 text-center text-[13px] text-text-secondary">
-        No locations found for your business yet. Create a location before managing the rota.
-      </div>
-    );
-  }
-
-  if (role === 'manager' && !managerLocationId) {
-    return (
-      <div className="mx-auto w-full max-w-3xl px-4 py-10 text-center text-[13px] text-text-secondary">
-        Your account is not assigned to a location yet. Ask your business owner to assign
-        you to one before managing the rota.
+        {role === 'owner'
+          ? 'No locations found for your business yet. Create a location before managing the rota.'
+          : 'Your account is not assigned to a location yet. Ask your business owner to assign you to one before managing the rota.'}
       </div>
     );
   }

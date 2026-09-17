@@ -18,7 +18,11 @@ import {
   createSupabaseFakeState,
   type SupabaseFakeState,
 } from '../common/testing/supabase-fake';
-import { ArrivalNotificationService, buildArrivalBody } from './arrival-notification.service';
+import {
+  ArrivalNotificationService,
+  buildArrivalBody,
+  buildCheckInUndoneBody,
+} from './arrival-notification.service';
 import type { NotificationsService } from './notifications.service';
 
 jest.mock('@supabase/supabase-js', () => ({
@@ -116,6 +120,25 @@ describe('ArrivalNotificationService.notifyClientArrivedSafe', () => {
 
   it('keys the notification so a replayed check-in cannot notify twice', async () => {
     const { service, createSafe } = makeService();
+    await service.notifyClientArrivedSafe(appointment({ check_in_at: '2026-05-13T09:02:00.000Z' }));
+    await service.notifyClientArrivedSafe(appointment({ check_in_at: '2026-05-13T09:02:00.000Z' }));
+    expect(createSafe.mock.calls[0]?.[0].dedupeKey).toBe(
+      `client_arrived:${APPOINTMENT_ID}:2026-05-13T09:02:00.000Z`,
+    );
+    expect(createSafe.mock.calls[1]?.[0].dedupeKey).toBe(createSafe.mock.calls[0]?.[0].dedupeKey);
+  });
+
+  it('gives a real arrival after an undone check-in its own key, so it is not swallowed', async () => {
+    // Dedupe keys are consumed for all time. Keyed on the appointment alone, the
+    // genuine arrival would be dropped as a duplicate of the mistaken one.
+    const { service, createSafe } = makeService();
+    await service.notifyClientArrivedSafe(appointment({ check_in_at: '2026-05-13T09:02:00.000Z' }));
+    await service.notifyClientArrivedSafe(appointment({ check_in_at: '2026-05-13T09:40:00.000Z' }));
+    expect(createSafe.mock.calls[1]?.[0].dedupeKey).not.toBe(createSafe.mock.calls[0]?.[0].dedupeKey);
+  });
+
+  it('keeps the legacy key for a caller that does not pass the check-in time', async () => {
+    const { service, createSafe } = makeService();
     await service.notifyClientArrivedSafe(appointment());
     expect(createSafe.mock.calls[0]?.[0].dedupeKey).toBe(`client_arrived:${APPOINTMENT_ID}`);
   });
@@ -173,6 +196,61 @@ describe('ArrivalNotificationService.notifyClientArrivedSafe', () => {
         undefined as unknown as ReturnType<typeof appointment>,
       ),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe('ArrivalNotificationService.notifyCheckInUndoneSafe', () => {
+  it('tells the same stylist the arrival was a mistake, routed to the same appointment', async () => {
+    const { service, createSafe } = makeService();
+    await service.notifyCheckInUndoneSafe(
+      appointment({ check_in_at: '2026-05-13T09:02:00.000Z' }),
+      RECEPTIONIST_USER_ID,
+    );
+
+    expect(createSafe).toHaveBeenCalledTimes(1);
+    expect(createSafe.mock.calls[0]?.[0]).toMatchObject({
+      businessId: BUSINESS_ID,
+      locationId: LOCATION_ID,
+      type: 'check_in_undone',
+      priority: 'high',
+      title: 'Check-in undone',
+      body: 'Jane has not arrived — their check-in was undone.',
+      recipientUserProfileIds: [STYLIST_USER_ID],
+      entityType: 'appointment',
+      entityId: APPOINTMENT_ID,
+      actionPath: `/bookings?appointmentId=${APPOINTMENT_ID}`,
+      dedupeKey: `check_in_undone:${APPOINTMENT_ID}:2026-05-13T09:02:00.000Z`,
+      createdByUserProfileId: RECEPTIONIST_USER_ID,
+    });
+  });
+
+  it('does not dedupe when the undone check-in has no recorded time', async () => {
+    const { service, createSafe } = makeService();
+    await service.notifyCheckInUndoneSafe(appointment({ check_in_at: null }));
+    expect(createSafe.mock.calls[0]?.[0].dedupeKey).toBeNull();
+  });
+
+  it('sends nothing when no stylist is assigned', async () => {
+    const { service, createSafe } = makeService();
+    await service.notifyCheckInUndoneSafe(appointment({ assigned_staff_profile_id: null }));
+    expect(createSafe).not.toHaveBeenCalled();
+  });
+
+  it('NEVER throws when the notification service itself blows up', async () => {
+    const { service, createSafe } = makeService();
+    createSafe.mockRejectedValue(new Error('boom'));
+    await expect(service.notifyCheckInUndoneSafe(appointment())).resolves.toBeUndefined();
+  });
+});
+
+describe('buildCheckInUndoneBody — notification content safety', () => {
+  it('uses the client’s first name only', () => {
+    expect(buildCheckInUndoneBody('  Jane ')).toBe('Jane has not arrived — their check-in was undone.');
+  });
+
+  it('falls back to a name-free message when there is no first name', () => {
+    expect(buildCheckInUndoneBody(null)).toBe('A check-in was undone — your client has not arrived.');
+    expect(buildCheckInUndoneBody('   ')).toBe('A check-in was undone — your client has not arrived.');
   });
 });
 

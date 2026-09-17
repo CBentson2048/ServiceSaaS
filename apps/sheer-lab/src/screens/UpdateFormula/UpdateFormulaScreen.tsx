@@ -2,28 +2,18 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { PinUnlockResponse } from '@sheer/domain';
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  Pressable,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TextInput,
-  useWindowDimensions,
-  View,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import type { RootStackParamList } from '../../app/navigation/routes';
 import { useBleScale } from '../../features/ble/hooks/useBleScale';
 import { formulaDraftStore } from '../../features/formulas/formulaDraftStore';
 import type { SavedFormulaRecord } from '../../features/formulas/formulaDraftTypes';
-import { getActiveLabSession, logoutLabSession } from '../../features/sheer-lab/labSession';
+import { getActiveLabSession } from '../../features/sheer-lab/labSession';
 import { appConfig } from '../../config/appConfig';
 import { formatClock, formatGrams } from '../Home/dashboardHelpers';
-import { featureFlags } from '../../config/featureFlags';
 import { labTheme } from '../../theme/labTheme';
-import { TopBar } from '../shared/LabShell';
+import { Icon } from '../../ui/icons/Icon';
+import { LabShell } from '../shared/LabShell';
 
 const T = labTheme;
 const C = T.colors;
@@ -32,64 +22,6 @@ type UpdateFormulaScreenProps = NativeStackScreenProps<RootStackParamList, 'Upda
 
 type PercentChoice = '20' | '30' | '50' | '75' | '100' | 'custom';
 const PERCENT_PRESETS: PercentChoice[] = ['20', '30', '50', '75', '100', 'custom'];
-
-// ---------------------------------------------------------------------------
-// Responsive layout — mirrors the Build Formula breakpoints.
-// ---------------------------------------------------------------------------
-
-interface UpdateLayout {
-  mode: 'phone' | 'tablet' | 'wide';
-  sidebarWidth: number;
-  contentWidth: number;
-  pad: number;
-  gap: number;
-  showSidebar: boolean;
-}
-
-function getLayout(width: number): UpdateLayout {
-  if (width >= 1024) {
-    const large = width >= 1280;
-    return {
-      mode: 'wide',
-      sidebarWidth: large ? 248 : 216,
-      contentWidth: 920,
-      pad: large ? T.spacing.xl : T.spacing.base,
-      gap: T.spacing.lg,
-      showSidebar: true,
-    };
-  }
-  if (width >= 700) {
-    return { mode: 'tablet', sidebarWidth: 208, contentWidth: 720, pad: T.spacing.base, gap: T.spacing.base, showSidebar: true };
-  }
-  return { mode: 'phone', sidebarWidth: 0, contentWidth: 0, pad: T.spacing.base, gap: T.spacing.base, showSidebar: false };
-}
-
-// ---------------------------------------------------------------------------
-// Sidebar navigation model (reached from History → History is the origin).
-// ---------------------------------------------------------------------------
-
-type WorkingRoute = 'Home' | 'NewMix' | 'FormulaHistory';
-type NavTarget = { kind: 'route'; route: WorkingRoute } | { kind: 'soon' } | { kind: 'current' };
-
-interface NavEntry {
-  key: string;
-  label: string;
-  glyph: string;
-  target: NavTarget;
-}
-
-const NAV_ITEMS: NavEntry[] = ([
-  { key: 'dashboard', label: 'Dashboard', glyph: '▦', target: { kind: 'route', route: 'Home' } },
-  { key: 'new-mix', label: 'New Mix', glyph: '🧪', target: { kind: 'route', route: 'NewMix' } },
-  { key: 'history', label: 'History', glyph: '🕘', target: { kind: 'current' } },
-  { key: 'inventory', label: 'Inventory', glyph: '📦', target: { kind: 'soon' } },
-  { key: 'billing', label: 'Billing Rules', glyph: '🧾', target: { kind: 'soon' } },
-  { key: 'audit', label: 'Audit Trail', glyph: '🛡️', target: { kind: 'soon' } },
-  // Billing Rules and Audit Trail are hidden from the nav behind feature flags
-  // for every role; their entries stay so the feature can be restored later.
-] satisfies NavEntry[]).filter(
-  (item) => (item.key !== 'billing' || featureFlags.billingRules) && (item.key !== 'audit' || featureFlags.auditTrail),
-);
 
 /** One source ingredient projected to its remix target for the current render. */
 interface RemixLine {
@@ -107,8 +39,6 @@ interface RemixLine {
 export function UpdateFormulaScreen({ navigation, route }: UpdateFormulaScreenProps): React.JSX.Element {
   const { entryContext, sourceFormulaId } = route.params;
 
-  const { width } = useWindowDimensions();
-  const layout = getLayout(width);
   const ble = useBleScale();
   const scaleConnected = ble.status === 'connected';
 
@@ -197,23 +127,6 @@ export function UpdateFormulaScreen({ navigation, route }: UpdateFormulaScreenPr
     setOverrides((current) => ({ ...current, [rowId]: value }));
   }, []);
 
-  const goToRoute = useCallback(
-    (target: NavTarget) => {
-      if (target.kind !== 'route') return;
-      navigation.navigate(target.route);
-    },
-    [navigation],
-  );
-
-  const handleSignOut = useCallback(async () => {
-    try {
-      await logoutLabSession(entryContext.labSessionId);
-    } catch {
-      // Best effort — always return the device to the lock screen.
-    }
-    navigation.reset({ index: 0, routes: [{ name: 'Auth' }] });
-  }, [entryContext.labSessionId, navigation]);
-
   const handleStartWeighing = useCallback(() => {
     if (!source || !canStart) return;
     const targetGramsByRowId: Record<string, number> = {};
@@ -243,94 +156,67 @@ export function UpdateFormulaScreen({ navigation, route }: UpdateFormulaScreenPr
   }, [canStart, effectivePercent, entryContext, lines, navigation, source]);
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
-      <StatusBar barStyle="light-content" backgroundColor={C.surface} />
-      <TopBar session={session} bleStatus={ble.status} />
-
-      <View style={[styles.body, layout.showSidebar ? styles.bodyRow : styles.bodyColumn]}>
-        {layout.showSidebar ? (
-          <Sidebar
-            width={layout.sidebarWidth}
-            onNav={goToRoute}
-            onSignOut={handleSignOut}
-            canManageOps={session?.role === 'owner' || session?.role === 'manager'}
+    <LabShell
+      session={session}
+      bleStatus={ble.status}
+      labSessionId={entryContext.labSessionId}
+      contentWidth="reading"
+      footer={<Footer now={now} scaleConnected={scaleConnected} online={session?.status === 'active'} />}
+      bottomBar={
+        source ? (
+          <BottomBar
+            newTotalGrams={newTotalGrams}
+            combinedTotalGrams={combinedTotalGrams}
+            ready={canStart}
+            onStart={handleStartWeighing}
           />
-        ) : null}
+        ) : null
+      }
+    >
+      <Header
+        clientName={entryContext.clientName}
+        serviceType={entryContext.serviceType}
+        savedAt={source?.savedAt}
+      />
 
-        <View style={styles.mainArea}>
-          <ScrollView
-            style={styles.scroll}
-            contentContainerStyle={{ padding: layout.pad, paddingBottom: T.spacing.xl }}
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-          >
-            <View style={[styles.contentWrap, { gap: layout.gap, maxWidth: layout.contentWidth || undefined }]}>
-              {!layout.showSidebar ? (
-                <NavScroller
-                  onNav={goToRoute}
-                  onSignOut={handleSignOut}
-                  canManageOps={session?.role === 'owner' || session?.role === 'manager'}
-                />
-              ) : null}
-
-              <Header
-                clientName={entryContext.clientName}
-                serviceType={entryContext.serviceType}
-                savedAt={source?.savedAt}
-              />
-
-              {!source ? (
-                <View style={styles.card}>
-                  <Text style={styles.cardEyebrow}>Previous formula unavailable</Text>
-                  <Text style={styles.muted}>
-                    The last formula for this client is not available on this device. Open it from the original mix to
-                    update it.
-                  </Text>
-                  <Pressable accessibilityRole="button" onPress={() => navigation.goBack()} style={styles.secondaryButton}>
-                    <Text style={styles.secondaryButtonText}>‹ Back to History</Text>
-                  </Pressable>
-                </View>
-              ) : (
-                <>
-                  <PreviousFormulaCard lines={lines} baselineTotalGrams={baselineTotalGrams} />
-
-                  <RemixOptionsCard
-                    allowRemix={allowRemix}
-                    onToggleRemix={() => setAllowRemix((v) => !v)}
-                    percentChoice={percentChoice}
-                    onSelectPercent={selectPercent}
-                    customPercent={customPercent}
-                    onCustomPercent={onCustomPercent}
-                    allowAdjust={allowAdjust}
-                    onToggleAdjust={() => setAllowAdjust((v) => !v)}
-                    effectivePercent={effectivePercent}
-                  />
-
-                  <RemixTargetsCard lines={lines} editable={allowAdjust} overrides={overrides} onOverride={onOverride} />
-
-                  <CombinedTotalCard
-                    baselineTotalGrams={baselineTotalGrams}
-                    newTotalGrams={newTotalGrams}
-                    combinedTotalGrams={combinedTotalGrams}
-                  />
-                </>
-              )}
-
-              <Footer now={now} scaleConnected={scaleConnected} online={session?.status === 'active'} />
-            </View>
-          </ScrollView>
-
-          {source ? (
-            <BottomBar
-              newTotalGrams={newTotalGrams}
-              combinedTotalGrams={combinedTotalGrams}
-              ready={canStart}
-              onStart={handleStartWeighing}
-            />
-          ) : null}
+      {!source ? (
+        <View style={styles.card}>
+          <Text style={styles.cardEyebrow}>Previous formula unavailable</Text>
+          <Text style={styles.muted}>
+            The last formula for this client is not available on this device. Open it from the original mix to update
+            it.
+          </Text>
+          <Pressable accessibilityRole="button" onPress={() => navigation.goBack()} style={styles.secondaryButton}>
+            <Icon name="chevronLeft" size="xs" tone="primary" />
+            <Text style={styles.secondaryButtonText}>Back to History</Text>
+          </Pressable>
         </View>
-      </View>
-    </SafeAreaView>
+      ) : (
+        <>
+          <PreviousFormulaCard lines={lines} baselineTotalGrams={baselineTotalGrams} />
+
+          <RemixOptionsCard
+            allowRemix={allowRemix}
+            onToggleRemix={() => setAllowRemix((v) => !v)}
+            percentChoice={percentChoice}
+            onSelectPercent={selectPercent}
+            customPercent={customPercent}
+            onCustomPercent={onCustomPercent}
+            allowAdjust={allowAdjust}
+            onToggleAdjust={() => setAllowAdjust((v) => !v)}
+            effectivePercent={effectivePercent}
+          />
+
+          <RemixTargetsCard lines={lines} editable={allowAdjust} overrides={overrides} onOverride={onOverride} />
+
+          <CombinedTotalCard
+            baselineTotalGrams={baselineTotalGrams}
+            newTotalGrams={newTotalGrams}
+            combinedTotalGrams={combinedTotalGrams}
+          />
+        </>
+      )}
+    </LabShell>
   );
 }
 
@@ -507,7 +393,7 @@ function CheckboxRow({
   return (
     <Pressable accessibilityRole="checkbox" accessibilityState={{ checked }} onPress={onToggle} style={styles.checkboxRow}>
       <View style={[styles.checkbox, checked && styles.checkboxChecked]}>
-        {checked ? <Text style={styles.checkboxGlyph}>✓</Text> : null}
+        {checked ? <Icon name="check" size="xs" tone="inherit" color={C.textOnPrimary} /> : null}
       </View>
       <View style={styles.checkboxText}>
         <Text style={styles.checkboxLabel}>{label}</Text>
@@ -639,89 +525,10 @@ function BottomBar({
         onPress={onStart}
         style={({ pressed }) => [styles.startButton, !ready && styles.startButtonDisabled, pressed && ready && styles.startButtonPressed]}
       >
-        <Text style={styles.startButtonText}>Start Weighing →</Text>
+        <Text style={styles.startButtonText}>Start Weighing</Text>
+        <Icon name="arrowRight" size="xs" tone="inherit" color={C.textOnPrimary} />
       </Pressable>
     </View>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Chrome — top bar, sidebar, mobile nav, footer
-// ---------------------------------------------------------------------------
-
-
-function Sidebar({
-  width,
-  onNav,
-  onSignOut,
-  canManageOps,
-}: {
-  width: number;
-  onNav: (target: NavTarget) => void;
-  onSignOut: () => void;
-  canManageOps: boolean;
-}): React.JSX.Element {
-  return (
-    <View style={[styles.sidebar, { width }]}>
-      <View style={styles.sidebarNav}>
-        {NAV_ITEMS.filter((item) => item.key !== 'inventory' || canManageOps).map((item) => {
-          const active = item.target.kind === 'current';
-          const soon = item.target.kind === 'soon';
-          return (
-            <Pressable
-              key={item.key}
-              accessibilityRole="button"
-              disabled={soon || active}
-              onPress={() => onNav(item.target)}
-              style={[styles.navItem, active && styles.navItemActive, soon && styles.navItemSoon]}
-            >
-              <Text style={styles.navGlyph}>{item.glyph}</Text>
-              <Text style={[styles.navLabel, active && styles.navLabelActive]} numberOfLines={1}>
-                {item.label}
-              </Text>
-              {soon ? <Text style={styles.soonTag}>Soon</Text> : null}
-            </Pressable>
-          );
-        })}
-      </View>
-      <Pressable accessibilityRole="button" onPress={onSignOut} style={styles.signOut}>
-        <Text style={styles.signOutGlyph}>⏻</Text>
-        <Text style={styles.signOutLabel}>Sign Out</Text>
-      </Pressable>
-    </View>
-  );
-}
-
-function NavScroller({ onNav, onSignOut, canManageOps }: { onNav: (target: NavTarget) => void; onSignOut: () => void; canManageOps: boolean }): React.JSX.Element {
-  return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={styles.navScroller}
-      style={styles.navScrollerWrap}
-    >
-      {NAV_ITEMS.filter((item) => item.key !== 'inventory' || canManageOps).map((item) => {
-        const active = item.target.kind === 'current';
-        const soon = item.target.kind === 'soon';
-        return (
-          <Pressable
-            key={item.key}
-            accessibilityRole="button"
-            disabled={soon || active}
-            onPress={() => onNav(item.target)}
-            style={[styles.navChip, active && styles.navChipActive, soon && styles.navItemSoon]}
-          >
-            <Text style={styles.navGlyph}>{item.glyph}</Text>
-            <Text style={[styles.navChipLabel, active && styles.navLabelActive]}>{item.label}</Text>
-            {soon ? <Text style={styles.soonTag}>Soon</Text> : null}
-          </Pressable>
-        );
-      })}
-      <Pressable accessibilityRole="button" onPress={onSignOut} style={styles.navChip}>
-        <Text style={styles.navGlyph}>⏻</Text>
-        <Text style={styles.navChipLabel}>Sign Out</Text>
-      </Pressable>
-    </ScrollView>
   );
 }
 
@@ -777,99 +584,6 @@ function formatSavedAt(savedAt: string): string {
 // ---------------------------------------------------------------------------
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: C.background },
-  body: { flex: 1 },
-  bodyRow: { flexDirection: 'row' },
-  bodyColumn: { flexDirection: 'column' },
-  mainArea: { flex: 1 },
-  scroll: { flex: 1 },
-  contentWrap: { width: '100%', alignSelf: 'center' },
-
-  // Top bar
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: T.spacing.base,
-    paddingVertical: T.spacing.md,
-    backgroundColor: C.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-  },
-  topSideLeft: { flex: 1, alignItems: 'flex-start' },
-  topSideRight: { flex: 1, alignItems: 'flex-end' },
-  brandRow: { flexDirection: 'row', alignItems: 'center', gap: T.spacing.sm },
-  brandText: { color: C.textPrimary, fontSize: 17, fontWeight: '800', letterSpacing: 1 },
-  userRow: { flexDirection: 'row', alignItems: 'center', gap: T.spacing.sm, maxWidth: 220 },
-  userText: { alignItems: 'flex-end' },
-  userName: { color: C.textPrimary, fontWeight: '700', fontSize: 13 },
-  userRole: { color: C.textMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 },
-  avatar: {
-    width: 36,
-    height: 36,
-    borderRadius: T.radius.full,
-    backgroundColor: C.primarySoft,
-    borderWidth: 1,
-    borderColor: C.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: { color: C.primary, fontWeight: '800', fontSize: 13 },
-
-  // Sidebar
-  sidebar: {
-    backgroundColor: C.surface,
-    borderRightWidth: 1,
-    borderRightColor: C.border,
-    paddingVertical: T.spacing.lg,
-    paddingHorizontal: T.spacing.md,
-    justifyContent: 'space-between',
-  },
-  sidebarNav: { gap: T.spacing.xs },
-  navItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: T.spacing.md,
-    paddingVertical: T.spacing.md,
-    paddingHorizontal: T.spacing.md,
-    borderRadius: T.radius.card,
-  },
-  // Active item reads as a solid brand pill with white text (was a soft fill).
-  navItemActive: { backgroundColor: C.sidebarActive },
-  navItemSoon: { opacity: 0.5 },
-  navGlyph: { fontSize: 16 },
-  navLabel: { flex: 1, color: C.textSecondary, fontSize: 13, fontWeight: '700' },
-  navLabelActive: { color: C.sidebarActiveText },
-  soonTag: { color: C.textMuted, fontSize: 11, fontWeight: '700' },
-  signOut: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: T.spacing.md,
-    paddingVertical: T.spacing.md,
-    paddingHorizontal: T.spacing.md,
-    borderRadius: T.radius.card,
-    borderWidth: 1,
-    borderColor: C.border,
-  },
-  signOutGlyph: { fontSize: 16, color: C.danger.text },
-  signOutLabel: { color: C.textPrimary, fontWeight: '700', fontSize: 13 },
-
-  // Mobile nav scroller
-  navScrollerWrap: { marginBottom: T.spacing.xs },
-  navScroller: { flexDirection: 'row', gap: T.spacing.sm, paddingVertical: T.spacing.xs },
-  navChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: T.spacing.xs,
-    paddingVertical: T.spacing.sm,
-    paddingHorizontal: T.spacing.md,
-    borderRadius: T.radius.full,
-    borderWidth: 1,
-    borderColor: C.border,
-    backgroundColor: C.surface,
-  },
-  navChipActive: { backgroundColor: C.primarySoft, borderColor: C.primary },
-  navChipLabel: { color: C.textSecondary, fontSize: 13, fontWeight: '700' },
-
   // Header
   header: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', flexWrap: 'wrap', gap: T.spacing.md },
   headerText: { gap: 4, minWidth: 240, flexShrink: 1 },
@@ -949,7 +663,6 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
   checkboxChecked: { backgroundColor: C.primary, borderColor: C.primary },
-  checkboxGlyph: { color: C.textOnPrimary, fontSize: 14, fontWeight: '900' },
   checkboxText: { flex: 1, gap: 2 },
   checkboxLabel: { color: C.textPrimary, fontSize: 14, fontWeight: '700' },
   checkboxHint: { color: C.textMuted, fontSize: 12, lineHeight: 17 },
@@ -995,6 +708,8 @@ const styles = StyleSheet.create({
 
   // Buttons
   secondaryButton: {
+    flexDirection: 'row',
+    gap: 6,
     minHeight: 48,
     paddingHorizontal: T.spacing.lg,
     borderRadius: T.radius.inputLg,
@@ -1026,6 +741,8 @@ const styles = StyleSheet.create({
   bottomCombinedLabel: { color: C.textMuted, fontSize: 10, fontWeight: '800', letterSpacing: 1 },
   bottomCombinedValue: { color: C.textPrimary, fontSize: 22, fontWeight: '900', letterSpacing: -0.5 },
   startButton: {
+    flexDirection: 'row',
+    gap: 6,
     minHeight: 52,
     paddingHorizontal: T.spacing.xl,
     borderRadius: T.radius.full,
@@ -1053,9 +770,4 @@ const styles = StyleSheet.create({
   footerText: { color: C.textMuted, fontSize: 12 },
   footerTextStrong: { color: C.textSecondary, fontSize: 11, fontWeight: '800', letterSpacing: 1 },
   dot: { width: 8, height: 8, borderRadius: T.radius.full },
-
-  // Pill
-  pill: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: T.spacing.sm, paddingVertical: 5, borderRadius: T.radius.full, borderWidth: 1 },
-  pillDot: { width: 7, height: 7, borderRadius: T.radius.full },
-  pillText: { fontSize: 11, fontWeight: '800', letterSpacing: 0.5, textTransform: 'uppercase' },
 });

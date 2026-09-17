@@ -12,7 +12,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 
-import { theme } from '../theme/theme';
+import { labTheme as theme } from '../theme/labTheme';
 import { IconButton } from './Button';
 import { Text } from './Text';
 

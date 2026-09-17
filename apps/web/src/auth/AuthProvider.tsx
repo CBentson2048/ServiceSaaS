@@ -13,6 +13,33 @@ import * as authApi from './api';
 import { ApiRequestError, setExpiredTokenHandler } from './api';
 
 const STORAGE_KEY = 'sheer.web.auth.session';
+/** Per tab, so a reload or Back/Forward into this tab still knows it was signed out of. */
+const SIGNED_OUT_KEY = 'sheer.web.auth.signedOut';
+
+/**
+ * The saved sign-out counts only when this page load returns to earlier pages
+ * (a reload, Back/Forward, a restored tab). A link opened fresh — shared,
+ * bookmarked, typed — is a new visit and keeps its sign-in target.
+ */
+function readSignedOut(): boolean {
+  try {
+    if (sessionStorage.getItem(SIGNED_OUT_KEY) !== '1') return false;
+    const [entry] = (performance.getEntriesByType?.('navigation') ?? []) as PerformanceNavigationTiming[];
+    // No timing entry: assume a return (fail-safe). A prerender is a new visit.
+    return entry === undefined || entry.type === 'reload' || entry.type === 'back_forward';
+  } catch {
+    return false;
+  }
+}
+
+function writeSignedOut(value: boolean): void {
+  try {
+    if (value) sessionStorage.setItem(SIGNED_OUT_KEY, '1');
+    else sessionStorage.removeItem(SIGNED_OUT_KEY);
+  } catch {
+    // Storage unavailable: the in-memory flag still covers this page load.
+  }
+}
 
 /** Cross-tab Web Lock guarding refresh-token rotation. */
 const REFRESH_LOCK_NAME = 'sheer.web.auth.refresh';
@@ -64,6 +91,14 @@ interface AuthState {
   signIn: (email: string, password: string) => Promise<AuthUser>;
   signOut: () => Promise<void>;
   applyAuthenticatedSession: (session: AuthSession, user: AuthUser) => void;
+  /**
+   * True from a sign-out (in this tab or another) until the next sign-in or a
+   * proven stored session; a reload or Back/Forward into the tab still sees it,
+   * a freshly opened link does not. A protected route then
+   * records no sign-in target, so nothing about the page that was signed out
+   * of — Back included — reaches whoever signs in next.
+   */
+  signedOut: boolean;
 }
 
 const AuthContext = createContext<AuthState | undefined>(undefined);
@@ -72,6 +107,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthState['status']>('bootstrapping');
   const [user, setUser] = useState<AuthUser | null>(null);
   const [session, setSession] = useState<AuthSession | null>(() => readStoredSession());
+  // Saved only where it changes: a fresh visit must not erase the saved flag,
+  // which a later Back into the signed-out user's pages still needs.
+  const [signedOut, setSignedOut] = useState(readSignedOut);
   /**
    * Bumped when something suggests it is worth trying the API again — the
    * browser came back online, the tab was brought forward. Both the bootstrap
@@ -91,6 +129,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const applySession = useCallback((nextSession: AuthSession, nextUser: AuthUser) => {
     provenToken.current = nextSession.accessToken;
+    writeSignedOut(false);
+    setSignedOut(false);
     setSession(nextSession);
     setUser(nextUser);
     setStatus('authenticated');
@@ -134,6 +174,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (result.outcome === 'valid') {
         provenToken.current = session.accessToken;
+        // A proven stored session (this tab reloaded, or another tab signed in)
+        // is a sign-in for this tab.
+        writeSignedOut(false);
+        setSignedOut(false);
         setUser(result.user);
         setStatus('authenticated');
         return;
@@ -293,6 +337,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return next;
       });
       if (!next) {
+        writeSignedOut(true);
+        setSignedOut(true);
         setUser(null);
         setStatus('anonymous');
       }
@@ -321,6 +367,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     const currentSession = session;
+    writeSignedOut(true);
+    setSignedOut(true);
     clearSession();
     await authApi.logout(currentSession?.accessToken, currentSession?.refreshToken).catch(() => undefined);
   }, [clearSession, session]);
@@ -334,8 +382,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signIn,
       signOut,
       applyAuthenticatedSession: applySession,
+      signedOut,
     }),
-    [applySession, createAccount, session, signIn, signOut, status, user],
+    [applySession, createAccount, session, signIn, signOut, signedOut, status, user],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -9,6 +9,7 @@ import { listTodaysLabAppointmentsForSession } from '../../features/appointments
 import { useBleScale } from '../../features/ble/hooks/useBleScale';
 import { getLabSessionBillingBreakdown } from '../../features/formulas/formulasApi';
 import { getActiveLabSession } from '../../features/sheer-lab/labSession';
+import { Icon } from '../../ui/icons/Icon';
 import { formatTimeOfDay } from '../Home/dashboardHelpers';
 import { c, initials, LabShell, Pill, t } from '../shared/LabShell';
 
@@ -138,7 +139,7 @@ export function NewMixScreen({ navigation }: NewMixScreenProps): React.JSX.Eleme
   );
 
   return (
-    <LabShell active="new-mix" session={session} bleStatus={ble.status} footer={footer}>
+    <LabShell session={session} bleStatus={ble.status} footer={footer}>
       <Stepper activeStep={activeStep} />
 
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
@@ -181,9 +182,13 @@ function Stepper({ activeStep }: { activeStep: number }): React.JSX.Element {
             <View style={styles.stepRow}>
               {index > 0 ? <View style={[styles.connector, step <= activeStep && styles.connectorOn]} /> : <View style={styles.connectorSpacer} />}
               <View style={[styles.stepNode, state !== 'todo' ? styles.stepNodeOn : styles.stepNodeTodo]}>
-                <Text style={[styles.stepNodeText, state !== 'todo' && styles.stepNodeTextOn]}>
-                  {state === 'done' ? '✓' : String(step)}
-                </Text>
+                {state === 'done' ? (
+                  <Icon name="check" size="xs" tone="inherit" color={c.textOnPrimary} />
+                ) : (
+                  <Text style={[styles.stepNodeText, state !== 'todo' && styles.stepNodeTextOn]}>
+                    {String(step)}
+                  </Text>
+                )}
               </View>
               {index < STEPS.length - 1 ? (
                 <View style={[styles.connector, step < activeStep && styles.connectorOn]} />
@@ -230,7 +235,7 @@ function ClientStep({
           <Text style={styles.stepSubtitle}>Select an existing appointment or create a walk-in session.</Text>
         </View>
         <View style={styles.searchBox}>
-          <Text style={styles.searchGlyph}>⌕</Text>
+          <Icon name="search" size="sm" tone="muted" />
           <TextInput
             value={query}
             onChangeText={onQuery}
@@ -288,7 +293,10 @@ function ClientStep({
 
         <View style={[styles.walkinCard, styles.walkinCardDisabled]}>
           <View style={styles.walkinHead}>
-            <Text style={styles.walkinTitle}>＋ New Walk-in</Text>
+            <View style={styles.walkinTitleRow}>
+              <Icon name="plus" size="sm" tone="primary" />
+              <Text style={styles.walkinTitle}>New Walk-in</Text>
+            </View>
             <Pill label="Soon" tone="neutral" subtle />
           </View>
           <Text style={styles.muted}>Walk-in mixes need a client record before they can be billed and saved — coming soon.</Text>
@@ -297,7 +305,8 @@ function ClientStep({
             <Text style={styles.inputPlaceholderText}>e.g. Guest Customer</Text>
           </View>
           <View style={[styles.walkinButton, styles.buttonDisabled]}>
-            <Text style={styles.walkinButtonText}>＋ Create Session</Text>
+            <Icon name="plus" size="xs" tone="inherit" color={c.textOnPrimary} />
+            <Text style={styles.walkinButtonText}>Create Session</Text>
           </View>
         </View>
       </View>
@@ -346,12 +355,12 @@ function ServiceStep({
                 style={[styles.serviceTile, isSelected && styles.serviceTileSelected]}
               >
                 <View style={styles.serviceIcon}>
-                  <Text style={styles.serviceGlyph}>🎨</Text>
+                  <Icon name="flask" size={22} tone="brand" />
                 </View>
                 <Text style={styles.serviceLabel} numberOfLines={2}>
                   {name.toUpperCase()}
                 </Text>
-                {isSelected ? <Text style={styles.serviceCheck}>✓</Text> : null}
+                {isSelected ? <Icon name="check" size="xs" tone="brand" /> : null}
               </Pressable>
             );
           })}
@@ -397,7 +406,8 @@ function ActionBar({
           onPress={onStart}
           style={[styles.startButton, !canStart && styles.buttonDisabled]}
         >
-          <Text style={styles.startText}>{alreadyMixed ? 'Re-build Formula →' : 'Start Formula Build →'}</Text>
+          <Text style={styles.startText}>{alreadyMixed ? 'Re-build Formula' : 'Start Formula Build'}</Text>
+          <Icon name="arrowRight" size="xs" tone="inherit" color={c.textOnPrimary} />
         </Pressable>
       </View>
     </View>
@@ -477,7 +487,6 @@ const styles = StyleSheet.create({
     height: 40,
     minWidth: 220,
   },
-  searchGlyph: { color: c.textMuted, fontSize: 16 },
   searchInput: { flex: 1, color: c.textPrimary, fontSize: t.typography.fontSize.small, padding: 0 },
 
   // Client step
@@ -526,6 +535,7 @@ const styles = StyleSheet.create({
   walkinCard: { ...card, flexGrow: 1, flexBasis: 240, gap: t.spacing.sm, backgroundColor: c.surfaceAlt },
   walkinCardDisabled: { opacity: 0.6 },
   walkinHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  walkinTitleRow: { flexDirection: 'row', alignItems: 'center', gap: t.spacing.xs },
   walkinTitle: { color: c.textPrimary, fontSize: t.typography.fontSize.bodyLg, fontWeight: '700' },
   fieldLabel: {
     color: c.textMuted,
@@ -550,8 +560,10 @@ const styles = StyleSheet.create({
     height: 42,
     borderRadius: t.radius.inputLg,
     backgroundColor: c.primary,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: t.spacing.xs,
   },
   walkinButtonText: { color: c.textOnPrimary, fontSize: t.typography.fontSize.small, fontWeight: '700' },
 
@@ -578,7 +590,6 @@ const styles = StyleSheet.create({
     backgroundColor: c.primarySoft,
     borderColor: c.primarySoft,
   },
-  serviceGlyph: { fontSize: 22, color: c.primary },
   serviceLabel: {
     color: c.textPrimary,
     fontSize: t.typography.fontSize.micro,
@@ -586,7 +597,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
     textAlign: 'center',
   },
-  serviceCheck: { color: c.primary, fontSize: t.typography.fontSize.small, fontWeight: '700' },
 
   // Action bar
   actionBar: {
@@ -608,6 +618,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: t.spacing.lg,
     paddingVertical: t.spacing.md,
     borderRadius: t.radius.full,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: t.spacing.xs,
   },
   startText: { color: c.textOnPrimary, fontSize: t.typography.fontSize.small, fontWeight: '700' },
   // Solid muted fill (not opacity) so the primary CTA never blends toward white

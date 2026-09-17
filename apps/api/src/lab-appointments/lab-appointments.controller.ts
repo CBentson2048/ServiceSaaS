@@ -32,6 +32,7 @@ import {
   RejectBookingDto,
   RemoveAppointmentServiceDto,
   RescheduleAppointmentDto,
+  UndoCheckInDto,
 } from './dto';
 import { LabAppointmentsService } from './lab-appointments.service';
 
@@ -92,6 +93,20 @@ export class LabAppointmentsController {
     @Param('id') id: string,
   ): Promise<CheckInAppointmentResponse> {
     return this.labAppointmentsService.checkIn(actor, id);
+  }
+
+  /**
+   * Undo a mistaken check-in (checked in → accepted). Open to whoever can check a
+   * client in, audited, and refused once the visit is checked out or its services
+   * have been changed — see LabAppointmentsService.undoCheckIn.
+   */
+  @Post(':id/check-in/undo')
+  undoCheckIn(
+    @CurrentUser() actor: AuthUser,
+    @Param('id') id: string,
+    @Body() body: UndoCheckInDto,
+  ): Promise<{ appointment: StaffBookingDetail }> {
+    return this.labAppointmentsService.undoCheckIn(actor, id, body.reason);
   }
 
   /**

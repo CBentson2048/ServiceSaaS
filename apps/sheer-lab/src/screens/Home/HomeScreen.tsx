@@ -10,15 +10,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
-  RefreshControl,
-  ScrollView,
-  StatusBar,
   StyleSheet,
   Text,
   useWindowDimensions,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { RootStackParamList } from '../../app/navigation/routes';
 import { featureFlags } from '../../config/featureFlags';
@@ -26,9 +22,12 @@ import { getLabAnalyticsSummaryForSession } from '../../features/analytics/analy
 import { listTodaysLabAppointmentsForSession } from '../../features/appointments/appointmentsApi';
 import { useBleScale } from '../../features/ble/hooks/useBleScale';
 import { listLabInventoryStockForSession } from '../../features/inventory/productsApi';
-import { getActiveLabSession, logoutLabSession } from '../../features/sheer-lab/labSession';
-import { labLightTheme } from '../../theme/labTheme';
-import { TopBar } from '../shared/LabShell';
+import { getActiveLabSession } from '../../features/sheer-lab/labSession';
+import { confirmDestructive } from '../../lib/confirm';
+import { labTheme, tone as resolveTone, type ToneTriple } from '../../theme/labTheme';
+import { Icon } from '../../ui/icons/Icon';
+import type { IconName } from '../../ui/icons/paths';
+import { LabShell, useLabLayout } from '../shared/LabShell';
 import {
   activeStatusBadge,
   completedStatusBadge,
@@ -49,55 +48,31 @@ import {
   type StatusTone,
 } from './dashboardHelpers';
 
-const t = labLightTheme;
+const t = labTheme;
 const c = t.colors;
 
 type HomeScreenProps = NativeStackScreenProps<RootStackParamList, 'Home'>;
 
 type WorkingRoute = 'NewMix' | 'Formula' | 'FormulaHistory' | 'Inventory' | 'BillingRules' | 'DevicePairing' | 'Settings';
 
-type NavTarget = { kind: 'route'; route: WorkingRoute } | { kind: 'soon' } | { kind: 'current' };
+type NavTarget = { kind: 'route'; route: WorkingRoute } | { kind: 'soon' };
 
 interface NavEntry {
   key: string;
   label: string;
-  glyph: string;
+  icon: IconName;
   target: NavTarget;
-}
-
-// Inventory and Billing Rules are owner/manager-only (stylists get a lock
-// screen), so they only become live destinations for those roles — stylists
-// keep the "Soon" affordance rather than being sent to a wall.
-function buildNavItems(canManageOps: boolean): NavEntry[] {
-  const inventoryTarget: NavTarget = canManageOps ? { kind: 'route', route: 'Inventory' } : { kind: 'soon' };
-  const billingTarget: NavTarget = canManageOps ? { kind: 'route', route: 'BillingRules' } : { kind: 'soon' };
-  const items: NavEntry[] = [
-    { key: 'dashboard', label: 'Dashboard', glyph: '▦', target: { kind: 'current' } },
-    { key: 'new-mix', label: 'New Mix', glyph: '🧪', target: { kind: 'route', route: 'NewMix' } },
-    { key: 'history', label: 'History', glyph: '🕘', target: { kind: 'route', route: 'FormulaHistory' } },
-    { key: 'inventory', label: 'Inventory', glyph: '📦', target: inventoryTarget },
-    { key: 'billing', label: 'Billing Rules', glyph: '🧾', target: billingTarget },
-    { key: 'audit', label: 'Audit Trail', glyph: '🛡️', target: { kind: 'soon' } },
-  ];
-  // Billing Rules and Audit Trail are hidden from the UI behind their feature
-  // flags for every role until the flags are flipped on.
-  return items.filter(
-    (item) =>
-      (item.key !== 'inventory' || canManageOps) &&
-      (item.key !== 'billing' || featureFlags.billingRules) &&
-      (item.key !== 'audit' || featureFlags.auditTrail),
-  );
 }
 
 function buildQuickTools(canManageOps: boolean): NavEntry[] {
   const inventoryTarget: NavTarget = canManageOps ? { kind: 'route', route: 'Inventory' } : { kind: 'soon' };
   const billingTarget: NavTarget = canManageOps ? { kind: 'route', route: 'BillingRules' } : { kind: 'soon' };
   const tools: NavEntry[] = [
-    { key: 'reweigh', label: 'Reweigh Tool', glyph: '⚖️', target: { kind: 'route', route: 'DevicePairing' } },
-    { key: 'formula-search', label: 'Formula Search', glyph: '🔍', target: { kind: 'route', route: 'FormulaHistory' } },
-    { key: 'add-inventory', label: 'Add Inventory', glyph: '➕', target: inventoryTarget },
-    { key: 'billing-settings', label: 'Billing Rules', glyph: '🧾', target: billingTarget },
-    { key: 'lab-audit', label: 'Lab Audit', glyph: '🛡️', target: { kind: 'soon' } },
+    { key: 'reweigh', label: 'Reweigh Tool', icon: 'scale', target: { kind: 'route', route: 'DevicePairing' } },
+    { key: 'formula-search', label: 'Formula Search', icon: 'search', target: { kind: 'route', route: 'FormulaHistory' } },
+    { key: 'add-inventory', label: 'Add Inventory', icon: 'plus', target: inventoryTarget },
+    { key: 'billing-settings', label: 'Billing Rules', icon: 'receipt', target: billingTarget },
+    { key: 'lab-audit', label: 'Lab Audit', icon: 'shield', target: { kind: 'soon' } },
   ];
   // Billing Rules and the Lab Audit tool are hidden behind their feature flags
   // for every role until the flags are flipped on.
@@ -109,62 +84,24 @@ function buildQuickTools(canManageOps: boolean): NavEntry[] {
   );
 }
 
-type LayoutMode = 'phone' | 'tablet' | 'wide';
-
-interface DashboardLayout {
-  mode: LayoutMode;
-  sidebarWidth: number;
-  railWidth: number;
-  pad: number;
-  gap: number;
-  insightsRow: boolean;
-}
-
-/**
- * Breakpoints tuned for the device range this app runs on:
- *  - phone (<700pt): no sidebar, horizontal nav scroller, single column.
- *  - tablet (700–1023pt): iPad portrait / small tablets — slim sidebar + a
- *    single stacked content column. Insight tiles flow in a row once there is
- *    room (>=880pt).
- *  - wide (>=1024pt): iPad landscape and up — the 3-column mockup layout. The
- *    sidebar and right-rail widths scale with the viewport so it breathes from
- *    a 1024pt iPad through a 12.9"/desktop without fixed-width cramping.
- * useWindowDimensions re-renders on rotation, so the mode follows orientation.
- */
-function getDashboardLayout(width: number): DashboardLayout {
-  if (width >= 1024) {
-    const large = width >= 1280;
-    return {
-      mode: 'wide',
-      sidebarWidth: large ? 248 : 216,
-      railWidth: clampNumber(Math.round(width * 0.3), 300, 380),
-      pad: large ? t.spacing.xl : t.spacing.base,
-      gap: t.spacing.lg,
-      insightsRow: false,
-    };
-  }
-  if (width >= 700) {
-    return {
-      mode: 'tablet',
-      sidebarWidth: 208,
-      railWidth: 0,
-      pad: t.spacing.base,
-      gap: t.spacing.base,
-      insightsRow: width >= 880,
-    };
-  }
-  return { mode: 'phone', sidebarWidth: 0, railWidth: 0, pad: t.spacing.base, gap: t.spacing.base, insightsRow: false };
-}
-
 function clampNumber(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
 export function HomeScreen({ navigation }: HomeScreenProps): React.JSX.Element {
   const { width } = useWindowDimensions();
-  const layout = getDashboardLayout(width);
+  // The shell owns the breakpoints (phone <700pt, tablet 700-1023pt, wide
+  // >=1024pt) and the sidebar width and padding they imply. The two below are
+  // Home's own content layout, derived from the same width so they still
+  // follow rotation: the right rail exists only in the wide layout and scales
+  // with the viewport, so it breathes from a 1024pt iPad up to a
+  // 12.9"/desktop; the insight tiles flow into a row on a tablet with room for
+  // it (>=880pt), while the wide layout stacks them inside the narrow rail.
+  const layout = useLabLayout();
   const isWide = layout.mode === 'wide';
   const showSidebar = layout.mode !== 'phone';
+  const railWidth = isWide ? clampNumber(Math.round(width * 0.3), 300, 380) : 0;
+  const insightsRow = layout.mode === 'tablet' && width >= 880;
   const ble = useBleScale();
 
   const [session, setSession] = useState<PinUnlockResponse | undefined>();
@@ -230,11 +167,6 @@ export function HomeScreen({ navigation }: HomeScreenProps): React.JSX.Element {
     void load();
   }, [load]);
 
-  const handleLogout = useCallback(async () => {
-    if (session) await logoutLabSession(session.sessionId);
-    navigation.replace('Auth');
-  }, [navigation, session]);
-
   const goToRoute = useCallback(
     (route: WorkingRoute) => {
       switch (route) {
@@ -256,9 +188,6 @@ export function HomeScreen({ navigation }: HomeScreenProps): React.JSX.Element {
         case 'DevicePairing':
           navigation.navigate('DevicePairing');
           break;
-        case 'Settings':
-          navigation.navigate('Settings');
-          break;
       }
     },
     [navigation],
@@ -272,8 +201,23 @@ export function HomeScreen({ navigation }: HomeScreenProps): React.JSX.Element {
   );
 
   const openFormulaForBooking = useCallback(
-    (booking: StaffBookingSummary) => {
+    async (booking: StaffBookingSummary) => {
       if (!session) return;
+      // "Completed Today" reads as a RECORD view, and tapping a row here used
+      // to start a brand-new blank draft against an appointment that had
+      // already been mixed and billed — silently, with no indication that this
+      // was a second mix rather than a look at the first. Remixing may be
+      // legitimate (a correction), so the affordance stays; it just cannot
+      // happen by accident any more.
+      if (isCompletedBooking(booking)) {
+        const confirmed = await confirmDestructive({
+          title: `Start a new mix for ${booking.clientDisplayName}?`,
+          message:
+            'This appointment is already completed. Opening it here starts a NEW, empty formula rather than showing the one that was billed — use Formula History to review the existing record.',
+          confirmLabel: 'Start a new mix',
+        });
+        if (!confirmed) return;
+      }
       navigation.navigate('Formula', {
         entryContext: {
           labSessionId: session.sessionId,
@@ -296,77 +240,73 @@ export function HomeScreen({ navigation }: HomeScreenProps): React.JSX.Element {
   const scale = mapScaleState(ble);
   const canSeeInsights = session?.role === 'owner' || session?.role === 'manager';
   const canManageOps = session?.role === 'owner' || session?.role === 'manager';
-  const navItems = useMemo(() => buildNavItems(canManageOps), [canManageOps]);
   const quickTools = useMemo(() => buildQuickTools(canManageOps), [canManageOps]);
 
+  // The first load still takes over the whole screen rather than showing empty
+  // chrome. The safe area and the StatusBar are not this screen's to set — the
+  // shell owns them once there is a session, and AppProviders already declares
+  // the same light-content/background pair app-wide.
   if (loading && !session) {
     return (
-      <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
-        <StatusBar barStyle="light-content" backgroundColor={c.background} />
+      <View style={styles.screen}>
         <View style={styles.centerFill}>
           <ActivityIndicator color={c.primary} />
           <Text style={styles.mutedText}>Loading your lab…</Text>
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   const rail = (
     <>
       <ScalePanel scale={scale} onPair={() => goToRoute('DevicePairing')} />
-      <ManagerInsights insights={insights} canSee={Boolean(canSeeInsights)} horizontal={layout.insightsRow} />
-      <InventoryStatusPanel items={displayStock} hasStock={stock.length > 0} failed={stockFailed} />
+      <ManagerInsights insights={insights} canSee={Boolean(canSeeInsights)} horizontal={insightsRow} />
+      <InventoryStatusPanel
+        items={displayStock}
+        hasStock={stock.length > 0}
+        failed={stockFailed}
+        loading={loading}
+      />
     </>
   );
 
   const main = (
     <>
-      <ActiveSessionsPanel bookings={activeBookings} onOpen={openFormulaForBooking} />
-      <CompletedTodayPanel bookings={completedBookings} isWide={isWide} onOpen={openFormulaForBooking} />
+      <ActiveSessionsPanel bookings={activeBookings} loading={loading} onOpen={(booking) => void openFormulaForBooking(booking)} />
+      <CompletedTodayPanel
+        bookings={completedBookings}
+        isWide={isWide}
+        loading={loading}
+        onOpen={(booking) => void openFormulaForBooking(booking)}
+      />
       <QuickToolsPanel fixedTiles={showSidebar} tools={quickTools} onSelect={handleNav} />
     </>
   );
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
-      <StatusBar barStyle="light-content" backgroundColor={c.background} />
-      <TopBar session={session} bleStatus={ble.status} onRefresh={handleRefresh} onSettings={() => goToRoute('Settings')} />
+    <LabShell
+      session={session}
+      bleStatus={ble.status}
+      refreshing={refreshing}
+      onRefresh={handleRefresh}
+      footer={<Footer session={session} now={now} bleConnected={scale.connected} />}
+    >
+      {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
-      <View style={[styles.body, showSidebar ? styles.bodyRow : styles.bodyColumn]}>
-        {showSidebar ? (
-          <Sidebar width={layout.sidebarWidth} items={navItems} onNav={handleNav} onSignOut={handleLogout} />
-        ) : null}
+      <WelcomeHero session={session} scale={scale} stockCount={stock.length} onStartMix={() => goToRoute('NewMix')} />
 
-        <ScrollView
-          style={styles.scroll}
-          contentContainerStyle={{ padding: layout.pad, paddingBottom: t.spacing['3xl'] }}
-          showsVerticalScrollIndicator={false}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={c.primary} />}
-        >
-          <View style={[styles.contentWrap, { gap: layout.gap }]}>
-            {!showSidebar ? <NavScroller items={navItems} onNav={handleNav} onSignOut={handleLogout} /> : null}
-
-            {error ? <Text style={styles.errorText}>{error}</Text> : null}
-
-            <WelcomeHero session={session} scale={scale} stockCount={stock.length} onStartMix={() => goToRoute('NewMix')} />
-
-            {isWide ? (
-              <View style={[styles.mainRow, { gap: layout.gap }]}>
-                <View style={styles.mainColumn}>{main}</View>
-                <View style={[styles.rightRail, { width: layout.railWidth }]}>{rail}</View>
-              </View>
-            ) : (
-              <View style={[styles.stack, { gap: layout.gap }]}>
-                {main}
-                {rail}
-              </View>
-            )}
-
-            <Footer session={session} now={now} bleConnected={scale.connected} />
-          </View>
-        </ScrollView>
-      </View>
-    </SafeAreaView>
+      {isWide ? (
+        <View style={[styles.mainRow, { gap: layout.gap }]}>
+          <View style={styles.mainColumn}>{main}</View>
+          <View style={[styles.rightRail, { width: railWidth }]}>{rail}</View>
+        </View>
+      ) : (
+        <View style={[styles.stack, { gap: layout.gap }]}>
+          {main}
+          {rail}
+        </View>
+      )}
+    </LabShell>
   );
 }
 
@@ -415,95 +355,6 @@ function mapScaleState(ble: ReturnType<typeof useBleScale>): ScaleView {
 }
 
 // ---------------------------------------------------------------------------
-// Chrome: top bar, sidebar, mobile nav
-// ---------------------------------------------------------------------------
-
-
-function Sidebar({
-  width,
-  items,
-  onNav,
-  onSignOut,
-}: {
-  width: number;
-  items: NavEntry[];
-  onNav: (target: NavTarget) => void;
-  onSignOut: () => void;
-}): React.JSX.Element {
-  return (
-    <View style={[styles.sidebar, { width }]}>
-      <View style={styles.sidebarNav}>
-        {items.map((item) => {
-          const active = item.target.kind === 'current';
-          const soon = item.target.kind === 'soon';
-          return (
-            <Pressable
-              key={item.key}
-              accessibilityRole="button"
-              disabled={soon}
-              onPress={() => onNav(item.target)}
-              style={[styles.navItem, active && styles.navItemActive, soon && styles.navItemSoon]}
-            >
-              <Text style={[styles.navGlyph, styles.sidebarGlyph, active && styles.sidebarGlyphActive]}>{item.glyph}</Text>
-              <Text style={[styles.navLabel, active && styles.navLabelActive]} numberOfLines={1}>
-                {item.label}
-              </Text>
-              {soon ? <Text style={styles.sidebarSoonTag}>Soon</Text> : null}
-            </Pressable>
-          );
-        })}
-      </View>
-
-      <Pressable accessibilityRole="button" onPress={onSignOut} style={styles.signOut}>
-        <Text style={styles.signOutGlyph}>⏻</Text>
-        <Text style={styles.signOutLabel}>Sign Out</Text>
-      </Pressable>
-    </View>
-  );
-}
-
-function NavScroller({
-  items,
-  onNav,
-  onSignOut,
-}: {
-  items: NavEntry[];
-  onNav: (target: NavTarget) => void;
-  onSignOut: () => void;
-}): React.JSX.Element {
-  return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={styles.navScroller}
-      style={styles.navScrollerWrap}
-    >
-      {items.map((item) => {
-        const active = item.target.kind === 'current';
-        const soon = item.target.kind === 'soon';
-        return (
-          <Pressable
-            key={item.key}
-            accessibilityRole="button"
-            disabled={soon}
-            onPress={() => onNav(item.target)}
-            style={[styles.navChip, active && styles.navChipActive, soon && styles.navItemSoon]}
-          >
-            <Text style={styles.navGlyph}>{item.glyph}</Text>
-            <Text style={[styles.navChipLabel, active && styles.navLabelActive]}>{item.label}</Text>
-            {soon ? <Text style={styles.soonTag}>Soon</Text> : null}
-          </Pressable>
-        );
-      })}
-      <Pressable accessibilityRole="button" onPress={onSignOut} style={styles.navChip}>
-        <Text style={styles.navGlyph}>⏻</Text>
-        <Text style={styles.navChipLabel}>Sign Out</Text>
-      </Pressable>
-    </ScrollView>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Hero / Welcome
 // ---------------------------------------------------------------------------
 
@@ -530,7 +381,7 @@ function WelcomeHero({
           {scaleLine} · {stockLine}. Ready for the next masterpiece.
         </Text>
         <Pressable accessibilityRole="button" onPress={onStartMix} style={styles.heroButton}>
-          <Text style={styles.heroButtonPlus}>＋</Text>
+          <Icon name="plus" size="sm" tone="inherit" color={c.onHeroButtonText} />
           <Text style={styles.heroButtonText}>Start new mix</Text>
         </Pressable>
       </View>
@@ -627,15 +478,22 @@ function InventoryStatusPanel({
   items,
   hasStock,
   failed,
+  loading,
 }: {
   items: InventoryLocationStock[];
   hasStock: boolean;
   failed: boolean;
+  loading: boolean;
 }): React.JSX.Element {
   return (
     <View style={styles.card}>
       <Text style={styles.eyebrow}>Inventory Status</Text>
-      {failed ? (
+      {/* This panel already separated failure from empty, which the two booking
+          panels did not. It still could not say "not known yet", so a cold open
+          announced that no stock was configured at this location. */}
+      {loading && !hasStock && !failed ? (
+        <Text style={styles.mutedText}>Loading stock levels…</Text>
+      ) : failed ? (
         <Text style={styles.mutedText}>Stock levels could not be loaded. Pull to refresh to try again.</Text>
       ) : !hasStock ? (
         <Text style={styles.mutedText}>No stock has been initialised for this location yet.</Text>
@@ -673,15 +531,24 @@ function InventoryStatusPanel({
 
 function ActiveSessionsPanel({
   bookings,
+  loading,
   onOpen,
 }: {
   bookings: StaffBookingSummary[];
+  /** UNKNOWN IS NOT NONE — see the empty-state note below. */
+  loading: boolean;
   onOpen: (booking: StaffBookingSummary) => void;
 }): React.JSX.Element {
   return (
     <View style={styles.card}>
       <SectionHeading title="Active Sessions" count={bookings.length} />
-      {bookings.length === 0 ? (
+      {/* The empty state used to be `bookings.length === 0` alone. `bookings`
+          starts as [], so on every cold open the dashboard stated as fact that
+          nobody was in the chair — while the request that would say otherwise
+          was still in flight. Distinguish "we do not know yet" from "none". */}
+      {loading && bookings.length === 0 ? (
+        <Text style={styles.mutedText}>Loading sessions…</Text>
+      ) : bookings.length === 0 ? (
         <Text style={styles.mutedText}>No clients are in the chair right now.</Text>
       ) : (
         <View style={styles.sessionList}>
@@ -718,16 +585,20 @@ function ActiveSessionsPanel({
 function CompletedTodayPanel({
   bookings,
   isWide,
+  loading,
   onOpen,
 }: {
   bookings: StaffBookingSummary[];
   isWide: boolean;
+  loading: boolean;
   onOpen: (booking: StaffBookingSummary) => void;
 }): React.JSX.Element {
   return (
     <View style={styles.card}>
       <SectionHeading title="Completed Today" count={bookings.length} />
-      {bookings.length === 0 ? (
+      {loading && bookings.length === 0 ? (
+        <Text style={styles.mutedText}>Loading today’s appointments…</Text>
+      ) : bookings.length === 0 ? (
         <Text style={styles.mutedText}>No appointments have been completed yet today.</Text>
       ) : (
         <View>
@@ -811,7 +682,7 @@ function QuickToolsPanel({
               onPress={() => onSelect(tool.target)}
               style={[styles.toolTile, fixedTiles ? styles.toolTileTablet : styles.toolTilePhone, soon && styles.navItemSoon]}
             >
-              <Text style={styles.toolGlyph}>{tool.glyph}</Text>
+              <Icon name={tool.icon} size={22} tone="primary" />
               <Text style={styles.toolLabel} numberOfLines={2}>
                 {tool.label}
               </Text>
@@ -921,19 +792,11 @@ function Pill({
   );
 }
 
-function toneStyle(tone: StatusTone): { text: string; bg: string; border: string } {
-  switch (tone) {
-    case 'success':
-      return { text: c.successText, bg: c.successBg, border: c.successBorder };
-    case 'warning':
-      return { text: c.warningText, bg: c.warningBg, border: c.warningBorder };
-    case 'danger':
-      return { text: c.dangerText, bg: c.dangerBg, border: c.dangerBorder };
-    case 'brand':
-      return { text: c.primary, bg: c.primarySoft, border: c.primarySoft };
-    default:
-      return { text: c.textSecondary, bg: c.surfaceAlt, border: c.border };
-  }
+function toneStyle(tone: StatusTone): ToneTriple {
+  // Delegates to the ONE implementation in src/theme/labTheme.ts. This was a
+  // five-case switch, and it existed in four copies that had drifted apart on
+  // `brand` and `neutral`.
+  return resolveTone(tone);
 }
 
 function tierBarStyle(tone: StatusTone): { backgroundColor: string } {
@@ -964,25 +827,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: t.spacing.sm,
   },
-  body: {
-    flex: 1,
-  },
-  bodyRow: {
-    flexDirection: 'row',
-  },
-  bodyColumn: {
-    flexDirection: 'column',
-  },
-  scroll: {
-    flex: 1,
-  },
-  // Caps content on very large displays (e.g. 12.9" iPad, desktop) and centres
-  // it so the dashboard never stretches into unreadable line lengths.
-  contentWrap: {
-    width: '100%',
-    maxWidth: 1600,
-    alignSelf: 'center',
-  },
   stack: {
     gap: t.spacing.base,
   },
@@ -998,189 +842,10 @@ const styles = StyleSheet.create({
     gap: t.spacing.lg,
   },
 
-  // Top bar
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: t.spacing.base,
-    paddingVertical: t.spacing.md,
-    backgroundColor: c.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: c.border,
-    flexWrap: 'wrap',
-    gap: t.spacing.sm,
-  },
-  brandRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: t.spacing.sm,
-  },
-  brandText: {
-    color: c.textPrimary,
-    fontSize: t.typography.fontSize.subtitle,
-    fontWeight: '700',
-    letterSpacing: 1,
-  },
-  topActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: t.spacing.sm,
-    flexWrap: 'wrap',
-  },
-  iconButton: {
-    width: 36,
-    height: 36,
-    borderRadius: t.radius.full,
-    borderWidth: 1,
-    borderColor: c.border,
-    backgroundColor: c.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  iconButtonGlyph: {
-    fontSize: 16,
-    color: c.textSecondary,
-  },
-  userRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: t.spacing.sm,
-    maxWidth: 200,
-  },
-  avatar: {
-    width: 34,
-    height: 34,
-    borderRadius: t.radius.full,
-    backgroundColor: c.primarySoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: {
-    color: c.primary,
-    fontWeight: '700',
-    fontSize: t.typography.fontSize.caption,
-  },
-  userName: {
-    color: c.textPrimary,
-    fontWeight: '600',
-    fontSize: t.typography.fontSize.small,
-  },
-  userRole: {
-    color: c.textMuted,
-    fontSize: t.typography.fontSize.micro,
-  },
-
-  // Sidebar
-  sidebar: {
-    backgroundColor: c.sidebar,
-    borderRightWidth: 1,
-    borderRightColor: c.sidebarBorder,
-    paddingVertical: t.spacing.lg,
-    paddingHorizontal: t.spacing.md,
-    justifyContent: 'space-between',
-  },
-  sidebarNav: {
-    gap: t.spacing.xs,
-  },
-  navItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: t.spacing.md,
-    paddingVertical: t.spacing.md,
-    paddingHorizontal: t.spacing.md,
-    borderRadius: t.radius.card,
-  },
-  // Active item reads as a solid brand pill (rounded via `navItem.borderRadius`)
-  // with white text/glyph, rather than the older soft-tinted fill.
-  navItemActive: {
-    backgroundColor: c.sidebarActive,
-  },
+  // All that survives of the old private nav: it now only dims a Quick Tools
+  // tile whose destination does not exist yet.
   navItemSoon: {
     opacity: 0.55,
-  },
-  navGlyph: {
-    fontSize: 16,
-  },
-  // Lightens non-emoji glyphs (e.g. the ▦ dashboard mark) on the dark rail;
-  // colour emoji ignore the tint either way.
-  sidebarGlyph: {
-    color: c.sidebarText,
-  },
-  // On the filled active pill the ▦-style glyph flips to white to match the label.
-  sidebarGlyphActive: {
-    color: c.sidebarActiveText,
-  },
-  navLabel: {
-    flex: 1,
-    color: c.sidebarText,
-    fontSize: t.typography.fontSize.small,
-    fontWeight: '600',
-  },
-  navLabelActive: {
-    color: c.sidebarActiveText,
-    fontWeight: '700',
-  },
-  soonTag: {
-    color: c.textMuted,
-    fontSize: t.typography.fontSize.micro,
-    fontWeight: '600',
-  },
-  // Sidebar sits on the deep purple rail, so its "Soon" tag needs a light tone
-  // (the shared `soonTag` above stays dark for the mobile nav scroller chips).
-  sidebarSoonTag: {
-    color: c.sidebarTextMuted,
-    fontSize: t.typography.fontSize.micro,
-    fontWeight: '600',
-  },
-  signOut: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: t.spacing.md,
-    paddingVertical: t.spacing.md,
-    paddingHorizontal: t.spacing.md,
-    borderRadius: t.radius.card,
-    borderWidth: 1,
-    borderColor: c.sidebarBorder,
-  },
-  signOutGlyph: {
-    fontSize: 16,
-    color: c.sidebarText,
-  },
-  signOutLabel: {
-    color: c.sidebarText,
-    fontWeight: '600',
-    fontSize: t.typography.fontSize.small,
-  },
-
-  // Mobile nav scroller
-  navScrollerWrap: {
-    marginBottom: t.spacing.xs,
-  },
-  navScroller: {
-    flexDirection: 'row',
-    gap: t.spacing.sm,
-    paddingVertical: t.spacing.xs,
-  },
-  navChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: t.spacing.xs,
-    paddingVertical: t.spacing.sm,
-    paddingHorizontal: t.spacing.md,
-    borderRadius: t.radius.full,
-    borderWidth: 1,
-    borderColor: c.border,
-    backgroundColor: c.surface,
-  },
-  navChipActive: {
-    backgroundColor: c.primarySoft,
-    borderColor: c.primarySoft,
-  },
-  navChipLabel: {
-    color: c.textSecondary,
-    fontSize: t.typography.fontSize.small,
-    fontWeight: '600',
   },
 
   // Hero
@@ -1215,11 +880,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: t.spacing.lg,
     borderRadius: t.radius.full,
     marginTop: t.spacing.xs,
-  },
-  heroButtonPlus: {
-    color: c.onHeroButtonText,
-    fontSize: 16,
-    fontWeight: '700',
   },
   heroButtonText: {
     color: c.onHeroButtonText,
@@ -1520,9 +1180,6 @@ const styles = StyleSheet.create({
   toolTilePhone: {
     flexBasis: '47%',
     flexGrow: 1,
-  },
-  toolGlyph: {
-    fontSize: 22,
   },
   toolLabel: {
     color: c.textPrimary,

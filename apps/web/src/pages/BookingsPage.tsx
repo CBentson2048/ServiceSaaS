@@ -43,6 +43,7 @@ import {
   rescheduleBooking,
   updateRotaAbsence,
   deleteRotaAbsence,
+  undoCheckInBooking,
 } from '../auth/api';
 import { useAuth } from '../auth/AuthProvider';
 import { useLocationScope } from '../components/LocationScopeContext';
@@ -247,6 +248,42 @@ export function BookingsPage() {
         if (err instanceof ApiRequestError) setError(err.message);
         else if (err instanceof Error) setError(err.message);
         else setError('Could not check in the client');
+      } finally {
+        setActionLoadingId(null);
+      }
+    },
+    [accessToken, actionLoadingId],
+  );
+
+  /**
+   * Undo a mistaken check-in (wrong client, or tapped too early).
+   *
+   * Confirmed first because it notifies the stylist. The API alone decides whether
+   * the undo is allowed — it refuses once the visit is checked out or its services
+   * have been changed — so its message is shown verbatim.
+   */
+  const handleUndoCheckIn = useCallback(
+    async (booking: StaffBookingSummary) => {
+      if (!accessToken || actionLoadingId) return;
+      const confirmed = window.confirm(
+        `Undo check-in for ${booking.clientDisplayName}?\n\n` +
+          'The appointment goes back to confirmed, and their stylist is told the client has not arrived.',
+      );
+      if (!confirmed) return;
+
+      setActionLoadingId(booking.id);
+      setCheckoutMessage(null);
+      setError(null);
+      try {
+        const result = await undoCheckInBooking(accessToken, booking.id);
+        setBookings((current) =>
+          current.map((entry) => (entry.id === booking.id ? { ...entry, ...result.appointment } : entry)),
+        );
+        setCheckoutMessage(`Check-in undone. ${result.appointment.clientDisplayName} is no longer marked as arrived.`);
+      } catch (err: unknown) {
+        if (err instanceof ApiRequestError) setError(err.message);
+        else if (err instanceof Error) setError(err.message);
+        else setError('Could not undo the check-in');
       } finally {
         setActionLoadingId(null);
       }
@@ -966,6 +1003,7 @@ export function BookingsPage() {
               setProfileClient({ id: booking.clientProfileId, name: booking.clientDisplayName })
             }
             onCheckIn={(booking) => void handleCheckIn(booking)}
+            onUndoCheckIn={(booking) => void handleUndoCheckIn(booking)}
             onMarkNoShow={(booking) => void handleMarkNoShow(booking)}
             onCheckOut={(booking) => void handleComplete(booking)}
             onEditBooking={(booking) => setRescheduleTarget(booking)}

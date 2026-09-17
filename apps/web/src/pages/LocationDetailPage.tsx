@@ -23,6 +23,7 @@ import {
 import { useAuth } from '../auth/AuthProvider';
 import { useLocationRouteSync } from '../components/LocationScopeContext';
 import { LocationSettingsTabs } from '../components/locations/LocationSettingsTabs';
+import { salonBookingUrl } from './bookingLinks';
 
 export function LocationDetailPage() {
   const auth = useAuth();
@@ -114,7 +115,7 @@ export function LocationDetailPage() {
           <LocationSettingsTabs locationId={location.id} />
 
           {/* Salon Code — public-facing, immutable identifier */}
-          <SalonCodeCard code={location.publicCode} />
+          <SalonCodeCard code={location.publicCode} active={location.isActive} />
 
           {/* Contact summary */}
           <section className="rounded-card-lg border border-border bg-surface px-5 py-5">
@@ -428,7 +429,7 @@ function ProductBillingSection({
                 return (
                   <label
                     key={value}
-                    className={`group flex cursor-pointer flex-col gap-1 rounded-input-lg border px-4 py-3 transition-colors ${
+                    className={`group flex cursor-pointer flex-col gap-1 rounded-input-lg border px-4 py-3 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-primary/30 ${
                       selected
                         ? 'border-primary bg-primary/[0.05]'
                         : 'border-border bg-surface hover:border-border-strong hover:bg-surface-alt/50'
@@ -986,7 +987,7 @@ function TaxSettingsSection({
                 return (
                   <label
                     key={value}
-                    className={`group flex cursor-pointer flex-col gap-1 rounded-input-lg border px-4 py-3 transition-colors ${
+                    className={`group flex cursor-pointer flex-col gap-1 rounded-input-lg border px-4 py-3 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-primary/30 ${
                       selected
                         ? 'border-primary bg-primary/[0.05]'
                         : 'border-border bg-surface hover:border-border-strong hover:bg-surface-alt/50'
@@ -1281,14 +1282,15 @@ function fmtGbp(amount: number): string {
   return new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(amount);
 }
 
-function SalonCodeCard({ code }: { code: string }) {
-  const [copied, setCopied] = useState(false);
+function SalonCodeCard({ code, active }: { code: string; active: boolean }) {
+  const [copied, setCopied] = useState<'code' | 'link' | null>(null);
+  const bookingUrl = salonBookingUrl(window.location.origin, code);
 
-  async function copy() {
+  async function copy(what: 'code' | 'link') {
     try {
-      await navigator.clipboard.writeText(code);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
+      await navigator.clipboard.writeText(what === 'code' ? code : bookingUrl);
+      setCopied(what);
+      window.setTimeout(() => setCopied(null), 1500);
     } catch {
       // Clipboard can be unavailable (insecure context / permissions); ignore.
     }
@@ -1311,12 +1313,38 @@ function SalonCodeCard({ code }: { code: string }) {
           </span>
           <button
             type="button"
-            onClick={copy}
+            onClick={() => void copy('code')}
             className="inline-flex h-9 items-center justify-center rounded-pill border border-border-strong bg-surface px-4 text-[13px] font-medium text-text-secondary transition hover:bg-surface-alt"
           >
-            {copied ? 'Copied' : 'Copy'}
+            {copied === 'code' ? 'Copied' : 'Copy'}
           </button>
         </div>
+      </div>
+
+      <div className="mt-4 flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <h3 className="text-[13px] font-medium text-text-primary">Booking link</h3>
+          <p className="mt-1 text-[13px] text-text-secondary">
+            {active
+              ? 'Opens this salon\'s services, so clients can pick a stylist and time and book. No sign-in needed to browse.'
+              : 'This location is inactive, so the link will not open until it is active again.'}
+          </p>
+          <a
+            href={bookingUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-1 block truncate font-mono text-[13px] text-primary-deep hover:underline"
+          >
+            {bookingUrl}
+          </a>
+        </div>
+        <button
+          type="button"
+          onClick={() => void copy('link')}
+          className="inline-flex h-9 shrink-0 items-center justify-center rounded-pill border border-border-strong bg-surface px-4 text-[13px] font-medium text-text-secondary transition hover:bg-surface-alt"
+        >
+          {copied === 'link' ? 'Copied' : 'Copy link'}
+        </button>
       </div>
     </section>
   );

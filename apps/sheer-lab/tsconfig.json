@@ -3,6 +3,11 @@
   "compilerOptions": {
     "strict": true,
     "jsx": "react-jsx",
+    // The @react-native/typescript-config base narrows `types` to ["jest"], so
+    // the structural specs' fs/path/__dirname would not resolve. @types/node is
+    // already in the hoisted root install, so this adds no dependency — and it
+    // keeps `pnpm typecheck` checking the specs rather than skipping them.
+    "types": ["jest", "node"],
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"],

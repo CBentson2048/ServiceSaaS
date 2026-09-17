@@ -15,7 +15,12 @@ export function DashboardLayout() {
           {/* Week 5: persistent front-desk quick actions — pinned between the
               top bar and the page so they survive every navigation/scroll. */}
           <QuickActionBar />
-          <main className="min-h-0 flex-1 overflow-y-auto">
+          {/* `relative` makes <main> the containing block for any absolutely
+              positioned descendant that has no positioned parent of its own
+              (e.g. an `sr-only` radio). Without it such an element is placed
+              against the document, escapes this scroller, and stretches the
+              page — a second scrollbar that drags the whole shell up. */}
+          <main className="relative min-h-0 flex-1 overflow-y-auto">
             <Outlet />
           </main>
         </div>

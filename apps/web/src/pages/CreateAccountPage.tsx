@@ -1,12 +1,15 @@
-import type { FormEvent} from 'react';
-import { useState } from 'react';
+import type { ChangeEvent, FormEvent } from 'react';
+import { useId, useState } from 'react';
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import type { LoginResponse } from '@sheer/domain';
 import { useAuth } from '../auth/AuthProvider';
 import { createClientBookingAccount } from '../auth/api';
 import { BrandLogo } from '../components/BrandLogo';
+import { PasswordInput } from '../design';
 import {
+  type BookingClient,
   readClientBookingSelection,
+  sessionBookingClient,
   updateClientBookingSelection,
 } from './clientBookingFlow';
 
@@ -35,18 +38,20 @@ export function CreateAccountPage() {
   }
 
   if (auth.user) {
-    if (bookingMode && auth.session && auth.user.clientProfileId) {
-      const name = splitFullName(auth.user.profile.fullName);
-      completeBookingAuth(
-        { session: auth.session, user: auth.user },
-        {
-          firstName: name.firstName,
-          lastName: name.lastName,
-          phone: auth.user.profile.phone,
-        },
-      );
+    if (!bookingMode) return <Navigate to="/" replace />;
+    const sessionClient = sessionBookingClient(auth.user, bookingSelection?.location?.businessId);
+    if (!sessionClient || !auth.session) {
+      // Signed in, but not as a client of this salon: the sign-in page explains
+      // and signs the same account in for this booking.
+      return <Navigate to="/login?booking=1" replace />;
     }
-    return <Navigate to={bookingMode ? '/book/review' : '/'} replace />;
+    const name = splitFullName(auth.user.profile.fullName);
+    completeBookingAuth({ session: auth.session, user: auth.user }, sessionClient, {
+      firstName: name.firstName,
+      lastName: name.lastName,
+      phone: auth.user.profile.phone,
+    });
+    return <Navigate to="/book/review" replace />;
   }
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
@@ -67,7 +72,7 @@ export function CreateAccountPage() {
           password,
           communicationPreference,
         });
-        completeBookingAuth(response, {
+        completeBookingAuth(response, response.bookingClient, {
           firstName: trimmedFirstName,
           lastName: trimmedLastName,
           phone: phone.trim() || undefined,
@@ -187,25 +192,40 @@ function Field({
   autoComplete?: string;
   required?: boolean;
 }) {
+  const id = useId();
+  const inputProps = {
+    id,
+    className:
+      'w-full rounded-input-lg border border-[#E5D9CC] bg-[#FFFCF8] px-4 py-3 text-sm outline-none transition focus:border-primary',
+    autoComplete,
+    value,
+    onChange: (event: ChangeEvent<HTMLInputElement>) => onChange(event.target.value),
+    required,
+  };
+  // The label is tied by htmlFor rather than wrapping the input: a label may
+  // not contain a second labelable element such as the show/hide button.
   return (
-    <label className="block">
-      <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8A7D94]">
+    <div>
+      <label
+        htmlFor={id}
+        className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8A7D94]"
+      >
         {label}
-      </span>
-      <input
-        className="mt-2 w-full rounded-input-lg border border-[#E5D9CC] bg-[#FFFCF8] px-4 py-3 text-sm outline-none transition focus:border-primary"
-        type={type}
-        autoComplete={autoComplete}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        required={required}
-      />
-    </label>
+      </label>
+      <div className="mt-2">
+        {type === 'password' ? (
+          <PasswordInput {...inputProps} />
+        ) : (
+          <input type={type} {...inputProps} />
+        )}
+      </div>
+    </div>
   );
 }
 
 function completeBookingAuth(
   response: LoginResponse,
+  bookingClient: BookingClient,
   client: {
     firstName: string;
     lastName: string;
@@ -213,9 +233,6 @@ function completeBookingAuth(
     communicationPreference?: CommunicationPreference;
   },
 ): void {
-  if (!response.user.clientProfileId) {
-    throw new Error('Client profile could not be linked to this booking.');
-  }
   updateClientBookingSelection({
     client: {
       firstName: client.firstName,
@@ -223,12 +240,12 @@ function completeBookingAuth(
       email: response.user.profile.email,
       phone: client.phone,
     },
-    communicationPreference: client.communicationPreference ?? response.user.clientCommunicationPreference,
+    communicationPreference: client.communicationPreference ?? bookingClient.communicationPreference,
     account: {
       accessToken: response.session.accessToken,
       refreshToken: response.session.refreshToken,
       userProfileId: response.user.id,
-      clientProfileId: response.user.clientProfileId,
+      clientProfileId: bookingClient.clientProfileId,
       email: response.user.profile.email,
     },
   });

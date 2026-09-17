@@ -119,6 +119,7 @@ import type {
   LocationCommunicationSettings,
   LocationCommunicationSettingsResponse,
   LocationDetailResponse,
+  ClientBookingLoginResponse,
   LoginResponse,
   OwnerBookingSettingsResponse,
   OwnerOnboardingBootstrap,
@@ -236,7 +237,12 @@ import type {
   RecordProductConsumptionRequest,
   RecordProductConsumptionResponse,
   ZacRoutingDetails,
+  ReportFilter,
+  ReportKey,
+  ReportOptions,
+  ReportResult,
 } from '@sheer/domain';
+import { encodeReportFilter } from '@sheer/domain';
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL ?? 'http://localhost:3001').replace(/\/$/, '');
 
@@ -357,11 +363,13 @@ export async function searchPublicSalons(query: string): Promise<SalonSearchResp
 
 export async function getPublicBookingSelection(params: {
   locationId?: string;
+  salonCode?: string;
   businessSlug?: string;
   locationSlug?: string;
 }): Promise<PublicBookingServiceSelectionResponse> {
   const search = new URLSearchParams();
   if (params.locationId) search.set('locationId', params.locationId);
+  if (params.salonCode) search.set('salonCode', params.salonCode);
   if (params.businessSlug) search.set('businessSlug', params.businessSlug);
   if (params.locationSlug) search.set('locationSlug', params.locationSlug);
   return request<PublicBookingServiceSelectionResponse>(
@@ -372,12 +380,14 @@ export async function getPublicBookingSelection(params: {
 export async function getPublicBookingStylists(params: {
   serviceIds: string[];
   locationId?: string;
+  salonCode?: string;
   businessSlug?: string;
   locationSlug?: string;
 }): Promise<PublicBookingStylistsResponse> {
   const search = new URLSearchParams();
   search.set('serviceIds', params.serviceIds.join(','));
   if (params.locationId) search.set('locationId', params.locationId);
+  if (params.salonCode) search.set('salonCode', params.salonCode);
   if (params.businessSlug) search.set('businessSlug', params.businessSlug);
   if (params.locationSlug) search.set('locationSlug', params.locationSlug);
   return request<PublicBookingStylistsResponse>(`/public/booking/stylists?${search.toString()}`);
@@ -715,6 +725,22 @@ export async function checkInBooking(
   return request<CheckInAppointmentResponse>(
     `/lab/appointments/${encodeURIComponent(bookingId)}/check-in`,
     { method: 'POST', accessToken },
+  );
+}
+
+/**
+ * Undo a mistaken check-in: the appointment goes back to accepted and the stylist is
+ * told the client has not arrived. The API refuses once the visit is checked out or
+ * its services have been changed, and says which — show its message as-is.
+ */
+export async function undoCheckInBooking(
+  accessToken: string,
+  bookingId: string,
+  reason?: string,
+): Promise<CheckInAppointmentResponse> {
+  return request<CheckInAppointmentResponse>(
+    `/lab/appointments/${encodeURIComponent(bookingId)}/check-in/undo`,
+    { method: 'POST', accessToken, body: reason ? { reason } : {} },
   );
 }
 
@@ -1817,8 +1843,8 @@ export async function createClientBookingAccount(payload: {
   lastName: string;
   phone?: string;
   communicationPreference: 'whatsapp' | 'sms' | 'email';
-}): Promise<LoginResponse> {
-  return request<LoginResponse>('/auth/client-booking/register', {
+}): Promise<ClientBookingLoginResponse> {
+  return request<ClientBookingLoginResponse>('/auth/client-booking/register', {
     method: 'POST',
     body: payload,
   });
@@ -1829,8 +1855,8 @@ export async function loginClientBookingAccount(payload: {
   email: string;
   password: string;
   phone?: string;
-}): Promise<LoginResponse> {
-  return request<LoginResponse>('/auth/client-booking/login', {
+}): Promise<ClientBookingLoginResponse> {
+  return request<ClientBookingLoginResponse>('/auth/client-booking/login', {
     method: 'POST',
     body: payload,
   });
@@ -3459,4 +3485,37 @@ export interface DiarySignalsResponse {
 export interface OperationalSignalSettingsResponse {
   scopes: Array<OperationalSignalThresholds & { locationId: string | null; configured: boolean }>;
   defaults: OperationalSignalThresholds;
+}
+
+// ---------------------------------------------------------------------------
+// QLOOQO 10 reports — foundation (V1.1 Week 8 Ticket A)
+// ---------------------------------------------------------------------------
+
+/**
+ * The locations this user may report on for a report, and the business week
+ * start. Sends no selection: the options can never be refused because of one.
+ */
+export async function getReportOptions(accessToken: string, reportKey: ReportKey): Promise<ReportOptions> {
+  return request<ReportOptions>(`/reports/${encodeURIComponent(reportKey)}/options`, { accessToken });
+}
+
+/**
+ * A report for a filter. The query is written by the same encoder as the page
+ * URL, so the API receives exactly the filter the URL holds. Dates are local
+ * `YYYY-MM-DD` strings — the server resolves every location's own window.
+ */
+export async function getReportResult(
+  accessToken: string,
+  reportKey: ReportKey,
+  filter: ReportFilter,
+  /** Detail-view page cursor. Never part of the report URL. */
+  cursor?: string,
+): Promise<ReportResult> {
+  const params = new URLSearchParams(encodeReportFilter(filter));
+  if (cursor !== undefined) params.set('cursor', cursor);
+  const query = params.toString();
+  return request<ReportResult>(
+    `/reports/${encodeURIComponent(reportKey)}/result${query ? `?${query}` : ''}`,
+    { accessToken },
+  );
 }

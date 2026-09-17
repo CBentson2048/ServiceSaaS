@@ -1,4 +1,4 @@
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { PinUnlockResponse } from '@sheer/domain';
 import type React from 'react';
@@ -7,7 +7,6 @@ import {
   Pressable,
   RefreshControl,
   ScrollView,
-  StatusBar,
   StyleSheet,
   Text,
   useWindowDimensions,
@@ -16,14 +15,21 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { RootStackParamList } from '../../app/navigation/routes';
-import { featureFlags } from '../../config/featureFlags';
 import type { BleConnectionStatus } from '../../features/ble/types';
 import { logoutLabSession } from '../../features/sheer-lab/labSession';
-import { labLightTheme } from '../../theme/labTheme';
+import {
+  canManageOps as roleCanManageOps,
+  isNavItemActive,
+  isNavItemSoon,
+  visibleNavItems,
+  type NavSpec,
+} from '../../navigation/labNav';
+import { labTheme, tone as resolveTone, type ToneTriple } from '../../theme/labTheme';
+import { Icon } from '../../ui/icons/Icon';
 import { BrandMark } from './BrandMark';
 import { BrandWordmark } from './BrandWordmark';
 
-export const t = labLightTheme;
+export const t = labTheme;
 export const c = t.colors;
 
 export type StatusTone = 'success' | 'warning' | 'danger' | 'neutral' | 'brand';
@@ -41,6 +47,13 @@ export interface LabLayout {
   gap: number;
   isWide: boolean;
   isTablet: boolean;
+  /**
+   * Cap for a reading-width column, in px; 0 means unbounded. A dashboard wants
+   * the full 1600 so its tiles can spread, but a report page (Mix Finalized,
+   * Update Formula) is one column of prose and numbers, and 1600px of it is
+   * unreadable. Those two screens each carried their own copy of these numbers.
+   */
+  readingWidth: number;
 }
 
 export function useLabLayout(): LabLayout {
@@ -58,108 +71,133 @@ function resolveLayout(width: number): LabLayout {
       gap: t.spacing.lg,
       isWide: true,
       isTablet: true,
+      readingWidth: 920,
     };
   }
   if (width >= 700) {
-    return { mode: 'tablet', sidebarWidth: 208, pad: t.spacing.base, gap: t.spacing.base, isWide: false, isTablet: true };
+    return {
+      mode: 'tablet',
+      sidebarWidth: 208,
+      pad: t.spacing.base,
+      gap: t.spacing.base,
+      isWide: false,
+      isTablet: true,
+      readingWidth: 720,
+    };
   }
-  return { mode: 'phone', sidebarWidth: 0, pad: t.spacing.base, gap: t.spacing.base, isWide: false, isTablet: false };
+  return {
+    mode: 'phone',
+    sidebarWidth: 0,
+    pad: t.spacing.base,
+    gap: t.spacing.base,
+    isWide: false,
+    isTablet: false,
+    readingWidth: 0,
+  };
 }
 
 // ---------------------------------------------------------------------------
-// Navigation model
+// Navigation
 // ---------------------------------------------------------------------------
+//
+// The destination list, the visibility rule and the active-state derivation all
+// live in `src/navigation/labNav.ts` — a pure module, so they are unit-tested.
+// This file only renders them. Re-declaring any of it here is how the seven
+// divergent copies happened.
 
-export type NavKey = 'dashboard' | 'new-mix' | 'history' | 'inventory' | 'billing' | 'audit';
-
-// Routes the sidebar can reach. All have `undefined` params so a bare
-// navigation.navigate(route) is type-safe.
-type DirectRoute = 'Home' | 'NewMix' | 'FormulaHistory' | 'Inventory' | 'BillingRules';
-
-interface NavSpec {
-  key: NavKey;
-  label: string;
-  glyph: string;
-  route?: DirectRoute;
-}
-
-const NAV_ITEMS: NavSpec[] = [
-  { key: 'dashboard', label: 'Dashboard', glyph: '▦', route: 'Home' },
-  { key: 'new-mix', label: 'New Mix', glyph: '🧪', route: 'NewMix' },
-  { key: 'history', label: 'History', glyph: '🕘', route: 'FormulaHistory' },
-  { key: 'inventory', label: 'Inventory', glyph: '📦', route: 'Inventory' },
-  { key: 'billing', label: 'Billing Rules', glyph: '🧾', route: 'BillingRules' },
-  { key: 'audit', label: 'Audit Trail', glyph: '🛡️' },
-];
-
-// Billing Rules and Audit Trail are hidden from the UI behind their feature
-// flags; the screens/routes stay intact, they are simply dropped from the
-// sidebar/nav for every role until the flags are flipped on.
-const VISIBLE_NAV_ITEMS = NAV_ITEMS.filter(
-  (item) =>
-    (item.key !== 'billing' || featureFlags.billingRules) && (item.key !== 'audit' || featureFlags.auditTrail),
-);
-
-// Destinations restricted to owners/managers — stylists see them disabled.
-function isManagedNav(key: NavKey): boolean {
-  return key === 'inventory' || key === 'billing';
-}
+export type { NavKey } from '../../navigation/labNav';
 
 // ---------------------------------------------------------------------------
 // Shell
 // ---------------------------------------------------------------------------
 
 export interface LabShellProps {
-  active: NavKey;
   session?: PinUnlockResponse;
   /** Live Bluetooth/scale connection state — drives the header status badge. */
   bleStatus: BleConnectionStatus;
+  /**
+   * A lab session id the screen knows SYNCHRONOUSLY — from route params, or a
+   * draft. Sign-out uses `session.sessionId` when it has it and falls back to
+   * this otherwise.
+   *
+   * This is load-bearing, not a convenience. `session` arrives from an async
+   * getActiveLabSession() call, so a shell that only knew about `session` would
+   * navigate an operator to the lock screen WITHOUT invalidating the
+   * server-side session whenever they signed out before that call landed — or
+   * whenever it failed. The formula-flow screens all carry the id in their
+   * route params from first render, which is exactly why their own handlers
+   * used it. Pass it wherever you have it.
+   */
+  labSessionId?: string;
   refreshing?: boolean;
   onRefresh?: () => void;
+  /** Scrolls with the content. Defaults to the system-status band. */
   footer?: React.ReactNode;
+  /**
+   * PINNED below the scroll area, inside the main column so it clears the
+   * sidebar. This is the slot whose absence forced Formula, BuildFormula and
+   * UpdateFormula to fork the whole shell: their live grams/charge bar has to
+   * stay visible while the operator weighs, and `footer` scrolls away.
+   */
+  bottomBar?: React.ReactNode;
+  /**
+   * `full` (default) spreads to 1600px — right for a dashboard of tiles.
+   * `reading` caps to `layout.readingWidth` — right for a one-column report.
+   */
+  contentWidth?: 'full' | 'reading';
   children: React.ReactNode;
 }
 
 export function LabShell({
-  active,
   session,
   bleStatus,
+  labSessionId,
   refreshing,
   onRefresh,
   footer,
+  bottomBar,
+  contentWidth = 'full',
   children,
 }: LabShellProps): React.JSX.Element {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const layout = useLabLayout();
   const showSidebar = layout.mode !== 'phone';
 
-  // Inventory and Billing Rules are owner/manager-only (stylists get a lock
-  // screen), so those destinations are only live for those roles — stylists keep
-  // the "Soon" affordance rather than being routed to a wall.
-  const canManageOps = session?.role === 'owner' || session?.role === 'manager';
+  // ACTIVE STATE IS DERIVED, NOT DECLARED. It used to be an `active: NavKey`
+  // prop, which meant every screen asserted which station it was — and the six
+  // forked screens either got it wrong or omitted it, leaving nothing
+  // highlighted. A route cannot disagree with itself.
+  const routeName = useRoute().name;
+  const canManageOps = roleCanManageOps(session?.role);
+  const items = visibleNavItems({ canManageOps });
 
   const navigate = useCallback(
     (item: NavSpec) => {
-      if (!item.route || item.key === active) return;
+      if (!item.route || isNavItemActive(item, routeName)) return;
       navigation.navigate(item.route);
     },
-    [active, navigation],
+    [navigation, routeName],
   );
 
   const handleSignOut = useCallback(async () => {
-    if (session) {
+    // `session.sessionId` is authoritative (it comes from getActiveLabSession);
+    // `labSessionId` is the synchronous fallback so a sign-out during the load
+    // still reaches the server. The forks disagreed on this ordering — Formula
+    // preferred the route param, MixFinalized preferred the session — and two
+    // of them had no fallback at all.
+    const sid = session?.sessionId ?? labSessionId;
+    if (sid) {
       try {
-        await logoutLabSession(session.sessionId);
+        await logoutLabSession(sid);
       } catch {
         // Best effort — always return the device to the lock screen.
       }
     }
     navigation.reset({ index: 0, routes: [{ name: 'Auth' }] });
-  }, [navigation, session]);
+  }, [labSessionId, navigation, session]);
 
   return (
     <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
-      <StatusBar barStyle="light-content" backgroundColor={c.background} />
       <TopBar
         session={session}
         bleStatus={bleStatus}
@@ -170,30 +208,47 @@ export function LabShell({
       <View style={[styles.body, showSidebar ? styles.bodyRow : styles.bodyColumn]}>
         {showSidebar ? (
           <Sidebar
-            active={active}
+            items={items}
+            routeName={routeName}
             width={layout.sidebarWidth}
-            canManageOps={canManageOps}
             onNav={navigate}
             onSignOut={handleSignOut}
           />
         ) : null}
 
-        <ScrollView
-          style={styles.scroll}
-          contentContainerStyle={{ padding: layout.pad, paddingBottom: t.spacing['3xl'] }}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            onRefresh ? <RefreshControl refreshing={Boolean(refreshing)} onRefresh={onRefresh} tintColor={c.primary} /> : undefined
-          }
-        >
-          <View style={[styles.contentWrap, { gap: layout.gap }]}>
-            {!showSidebar ? (
-              <NavScroller active={active} canManageOps={canManageOps} onNav={navigate} onSignOut={handleSignOut} />
-            ) : null}
-            {children}
-            {footer ?? <DefaultFooter session={session} />}
-          </View>
-        </ScrollView>
+        {/* The pinned bar is a sibling of the ScrollView inside this column, so
+            it clears the sidebar rail and never overlaps scrolling content. */}
+        <View style={styles.mainArea}>
+          <ScrollView
+            style={styles.scroll}
+            contentContainerStyle={{ padding: layout.pad, paddingBottom: t.spacing['3xl'] }}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            refreshControl={
+              onRefresh ? <RefreshControl refreshing={Boolean(refreshing)} onRefresh={onRefresh} tintColor={c.primary} /> : undefined
+            }
+          >
+            <View
+              style={[
+                styles.contentWrap,
+                { gap: layout.gap },
+                contentWidth === 'reading' && layout.readingWidth > 0 ? { maxWidth: layout.readingWidth } : null,
+              ]}
+            >
+              {!showSidebar ? (
+                <NavScroller
+                  items={items}
+                  routeName={routeName}
+                  onNav={navigate}
+                  onSignOut={handleSignOut}
+                />
+              ) : null}
+              {children}
+              {footer ?? <DefaultFooter session={session} />}
+            </View>
+          </ScrollView>
+          {bottomBar}
+        </View>
       </View>
     </SafeAreaView>
   );
@@ -236,12 +291,24 @@ export function TopBar({
 
       <View style={styles.topActions}>
         {onRefresh ? (
-          <Pressable accessibilityRole="button" onPress={onRefresh} style={styles.iconButton} hitSlop={8}>
-            <Text style={styles.iconButtonGlyph}>⟳</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Refresh"
+            onPress={onRefresh}
+            style={styles.iconButton}
+            hitSlop={8}
+          >
+            <Icon name="refresh" size="sm" tone="secondary" />
           </Pressable>
         ) : null}
-        <Pressable accessibilityRole="button" onPress={handleSettings} style={styles.iconButton} hitSlop={8}>
-          <Text style={styles.iconButtonGlyph}>⚙︎</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Settings"
+          onPress={handleSettings}
+          style={styles.iconButton}
+          hitSlop={8}
+        >
+          <Icon name="settings" size="sm" tone="secondary" />
         </Pressable>
         {session ? (
           <View style={styles.avatar}>
@@ -254,33 +321,34 @@ export function TopBar({
 }
 
 function Sidebar({
-  active,
+  items,
+  routeName,
   width,
-  canManageOps,
   onNav,
   onSignOut,
 }: {
-  active: NavKey;
+  items: NavSpec[];
+  routeName: string;
   width: number;
-  canManageOps: boolean;
   onNav: (item: NavSpec) => void;
   onSignOut: () => void;
 }): React.JSX.Element {
   return (
     <View style={[styles.sidebar, { width }]}>
       <View style={styles.sidebarNav}>
-        {VISIBLE_NAV_ITEMS.filter((item) => item.key !== 'inventory' || canManageOps).map((item) => {
-          const isActive = item.key === active;
-          const soon = !item.route || (isManagedNav(item.key) && !canManageOps);
+        {items.map((item) => {
+          const isActive = isNavItemActive(item, routeName);
+          const soon = isNavItemSoon(item);
           return (
             <Pressable
               key={item.key}
               accessibilityRole="button"
+              accessibilityState={{ selected: isActive, disabled: soon }}
               disabled={soon || isActive}
               onPress={() => onNav(item)}
               style={[styles.navItem, isActive && styles.navItemActive, soon && styles.navItemSoon]}
             >
-              <Text style={[styles.navGlyph, styles.sidebarGlyph, isActive && styles.sidebarGlyphActive]}>{item.glyph}</Text>
+              <Icon name={item.icon} size="sm" tone="inherit" color={isActive ? c.sidebarActiveText : c.sidebarText} />
               <Text style={[styles.navLabel, isActive && styles.navLabelActive]} numberOfLines={1}>
                 {item.label}
               </Text>
@@ -291,7 +359,7 @@ function Sidebar({
       </View>
 
       <Pressable accessibilityRole="button" onPress={onSignOut} style={styles.signOut}>
-        <Text style={styles.signOutGlyph}>⏻</Text>
+        <Icon name="signOut" size="sm" tone="inherit" color={c.sidebarText} />
         <Text style={styles.signOutLabel}>Sign Out</Text>
       </Pressable>
     </View>
@@ -299,13 +367,13 @@ function Sidebar({
 }
 
 function NavScroller({
-  active,
-  canManageOps,
+  items,
+  routeName,
   onNav,
   onSignOut,
 }: {
-  active: NavKey;
-  canManageOps: boolean;
+  items: NavSpec[];
+  routeName: string;
   onNav: (item: NavSpec) => void;
   onSignOut: () => void;
 }): React.JSX.Element {
@@ -315,37 +383,45 @@ function NavScroller({
       showsHorizontalScrollIndicator={false}
       contentContainerStyle={styles.navScroller}
       style={styles.navScrollerWrap}
+      accessibilityRole="tablist"
     >
-      {VISIBLE_NAV_ITEMS.filter((item) => item.key !== 'inventory' || canManageOps).map((item) => {
-        const isActive = item.key === active;
-        const soon = !item.route || (isManagedNav(item.key) && !canManageOps);
+      {items.map((item) => {
+        const isActive = isNavItemActive(item, routeName);
+        const soon = isNavItemSoon(item);
         return (
           <Pressable
             key={item.key}
             accessibilityRole="button"
+            accessibilityState={{ selected: isActive, disabled: soon }}
             disabled={soon || isActive}
             onPress={() => onNav(item)}
             style={[styles.navChip, isActive && styles.navChipActive, soon && styles.navItemSoon]}
           >
-            <Text style={styles.navGlyph}>{item.glyph}</Text>
+            <Icon name={item.icon} size="sm" tone="inherit" color={isActive ? c.sidebarActiveText : c.textSecondary} />
             <Text style={[styles.navChipLabel, isActive && styles.navLabelActive]}>{item.label}</Text>
             {soon ? <Text style={styles.soonTag}>Soon</Text> : null}
           </Pressable>
         );
       })}
       <Pressable accessibilityRole="button" onPress={onSignOut} style={styles.navChip}>
-        <Text style={styles.navGlyph}>⏻</Text>
+        <Icon name="signOut" size="sm" tone="inherit" color={c.textSecondary} />
         <Text style={styles.navChipLabel}>Sign Out</Text>
       </Pressable>
     </ScrollView>
   );
 }
 
-function DefaultFooter({ session }: { session?: PinUnlockResponse }): React.JSX.Element {
-  const live = session?.status === 'active';
+function DefaultFooter({ session }: { session?: PinUnlockResponse }): React.JSX.Element | null {
+  // UNKNOWN IS NOT ENDED. This used to print "SESSION ENDED" whenever `session`
+  // was undefined, which includes every screen's initial load — so a spinner
+  // came with a footer announcing the session was over. Say nothing until we
+  // know.
+  if (!session) return null;
   return (
     <View style={styles.footer}>
-      <Text style={styles.footerTextStrong}>{live ? 'SYSTEM LIVE' : 'SESSION ENDED'}</Text>
+      <Text style={styles.footerTextStrong}>
+        {session.status === 'active' ? 'SYSTEM LIVE' : 'SESSION ENDED'}
+      </Text>
     </View>
   );
 }
@@ -399,19 +475,11 @@ export function bleBadge(status: BleConnectionStatus): { label: string; tone: St
   }
 }
 
-export function toneStyle(tone: StatusTone): { text: string; bg: string; border: string } {
-  switch (tone) {
-    case 'success':
-      return { text: c.successText, bg: c.successBg, border: c.successBorder };
-    case 'warning':
-      return { text: c.warningText, bg: c.warningBg, border: c.warningBorder };
-    case 'danger':
-      return { text: c.dangerText, bg: c.dangerBg, border: c.dangerBorder };
-    case 'brand':
-      return { text: c.primary, bg: c.primarySoft, border: c.primarySoft };
-    default:
-      return { text: c.textSecondary, bg: c.surfaceAlt, border: c.border };
-  }
+export function toneStyle(tone: StatusTone): ToneTriple {
+  // Delegates to the ONE implementation in src/theme/labTheme.ts. This was a
+  // five-case switch, and it existed in four copies that had drifted apart on
+  // `brand` and `neutral`.
+  return resolveTone(tone);
 }
 
 export function initials(displayName: string): string {
@@ -442,6 +510,8 @@ const styles = StyleSheet.create({
   bodyRow: { flexDirection: 'row' },
   bodyColumn: { flexDirection: 'column' },
   scroll: { flex: 1 },
+  // Holds the ScrollView and the pinned bottomBar as siblings.
+  mainArea: { flex: 1 },
   contentWrap: { width: '100%', maxWidth: 1600, alignSelf: 'center' },
 
   // Single row — never wraps. Items are vertically centred, so the right-hand
@@ -472,7 +542,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  iconButtonGlyph: { fontSize: 16, color: c.textSecondary },
   userRow: { flexDirection: 'row', alignItems: 'center', gap: t.spacing.sm, maxWidth: 200 },
   avatar: {
     width: 34,
@@ -507,12 +576,6 @@ const styles = StyleSheet.create({
   // with white text/glyph, rather than the older soft-tinted fill.
   navItemActive: { backgroundColor: c.sidebarActive },
   navItemSoon: { opacity: 0.55 },
-  navGlyph: { fontSize: 16 },
-  // Lightens non-emoji glyphs (e.g. the ▦ dashboard mark) on the dark rail;
-  // colour emoji ignore the tint either way.
-  sidebarGlyph: { color: c.sidebarText },
-  // On the filled active pill the ▦-style glyph flips to white to match the label.
-  sidebarGlyphActive: { color: c.sidebarActiveText },
   navLabel: { flex: 1, color: c.sidebarText, fontSize: t.typography.fontSize.small, fontWeight: '600' },
   navLabelActive: { color: c.sidebarActiveText, fontWeight: '700' },
   soonTag: { color: c.textMuted, fontSize: t.typography.fontSize.micro, fontWeight: '600' },
@@ -529,7 +592,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: c.sidebarBorder,
   },
-  signOutGlyph: { fontSize: 16, color: c.sidebarText },
   signOutLabel: { color: c.sidebarText, fontWeight: '600', fontSize: t.typography.fontSize.small },
 
   navScrollerWrap: { marginBottom: t.spacing.xs },

@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type {
+  ClientBookingLoginResponse,
   CreateAccountResponse,
   CurrentUserResponse,
   LoginResponse,
@@ -48,7 +49,9 @@ export class AuthController {
   }
 
   @Post('client-booking/register')
-  async registerClientForBooking(@Body() body: ClientBookingAccountDto): Promise<LoginResponse> {
+  async registerClientForBooking(
+    @Body() body: ClientBookingAccountDto,
+  ): Promise<ClientBookingLoginResponse> {
     return this.auth.createClientBookingAccount(body);
   }
 
@@ -61,7 +64,9 @@ export class AuthController {
   }
 
   @Post('client-booking/login')
-  async loginClientForBooking(@Body() body: ClientBookingLoginDto): Promise<LoginResponse> {
+  async loginClientForBooking(
+    @Body() body: ClientBookingLoginDto,
+  ): Promise<ClientBookingLoginResponse> {
     return this.auth.loginClientForBooking(body);
   }
 

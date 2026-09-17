@@ -5,9 +5,16 @@ import type { AuthUser, LoginResponse, Permission } from '@sheer/domain';
 import { userHasPermission } from '@sheer/domain';
 import { useAuth } from '../auth/AuthProvider';
 import { loginClientBookingAccount } from '../auth/api';
+import { loginRedirectTarget } from '../auth/loginRedirect';
 import { BrandLogo } from '../components/BrandLogo';
+import { PasswordInput } from '../design';
 import { usePageMetadata } from '../hooks/usePageMetadata';
-import { readClientBookingSelection, updateClientBookingSelection } from './clientBookingFlow';
+import {
+  type BookingClient,
+  readClientBookingSelection,
+  sessionBookingClient,
+  updateClientBookingSelection,
+} from './clientBookingFlow';
 
 export function LoginPage() {
   usePageMetadata(
@@ -20,12 +27,14 @@ export function LoginPage() {
   const [searchParams] = useSearchParams();
   const bookingMode = searchParams.get('booking') === '1';
   const bookingSelection = bookingMode ? readClientBookingSelection() : null;
-  const [email, setEmail] = useState('');
+  // Signed in, but not as a client of the salon being booked: offer the same
+  // account for a fresh booking sign-in.
+  const [email, setEmail] = useState(() => (bookingMode ? (auth.user?.profile.email ?? '') : ''));
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const requestedFrom = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname;
+  const requestedFrom = loginRedirectTarget(location.state);
   const from = bookingMode ? '/book/review' : requestedFrom;
   const justOnboarded = searchParams.get('onboarded') === '1';
   const justAcceptedInvitation = searchParams.get('invitation') === 'accepted';
@@ -46,17 +55,20 @@ export function LoginPage() {
     );
   }
 
-  if (auth.user) {
-    if (bookingMode && auth.session && auth.user.clientProfileId) {
-      completeBookingAuth({ session: auth.session, user: auth.user });
-    }
+  const sessionClient =
+    auth.user && bookingMode
+      ? sessionBookingClient(auth.user, bookingSelection?.location?.businessId)
+      : null;
+
+  if (auth.user && !bookingMode) {
+    return <Navigate to={from ?? defaultRouteFor(auth.user)} replace />;
+  }
+
+  if (auth.user && auth.session && sessionClient) {
+    completeBookingAuth({ session: auth.session, user: auth.user }, sessionClient);
     return (
       <Navigate
-        to={
-          bookingMode && !auth.user.clientCommunicationPreference
-            ? '/book/preference'
-            : (from ?? defaultRouteFor(auth.user))
-        }
+        to={sessionClient.communicationPreference ? (from ?? '/book/review') : '/book/preference'}
         replace
       />
     );
@@ -74,10 +86,10 @@ export function LoginPage() {
           email,
           password,
         });
-        completeBookingAuth(response);
+        completeBookingAuth(response, response.bookingClient);
         auth.applyAuthenticatedSession(response.session, response.user);
         navigate(
-          response.user.clientCommunicationPreference
+          response.bookingClient.communicationPreference
             ? (from ?? '/book/review')
             : '/book/preference',
           {
@@ -130,6 +142,13 @@ export function LoginPage() {
             </div>
           ) : null}
 
+          {auth.user && bookingMode ? (
+            <div className="rounded-input-lg border border-border bg-surface-alt px-4 py-3 text-sm text-text-secondary">
+              You are signed in as {auth.user.profile.email}. Sign in again to book at{' '}
+              {bookingSelection?.location?.name ?? 'this salon'}.
+            </div>
+          ) : null}
+
           {justResetPassword ? (
             <div className="rounded-input-lg border border-success-border bg-success-soft px-4 py-3 text-sm text-success">
               Password updated. Sign in with your new password.
@@ -150,27 +169,32 @@ export function LoginPage() {
             />
           </label>
 
-          <label className="block">
-            <span className="flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8A7D94]">
+          {/* Not a wrapping <label>: it would fold "Forgot password?" into the
+              input's name, and may not contain the show/hide button. */}
+          <div>
+            <div className="mb-2 flex items-center justify-between">
+              <label
+                htmlFor="login-password"
+                className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8A7D94]"
+              >
                 Password
-              </span>
+              </label>
               <Link
                 to="/forgot-password"
                 className="text-[12px] font-medium text-primary-deep hover:underline"
               >
                 Forgot password?
               </Link>
-            </span>
-            <input
-              className="mt-2 w-full rounded-input-lg border border-[#E5D9CC] bg-[#FFFCF8] px-4 py-3 text-sm outline-none transition focus:border-primary"
-              type="password"
+            </div>
+            <PasswordInput
+              id="login-password"
+              className="w-full rounded-input-lg border border-[#E5D9CC] bg-[#FFFCF8] px-4 py-3 text-sm outline-none transition focus:border-primary"
               autoComplete="current-password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               required
             />
-          </label>
+          </div>
 
           {error ? (
             <div className="rounded-input-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -222,10 +246,7 @@ function defaultRouteFor(user: AuthUser): string {
   );
 }
 
-function completeBookingAuth(response: LoginResponse): void {
-  if (!response.user.clientProfileId) {
-    throw new Error('Client profile could not be linked to this booking.');
-  }
+function completeBookingAuth(response: LoginResponse, bookingClient: BookingClient): void {
   const profileName = splitFullName(response.user.profile.fullName);
   updateClientBookingSelection({
     client: {
@@ -234,12 +255,12 @@ function completeBookingAuth(response: LoginResponse): void {
       email: response.user.profile.email,
       phone: response.user.profile.phone,
     },
-    communicationPreference: response.user.clientCommunicationPreference,
+    communicationPreference: bookingClient.communicationPreference,
     account: {
       accessToken: response.session.accessToken,
       refreshToken: response.session.refreshToken,
       userProfileId: response.user.id,
-      clientProfileId: response.user.clientProfileId,
+      clientProfileId: bookingClient.clientProfileId,
       email: response.user.profile.email,
     },
   });

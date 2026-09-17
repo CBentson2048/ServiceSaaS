@@ -2,6 +2,7 @@ import type React from 'react';
 import { useEffect, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { Icon } from '../../ui/icons/Icon';
 import { t, c } from '../shared/LabShell';
 import { formatGrams } from '../Home/dashboardHelpers';
 
@@ -24,6 +25,8 @@ interface StockAdjustModalProps {
   visible: boolean;
   item?: StockAdjustTarget;
   saving: boolean;
+  /** A failure from the adjust request — see ProductFormModal.submitError. */
+  submitError?: string;
   onClose: () => void;
   onSubmit: (values: StockAdjustValues) => void;
 }
@@ -31,7 +34,14 @@ interface StockAdjustModalProps {
 // Records an auditable stock movement against one product at the station's
 // location — inbound restock (+) or loss/correction (−). Every adjustment is
 // written to the movement log by the API.
-export function StockAdjustModal({ visible, item, saving, onClose, onSubmit }: StockAdjustModalProps): React.JSX.Element {
+export function StockAdjustModal({
+  visible,
+  item,
+  saving,
+  submitError,
+  onClose,
+  onSubmit,
+}: StockAdjustModalProps): React.JSX.Element {
   const [direction, setDirection] = useState<'inbound' | 'loss'>('inbound');
   const [quantity, setQuantity] = useState('');
   const [reason, setReason] = useState('');
@@ -53,6 +63,14 @@ export function StockAdjustModal({ visible, item, saving, onClose, onSubmit }: S
       setError('Enter a quantity greater than zero.');
       return;
     }
+    // A loss larger than what is on hand drove the stock record negative and
+    // corrupted the valuation (quantity x cost), while telling the operator it
+    // had worked. The on-hand figure is displayed two lines above this field,
+    // so the check has the number it needs.
+    if (direction === 'loss' && item && magnitude > item.currentQuantityGrams) {
+      setError(`Only ${formatGrams(item.currentQuantityGrams)} on hand — a loss cannot exceed it.`);
+      return;
+    }
     onSubmit({ direction, quantityGrams: magnitude, reason: reason.trim() || null });
   };
 
@@ -67,8 +85,14 @@ export function StockAdjustModal({ visible, item, saving, onClose, onSubmit }: S
                 {item ? `${item.brand ? `${item.brand} · ` : ''}${item.productName}` : ''}
               </Text>
             </View>
-            <Pressable accessibilityRole="button" onPress={onClose} hitSlop={10} style={styles.close}>
-              <Text style={styles.closeGlyph}>✕</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+              onPress={onClose}
+              hitSlop={10}
+              style={styles.close}
+            >
+              <Icon name="close" size="xs" tone="secondary" />
             </Pressable>
           </View>
 
@@ -79,7 +103,9 @@ export function StockAdjustModal({ visible, item, saving, onClose, onSubmit }: S
               </Text>
             ) : null}
 
-            {error ? <Text style={styles.error}>{error}</Text> : null}
+            {error ?? submitError ? (
+              <Text style={styles.error}>{error ?? submitError}</Text>
+            ) : null}
 
             {canReduce ? (
               <View style={styles.toggleRow}>
@@ -167,7 +193,6 @@ const styles = StyleSheet.create({
   title: { color: c.textPrimary, fontSize: t.typography.fontSize.subtitle, fontWeight: '700' },
   subtitle: { color: c.textSecondary, fontSize: t.typography.fontSize.small, marginTop: 2 },
   close: { width: 30, height: 30, borderRadius: t.radius.full, alignItems: 'center', justifyContent: 'center', backgroundColor: c.surfaceAlt },
-  closeGlyph: { color: c.textSecondary, fontSize: 14, fontWeight: '700' },
   body: { padding: t.spacing.lg, gap: t.spacing.sm },
   onHand: { color: c.textSecondary, fontSize: t.typography.fontSize.small },
   onHandValue: { color: c.textPrimary, fontWeight: '700' },

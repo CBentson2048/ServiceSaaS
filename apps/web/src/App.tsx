@@ -51,6 +51,7 @@ import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { RetailSalesPage } from './pages/RetailSalesPage';
+import { SalonBookingLinkPage } from './pages/SalonBookingLinkPage';
 import { BillsPage } from './pages/BillsPage';
 import { EndOfDayPage } from './pages/EndOfDayPage';
 import { RotaPage } from './pages/RotaPage';
@@ -66,6 +67,8 @@ import { SheerLabPage } from './pages/SheerLabPage';
 import { SupportPage } from './pages/SupportPage';
 import { TeamPage } from './pages/TeamPage';
 import { UnauthorizedPage } from './pages/UnauthorizedPage';
+import { reportsSurface } from './config/reportsFoundationShell';
+import { reportRoutes } from './reports/reportRoutes';
 
 export function App() {
   return (
@@ -108,6 +111,7 @@ export function App() {
         a session, alongside the privacy-policy and delete-account pages.
       */}
       <Route path="/support" element={<SupportPage />} />
+      <Route path="/s/:salonCode" element={<SalonBookingLinkPage />} />
       <Route path="/book/location" element={<ClientBookingLocationPage />} />
       <Route path="/book/service" element={<ClientBookingServicePage />} />
       <Route path="/book/date-time" element={<ClientBookingDateTimePage />} />
@@ -133,6 +137,11 @@ export function App() {
           >
             <Route path="/dashboard" element={<DashboardPage />} />
           </Route>
+          {/*
+            QLOOQO 10 reports: routes exist only for reports available in this
+            build, each behind ReportGate (the API's own access decision).
+          */}
+          {reportRoutes(reportsSurface())}
           <Route
             element={
               <ProtectedRoute
