@@ -25,13 +25,18 @@ export interface LedgerBill extends PaidBillRow {
   businessId: string;
   status: 'paid' | 'voided';
 }
-export interface LedgerLine extends BillLineRow {}
+/** Staff attribution is optional in a ledger: an unset line has no staff and is itemised per service. */
+export interface LedgerLine extends Omit<BillLineRow, 'staffProfileId' | 'perService'> {
+  staffProfileId?: string | null;
+  perService?: boolean;
+}
 export interface LedgerPayment extends TillPaymentRow {
   businessId: string;
   locationId: string;
   at: string;
 }
-export interface LedgerRetailSale extends RetailSaleRow {
+export interface LedgerRetailSale extends Omit<RetailSaleRow, 'sellerStaffProfileId'> {
+  sellerStaffProfileId?: string | null;
   businessId: string;
 }
 export interface LedgerDeposit {
@@ -126,7 +131,7 @@ export class MemoryMoneySource implements MoneySource {
     const rows = this.ledger.lines
       .filter((l) => billIds.includes(l.billId) && (afterId === null || l.id > afterId))
       .sort((a, b) => (a.id < b.id ? -1 : 1));
-    return this.take(rows, limit);
+    return this.take(rows, limit).map((line) => ({ ...line, staffProfileId: line.staffProfileId ?? null, perService: line.perService ?? true }));
   }
 
   async tillPaymentsForVisits(businessId: string, visitIds: readonly string[], afterId: string | null, limit: number): Promise<TillPaymentRow[]> {
@@ -157,7 +162,7 @@ export class MemoryMoneySource implements MoneySource {
     const rows = this.ledger.retail
       .filter((r) => r.businessId === businessId && inWindows(r.at, r.locationId, windows) && afterKeyset(r.at, r.id, after))
       .sort(byInstantThenId);
-    return this.take(rows, limit).map(({ businessId: _b, ...row }) => row);
+    return this.take(rows, limit).map(({ businessId: _b, ...row }) => ({ ...row, sellerStaffProfileId: row.sellerStaffProfileId ?? null }));
   }
 
   async depositsCollected(businessId: string, windows: readonly MoneyWindow[], after: MoneyAfter | null, limit: number): Promise<DepositEventRow[]> {

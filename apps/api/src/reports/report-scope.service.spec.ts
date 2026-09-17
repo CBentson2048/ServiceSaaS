@@ -188,6 +188,18 @@ describe('location scope', () => {
   });
 });
 
+describe('the Team staff control (R2)', () => {
+  it('passes staff ids through without reading staff, and never widens the locations', async () => {
+    const { service, queries } = serviceWith({ locations: ok(LOCATION_ROWS) });
+    const staffId = '70000000-0000-4000-8000-000000000001';
+    const scope = await service.resolve(owner, team, q({ staff: staffId, locations: LONDON }), ASOF);
+    expect(scope.resolved.filter.staffProfileIds).toEqual([staffId]);
+    expect(scope.resolved.locations.map((location) => location.id)).toEqual([LONDON]);
+    // Resolving the scope reads locations only: staff are the Team body's business.
+    expect(queries.map((query) => query.table)).toEqual(['locations']);
+  });
+});
+
 describe('refused filters never reach the database', () => {
   it.each([
     ['staff on a report without a staff control', q({ staff: LONDON }), money, 'report_control_not_supported'],

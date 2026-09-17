@@ -9,6 +9,8 @@ import { MoneyReportService } from './money/money-report.service';
 import { MONEY_SOURCE, SupabaseMoneySource } from './money/money-source';
 import { CashUpReportService } from './cash-up/cash-up-report.service';
 import { CASH_UP_SOURCE, SupabaseCashUpSource } from './cash-up/cash-up-source';
+import { TeamReportService } from './team/team-report.service';
+import { SupabaseTeamSource, TEAM_SOURCE } from './team/team-source';
 
 /** QLOOQO 10 report foundation (V1.1 Week 8 Ticket A). */
 @Module({
@@ -23,6 +25,8 @@ import { CASH_UP_SOURCE, SupabaseCashUpSource } from './cash-up/cash-up-source';
     { provide: MONEY_SOURCE, useClass: SupabaseMoneySource },
     CashUpReportService,
     { provide: CASH_UP_SOURCE, useClass: SupabaseCashUpSource },
+    TeamReportService,
+    { provide: TEAM_SOURCE, useClass: SupabaseTeamSource },
   ],
   exports: [ReportScopeService],
 })

@@ -21,6 +21,7 @@ import { REPORT_SURFACE } from './report-surface';
 import { ReportsController } from './reports.controller';
 import { MoneyReportService } from './money/money-report.service';
 import { CashUpReportService } from './cash-up/cash-up-report.service';
+import { TeamReportService } from './team/team-report.service';
 
 const A = '00000000-0000-4000-8000-00000000000a';
 
@@ -70,6 +71,23 @@ const users: Record<string, Partial<AuthUser>> = {
     allowedLocationIds: [A, '00000000-0000-4000-8000-00000000000b'],
     membershipGrants: [{ locationId: A, permissions: ['report.financials.view'] }],
   },
+  // The system Manager level: performance and commission at A.
+  'performance-manager': {
+    id: 'performance-manager',
+    businessId: 'biz',
+    roles: ['manager'],
+    permissions: [],
+    membershipGrants: [{ locationId: A, permissions: ['report.performance.view', 'report.commission.view'] }],
+  },
+  // manager@A (performance) + stylist@B: the stylist row grants nothing.
+  'performance-manager-a-stylist-b': {
+    id: 'performance-mixed',
+    businessId: 'biz',
+    roles: ['manager', 'stylist'],
+    permissions: [...DEFAULT_ROLE_PERMISSIONS.manager],
+    allowedLocationIds: [A, '00000000-0000-4000-8000-00000000000b'],
+    membershipGrants: [{ locationId: A, permissions: ['report.performance.view'] }],
+  },
   stylist: {
     id: 'stylist',
     businessId: 'biz',
@@ -89,6 +107,7 @@ async function appWith(surface: ReportSurface) {
   };
   const money = { build: jest.fn().mockResolvedValue({ currencyCode: 'GBP' }) };
   const cashUp = { build: jest.fn().mockResolvedValue({ continuation: false }) };
+  const team = { build: jest.fn().mockResolvedValue({ staffRows: [] }) };
   const auth = {
     verifyAccessToken: jest.fn(async (token: string) => {
       const user = users[token];
@@ -103,6 +122,7 @@ async function appWith(surface: ReportSurface) {
       { provide: ReportScopeService, useValue: scope },
       { provide: MoneyReportService, useValue: money },
       { provide: CashUpReportService, useValue: cashUp },
+      { provide: TeamReportService, useValue: team },
       { provide: AuthService, useValue: auth },
       SupabaseAuthGuard,
       ReportAvailabilityGuard,
@@ -113,7 +133,7 @@ async function appWith(surface: ReportSurface) {
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }));
   app.setGlobalPrefix('api');
   await app.init();
-  return { app, scope, money, cashUp, auth };
+  return { app, scope, money, cashUp, team, auth };
 }
 
 describe('report routes with the foundation shell OFF (production)', () => {
@@ -142,9 +162,10 @@ describe('report routes with the foundation shell ON (dev-test)', () => {
   let scope: { options: jest.Mock; resolve: jest.Mock };
   let money: { build: jest.Mock };
   let cashUp: { build: jest.Mock };
+  let team: { build: jest.Mock };
 
   beforeAll(async () => {
-    ({ app, scope, money, cashUp } = await appWith({ foundationShell: true }));
+    ({ app, scope, money, cashUp, team } = await appWith({ foundationShell: true }));
   });
   afterAll(() => app.close());
   beforeEach(() => {
@@ -212,6 +233,43 @@ describe('report routes with the foundation shell ON (dev-test)', () => {
       ['stylist', 403, 'report_forbidden'],
       ['no-financials', 403, 'report_forbidden'],
     ]);
+  });
+
+  it('R2 Team actor matrix: only an owner or a grant carrying report.performance.view reaches the Team body', async () => {
+    const outcomes: Array<[string, number, string | undefined]> = [];
+    for (const token of [
+      'owner',
+      'performance-manager',
+      'performance-manager-a-stylist-b',
+      'null-level-manager',
+      'receptionist',
+      'stylist',
+      // A custom level with financials but without Performance.
+      'manager',
+    ]) {
+      team.build.mockClear();
+      const response = await get(`/api/reports/team/result?staff=${A}`, token);
+      outcomes.push([token, response.status, team.build.mock.calls.length ? 'body built' : response.body.code]);
+    }
+    expect(outcomes).toEqual([
+      ['owner', 200, 'body built'],
+      ['performance-manager', 200, 'body built'],
+      ['performance-manager-a-stylist-b', 200, 'body built'],
+      ['null-level-manager', 403, 'report_forbidden'],
+      ['receptionist', 403, 'report_forbidden'],
+      ['stylist', 403, 'report_forbidden'],
+      ['manager', 403, 'report_forbidden'],
+    ]);
+  });
+
+  it('a staff refusal from the Team body reads the same for any id, with no-store', async () => {
+    team.build.mockRejectedValueOnce(reportHttpError('report_staff_out_of_scope'));
+    const response = await get(`/api/reports/team/result?staff=${A}`, 'owner');
+    expect([response.status, response.body]).toEqual([
+      403,
+      { statusCode: 403, code: 'report_staff_out_of_scope', message: 'One or more selected staff are not available to you for this report' },
+    ]);
+    expect(response.headers['cache-control']).toBe('no-store, private');
   });
 
   it('lets a Manager-level membership open Money and refuses P&L', async () => {

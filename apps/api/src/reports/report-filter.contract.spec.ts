@@ -18,8 +18,7 @@ import {
 } from '@sheer/domain';
 
 const money = getReportDefinition('money') as ReportDefinition; // detail: true
-const team = getReportDefinition('team') as ReportDefinition; // detail: false
-const staffReport: ReportDefinition = { ...team, controls: { staff: true, detail: false } };
+const team = getReportDefinition('team') as ReportDefinition; // staff: true, detail: false
 
 const L1 = '11111111-1111-4111-8111-111111111111';
 const L2 = '22222222-2222-4222-8222-222222222222';
@@ -81,7 +80,7 @@ describe('strict mode (API)', () => {
     expect(codes({ from: '2026-09-01', to: '2026-09-02' })).toEqual(['from:dates_require_custom', 'to:dates_require_custom']);
   });
 
-  it('refuses controls a report does not support: staff everywhere, detail on team', () => {
+  it('refuses controls a report does not support: staff outside Team, detail on team', () => {
     expect(codes({ staff: L1 })).toEqual(['staff:control_not_supported']);
     expect(codes({ view: 'detail' }, team)).toEqual(['view:control_not_supported']);
     expect(codes({ view: 'summary' }, team)).toEqual([]);
@@ -122,11 +121,15 @@ describe('strict mode (API)', () => {
     expect(codes({ locations: fiftyOne.slice(0, 50).join(',') })).toEqual([]);
   });
 
-  it('decodes staff ids only when a report supports the control (future R2)', () => {
-    expect(strict({ staff: L1 }, staffReport)).toEqual({
-      filter: { preset: 'today', locationIds: [], staffProfileIds: [L1], view: 'summary' },
+  it('decodes staff ids on Team (R2): lower-cased, deduped, sorted, uuids only, at most 50', () => {
+    expect(strict({ staff: `${L2},${L1.toUpperCase()},${L2}` }, team)).toEqual({
+      filter: { preset: 'today', locationIds: [], staffProfileIds: [L1, L2], view: 'summary' },
       issues: [],
     });
+    expect(codes({ staff: 'unattributed' }, team)).toEqual(['staff:invalid_id']);
+    const fiftyOne = Array.from({ length: 51 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`);
+    expect(codes({ staff: fiftyOne.join(',') }, team)).toEqual(['staff:too_many_ids']);
+    expect(encodeReportFilter({ preset: 'today', locationIds: [], staffProfileIds: [L2, L1], view: 'summary' })).toEqual({ staff: `${L1},${L2}` });
   });
 });
 
@@ -146,6 +149,8 @@ describe('lenient mode (browser URL)', () => {
     expect(lenient('view=detail', team).filter.view).toBe('summary');
     expect(lenient('view=detail', money).filter.view).toBe('detail');
     expect(lenient(`staff=${L1}&view=detail`, team).issues).toEqual([]);
+    // Team keeps its staff filter; a shared link is refused by the server rather than silently narrowed.
+    expect(lenient(`staff=${L1}`, team).filter.staffProfileIds).toEqual([L1]);
   });
 
   it('never drops ids, including ids the viewer may not see and non-uuid ids, and blocks on bad ids', () => {

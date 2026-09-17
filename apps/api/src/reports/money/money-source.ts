@@ -73,6 +73,10 @@ export interface BillLineRow {
   grossCents: number;
   netCents: number;
   taxCents: number;
+  /** The staff member the line is attributed to, as written at checkout (no FK: may name a removed profile). */
+  staffProfileId: string | null;
+  /** The line was itemised per performed service (`source_ref.appointment_service_id`), not rolled up. */
+  perService: boolean;
 }
 
 export interface TillPaymentRow {
@@ -98,6 +102,8 @@ export interface RetailSaleRow {
   quantity: number;
   method: MoneyRetailMethodKey;
   currencyCode: string;
+  /** The seller recorded on the sale; `null` when none. */
+  sellerStaffProfileId: string | null;
 }
 
 export interface DepositEventRow {
@@ -196,6 +202,11 @@ function text(value: unknown, what: string): string {
   return value;
 }
 
+function nullableText(value: unknown, what: string): string | null {
+  if (value === null || value === undefined) return null;
+  return text(value, what);
+}
+
 /** A recorded currency, normalised; anything that is not an ISO 4217 code is refused, never guessed. */
 function currency(value: unknown, what: string): string {
   const code = currencyCodeOf(value);
@@ -258,7 +269,7 @@ export class SupabaseMoneySource implements MoneySource {
       let query = this.admin
         .schema('billing')
         .from('bill_lines')
-        .select('id,bill_id,line_type,gross_cents,net_cents,tax_cents')
+        .select('id,bill_id,line_type,gross_cents,net_cents,tax_cents,staff_profile_id,appointment_service_id:source_ref->>appointment_service_id')
         .in('bill_id', [...billIds]);
       if (afterId !== null) query = query.gt('id', afterId);
       return query.order('id', { ascending: true }).limit(limit).returns<Row[]>();
@@ -270,6 +281,8 @@ export class SupabaseMoneySource implements MoneySource {
       grossCents: integerCents(row.gross_cents, 'line gross'),
       netCents: integerCents(row.net_cents, 'line net'),
       taxCents: integerCents(row.tax_cents, 'line tax'),
+      staffProfileId: nullableText(row.staff_profile_id, 'line staff'),
+      perService: typeof row.appointment_service_id === 'string' && row.appointment_service_id.length > 0,
     }));
   }
 
@@ -332,7 +345,7 @@ export class SupabaseMoneySource implements MoneySource {
       this.admin
         .schema('billing')
         .from('retail_sales')
-        .select('id,location_id,sold_at,total_amount_cents,quantity,payment_method,currency_code')
+        .select('id,location_id,sold_at,total_amount_cents,quantity,payment_method,currency_code,staff_profile_id')
         .eq('business_id', businessId)
         .or(windowFilter('sold_at', windows, after))
         .order('sold_at', { ascending: true })
@@ -348,6 +361,7 @@ export class SupabaseMoneySource implements MoneySource {
       quantity: integerValue(row.quantity, 'retail quantity'),
       method: row.payment_method === null ? 'not_recorded' : oneOf(row.payment_method, RETAIL_METHODS, 'retail method'),
       currencyCode: currency(row.currency_code, 'retail currency'),
+      sellerStaffProfileId: nullableText(row.staff_profile_id, 'retail seller'),
     }));
   }
 

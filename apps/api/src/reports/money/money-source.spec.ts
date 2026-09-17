@@ -177,11 +177,26 @@ describe('SupabaseMoneySource reads', () => {
     expect(rows[0].method).toBe('not_recorded');
   });
 
+  it('bill lines carry their staff and whether they were itemised per service', async () => {
+    const { source } = fakeSupabase({
+      data: [
+        { id: ROW_ID, bill_id: ROW_ID, line_type: 'service', gross_cents: 100, net_cents: 100, tax_cents: 0, staff_profile_id: ROW_ID, appointment_service_id: ROW_ID },
+        { id: ROW_ID, bill_id: ROW_ID, line_type: 'service', gross_cents: 100, net_cents: 100, tax_cents: 0, staff_profile_id: null, appointment_service_id: null },
+      ],
+      error: null,
+    });
+    const rows = await source.billLines([ROW_ID], null, 10);
+    expect(rows.map((row) => [row.staffProfileId, row.perService])).toEqual([
+      [ROW_ID, true],
+      [null, false],
+    ]);
+  });
+
   it('lines and payments of known bills are read by id keyset, never an offset', async () => {
     const lines = fakeSupabase({ data: [], error: null });
     await lines.source.billLines([ROW_ID], '60000000-0000-4000-8000-000000000000', 1000);
     expect(lines.queries[0].ops).toEqual([
-      ['select', ['id,bill_id,line_type,gross_cents,net_cents,tax_cents']],
+      ['select', ['id,bill_id,line_type,gross_cents,net_cents,tax_cents,staff_profile_id,appointment_service_id:source_ref->>appointment_service_id']],
       ['in', ['bill_id', [ROW_ID]]],
       ['gt', ['id', '60000000-0000-4000-8000-000000000000']],
       ['order', ['id', { ascending: true }]],

@@ -16,6 +16,7 @@ import {
   type ReportOptions,
   type ReportResult,
   type ResolvedReportLocation,
+  type TeamStaffRow,
 } from '@sheer/domain';
 import { ReportPage } from './ReportPage';
 
@@ -489,6 +490,121 @@ describe('review fixes', () => {
     await screen.findByText('We couldn’t load this report’s options.');
     expect(screen.getByText('This link has location filters that aren’t valid.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Reset locations' })).toBeTruthy();
+  });
+});
+
+describe('R2 Team body and staff filter', () => {
+  const ALICE = '33333333-3333-4333-8333-333333333333';
+  const BEN = '44444444-4444-4444-8444-444444444444';
+  const gbp = (cents: number) => ({ availability: 'available', cents }) as const;
+  const count = (n: number) => ({ availability: 'available', count: n }) as const;
+  const ratio = { availability: 'available', numerator: 1, denominator: 2, basisPoints: 5000 } as const;
+  const metrics = (service: number) => ({
+    serviceRevenue: { gross: gbp(service), netOfVat: gbp(service) },
+    colour: { gross: gbp(0), netOfVat: gbp(0) },
+    averageBill: { total: gbp(service), bills: count(1), average: gbp(service) },
+    utilisation: { availableMinutes: count(60), bookedMinutes: count(30), utilisation: ratio },
+    futureBooking: { clientsSeen: count(2), withFutureBooking: ratio, withConfirmedFutureBooking: ratio },
+    retailRevenue: gbp(0),
+  });
+  const totals = { ...metrics(4000), retailShareOfServiceRevenue: ratio, otherBillLines: gbp(0), notItemised: gbp(0) };
+  const staffRow = (id: string, name: string, service: number): TeamStaffRow => ({
+    rowKey: `${L1}:${id}`,
+    locationId: L1,
+    staff: { kind: 'staff', staffProfileId: id, name, currentEmploymentStatus: 'active', currentlyActiveHere: true },
+    currencyCode: 'GBP',
+    hasRecordedActivity: true,
+    metrics: metrics(service),
+  });
+  const teamResult = (selected: string[]): ReportResult => ({
+    ...result('team', [loc(L1, 'London', '2026-09-28', '2026-09-28', 'in_progress')]),
+    body: {
+      generatedAt: '2026-09-28T10:00:00.000Z',
+      currencyCode: 'GBP',
+      summary: totals,
+      selectedStaff: selected.length > 0 ? metrics(1000) : null,
+      locations: [{ locationId: L1, currencyCode: 'GBP', totals, selectedStaff: selected.length > 0 ? metrics(1000) : null, futureBookingAsAt: { localDate: '2026-09-28', localTime: '11:00' } }],
+      staffRows: [staffRow(ALICE, 'Alice', 3000), staffRow(BEN, 'Ben', 1000)].filter(
+        (row) => selected.length === 0 || (row.staff.kind === 'staff' && selected.includes(row.staff.staffProfileId)),
+      ),
+      staffOptions: [
+        { staffProfileId: ALICE, kind: 'staff', name: 'Alice', locationIds: [L1] },
+        { staffProfileId: BEN, kind: 'staff', name: 'Ben', locationIds: [L1] },
+      ],
+      finalisedCommission: { periods: [], restrictions: [] },
+      unavailableMetrics: [{ metric: 'rebooking_at_source', reason: 'capture_not_implemented' }],
+      dataQuality: { rolledUpServiceLines: 0, bookedWithoutRota: 0, bookedAtAnotherLocation: 0 },
+    },
+  });
+
+  it('renders the Team figures, and the staff picker lists the reportable staff from the result', async () => {
+    api.getReportOptions.mockResolvedValue({ ...options(), reportKey: 'team' });
+    api.getReportResult.mockResolvedValue(teamResult([]));
+    renderAt('/reports/team');
+    await screen.findByRole('region', { name: 'Staff performance' });
+    expect(screen.queryByText('Foundation preview')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /^Staff/ }));
+    expect(screen.getByRole('option', { name: /Alice/ })).toBeTruthy();
+    expect(screen.getByRole('option', { name: /Ben/ })).toBeTruthy();
+  });
+
+  it('choosing staff writes ?staff= to the URL, asks the API for those staff, and shows the Selected staff subtotal beside the location total', async () => {
+    api.getReportOptions.mockResolvedValue({ ...options(), reportKey: 'team' });
+    api.getReportResult.mockImplementation((_token: string, _key: string, filter: { staffProfileIds: string[] }) => Promise.resolve(teamResult(filter.staffProfileIds)));
+    renderAt('/reports/team');
+    await screen.findByRole('region', { name: 'Staff performance' });
+    fireEvent.click(screen.getByRole('button', { name: /^Staff/ }));
+    fireEvent.click(screen.getByRole('option', { name: /Ben/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(currentSearch).toBe(`?staff=${BEN}`));
+    await screen.findByRole('region', { name: 'Selected staff' });
+    expect(api.getReportResult).toHaveBeenLastCalledWith('token', 'team', expect.objectContaining({ staffProfileIds: [BEN] }));
+    const table = screen.getByRole('region', { name: 'Staff performance' });
+    expect(within(table).getByRole('rowheader', { name: 'Selected staff' })).toBeTruthy();
+    expect(within(table).getByRole('rowheader', { name: 'Location total' })).toBeTruthy();
+    expect(within(table).queryByRole('rowheader', { name: /^Alice/ })).toBeNull();
+  });
+
+  it('the staff picker waits for the result, and lists each option’s locations', async () => {
+    const pending = deferred<ReportResult>();
+    api.getReportOptions.mockResolvedValue({ ...options(), reportKey: 'team' });
+    api.getReportResult.mockReturnValue(pending.promise);
+    renderAt('/reports/team');
+    await waitFor(() => expect((screen.getByRole('button', { name: /^Staff/ }) as HTMLButtonElement).disabled).toBe(true));
+    await act(async () => pending.resolve(teamResult([])));
+    await screen.findByRole('region', { name: 'Staff performance' });
+    expect((screen.getByRole('button', { name: /^Staff/ }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: /^Staff/ }));
+    expect(screen.getByRole('option', { name: /Alice/ }).textContent).toContain('London');
+  });
+
+  it('after a staff refusal the last picker stays usable, so one member can be unticked', async () => {
+    api.getReportOptions.mockResolvedValue({ ...options(), reportKey: 'team' });
+    api.getReportResult.mockImplementation((_token: string, _key: string, filter: { staffProfileIds: string[] }) =>
+      filter.staffProfileIds.includes(ALICE) ? Promise.reject(reportError(403, 'report_staff_out_of_scope')) : Promise.resolve(teamResult(filter.staffProfileIds)),
+    );
+    renderAt(`/reports/team?staff=${BEN}`);
+    await screen.findByRole('region', { name: 'Selected staff' });
+    fireEvent.click(screen.getByRole('button', { name: /^Staff/ }));
+    fireEvent.click(screen.getByRole('option', { name: /Alice/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    await screen.findByText('The selected staff aren’t all available to you for these dates and locations.');
+    fireEvent.click(screen.getByRole('button', { name: /^Staff/ }));
+    fireEvent.click(screen.getByRole('option', { name: /Alice/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(currentSearch).toBe(`?staff=${BEN}`));
+    await screen.findByRole('region', { name: 'Selected staff' });
+  });
+
+  it('a staff refusal says so and offers to show all staff, never an empty report', async () => {
+    api.getReportOptions.mockResolvedValue({ ...options(), reportKey: 'team' });
+    api.getReportResult.mockRejectedValueOnce(reportError(403, 'report_staff_out_of_scope')).mockResolvedValue(teamResult([]));
+    renderAt(`/reports/team?staff=${ALICE}`);
+    await screen.findByText('The selected staff aren’t all available to you for these dates and locations.');
+    expect(screen.queryByRole('region', { name: 'Staff performance' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Show all staff' }));
+    await waitFor(() => expect(currentSearch).toBe(''));
+    await screen.findByRole('region', { name: 'Staff performance' });
   });
 });
 

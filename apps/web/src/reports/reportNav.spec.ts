@@ -82,8 +82,9 @@ describe('reportLinkSearch — carrying a filter between reports', () => {
     );
   });
 
-  it('never carries staff (no report supports it yet) or a broken filter', () => {
-    expect(reportLinkSearch(team, '/reports/money', `?staff=${A}&preset=yesterday`)).toBe('?preset=yesterday');
+  it('carries staff only to Team, and never a broken filter', () => {
+    expect(reportLinkSearch(team, '/reports/team', `?staff=${A}&preset=yesterday`)).toBe(`?preset=yesterday&staff=${A}`);
+    expect(reportLinkSearch(cashUp, '/reports/team', `?staff=${A}&preset=yesterday`)).toBe('?preset=yesterday');
     expect(reportLinkSearch(team, '/reports/money', '?preset=custom&from=2026-09-29&to=2026-09-01')).toBe('');
     expect(reportLinkSearch(team, '/reports/money', '?locations=bogus')).toBe('');
   });

@@ -62,10 +62,7 @@ export interface ReportControlBarProps {
   resolvedLocations?: readonly ResolvedReportLocation[] | null;
   disabled?: boolean;
   onChange(next: ReportFilter, mode: ReportFilterWriteMode): void;
-  /**
-   * Staff control slot. Rendered only when the report supports a staff control
-   * (none does until R2 defines staff scope).
-   */
+  /** Staff control slot. Rendered only when the report supports a staff control (R2 Team). */
   staffControl?: ReactNode;
   /** Report actions slot — Ticket G adds export and email here. */
   actions?: ReactNode;

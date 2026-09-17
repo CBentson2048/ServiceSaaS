@@ -21,6 +21,7 @@ import type { ReportScope, ReportScopeService } from './report-scope.service';
 import { ReportsController } from './reports.controller';
 import type { MoneyReportService } from './money/money-report.service';
 import type { CashUpReportService } from './cash-up/cash-up-report.service';
+import type { TeamReportService } from './team/team-report.service';
 
 const GUARDS_KEY = '__guards__';
 const HANDLER_METADATA_KEYS = ['sheer:roles', 'sheer:permissions', 'sheer:location-param', GUARDS_KEY];
@@ -91,13 +92,16 @@ describe('ReportsController handlers', () => {
     const money = { build: jest.fn().mockResolvedValue(moneyBody) };
     const cashUpBody = { summary: 'cash-up-body' };
     const cashUp = { build: jest.fn().mockResolvedValue(cashUpBody) };
+    const teamBody = { summary: 'team-body' };
+    const team = { build: jest.fn().mockResolvedValue(teamBody) };
     const controller = new ReportsController(
       scope as unknown as ReportScopeService,
       money as unknown as MoneyReportService,
       cashUp as unknown as CashUpReportService,
+      team as unknown as TeamReportService,
     );
     const response = { setHeader: jest.fn() };
-    return { controller, scope, money, moneyBody, cashUp, cashUpBody, response, options, resolved };
+    return { controller, scope, money, moneyBody, cashUp, cashUpBody, team, teamBody, response, options, resolved };
   }
 
   it('result creates one instant, passes a report actor, and returns the Money body built on that scope', async () => {
@@ -120,13 +124,27 @@ describe('ReportsController handlers', () => {
   });
 
   it('a report without a body builder returns a null body and refuses a cursor', async () => {
-    const { controller, money, response, resolved } = setup();
-    const team = getReportDefinition('team');
-    const result = await controller.result({ auth, reportDefinition: team } as ReportRequest, {}, response as never);
-    expect(result).toEqual({ reportKey: 'team', filter: resolved, body: null });
+    const { controller, money, team, response, resolved } = setup();
+    const colourLab = getReportDefinition('colour-lab');
+    const result = await controller.result({ auth, reportDefinition: colourLab } as ReportRequest, {}, response as never);
+    expect(result).toEqual({ reportKey: 'colour-lab', filter: resolved, body: null });
     await expect(
-      controller.result({ auth, reportDefinition: team } as ReportRequest, { cursor: 'm1.abc' }, response as never),
+      controller.result({ auth, reportDefinition: colourLab } as ReportRequest, { cursor: 'm1.abc' }, response as never),
     ).rejects.toMatchObject({ response: { code: 'report_cursor_invalid' } });
+    expect(money.build).not.toHaveBeenCalled();
+    expect(team.build).not.toHaveBeenCalled();
+  });
+
+  it('builds the Team body on the same scope, and refuses a cursor (Team has no paged detail)', async () => {
+    const { controller, scope, money, team, teamBody, response, resolved } = setup();
+    const teamDefinition = getReportDefinition('team');
+    const result = await controller.result({ auth, reportDefinition: teamDefinition } as ReportRequest, { staff: 'x' }, response as never);
+    expect(result).toEqual({ reportKey: 'team', filter: resolved, body: teamBody });
+    expect(team.build).toHaveBeenCalledWith(await scope.resolve.mock.results[0].value);
+    await expect(
+      controller.result({ auth, reportDefinition: teamDefinition } as ReportRequest, { cursor: 'm1.abc' }, response as never),
+    ).rejects.toMatchObject({ response: { code: 'report_cursor_invalid' } });
+    expect(team.build).toHaveBeenCalledTimes(1);
     expect(money.build).not.toHaveBeenCalled();
   });
 

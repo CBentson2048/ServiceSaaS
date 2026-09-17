@@ -15,6 +15,7 @@ import type { MembershipGrant, Permission, UserRole } from './index';
 import { inclusiveDayCount, isLocalDate, type LocalDate } from './local-date';
 import type { MoneyReportBody } from './money-report';
 import type { CashUpReportBody } from './cash-up-report';
+import type { TeamReportBody } from './team-report';
 
 // ===========================================================================
 // Registry
@@ -31,7 +32,7 @@ export type ReportRelease = 'foundation' | 'released';
 
 /** Optional controls. Date range and locations are on every report. */
 export interface ReportControls {
-  /** Staff filter. No report supports it until R2 defines staff scope. */
+  /** Staff filter (R2 Team only). */
   staff: boolean;
   /** Summary/detail toggle. */
   detail: boolean;
@@ -70,8 +71,8 @@ export const REPORT_DEFINITIONS: readonly ReportDefinition[] = [
     key: 'team',
     label: 'Team report',
     permission: 'report.performance.view',
-    // R2 switches this on once its staff-scope contract exists (decision S-1d).
-    controls: { staff: false, detail: false },
+    // R2: staff narrow the staff rows only; facts keep their own location (S-1d).
+    controls: { staff: true, detail: false },
     release: 'foundation',
   },
   {
@@ -148,6 +149,31 @@ export function canOpenReport(
   return (user.membershipGrants ?? []).some((grant) =>
     grant.permissions.includes(definition.permission),
   );
+}
+
+/**
+ * The business locations where this user holds `permission` through a membership
+ * grant: every business location for an owner, otherwise only grant locations
+ * carrying it. For sub-gates inside a report (e.g. commission within Team); never
+ * reads merged permissions or `allowedLocationIds`. Deduped and sorted.
+ */
+export function reportGrantLocationIds(
+  user: ReportAccessUser,
+  permission: Permission,
+  businessLocationIds: readonly string[],
+): string[] {
+  const business = new Set(businessLocationIds);
+  if (isOwner(user)) return [...business].sort();
+  const permitted = new Set<string>();
+  for (const grant of user.membershipGrants ?? []) {
+    if (grant.permissions.includes(permission) && business.has(grant.locationId)) permitted.add(grant.locationId);
+  }
+  return [...permitted].sort();
+}
+
+/** Whether the user is an owner of the business (reporting's only role check). */
+export function isReportOwner(user: ReportAccessUser): boolean {
+  return isOwner(user);
 }
 
 /**
@@ -229,7 +255,10 @@ export interface ReportFilter {
   to?: LocalDate;
   /** `[]` means every location this user may report on for this report. */
   locationIds: string[];
-  /** Always `[]` while no report supports a staff control. */
+  /**
+   * Only on a report with a staff control (R2 Team). Narrows staff rows; never
+   * widens locations. `[]` means every staff member.
+   */
   staffProfileIds: string[];
   view: ReportView;
 }
@@ -498,6 +527,8 @@ export interface ReportBodyMap {
   money: MoneyReportBody;
   /** R7 Cash Up. */
   'cash-up': CashUpReportBody;
+  /** R2 Team. */
+  team: TeamReportBody;
 }
 
 export type ReportBody<K extends ReportKey> = K extends keyof ReportBodyMap ? ReportBodyMap[K] : null;
@@ -519,7 +550,9 @@ export type ReportErrorCode =
   | 'report_timezone_invalid'
   | 'report_week_start_unconfigured'
   /** A detail-page cursor that is malformed, or sent without the detail view. */
-  | 'report_cursor_invalid';
+  | 'report_cursor_invalid'
+  /** A requested staff id is not in this viewer's staff picker for the selection. */
+  | 'report_staff_out_of_scope';
 
 export const REPORT_ERROR_CODES: readonly ReportErrorCode[] = [
   'report_not_found',
@@ -531,6 +564,7 @@ export const REPORT_ERROR_CODES: readonly ReportErrorCode[] = [
   'report_timezone_invalid',
   'report_week_start_unconfigured',
   'report_cursor_invalid',
+  'report_staff_out_of_scope',
 ];
 
 export interface ReportErrorBody {
