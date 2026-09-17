@@ -32,6 +32,7 @@ Thumbs.db
 
 # Coverage / testing
 coverage/
+!apps/api/src/zac/tools/coverage/
 .nyc_output/
 
 # Expo / React Native
