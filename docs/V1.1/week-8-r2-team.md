@@ -1,7 +1,7 @@
 # QLOOQO V1.1 Week 8 — R2 Team
 
 **Status:** G1 approved 2026-09-16 (decisions U-1…U-12, §10). Base G2–G4 built on
-this branch. G5 (hosted UAT) not started. `team` stays `release: 'foundation'`.
+this branch, conditionally accepted 2026-09-17; review items R-1…R-4 resolved (§14). G5 (hosted UAT) not started. `team` stays `release: 'foundation'`.
 Builds on [Ticket A](week-8-ticket-a-foundation.md) (report registry, fail-closed
 access, per-location windows, decision S-1d) and consumes
 [R1 Money](week-8-ticket-b-r1-money.md)'s paid-bill universe.
@@ -21,11 +21,11 @@ report window.
 | Service revenue (gross incl. VAT; net alongside) | Available |
 | Colour | Available |
 | Average bill | Available |
-| Utilisation | Available; unavailable for a staff row — and its location and team totals — when a rostered day is covered by leave recorded at another location |
+| Utilisation | Available; `availability_scope_ambiguous` for a staff row — and its location and team totals — where a rostered day cannot be resolved safely for the viewer (§4) |
 | Future Booking (and confirmed-only) | Available, as at generation |
 | Retail revenue | Available |
 | Retail share of service revenue | Available, team and location only |
-| Finalised commission | Available, locked or paid pay periods only |
+| Finalised commission | Available, locked or paid pay periods only; amounts `currency_unverified` until payroll records a statement's currency (§7) |
 | Team and location totals, staff rows, staff filter | Available |
 | **Rebooking At Source** | Unavailable — `capture_not_implemented` |
 | **Revenue vs target** and target-dependent figures | Unavailable — `target_model_not_available` |
@@ -43,7 +43,7 @@ An unavailable metric is listed with its reason and is never rendered as 0.
 | Currency | R1's rule: facts' currencies + the location's configured currency | — | — | — |
 | Eligible visits | `booking.visits` (completed, awaiting payment, paid) | `primary_staff_profile_id` | `location_id` | `completed_at` |
 | Future appointments | `booking.appointments` (pending, accepted), business-wide | — | — | `scheduled_start_at` > generation |
-| Rota | `rota.shifts` (not cancelled), `shift_breaks`, `absence_events` + `book_out_types`, `leave_requests` (approved) | `staff_profile_id` | `location_id` | local days |
+| Rota | `rota.shifts` (not cancelled), `shift_breaks`, `absence_events` + `book_out_types`, `leave_requests` (approved, at the viewer's permitted locations only) | `staff_profile_id` | `location_id` | local days |
 | Booked time | `booking.appointments` (utilisation's booked statuses), `occupied_ranges` | `assigned_staff_profile_id` | `location_id` | local days |
 | Current staff | `core.user_memberships` (active manager or stylist) → `core.staff_profiles` | profile id | membership location | today |
 | Finalised commission | `payroll.pay_periods` (calculation; locked or paid) + `pay_summaries` (not superseded) | `staff_profile_id` | the period's own `location_id` (or business-wide) | period dates |
@@ -97,12 +97,25 @@ time; per staff-day. R2 has its own assembler (`team-utilisation.ts`):
   never after its local today (a custom range running into the future counts no
   future rota or bookings);
 - shifts, book-outs and bookings count only at their own location (as before);
-- **approved leave removes a staff-day only where it was recorded.** Leave recorded
-  at another location marks that staff-day ambiguous: its row, its location total and
-  the team total read `leave_location_ambiguous`. The existing assembler applies
-  leave fetched for the selected locations to every selected location, so a
-  multi-location person's figure depends on the selection. Which semantics is right
-  is not decided, so R2 does not guess (U-10 stop rule).
+- **approved leave recorded at the staff-day's own location removes the day.** Every
+  module agrees on that. Whether leave recorded at *another* location removes it is
+  not decided — online booking availability says no (`public-booking.service.ts`
+  filters leave by location), payroll hours say yes (no location filter), the KPI
+  assembler applies it per selection — so R2 does not guess (U-10 stop rule).
+- **privacy (R-1):** leave is read only at the viewer's permitted locations for the
+  Team report, never elsewhere. A staff-day that same-location leave does not remove
+  reads `availability_scope_ambiguous` when (a) the viewer is not an owner — leave
+  could be recorded at a location they may not see, and checking would reveal it.
+  The rule depends on the role alone: it deliberately never asks whether the grant
+  covers every location, because that answer would tell a manager whether other
+  (even archived) locations exist — or (b) approved leave recorded at another
+  location covers it (owners only, who may see every location). The row, its
+  location total and the team total then read unavailable. The body carries no count,
+  place or cause; the page says only "Utilisation is unavailable because staff
+  availability cannot be resolved safely for this period." Consequence: every
+  non-owner viewer sees utilisation unavailable for rostered days (except days
+  removed by same-location leave) until the leave semantics is decided (§14). No
+  owner diagnostics yet.
 - aggregates keep the shared semantics: minutes add up across staff-days, booked
   time on a day with no available time is left out, nothing is capped (over 100%
   stays visible). Booked time is summed per appointment slice, as before.
@@ -112,7 +125,8 @@ time; per staff-day. R2 has its own assembler (`team-utilisation.ts`):
 `utilisation_rate`) differs from R2's canonical figures:
 1. UTC days and a Monday week, not the location's local days and the business week
    start;
-2. leave applied across the selected locations, so figures depend on the selection;
+2. leave applied across the selected locations, so figures depend on the selection
+   (R2 applies only same-location leave and leaves the rest unstated, §4);
 3. scope from `allowedLocationIds` (merged across memberships);
 4. no per-staff output.
 When ZAC moves to canonical report facts it should read R2's figures, not recompute
@@ -147,6 +161,11 @@ no staff); plus **Former staff** (facts naming a removed profile). Facts keep th
 own location. A row states today's employment status and whether the person is
 currently active at that location — labelled as current, never as history.
 
+A current member with nothing recorded at the location in the period has
+`hasRecordedActivity: false` and the page says "No recorded activity here in this
+period" beside today's status (R-2). That row comes from the current membership only,
+never from `primary_location_id`, and is never claimed as history.
+
 **Picker:** every staff and former-staff row id, plus staff on a business-wide
 statement the viewer may see (owners).
 
@@ -170,6 +189,28 @@ never superseded statements, never rolled up across periods.
 - Location period: the viewer's grant at that location must carry
   `report.commission.view` (owners always). The period's own location decides.
 - Restrictions are stated whether or not any hidden period exists.
+
+**Statement currency (R-3).** Audit of `payroll.pay_summaries.currency_code`:
+- A. Not written from the calculation's currency: the only writer
+  (`payroll-period.service.ts` generate) inserts the literal `'GBP'`, and the engine's
+  input currency is the literal `'GBP'` too (`payroll-inputs.service.ts`), whatever the
+  location's currency.
+- B. Yes: the column is `not null default 'GBP'` (0073), so every summary — legacy or
+  new — reads GBP with no proof it was the period's currency.
+- C. No: nothing records provenance, so a trustworthy code cannot be told from a
+  defaulted one.
+
+Treatment: R2 never reads `currency_code`. Every statement's currency is
+`{ status: 'unverified' }`; its commission and adjustments, and its period's total,
+are `currency_unverified`; the period's `currencyCode` is `null`. The page says
+amounts aren't shown because payroll didn't record the currency, and never shows
+them in a guessed currency. Never relabelled with today's location or business
+currency, never defaulted, never converted; locked summaries are not modified. A
+statement whose currency is verified (a future provenance record) is stated in its
+own currency — tested with GBP and EUR. Mixed verified currencies leave the period
+total `mixed_currencies`; a period with no statements has no total
+(`no_pay_statements`). Recording the currency with provenance belongs to Payroll
+engine alignment (§12).
 
 **Live commission is unavailable** (`payroll_rules_not_implemented`): the KPI
 calculator is not used, the current payroll engine is not presented as the approved
@@ -196,6 +237,18 @@ changed in base R2.
 | Custom level without Performance | 403 | — | — |
 
 No R2 authorisation uses `primary_location_id` or `allowedLocationIds`.
+
+**Cross-location privacy (R-1).** A viewer learns nothing recorded at a location
+outside their Team report grant: rota, leave, book-outs, bookings, visits, bills,
+retail, pay statements and memberships are read only inside the grant (windows at
+resolved locations; leave at permitted locations), the scope carries no "every
+location" flag, and `team-privacy.spec.ts` — with the scope resolved by the real
+scope service — proves manager@A's whole report is identical with and without such
+facts at B and an archived location C, including for a manager with commission only
+at B. The one
+deliberate exception is locked U-5: Future Booking counts a client's future
+appointment at any location, so a manager@A figure can include a booking made at B
+(a count, never its place or detail) — confirm this stays acceptable.
 
 ## 9. Contract
 
@@ -226,12 +279,8 @@ U-11 staff universe as §6 · U-12 retail share team/location only.
 - A V1 commission calculator (`kpi.calc`) still serves `/kpi/stylists`.
 - Rebooking writers link later bookings to earlier visits with no time bound.
 - Shared utilisation defects noted in §4.
-- `pay_summaries.currency_code` has a database default of `'GBP'`: a statement's
-  currency may be that default rather than a recorded one — check before the
-  finalised-commission G5.
-- The cross-location leave note tells a location's viewer that a stylist rostered
-  there has approved leave recorded at another location (a count, no detail). It is
-  the price of figures that do not depend on the selection; confirm at G5.
+- `pay_summaries.currency_code` has no provenance (§7): finalised-commission amounts
+  stay `currency_unverified` until payroll records the currency.
 - Performance follow-ups (no migration in base R2): `booking.visits` has no index on
   `(business_id, location_id, completed_at)`; id-chunk reads run one after another
   (e.g. future appointments for many thousands of clients).
@@ -244,7 +293,8 @@ U-11 staff universe as §6 · U-12 retail share team/location only.
   individual → role → location → business targets with percentage metrics; drop the
   global 50% rebooking default.
 - **Payroll engine alignment:** R1 paid-bill revenue, At Source gate, Route 2, the
-  manager weekly target with the planned-hours lock; retire the V1 calculator.
+  manager weekly target with the planned-hours lock; retire the V1 calculator; record
+  each statement's calculation currency with provenance (§7).
 - **M-C Retail linkage:** visit or standalone sale context captured and validated at
   sale time; direct table writes narrowed.
 - Optional **M-D** effective-dated staff–location assignments.
@@ -254,3 +304,25 @@ U-11 staff universe as §6 · U-12 retail share team/location only.
 No migration; `0113`/`0114` stay reserved and no number is allocated. `team` stays
 `release: 'foundation'`; the production report shell stays off; G5 is mandatory
 before release.
+
+## 14. Review items (2026-09-17)
+
+- **R-1 Cross-location leave privacy:** the leave-elsewhere count and the
+  "leave at another location" wording are removed; the neutral
+  `availability_scope_ambiguous` replaces `leave_location_ambiguous` (§4, §8).
+  **Decision needed (not taken):** which leave semantics is canonical. If leave
+  applies only where it was recorded (online booking's reading), utilisation needs no
+  fact from another location and becomes available to every viewer — managers
+  included — with no leak. Until then managers see it unavailable.
+- **Re-review follow-ups (2026-09-17):** the "every business location" flag was
+  replaced by the owner role (it revealed whether other locations exist); the web
+  "no arithmetic" boundary is now a syntax-tree check (a regex could be dodged);
+  utilisation's ratio is gated on the stated minutes; R1 is pinned never to use the
+  staff fields its adapter carries.
+- **R-2 Zero-activity current staff:** proven, and labelled (§6).
+- **R-3 Finalised commission currency:** audited and treated (§7).
+- **R-4 Full suite:** `app.bootstrap.spec.ts` validated the environment when
+  `AppModule` was imported, before its own placeholder env was applied, so it passed
+  only where a local `.env` existed. It now loads `AppModule` after the placeholders;
+  the full API command exits green with no `.env`.
+
