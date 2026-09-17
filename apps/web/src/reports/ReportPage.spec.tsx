@@ -513,6 +513,7 @@ describe('R2 Team body and staff filter', () => {
     locationId: L1,
     staff: { kind: 'staff', staffProfileId: id, name, currentEmploymentStatus: 'active', currentlyActiveHere: true },
     currencyCode: 'GBP',
+    hasRecordedActivity: true,
     metrics: metrics(service),
   });
   const teamResult = (selected: string[]): ReportResult => ({
@@ -532,7 +533,7 @@ describe('R2 Team body and staff filter', () => {
       ],
       finalisedCommission: { periods: [], restrictions: [] },
       unavailableMetrics: [{ metric: 'rebooking_at_source', reason: 'capture_not_implemented' }],
-      dataQuality: { rolledUpServiceLines: 0, bookedWithoutRota: 0, bookedAtAnotherLocation: 0, leaveAtAnotherLocation: 0 },
+      dataQuality: { rolledUpServiceLines: 0, bookedWithoutRota: 0, bookedAtAnotherLocation: 0 },
     },
   });
 

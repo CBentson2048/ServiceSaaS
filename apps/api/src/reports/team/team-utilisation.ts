@@ -9,9 +9,20 @@
  *   Ticket A window — never UTC days;
  * - a staff-day belongs to one location: shifts, book-outs and appointments count
  *   only at their own location (unchanged);
- * - approved leave removes a staff-day only when it was recorded at that same
- *   location. Leave recorded at another location makes the staff-day ambiguous:
- *   its utilisation is not stated (`leave_location_ambiguous`), never guessed.
+ * - approved leave recorded at the staff-day's own location removes the whole day
+ *   (every module agrees on that). Whether leave recorded at ANOTHER location
+ *   removes it is not decided (online booking: no; payroll hours: yes; KPI: per
+ *   selection), so a staff-day is resolved only when that question cannot change
+ *   it. Leave is read only at the viewer's permitted locations, never elsewhere, and
+ *   a staff-day that same-location leave does not remove is not stated
+ *   (`availability_scope_ambiguous`) when either
+ *     - the viewer is not an owner — leave could be recorded at a location they may
+ *       not see, and checking (or even asking whether such a location exists) would
+ *       reveal it; the rule depends on the viewer's role alone, so the result
+ *       carries nothing from outside the grant; or
+ *     - approved leave recorded at another location covers it (owners, who may see
+ *       every location).
+ *   Nothing says where, why or how many.
  *
  * Aggregates keep the shared semantics: minutes add up across staff-days, booked
  * time on a day with no available time is left out, and nothing is capped.
@@ -45,8 +56,17 @@ export interface UtilisationSums {
   availableMs: number;
   /** Booked time on staff-days that had available time. */
   bookedMs: number;
-  /** A staff-day is covered by leave recorded at another location. */
+  /** A staff-day's availability cannot be resolved safely for this viewer. */
   ambiguous: boolean;
+}
+
+/** What the viewer lets the assembler settle about leave. */
+export interface UtilisationLeaveScope {
+  /**
+   * The viewer may see every location of the business (an owner), so leave recorded
+   * anywhere is in `facts.leave` and can be checked without revealing anything.
+   */
+  seesEveryLocation: boolean;
 }
 
 export interface UtilisationResult {
@@ -55,7 +75,6 @@ export interface UtilisationResult {
   dataQuality: {
     bookedWithoutRota: number;
     bookedAtAnotherLocation: number;
-    leaveAtAnotherLocation: number;
   };
 }
 
@@ -117,7 +136,8 @@ function* overlapping(days: readonly LocalDay[], startMs: number, endMs: number)
   }
 }
 
-export function assembleUtilisation(windows: readonly UtilisationWindow[], facts: UtilisationFacts): UtilisationResult {
+/** `facts.leave` must hold only leave recorded at the viewer's permitted locations. */
+export function assembleUtilisation(windows: readonly UtilisationWindow[], facts: UtilisationFacts, leaveScope: UtilisationLeaveScope): UtilisationResult {
   const daysByLocation = new Map(
     windows.map((window) => [window.locationId, localDays(window)] as const).filter(([, days]) => days.length > 0),
   );
@@ -165,22 +185,19 @@ export function assembleUtilisation(windows: readonly UtilisationWindow[], facts
     }
   }
 
-  // Approved leave: same location removes the whole local day; another location only marks the day ambiguous.
+  // Approved leave: same location removes the whole local day; otherwise see the header.
   const leaveByStaff = new Map<string, LeaveRow[]>();
   for (const row of facts.leave) {
     const list = leaveByStaff.get(row.staffProfileId);
     if (list) list.push(row);
     else leaveByStaff.set(row.staffProfileId, [row]);
   }
-  let leaveAtAnotherLocation = 0;
   for (const entry of staffDays.values()) {
     const covering = (leaveByStaff.get(entry.staffId) ?? []).filter((row) => row.startDate <= entry.day.date && entry.day.date <= row.endDate);
-    if (covering.length === 0) continue;
     if (covering.some((row) => row.locationId === entry.locationId)) {
       entry.reducing.push({ startMs: entry.day.startMs, endMs: entry.day.endMs });
-    } else {
+    } else if (!leaveScope.seesEveryLocation || covering.length > 0) {
       entry.ambiguous = true;
-      leaveAtAnotherLocation += 1;
     }
   }
 
@@ -220,7 +237,7 @@ export function assembleUtilisation(windows: readonly UtilisationWindow[], facts
     byStaff.set(entry.staffId, sums);
     byLocationStaff.set(entry.locationId, byStaff);
   }
-  return { byLocationStaff, dataQuality: { bookedWithoutRota, bookedAtAnotherLocation, leaveAtAnotherLocation } };
+  return { byLocationStaff, dataQuality: { bookedWithoutRota, bookedAtAnotherLocation } };
 }
 
 /** Occupied stylist intervals: the stored ranges, or the whole span only when the column is NULL. */

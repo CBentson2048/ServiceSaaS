@@ -38,6 +38,7 @@ export function moneyScope(
       })),
     },
     windows,
+    permittedLocationIds: windows.map((w) => w.locationId),
   };
 }
 

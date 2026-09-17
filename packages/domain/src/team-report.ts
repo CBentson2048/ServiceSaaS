@@ -23,11 +23,16 @@ export type TeamUnavailableReason =
   /** No rostered time remains after breaks, book-outs and leave. */
   | 'no_rostered_time'
   /**
-   * Approved leave recorded at another location covers a rostered day here. Whether
-   * it removes this location's rostered time is not decided, so utilisation is not
-   * stated rather than guessed.
+   * Staff availability for a rostered day cannot be resolved safely from what this
+   * viewer may see (how leave applies across locations is not decided), so
+   * utilisation is not stated rather than guessed. Deliberately says nothing about
+   * where, why or how often.
    */
-  | 'leave_location_ambiguous';
+  | 'availability_scope_ambiguous'
+  /** Payroll did not record which currency a pay statement is in, so its amounts are not stated. */
+  | 'currency_unverified'
+  /** A pay period has no live pay statements, so it has no commission total. */
+  | 'no_pay_statements';
 
 export type TeamAmount =
   | { availability: 'available'; cents: number }
@@ -62,7 +67,7 @@ export interface TeamAverageBill {
 }
 
 export interface TeamUtilisation {
-  /** Rostered minutes after breaks, reducing book-outs and same-location leave. */
+  /** Rostered minutes after breaks, reducing book-outs and leave recorded at the same location. */
   availableMinutes: TeamCount;
   /** Occupied appointment minutes on days with available time. */
   bookedMinutes: TeamCount;
@@ -131,6 +136,12 @@ export interface TeamStaffRow {
   staff: TeamStaffIdentity;
   /** The location's single currency; `null` when mixed or unknown. */
   currencyCode: string | null;
+  /**
+   * Whether this staff member has any recorded fact at this location in the period:
+   * a bill line, eligible visit, retail sale, rostered day or location pay statement.
+   * `false` means a current active member with no recorded activity here.
+   */
+  hasRecordedActivity: boolean;
   metrics: TeamMetrics;
 }
 
@@ -166,11 +177,20 @@ export type TeamGreaterOf = 'not_applied' | 'base_pay_won' | 'commission_won';
 /** A staff member on a pay statement. Statements are per person, not per location. */
 export type TeamCommissionStaff = { kind: 'staff'; staffProfileId: string; name: string } | { kind: 'former'; staffProfileId: string };
 
+/**
+ * A pay statement's currency. `verified` only when payroll recorded the currency the
+ * statement was calculated in. Never relabelled with a location's or business's
+ * currency today, never defaulted, never converted.
+ */
+export type TeamStatementCurrency = { status: 'verified'; code: string } | { status: 'unverified' };
+
 export interface TeamCommissionLine {
   staff: TeamCommissionStaff;
-  /** The statement's own currency. */
-  currencyCode: string;
-  /** As locked on the pay statement. When base pay won a greater-of comparison this is 0. */
+  currency: TeamStatementCurrency;
+  /**
+   * As locked on the pay statement; unavailable (`currency_unverified`) when its currency
+   * is not verified. When base pay won a greater-of comparison this is 0.
+   */
   commission: TeamAmount;
   /** Corrections carried into the statement, shown separately from commission. */
   adjustments: TeamAmount;
@@ -187,9 +207,12 @@ export interface TeamCommissionPeriod {
   status: 'locked' | 'paid';
   /** Narrowed by the staff filter. */
   lines: TeamCommissionLine[];
-  /** Σ commission over every statement in the period (unfiltered); unavailable when currencies differ. */
+  /**
+   * Σ commission over every statement in the period (unfiltered). Unavailable when any
+   * statement's currency is unverified, when currencies differ, or with no statements.
+   */
   total: TeamAmount;
-  /** The statements' single currency; `null` when they differ or there are none. */
+  /** The statements' single verified currency; `null` when any is unverified, they differ, or there are none. */
   currencyCode: string | null;
   /** Live statements in the period, whatever the staff filter. */
   statements: number;
@@ -238,10 +261,8 @@ export interface TeamDataQuality {
   rolledUpServiceLines: number;
   /** Booked appointment days with no rota shift for that stylist. */
   bookedWithoutRota: number;
-  /** Booked appointment days where the stylist was rostered at another location. */
+  /** Booked appointment days where the stylist was rostered at another location in this report. */
   bookedAtAnotherLocation: number;
-  /** Rostered staff-days covered by approved leave recorded at another location. */
-  leaveAtAnotherLocation: number;
 }
 
 export interface TeamReportBody {

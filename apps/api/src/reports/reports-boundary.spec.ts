@@ -199,7 +199,10 @@ describe('report foundation source boundaries', () => {
     expect(offenders(teamFiles, /'ready_for_review'|'draft'/)).toEqual([]);
     // 'approved' appears once: approved leave, which reduces rostered time.
     expect([...teamSource.matchAll(/'approved'/g)]).toHaveLength(1);
-    expect(teamSource).toContain(".eq('status', 'approved')\n        .in('staff_profile_id'");
+    // Leave is read only at the viewer's permitted locations — never a fact from outside the grant.
+    expect(teamSource).toContain(".eq('status', 'approved')\n        .in('location_id', [...locationIds])\n        .in('staff_profile_id'");
+    // A pay statement's stored currency code has no provenance (default and literal 'GBP'): never read, never trusted.
+    expect(offenders(teamFiles, /currency_code/)).toEqual([]);
     expect(offenders(teamFiles, /['"`]GBP['"`]/)).toEqual([]);
   });
 
@@ -214,6 +217,9 @@ describe('report foundation source boundaries', () => {
     expect(sourceTables).toEqual(['bill_lines', 'bills', 'businesses', 'deposits', 'location_settings', 'retail_sales', 'salon_payments']);
     // A figure's currency always comes from data: there is no default currency.
     expect(offenders(moneyFiles, /['"`]GBP['"`]/)).toEqual([]);
+    // The staff fields R2 added to R1's adapter are carried, never used: only the adapter names them,
+    // so R1's own figures cannot change because of them.
+    expect(offenders(moneyFiles, /\bstaffProfileId\b|\bperService\b|\bsellerStaffProfileId\b/)).toEqual(['apps/api/src/reports/money/money-source.ts']);
   });
 
   it('R7 Cash Up reads cash-ups as recorded and takings through R1 — never End of Day’s own calculations', () => {

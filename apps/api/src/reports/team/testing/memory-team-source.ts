@@ -77,6 +77,7 @@ export interface TeamReadLog {
   businessId: string;
   windows?: readonly MoneyWindow[];
   ids?: readonly string[];
+  locationIds?: readonly string[];
   ranges?: readonly LocalDateRange[];
   afterInstant?: string;
 }
@@ -198,13 +199,21 @@ export class MemoryTeamSource implements TeamSource {
     return this.ledger.bookOutTypes.filter((t) => t.businessId === businessId).map(({ businessId: _b, ...row }) => row);
   }
 
-  async approvedLeave(businessId: string, staffProfileIds: readonly string[], ranges: readonly LocalDateRange[], afterId: string | null, limit: number): Promise<LeaveRow[]> {
-    this.reads.push({ method: 'approvedLeave', businessId, ids: staffProfileIds, ranges });
+  async approvedLeave(
+    businessId: string,
+    locationIds: readonly string[],
+    staffProfileIds: readonly string[],
+    ranges: readonly LocalDateRange[],
+    afterId: string | null,
+    limit: number,
+  ): Promise<LeaveRow[]> {
+    this.reads.push({ method: 'approvedLeave', businessId, locationIds, ids: staffProfileIds, ranges });
     const rows = this.ledger.leave
       .filter(
         (l) =>
           l.businessId === businessId &&
           l.status === 'approved' &&
+          locationIds.includes(l.locationId) &&
           staffProfileIds.includes(l.staffProfileId) &&
           ranges.some((r) => l.startDate <= r.to && l.endDate >= r.from) &&
           (afterId === null || l.id > afterId),
@@ -258,6 +267,11 @@ export class MemoryTeamSource implements TeamSource {
 }
 
 /** A Ticket A scope for the Team report, as the scope service resolves it. */
+/** The viewer's grant for the Team report. Default: exactly the resolved locations. */
+export interface TeamGrant {
+  permittedLocationIds: readonly string[];
+}
+
 export function teamScope(
   businessId: string,
   locations: readonly ScopeLocation[],
@@ -265,7 +279,8 @@ export function teamScope(
   asOf: Date,
   actor: ReportActor = { id: 'owner-1', businessId, roles: ['owner'] },
   weekStartDay: WeekStartDay = 2,
+  grant?: TeamGrant,
 ): ReportScope {
   const scope = moneyScope(businessId, locations, filter, asOf, weekStartDay);
-  return { ...scope, actor, definition: getReportDefinition('team')!, resolved: { ...scope.resolved, reportKey: 'team' } };
+  return { ...scope, ...grant, actor, definition: getReportDefinition('team')!, resolved: { ...scope.resolved, reportKey: 'team' } };
 }

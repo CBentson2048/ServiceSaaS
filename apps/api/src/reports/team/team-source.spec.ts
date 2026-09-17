@@ -142,13 +142,14 @@ describe('SupabaseTeamSource', () => {
     expect(booked.queries[0].ops).toContainEqual(['eq', ['business_id', BIZ]]);
   });
 
-  it('approved leave of the staff, at any location, overlapping the report dates', async () => {
+  it('approved leave of the staff, only at the viewer’s permitted locations, overlapping the report dates', async () => {
     const { source, queries } = fake(empty);
-    await source.approvedLeave(BIZ, [ID], [{ from: '2026-09-14', to: '2026-09-20' }], null, 1000);
+    await source.approvedLeave(BIZ, [L1], [ID], [{ from: '2026-09-14', to: '2026-09-20' }], null, 1000);
     expect(queries[0].ops).toEqual([
       ['select', ['id,location_id,staff_profile_id,start_date,end_date']],
       ['eq', ['business_id', BIZ]],
       ['eq', ['status', 'approved']],
+      ['in', ['location_id', [L1]]],
       ['in', ['staff_profile_id', [ID]]],
       ['or', ['and(start_date.lte.2026-09-20,end_date.gte.2026-09-14)']],
       ['order', ['id', { ascending: true }]],
@@ -171,12 +172,14 @@ describe('SupabaseTeamSource', () => {
     ]);
     expect(dateOverlapFilter('period_start', 'period_end', [{ from: '2026-09-14', to: '2026-09-14' }], true)).toBe('and(period_start.lte.2026-09-14,period_end.gt.2026-09-14)');
     const statements = fake({
-      data: [{ id: ID, pay_period_id: ID, staff_profile_id: ID, currency_code: 'gbp', commission_cents: '1500', adjustments_cents: -300, greater_of_applied: true, greater_of_winner: 'base_pay' }],
+      data: [{ id: ID, pay_period_id: ID, staff_profile_id: ID, commission_cents: '1500', adjustments_cents: -300, greater_of_applied: true, greater_of_winner: 'base_pay' }],
       error: null,
     });
     expect(await statements.source.paySummaries(BIZ, [ID], null, 1000)).toEqual([
-      { id: ID, payPeriodId: ID, staffProfileId: ID, currencyCode: 'GBP', commissionCents: 1500, adjustmentsCents: -300, greaterOfApplied: true, greaterOfWinner: 'base_pay' },
+      { id: ID, payPeriodId: ID, staffProfileId: ID, currency: { status: 'unverified' }, commissionCents: 1500, adjustmentsCents: -300, greaterOfApplied: true, greaterOfWinner: 'base_pay' },
     ]);
+    // The stored currency_code is never read: it defaults to 'GBP' and payroll writes the literal 'GBP', so it proves nothing.
+    expect(statements.queries[0].ops).toContainEqual(['select', ['id,pay_period_id,staff_profile_id,commission_cents,adjustments_cents,greater_of_applied,greater_of_winner']]);
     expect(statements.queries[0].ops).toContainEqual(['is', ['superseded_by_id', null]]);
     expect(statements.queries[0].ops).toContainEqual(['eq', ['business_id', BIZ]]);
   });
@@ -190,8 +193,9 @@ describe('SupabaseTeamSource', () => {
     expect(writes).toEqual([]);
     const badStatus = fake({ data: [{ id: ID, client_profile_id: ID, status: 'no_show' }], error: null });
     await expect(badStatus.source.futureAppointments(BIZ, [ID], '2026-09-16T10:00:00.000000Z', null, 10)).rejects.toBeInstanceOf(MoneySourceShapeError);
-    const badCurrency = fake({ data: [{ id: ID, pay_period_id: ID, staff_profile_id: ID, currency_code: '', commission_cents: 1, adjustments_cents: 0, greater_of_applied: false, greater_of_winner: null }], error: null });
-    await expect(badCurrency.source.paySummaries(BIZ, [ID], null, 10)).rejects.toBeInstanceOf(MoneySourceShapeError);
+    const badWinner = fake({ data: [{ id: ID, pay_period_id: ID, staff_profile_id: ID, commission_cents: 1, adjustments_cents: 0, greater_of_applied: true, greater_of_winner: 'tips' }], error: null });
+    await expect(badWinner.source.paySummaries(BIZ, [ID], null, 10)).rejects.toBeInstanceOf(MoneySourceShapeError);
+    await expect(source.approvedLeave(BIZ, ['not-a-uuid'], [ID], [{ from: '2026-09-14', to: '2026-09-14' }], null, 10)).rejects.toThrow();
     const failing = fake({ data: null, error: { message: 'boom' } });
     await expect(failing.source.shifts(BIZ, WINDOWS, null, 10)).rejects.toBeInstanceOf(InternalServerErrorException);
   });

@@ -10,9 +10,12 @@ import type { ReactNode } from 'react';
 import { AppCard, AppText } from '../../design';
 import { formatReportDate } from '../reportScopeLine';
 import {
+  AVAILABILITY_SCOPE_TEXT,
+  COMMISSION_CURRENCY_UNVERIFIED_TEXT,
   COMMISSION_RESTRICTION_TEXT,
   GREATER_OF_TEXT,
   UNAVAILABLE_METRIC_LABELS,
+  activityText,
   asAtWhen,
   billsText,
   bookedOfRostered,
@@ -22,7 +25,10 @@ import {
   formatTeamCount,
   formatTeamRatio,
   formerStaffLabel,
+  hasAvailabilityScopeAmbiguity,
+  hasUnverifiedCommissionCurrency,
   staffName,
+  statementCurrencyCode,
   unavailableMetricText,
 } from './teamLabels';
 
@@ -109,7 +115,15 @@ function MetricsFigures({ metrics, currencyCode, totals, asAt }: { metrics: Team
     ['Service revenue, net of VAT', money(metrics.serviceRevenue.netOfVat), null],
     ['Colour', money(metrics.colour.gross), null],
     ['Average bill', money(metrics.averageBill.average), metrics.averageBill.average.availability === 'available' ? billsText(metrics.averageBill.bills) : null],
-    ['Utilisation', formatTeamRatio(utilisation.utilisation), utilisation.utilisation.availability === 'available' ? bookedOfRostered(utilisation.bookedMinutes, utilisation.availableMinutes) : null],
+    [
+      'Utilisation',
+      formatTeamRatio(utilisation.utilisation),
+      utilisation.utilisation.availability === 'available'
+        ? bookedOfRostered(utilisation.bookedMinutes, utilisation.availableMinutes)
+        : utilisation.utilisation.availability === 'unavailable' && utilisation.utilisation.reason === 'availability_scope_ambiguous'
+          ? AVAILABILITY_SCOPE_TEXT
+          : null,
+    ],
     ['Future Booking', formatTeamRatio(future.withFutureBooking), [clientsParts(future.withFutureBooking), future.withFutureBooking.availability === 'not_started' ? null : asAt].filter(Boolean).join(' · ') || null],
     ['Future Booking, confirmed only', formatTeamRatio(future.withConfirmedFutureBooking), null],
     ['Retail revenue', money(metrics.retailRevenue), null],
@@ -196,17 +210,18 @@ function StaffTable({ body, nameOf, asAtByLocation }: { body: TeamReportBody; na
           Each fact counts at the location where it happened. The status shown under a name is today’s, not where someone worked in the period.
           Unattributed holds bill lines, visits and retail sales with no staff member recorded.
         </Note>
+        {hasAvailabilityScopeAmbiguity(body) ? <Note>{AVAILABILITY_SCOPE_TEXT}</Note> : null}
       </section>
     </AppCard>
   );
 }
 
 function StaffRow({ row }: { row: TeamStaffRow }) {
-  const status = currentStatusText(row.staff);
+  const note = [currentStatusText(row.staff), activityText(row)].filter(Boolean).join(' · ') || null;
   return (
     <MetricsRow
       label={staffName(row.staff)}
-      note={status}
+      note={note}
       metrics={row.metrics}
       currencyCode={row.currencyCode}
     />
@@ -314,6 +329,7 @@ function CommissionSection({ body, nameOf }: { body: TeamReportBody; nameOf: (id
       ) : (
         periods.map((period) => <CommissionPeriod key={period.payPeriodId} period={period} nameOf={nameOf} filtered={body.selectedStaff !== null} />)
       )}
+      {hasUnverifiedCommissionCurrency(body) ? <Note>{COMMISSION_CURRENCY_UNVERIFIED_TEXT}</Note> : null}
       {restrictions.map((restriction) => (
         <Note key={restriction}>{COMMISSION_RESTRICTION_TEXT[restriction]}</Note>
       ))}
@@ -359,8 +375,8 @@ function CommissionPeriod({ period, nameOf, filtered }: { period: TeamCommission
                 <th scope="row" className="py-1 pr-4 text-left font-medium">
                   {line.staff.kind === 'staff' ? line.staff.name : formerStaffLabel(line.staff.staffProfileId)}
                 </th>
-                <td className="py-1 pr-4 text-right tabular-nums">{formatTeamAmount(line.commission, line.currencyCode)}</td>
-                <td className="py-1 pr-4 text-right tabular-nums">{formatTeamAmount(line.adjustments, line.currencyCode)}</td>
+                <td className="py-1 pr-4 text-right tabular-nums">{formatTeamAmount(line.commission, statementCurrencyCode(line.currency))}</td>
+                <td className="py-1 pr-4 text-right tabular-nums">{formatTeamAmount(line.adjustments, statementCurrencyCode(line.currency))}</td>
                 <td className="py-1 pr-4 text-right">{GREATER_OF_TEXT[line.greaterOf]}</td>
               </tr>
             ))}
@@ -392,9 +408,6 @@ function DataQuality({ body }: { body: TeamReportBody }) {
   }
   if (dataQuality.bookedAtAnotherLocation > 0) {
     notes.push(`${count(dataQuality.bookedAtAnotherLocation, 'booked appointment day is', 'booked appointment days are')} at a different location from the stylist’s shift that day, so left out of utilisation.`);
-  }
-  if (dataQuality.leaveAtAnotherLocation > 0) {
-    notes.push(`${count(dataQuality.leaveAtAnotherLocation, 'rostered day is', 'rostered days are')} covered by leave recorded at another location, so utilisation for them is not stated.`);
   }
   if (notes.length === 0) return null;
   return (

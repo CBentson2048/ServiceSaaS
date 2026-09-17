@@ -15,7 +15,8 @@ import type { TeamReportBody, TeamStaffRow } from '@sheer/domain';
 import { MemoryMoneySource } from '../money/testing/memory-money-source';
 import { TeamReportService } from './team-report.service';
 import { MemoryTeamSource, teamScope } from './testing/memory-team-source';
-import { ALICE, AS_OF, BEN, BIZ, CARA, DAN, DAY, EVE, FAY, GIL, HAL, LOCATIONS, LONDON, OTHER, moneyLedger, teamLedger } from './testing/team-fixture';
+import { instant as at } from '../money/testing/money-scope';
+import { ALICE, AS_OF, BEN, BIZ, CARA, DAN, DAY, EVE, FAY, GIL, HAL, LOCATIONS, LONDON, OTHER, moneyLedger, teamLedger, uid } from './testing/team-fixture';
 
 const OWNER: ReportActor = { id: 'owner', businessId: BIZ, roles: ['owner'] };
 
@@ -82,6 +83,76 @@ describe('R2 staff universe', () => {
     const body = await build();
     const dan = body.staffRows.find((row) => row.rowKey === `${LONDON}:${DAN}`)!;
     expect(Object.keys(dan.staff).sort()).toEqual(['currentEmploymentStatus', 'currentlyActiveHere', 'kind', 'name', 'staffProfileId']);
+  });
+});
+
+describe('R2 zero-activity current staff (locked U-11)', () => {
+  /**
+   * Eve: an active stylist membership at London today, and at London in the period
+   * no bill line, no visit, no retail sale, no rota, and no pay statement on the
+   * visible London pay period (which holds Alice's). Her row comes from her CURRENT
+   * membership only — never from a primary location, and never claimed as history.
+   */
+  const PERIOD = '60000000-0000-4000-8000-0000000000d1';
+  function ledgers() {
+    const team = teamLedger();
+    team.shifts.push({ id: uid(), businessId: BIZ, locationId: LONDON, staffProfileId: ALICE, startAt: at('2026-09-14T08:00:00Z'), endAt: at('2026-09-14T16:00:00Z') });
+    team.visits.push({ id: uid(), businessId: BIZ, locationId: LONDON, status: 'paid', completedAt: at('2026-09-14T12:00:00Z'), appointmentId: null, clientProfileId: uid(), primaryStaffProfileId: ALICE });
+    team.payPeriods.push({ id: PERIOD, businessId: BIZ, locationId: LONDON, label: null, periodStart: '2026-09-14', periodEnd: '2026-09-21', status: 'locked', kind: 'calculation' });
+    team.paySummaries.push({ id: uid(), businessId: BIZ, payPeriodId: PERIOD, staffProfileId: ALICE, currency: { status: 'unverified' }, commissionCents: 100, adjustmentsCents: 0, greaterOfApplied: false, greaterOfWinner: null });
+    return { team, money: moneyLedger() };
+  }
+  const MANAGER_LONDON: ReportActor = {
+    id: 'manager',
+    businessId: BIZ,
+    roles: ['manager'],
+    membershipGrants: [{ locationId: LONDON, permissions: ['report.performance.view', 'report.commission.view'] }],
+  };
+  const buildFor = (actor: ReportActor, staffProfileIds: string[] = []) => {
+    const { team, money } = ledgers();
+    return new TeamReportService(new MemoryMoneySource(money), new MemoryTeamSource(team)).build(
+      teamScope(BIZ, [LOCATIONS[0]], { ...DAY, staffProfileIds }, AS_OF, actor, undefined, { permittedLocationIds: [LONDON] }),
+    );
+  };
+
+  it('appears as a current active member with no recorded activity: a row, in the picker, selectable — and every figure honest, never a fake zero', async () => {
+    const body = await buildFor(MANAGER_LONDON);
+    const eve = body.staffRows.find((row) => row.rowKey === `${LONDON}:${EVE}`)!;
+    expect(eve.staff).toEqual({ kind: 'staff', staffProfileId: EVE, name: 'Eve', currentEmploymentStatus: 'active', currentlyActiveHere: true });
+    expect(eve.hasRecordedActivity).toBe(false);
+    const gbp0 = { availability: 'available', cents: 0 };
+    expect(eve.metrics).toEqual({
+      serviceRevenue: { gross: gbp0, netOfVat: gbp0 },
+      colour: { gross: gbp0, netOfVat: gbp0 },
+      averageBill: { total: gbp0, bills: { availability: 'available', count: 0 }, average: { availability: 'unavailable', reason: 'no_bills' } },
+      utilisation: {
+        availableMinutes: { availability: 'available', count: 0 },
+        bookedMinutes: { availability: 'available', count: 0 },
+        utilisation: { availability: 'unavailable', reason: 'no_rostered_time' },
+      },
+      futureBooking: {
+        clientsSeen: { availability: 'available', count: 0 },
+        withFutureBooking: { availability: 'unavailable', reason: 'no_clients_seen' },
+        withConfirmedFutureBooking: { availability: 'unavailable', reason: 'no_clients_seen' },
+      },
+      retailRevenue: gbp0,
+    });
+    expect(body.finalisedCommission.periods[0].lines.map((line) => line.staff.staffProfileId)).not.toContain(EVE);
+    expect(body.staffOptions.find((option) => option.staffProfileId === EVE)).toEqual({ staffProfileId: EVE, kind: 'staff', name: 'Eve', locationIds: [LONDON] });
+    expect((await buildFor(MANAGER_LONDON, [EVE])).staffRows.map((row) => row.rowKey)).toEqual([`${LONDON}:${EVE}`]);
+  });
+
+  it('every row with a recorded fact says so: staff with activity, moved staff, former staff and Unattributed', async () => {
+    const body = await buildFor(MANAGER_LONDON);
+    expect(body.staffRows.map((row) => [row.rowKey.split(':')[1], row.hasRecordedActivity])).toEqual([
+      [ALICE, true],
+      [BEN, true],
+      [DAN, true],
+      [EVE, false],
+      [FAY, true],
+      [CARA, true],
+      ['unattributed', true],
+    ]);
   });
 });
 

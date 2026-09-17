@@ -11,7 +11,7 @@
 import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { UTILISATION_BOOKED_STATUSES } from '@sheer/domain';
+import { UTILISATION_BOOKED_STATUSES, type TeamStatementCurrency } from '@sheer/domain';
 import type { MoneyAfter, MoneyWindow } from '../money/money-source';
 import { MoneySourceShapeError, instantKey, integerValue, isInstantKey, isUuid, isWindowBound } from '../money/money-values';
 
@@ -113,7 +113,11 @@ export interface PaySummaryRow {
   id: string;
   payPeriodId: string;
   staffProfileId: string;
-  currencyCode: string;
+  /**
+   * Verified only when payroll recorded the currency the statement was calculated in.
+   * See `SupabaseTeamSource.paySummaries`: nothing records that today.
+   */
+  currency: TeamStatementCurrency;
   commissionCents: number;
   adjustmentsCents: number;
   greaterOfApplied: boolean;
@@ -143,8 +147,18 @@ export interface TeamSource {
   /** Book-outs overlapping each location's window (open-ended included), by id keyset. */
   absences(businessId: string, windows: readonly MoneyWindow[], afterId: string | null, limit: number): Promise<AbsenceRow[]>;
   bookOutTypes(businessId: string): Promise<BookOutTypeRow[]>;
-  /** Approved leave of the given staff, at any location, overlapping any of the date ranges, by id keyset. */
-  approvedLeave(businessId: string, staffProfileIds: readonly string[], ranges: readonly LocalDateRange[], afterId: string | null, limit: number): Promise<LeaveRow[]>;
+  /**
+   * Approved leave of the given staff recorded at the given locations (the viewer's
+   * permitted locations — never any other), overlapping any of the date ranges, by id keyset.
+   */
+  approvedLeave(
+    businessId: string,
+    locationIds: readonly string[],
+    staffProfileIds: readonly string[],
+    ranges: readonly LocalDateRange[],
+    afterId: string | null,
+    limit: number,
+  ): Promise<LeaveRow[]>;
   /** Appointments that occupy a stylist (utilisation's booked statuses) overlapping each location's window, by id keyset. */
   bookedAppointments(businessId: string, windows: readonly MoneyWindow[], afterId: string | null, limit: number): Promise<BookedAppointmentRow[]>;
   /** Locked or paid calculation pay periods overlapping any of the date ranges, by id keyset. */
@@ -460,14 +474,16 @@ export class SupabaseTeamSource implements TeamSource {
 
   async approvedLeave(
     businessId: string,
+    locationIds: readonly string[],
     staffProfileIds: readonly string[],
     ranges: readonly LocalDateRange[],
     afterId: string | null,
     limit: number,
   ): Promise<LeaveRow[]> {
+    assertUuids(locationIds);
     assertUuids(staffProfileIds);
     if (afterId !== null) assertUuids([afterId]);
-    if (staffProfileIds.length === 0 || ranges.length === 0) return [];
+    if (locationIds.length === 0 || staffProfileIds.length === 0 || ranges.length === 0) return [];
     const rows = await this.run('leave_requests', () => {
       let query = this.admin
         .schema('rota')
@@ -475,6 +491,7 @@ export class SupabaseTeamSource implements TeamSource {
         .select('id,location_id,staff_profile_id,start_date,end_date')
         .eq('business_id', businessId)
         .eq('status', 'approved')
+        .in('location_id', [...locationIds])
         .in('staff_profile_id', [...staffProfileIds])
         .or(dateOverlapFilter('start_date', 'end_date', ranges, false));
       if (afterId !== null) query = query.gt('id', afterId);
@@ -546,22 +563,25 @@ export class SupabaseTeamSource implements TeamSource {
       let query = this.admin
         .schema('payroll')
         .from('pay_summaries')
-        .select('id,pay_period_id,staff_profile_id,currency_code,commission_cents,adjustments_cents,greater_of_applied,greater_of_winner')
+        .select('id,pay_period_id,staff_profile_id,commission_cents,adjustments_cents,greater_of_applied,greater_of_winner')
         .eq('business_id', businessId)
         .in('pay_period_id', [...payPeriodIds])
         .is('superseded_by_id', null);
       if (afterId !== null) query = query.gt('id', afterId);
       return query.order('id', { ascending: true }).limit(limit).returns<Row[]>();
     });
+    // `pay_summaries.currency_code` has no provenance: the column defaults to 'GBP'
+    // (0073) and the only writer inserts the literal 'GBP' (payroll-period.service.ts
+    // generate) whatever the location's currency, so a stored code is never evidence
+    // of the currency a statement was calculated in. Every statement is unverified —
+    // never relabelled with today's location or business currency.
     return rows.map((row) => {
-      const code = typeof row.currency_code === 'string' ? row.currency_code.trim().toUpperCase() : '';
-      if (!/^[A-Z]{3}$/.test(code)) throw new MoneySourceShapeError('pay summary currency');
       const winner = row.greater_of_winner;
       return {
         id: text(row.id, 'pay summary id'),
         payPeriodId: text(row.pay_period_id, 'pay summary period'),
         staffProfileId: text(row.staff_profile_id, 'pay summary staff'),
-        currencyCode: code,
+        currency: { status: 'unverified' } as const,
         commissionCents: bigintCents(row.commission_cents, 'pay summary commission'),
         adjustmentsCents: bigintCents(row.adjustments_cents, 'pay summary adjustments'),
         greaterOfApplied: bool(row.greater_of_applied, 'pay summary greater-of'),

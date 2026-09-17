@@ -14,7 +14,10 @@ import type {
   TeamGreaterOf,
   TeamLocalDateTime,
   TeamRatio,
+  TeamReportBody,
   TeamStaffIdentity,
+  TeamStaffRow,
+  TeamStatementCurrency,
   TeamUnavailableMetric,
   TeamUnavailableMetricKey,
   TeamUnavailableReason,
@@ -29,8 +32,47 @@ const TEAM_TEXT: Record<TeamOnlyReason, string> = {
   no_service_revenue: 'No service revenue',
   no_clients_seen: 'No clients seen',
   no_rostered_time: 'No rostered time',
-  leave_location_ambiguous: 'Not stated (leave at another location)',
+  availability_scope_ambiguous: 'Unavailable',
+  currency_unverified: 'Currency not verified',
+  no_pay_statements: 'No pay statements',
 };
+
+/**
+ * Why utilisation reads "Unavailable". Deliberately neutral: it never names a
+ * location, leave, or how many days — the viewer may not see what caused it.
+ */
+export const AVAILABILITY_SCOPE_TEXT = 'Utilisation is unavailable because staff availability cannot be resolved safely for this period.';
+
+/** Whether any utilisation figure in the report is unavailable for that reason (a presence check, no arithmetic). */
+export function hasAvailabilityScopeAmbiguity(body: TeamReportBody): boolean {
+  const ambiguous = (metrics: TeamMetricsLike) =>
+    metrics.utilisation.utilisation.availability === 'unavailable' && metrics.utilisation.utilisation.reason === 'availability_scope_ambiguous';
+  return (
+    ambiguous(body.summary) ||
+    (body.selectedStaff !== null && ambiguous(body.selectedStaff)) ||
+    body.locations.some((location) => ambiguous(location.totals) || (location.selectedStaff !== null && ambiguous(location.selectedStaff))) ||
+    body.staffRows.some((row) => ambiguous(row.metrics))
+  );
+}
+
+type TeamMetricsLike = Pick<TeamReportBody['summary'], 'utilisation'>;
+
+/** A pay statement's currency code, only when payroll recorded it; never a default. */
+export function statementCurrencyCode(currency: TeamStatementCurrency): string | null {
+  return currency.status === 'verified' ? currency.code : null;
+}
+
+export const COMMISSION_CURRENCY_UNVERIFIED_TEXT =
+  'Some amounts aren’t shown because payroll didn’t record which currency those pay statements were calculated in. They are never shown in a guessed currency.';
+
+/** Whether any pay statement or period total in the report has an unverified currency. */
+export function hasUnverifiedCommissionCurrency(body: TeamReportBody): boolean {
+  return body.finalisedCommission.periods.some(
+    (period) =>
+      (period.total.availability === 'unavailable' && period.total.reason === 'currency_unverified') ||
+      period.lines.some((line) => line.currency.status === 'unverified'),
+  );
+}
 
 function isTeamOnly(reason: TeamUnavailableReason): reason is TeamOnlyReason {
   return Object.prototype.hasOwnProperty.call(TEAM_TEXT, reason);
@@ -136,6 +178,11 @@ export function staffName(staff: TeamStaffIdentity): string {
 /** Former staff have no name left: a short reference keeps two of them apart. */
 export function formerStaffLabel(staffProfileId: string): string {
   return `Former staff (profile removed, ref ${staffProfileId.slice(-4)})`;
+}
+
+/** A current member with nothing recorded at this location in the period says so, rather than looking like figures of zero. */
+export function activityText(row: TeamStaffRow): string | null {
+  return row.hasRecordedActivity ? null : 'No recorded activity here in this period';
 }
 
 /** Today's status, always labelled as current — never as where someone worked in the period. */

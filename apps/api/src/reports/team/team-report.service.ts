@@ -11,6 +11,7 @@
 import { Inject, Injectable, InternalServerErrorException } from '@nestjs/common';
 import {
   TEAM_UNAVAILABLE_METRICS,
+  isReportOwner,
   type TeamAmount,
   type TeamCommissionStaff,
   type TeamCount,
@@ -110,8 +111,9 @@ export class TeamReportService {
         visits.map((visit) => visit.clientProfileId),
         (chunk, afterId, limit): Promise<FutureAppointmentRow[]> => this.source.futureAppointments(businessId, chunk, generatedKey, afterId, limit),
       ),
+      // Leave only at the viewer's permitted locations: never a fact from outside the grant.
       readByIdChunks(shifts.map((shift) => shift.staffProfileId), (chunk, afterId, limit) =>
-        this.source.approvedLeave(businessId, chunk, startedRanges, afterId, limit),
+        this.source.approvedLeave(businessId, scope.permittedLocationIds, chunk, startedRanges, afterId, limit),
       ),
       readChunks(memberships.map((membership) => membership.userProfileId), (chunk) => this.source.staffProfilesOfUsers(businessId, chunk)),
       readByIdChunks(commissionVisibility.periods.map((period) => period.id), (chunk, afterId, limit) =>
@@ -134,6 +136,8 @@ export class TeamReportService {
     const utilisation = assembleUtilisation(
       scope.windows.filter((window) => startedIds.has(window.locationId)),
       { shifts, breaks, absences, bookOutTypes, leave, appointments },
+      // Owner by role alone: never "does the grant cover every location", which would reveal whether others exist.
+      { seesEveryLocation: isReportOwner(scope.actor) },
     );
 
     // 4. The staff universe: current active staff at resolved locations, plus staff and
@@ -149,14 +153,18 @@ export class TeamReportService {
     }
     const commissionStaffLocations = commissionStaff(commissionVisibility.periods, summaries);
     const keysByLocation = new Map<string, Set<StaffKey>>();
+    // Staff with a recorded fact at the location; the rest of its keys are current members with none.
+    const activeKeysByLocation = new Map<string, Set<StaffKey>>();
     for (const locationId of resolvedIds) {
-      const keys = new Set<StaffKey>();
+      const withFacts = new Set<StaffKey>();
       const money = moneyByLocation.get(locationId);
-      if (money) for (const key of moneyStaffKeys(money)) keys.add(key);
-      for (const key of futureBookingStaffKeys(futureIndex, locationId)) keys.add(key);
-      for (const staffId of utilisation.byLocationStaff.get(locationId)?.keys() ?? []) keys.add(staffId);
+      if (money) for (const key of moneyStaffKeys(money)) withFacts.add(key);
+      for (const key of futureBookingStaffKeys(futureIndex, locationId)) withFacts.add(key);
+      for (const staffId of utilisation.byLocationStaff.get(locationId)?.keys() ?? []) withFacts.add(staffId);
+      for (const [staffId, locations] of commissionStaffLocations) if (locations.has(locationId)) withFacts.add(staffId);
+      const keys = new Set<StaffKey>(withFacts);
       for (const [staffId, locations] of activeHere) if (locations.has(locationId)) keys.add(staffId);
-      for (const [staffId, locations] of commissionStaffLocations) if (locations.has(locationId)) keys.add(staffId);
+      activeKeysByLocation.set(locationId, withFacts);
       keysByLocation.set(locationId, keys);
     }
     const referenced = new Set<string>(commissionStaffLocations.keys());
@@ -243,6 +251,7 @@ export class TeamReportService {
           locationId: window.locationId,
           staff: identity,
           currencyCode: currencyOf([window.locationId]),
+          hasRecordedActivity: activeKeysByLocation.get(window.locationId)?.has(key) ?? false,
           metrics: metricsFor([window.locationId], new Set([key])),
         });
       }
@@ -314,7 +323,7 @@ function teamMetrics(state: MoneyState, sums: StaffMoneySums, utilisation: Utili
   if (state.kind === 'not_started') {
     utilisationMetrics = { availableMinutes: NOT_STARTED, bookedMinutes: NOT_STARTED, utilisation: NOT_STARTED };
   } else if (utilisation.ambiguous) {
-    const ambiguous = { availability: 'unavailable', reason: 'leave_location_ambiguous' } as const;
+    const ambiguous = { availability: 'unavailable', reason: 'availability_scope_ambiguous' } as const;
     utilisationMetrics = { availableMinutes: ambiguous, bookedMinutes: ambiguous, utilisation: ambiguous };
   } else {
     const availableMinutes = Math.round(utilisation.availableMs / 60_000);
@@ -322,8 +331,9 @@ function teamMetrics(state: MoneyState, sums: StaffMoneySums, utilisation: Utili
     utilisationMetrics = {
       availableMinutes: { availability: 'available', count: availableMinutes },
       bookedMinutes: { availability: 'available', count: bookedMinutes },
+      // Gate on the stated minutes too, so a ratio never reads "of 0 min".
       utilisation:
-        utilisation.availableMs > 0
+        utilisation.availableMs > 0 && availableMinutes > 0
           ? {
               availability: 'available',
               numerator: bookedMinutes,

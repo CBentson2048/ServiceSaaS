@@ -1,16 +1,18 @@
 /**
  * R2 utilisation assembler (locked U-10): the shared formula over each location's
  * LOCAL days. Booked and available minutes add up across staff-days; nothing is
- * capped; leave removes a day only where it was recorded, and leave recorded at
- * another location leaves that staff-day's utilisation unstated.
+ * capped; leave removes a day where it was recorded, and a staff-day that leave
+ * elsewhere could change is not stated (`availability_scope_ambiguous`) — without
+ * ever reading, or revealing, leave outside the viewer's grant.
  */
 import type { TeamReportBody } from '@sheer/domain';
+import type { ReportActor } from '../report-actor';
 import { MemoryMoneySource, type Ledger } from '../money/testing/memory-money-source';
 import { instant as at } from '../money/testing/money-scope';
 import { TeamReportService } from './team-report.service';
-import { assembleUtilisation, type UtilisationFacts, type UtilisationWindow } from './team-utilisation';
+import { assembleUtilisation as assemble, type UtilisationFacts, type UtilisationWindow } from './team-utilisation';
 import type { AbsenceRow, BookedAppointmentRow, LeaveRow, ShiftBreakRow, ShiftRow } from './team-source';
-import { MemoryTeamSource, teamScope, type TeamLedger } from './testing/memory-team-source';
+import { MemoryTeamSource, teamScope, type TeamGrant, type TeamLedger } from './testing/memory-team-source';
 import { AS_OF, BEN, BIZ, DAY, EVE, LOCATIONS, LONDON, OTHER, teamLedger, uid } from './testing/team-fixture';
 
 const NEW_YORK = '20000000-0000-4000-8000-0000000000a1';
@@ -29,6 +31,9 @@ const booked = (locationId: string, start: string, end: string, staffProfileId =
 const facts = (partial: Partial<UtilisationFacts>): UtilisationFacts => ({ shifts: [], breaks: [], absences: [], bookOutTypes: [], leave: [], appointments: [], ...partial });
 const window = (locationId: string, timezone: string, from: string, to = from, localToday = '2026-12-31'): UtilisationWindow => ({ locationId, timezone, from, to, localToday });
 const minutes = (ms: number) => ms / 60_000;
+/** An owner, who may see every location, unless a test says otherwise. */
+const assembleUtilisation = (windows: readonly UtilisationWindow[], input: UtilisationFacts, seesEveryLocation = true) =>
+  assemble(windows, input, { seesEveryLocation });
 
 describe('R2 utilisation assembler: location-local days', () => {
   it('London (BST): a 09:00–17:00 local shift with a lunch break and two booked hours', () => {
@@ -80,9 +85,9 @@ describe('R2 utilisation assembler: location-local days', () => {
     const tokyoShift = shift(TOKYO, '2026-09-15T00:00:00Z', '2026-09-15T08:00:00Z');
     const quality = (appointment: BookedAppointmentRow) => assembleUtilisation(windows, facts({ shifts: [tokyoShift], appointments: [appointment] })).dataQuality;
     // 14 Sep 21:00 BST: a different London date, but inside Tokyo's rostered 15 Sep.
-    expect(quality(booked(LONDON, '2026-09-14T20:00:00Z', '2026-09-14T21:00:00Z'))).toEqual({ bookedWithoutRota: 0, bookedAtAnotherLocation: 1, leaveAtAnotherLocation: 0 });
+    expect(quality(booked(LONDON, '2026-09-14T20:00:00Z', '2026-09-14T21:00:00Z'))).toEqual({ bookedWithoutRota: 0, bookedAtAnotherLocation: 1 });
     // 15 Sep 18:00 BST: the same date label as the Tokyo shift, but after Tokyo's 15 Sep ended.
-    expect(quality(booked(LONDON, '2026-09-15T17:00:00Z', '2026-09-15T18:00:00Z'))).toEqual({ bookedWithoutRota: 1, bookedAtAnotherLocation: 0, leaveAtAnotherLocation: 0 });
+    expect(quality(booked(LONDON, '2026-09-15T17:00:00Z', '2026-09-15T18:00:00Z'))).toEqual({ bookedWithoutRota: 1, bookedAtAnotherLocation: 0 });
   });
 
   it('over 100% stays visible: two booked hours on a one-hour shift', () => {
@@ -124,8 +129,12 @@ describe('R2 utilisation in the report', () => {
     return base;
   }
   const EMPTY_MONEY: Ledger = { bills: [], lines: [], payments: [], retail: [], deposits: [], locations: [] };
-  const build = (team: TeamLedger, locations = LOCATIONS, staffProfileIds: string[] = []): Promise<TeamReportBody> =>
-    new TeamReportService(new MemoryMoneySource(EMPTY_MONEY), new MemoryTeamSource(team)).build(teamScope(BIZ, locations, { ...DAY, staffProfileIds }, AS_OF));
+  // An owner: every business location (London and Other) is permitted, whatever is selected.
+  const OWNER_GRANT: TeamGrant = { permittedLocationIds: [LONDON, OTHER] };
+  const build = (team: TeamLedger, locations = LOCATIONS, staffProfileIds: string[] = [], grant: TeamGrant = OWNER_GRANT, actor?: ReportActor): Promise<TeamReportBody> =>
+    new TeamReportService(new MemoryMoneySource(EMPTY_MONEY), new MemoryTeamSource(team)).build(
+      teamScope(BIZ, locations, { ...DAY, staffProfileIds }, AS_OF, actor, undefined, grant),
+    );
 
   const multiLocation = (withCrossLocationLeave: boolean) =>
     ledger((l) => {
@@ -161,16 +170,37 @@ describe('R2 utilisation in the report', () => {
     });
   });
 
-  it('leave recorded at another location: that staff-day is not guessed — the row, its location and the team read unavailable', async () => {
+  it('leave recorded at another location: that staff-day is not guessed — the row, its location and the team read unavailable, with a neutral reason', async () => {
     const body = await build(multiLocation(true));
-    const ambiguous = { availability: 'unavailable', reason: 'leave_location_ambiguous' };
+    const ambiguous = { availability: 'unavailable', reason: 'availability_scope_ambiguous' };
     const benAt = (locationId: string) => body.staffRows.find((row) => row.rowKey === `${locationId}:${BEN}`)!.metrics.utilisation;
     // London: the leave was recorded there, so the London day is removed.
     expect(benAt(LONDON).availableMinutes).toEqual({ availability: 'available', count: 0 });
     expect(benAt(OTHER)).toEqual({ availableMinutes: ambiguous, bookedMinutes: ambiguous, utilisation: ambiguous });
     expect(body.locations.find((location) => location.locationId === OTHER)!.totals.utilisation.utilisation).toEqual(ambiguous);
     expect(body.summary.utilisation.utilisation).toEqual(ambiguous);
-    expect(body.dataQuality.leaveAtAnotherLocation).toBe(1);
+    // No count, place or cause of the leave anywhere in the body.
+    expect(Object.keys(body.dataQuality).sort()).toEqual(['bookedAtAnotherLocation', 'bookedWithoutRota', 'rolledUpServiceLines']);
+    expect(JSON.stringify(body)).not.toMatch(/leave/i);
+  });
+
+  it('a viewer who is not an owner: rostered days are not stated unless same-location leave removes them, whatever exists elsewhere', async () => {
+    const LONDON_ONLY: TeamGrant = { permittedLocationIds: [LONDON] };
+    const manager: ReportActor = { id: 'manager', businessId: BIZ, roles: ['manager'], membershipGrants: [{ locationId: LONDON, permissions: ['report.performance.view'] }] };
+    const team = multiLocation(false);
+    team.shifts.push({ ...shift(LONDON, '2026-09-14T08:00:00Z', '2026-09-14T12:00:00Z', EVE), businessId: BIZ });
+    team.leave.push({ id: uid(), businessId: BIZ, locationId: LONDON, staffProfileId: EVE, startDate: '2026-09-14', endDate: '2026-09-14', status: 'approved' });
+    const body = await build(team, [LOCATIONS[0]], [], LONDON_ONLY, manager);
+    const ambiguous = { availability: 'unavailable', reason: 'availability_scope_ambiguous' };
+    const row = (staffId: string) => body.staffRows.find((r) => r.rowKey === `${LONDON}:${staffId}`)!.metrics.utilisation;
+    // Ben has no leave anywhere, yet his London day cannot be settled for this viewer.
+    expect(row(BEN)).toEqual({ availableMinutes: ambiguous, bookedMinutes: ambiguous, utilisation: ambiguous });
+    // Eve's London leave removes her London day whatever leave means elsewhere: resolved.
+    expect(row(EVE)).toEqual({
+      availableMinutes: { availability: 'available', count: 0 },
+      bookedMinutes: { availability: 'available', count: 0 },
+      utilisation: { availability: 'unavailable', reason: 'no_rostered_time' },
+    });
   });
 
   it('a custom range running past today counts no future rota or bookings, and a stylist with only future shifts has no row', async () => {
@@ -196,7 +226,7 @@ describe('R2 utilisation in the report', () => {
     expect(body.dataQuality.bookedWithoutRota).toBe(0);
   });
 
-  it('a location’s figures do not depend on which other locations are selected', async () => {
+  it('a location’s figures do not depend on which other permitted locations are selected', async () => {
     const both = await build(multiLocation(true));
     const londonOnly = await build(multiLocation(true), [LOCATIONS[0]]);
     const otherOnly = await build(multiLocation(true), [LOCATIONS[1]]);

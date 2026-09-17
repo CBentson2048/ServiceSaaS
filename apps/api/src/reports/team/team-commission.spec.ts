@@ -13,6 +13,8 @@
  * STATEMENTS
  *   P1: Alice 5000 (a superseded 4000 is ignored) · Ben 0, base pay won, adjustments −300 · Ivy 700 (only here)
  *   P2: Alice 2500 · Ben 1000          P3–P5: Alice 99 each (never shown)       P6: Gil 1800
+ * Currencies are VERIFIED GBP in this ledger, as a future provenance record would state them;
+ * production statements are all unverified today (team-source.ts, and the currency tests below).
  */
 import type { ReportActor } from '../report-actor';
 import type { TeamReportBody } from '@sheer/domain';
@@ -43,7 +45,7 @@ function ledger(): TeamLedger {
       businessId: BIZ,
       payPeriodId,
       staffProfileId,
-      currencyCode: 'GBP',
+      currency: { status: 'verified', code: 'GBP' },
       commissionCents,
       adjustmentsCents: 0,
       greaterOfApplied: false,
@@ -92,9 +94,9 @@ describe('R2 finalised commission', () => {
     const body = await build(OWNER);
     const p1 = body.finalisedCommission.periods.find((period) => period.payPeriodId === P.P1)!;
     expect(p1.lines).toEqual([
-      { staff: { kind: 'staff', staffProfileId: ALICE, name: 'Alice' }, currencyCode: 'GBP', commission: gbp(5000), adjustments: gbp(0), greaterOf: 'not_applied' },
-      { staff: { kind: 'staff', staffProfileId: BEN, name: 'Ben' }, currencyCode: 'GBP', commission: gbp(0), adjustments: gbp(-300), greaterOf: 'base_pay_won' },
-      { staff: { kind: 'staff', staffProfileId: IVY, name: 'Ivy' }, currencyCode: 'GBP', commission: gbp(700), adjustments: gbp(0), greaterOf: 'not_applied' },
+      { staff: { kind: 'staff', staffProfileId: ALICE, name: 'Alice' }, currency: { status: 'verified', code: 'GBP' }, commission: gbp(5000), adjustments: gbp(0), greaterOf: 'not_applied' },
+      { staff: { kind: 'staff', staffProfileId: BEN, name: 'Ben' }, currency: { status: 'verified', code: 'GBP' }, commission: gbp(0), adjustments: gbp(-300), greaterOf: 'base_pay_won' },
+      { staff: { kind: 'staff', staffProfileId: IVY, name: 'Ivy' }, currency: { status: 'verified', code: 'GBP' }, commission: gbp(700), adjustments: gbp(0), greaterOf: 'not_applied' },
     ]);
     expect(p1.total).toEqual(gbp(5700));
     expect(p1.currencyCode).toBe('GBP');
@@ -121,6 +123,59 @@ describe('R2 finalised commission', () => {
     const p2 = ben.finalisedCommission.periods.find((period) => period.payPeriodId === P.P2)!;
     expect(p2.lines.map((line) => line.staff)).toEqual([{ kind: 'staff', staffProfileId: BEN, name: 'Ben' }]);
     expect(p2.total).toEqual(gbp(3500));
+  });
+
+  describe('statement currency: never relabelled, defaulted or converted', () => {
+    const EUR_PERIOD = '60000000-0000-4000-8000-0000000000e1';
+    const withStatements = (currency: Array<TeamLedger['paySummaries'][number]['currency']>): TeamLedger => {
+      const team = ledger();
+      team.payPeriods = [{ id: EUR_PERIOD, businessId: BIZ, locationId: LONDON, label: null, periodStart: '2026-09-14', periodEnd: '2026-09-21', status: 'locked', kind: 'calculation' }];
+      team.paySummaries = currency.map((c, i) => ({
+        id: uid(),
+        businessId: BIZ,
+        payPeriodId: EUR_PERIOD,
+        staffProfileId: [ALICE, BEN][i],
+        currency: c,
+        commissionCents: 1000 * (i + 1),
+        adjustmentsCents: -50,
+        greaterOfApplied: false,
+        greaterOfWinner: null,
+      }));
+      return team;
+    };
+    const period = async (team: TeamLedger) =>
+      (await new TeamReportService(new MemoryMoneySource(EMPTY_MONEY), new MemoryTeamSource(team)).build(teamScope(BIZ, LOCATIONS, DAY, AS_OF, OWNER))).finalisedCommission.periods[0];
+
+    it('a verified GBP period is stated in GBP', async () => {
+      const p = await period(withStatements([{ status: 'verified', code: 'GBP' }]));
+      expect([p.currencyCode, p.total, p.lines[0].currency, p.lines[0].commission]).toEqual(['GBP', gbp(1000), { status: 'verified', code: 'GBP' }, gbp(1000)]);
+    });
+
+    it('a verified non-GBP period is stated in its own currency, never the location’s (London is GBP)', async () => {
+      const p = await period(withStatements([{ status: 'verified', code: 'EUR' }, { status: 'verified', code: 'EUR' }]));
+      expect([p.currencyCode, p.total]).toEqual(['EUR', gbp(3000)]);
+      expect(p.lines.map((line) => line.currency)).toEqual([{ status: 'verified', code: 'EUR' }, { status: 'verified', code: 'EUR' }]);
+    });
+
+    it('legacy / unverified currency: amounts and the total are unavailable, with no currency code — never a silent GBP', async () => {
+      const p = await period(withStatements([{ status: 'unverified' }, { status: 'verified', code: 'GBP' }]));
+      const unverified = { availability: 'unavailable', reason: 'currency_unverified' };
+      expect(p.currencyCode).toBeNull();
+      expect(p.total).toEqual(unverified);
+      expect(p.lines[0]).toEqual({ staff: { kind: 'staff', staffProfileId: ALICE, name: 'Alice' }, currency: { status: 'unverified' }, commission: unverified, adjustments: unverified, greaterOf: 'not_applied' });
+      // The verified statement beside it keeps its own figures.
+      expect(p.lines[1].commission).toEqual(gbp(2000));
+    });
+
+    it('mixed verified currencies: the period total is unavailable, each statement keeps its own', async () => {
+      const p = await period(withStatements([{ status: 'verified', code: 'GBP' }, { status: 'verified', code: 'EUR' }]));
+      expect([p.currencyCode, p.total]).toEqual([null, { availability: 'unavailable', reason: 'mixed_currencies' }]);
+    });
+
+    it('a pay period with no statements has no total, not a zero', async () => {
+      const p = await period(withStatements([]));
+      expect([p.statements, p.total, p.currencyCode]).toEqual([0, { availability: 'unavailable', reason: 'no_pay_statements' }, null]);
+    });
   });
 
   it('never states live commission', async () => {

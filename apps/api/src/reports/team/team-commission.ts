@@ -8,6 +8,10 @@
  * - a location period is shown when the viewer's membership grant at that
  *   location carries `report.commission.view` (owners always).
  * Never `primary_location_id`, merged permissions or `allowedLocationIds`.
+ *
+ * Amounts are stated only in a statement's verified currency: an unverified one
+ * (`currency_unverified`) is never relabelled with a location's or business's
+ * currency today, never defaulted to GBP and never converted.
  * docs/V1.1/week-8-r2-team.md §7.
  */
 import {
@@ -63,18 +67,25 @@ export function commissionPeriods(
   }
   return periods.map((period) => {
     const statements = [...(byPeriod.get(period.id) ?? [])].sort((a, b) => (a.staffProfileId < b.staffProfileId ? -1 : a.staffProfileId > b.staffProfileId ? 1 : 0));
-    const currencies = new Set(statements.map((statement) => statement.currencyCode));
+    const unverified = statements.some((statement) => statement.currency.status !== 'verified');
+    const currencies = new Set(statements.flatMap((statement) => (statement.currency.status === 'verified' ? [statement.currency.code] : [])));
     const total: TeamAmount =
-      currencies.size > 1
-        ? { availability: 'unavailable', reason: 'mixed_currencies' }
-        : { availability: 'available', cents: statements.reduce((sum, statement) => sum + statement.commissionCents, 0) };
+      statements.length === 0
+        ? { availability: 'unavailable', reason: 'no_pay_statements' }
+        : unverified
+          ? { availability: 'unavailable', reason: 'currency_unverified' }
+          : currencies.size > 1
+            ? { availability: 'unavailable', reason: 'mixed_currencies' }
+            : { availability: 'available', cents: statements.reduce((sum, statement) => sum + statement.commissionCents, 0) };
+    const amount = (statement: PaySummaryRow, cents: number): TeamAmount =>
+      statement.currency.status === 'verified' ? { availability: 'available', cents } : { availability: 'unavailable', reason: 'currency_unverified' };
     const lines: TeamCommissionLine[] = statements
       .filter((statement) => selected === null || selected.has(statement.staffProfileId))
       .map((statement) => ({
         staff: identityOf(statement.staffProfileId),
-        currencyCode: statement.currencyCode,
-        commission: { availability: 'available', cents: statement.commissionCents },
-        adjustments: { availability: 'available', cents: statement.adjustmentsCents },
+        currency: statement.currency,
+        commission: amount(statement, statement.commissionCents),
+        adjustments: amount(statement, statement.adjustmentsCents),
         greaterOf: !statement.greaterOfApplied ? 'not_applied' : statement.greaterOfWinner === 'base_pay' ? 'base_pay_won' : 'commission_won',
       }));
     return {
@@ -87,7 +98,7 @@ export function commissionPeriods(
       status: period.status,
       lines,
       total,
-      currencyCode: currencies.size === 1 ? [...currencies][0] : null,
+      currencyCode: !unverified && currencies.size === 1 ? [...currencies][0] : null,
       statements: statements.length,
     };
   });

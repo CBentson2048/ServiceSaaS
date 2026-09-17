@@ -55,7 +55,16 @@ function totals(overrides: Partial<TeamTotals> = {}): TeamTotals {
   };
 }
 
-const row = (key: string, staff: TeamStaffRow['staff'], m: TeamMetrics = metrics(), locationId = L1): TeamStaffRow => ({ rowKey: `${locationId}:${key}`, locationId, staff, currencyCode: 'GBP', metrics: m });
+const row = (key: string, staff: TeamStaffRow['staff'], m: TeamMetrics = metrics(), locationId = L1, hasRecordedActivity = true): TeamStaffRow => ({
+  rowKey: `${locationId}:${key}`,
+  locationId,
+  staff,
+  currencyCode: 'GBP',
+  hasRecordedActivity,
+  metrics: m,
+});
+const scopeAmbiguous = { availability: 'unavailable', reason: 'availability_scope_ambiguous' } as const;
+const SCOPE_SENTENCE = 'Utilisation is unavailable because staff availability cannot be resolved safely for this period.';
 
 function body(overrides: Partial<TeamReportBody> = {}): TeamReportBody {
   return {
@@ -88,9 +97,9 @@ function body(overrides: Partial<TeamReportBody> = {}): TeamReportBody {
         { kind: 'unattributed' },
         metrics({
           utilisation: {
-            availableMinutes: { availability: 'unavailable', reason: 'leave_location_ambiguous' },
-            bookedMinutes: { availability: 'unavailable', reason: 'leave_location_ambiguous' },
-            utilisation: { availability: 'unavailable', reason: 'leave_location_ambiguous' },
+            availableMinutes: scopeAmbiguous,
+            bookedMinutes: scopeAmbiguous,
+            utilisation: scopeAmbiguous,
           },
         }),
       ),
@@ -106,8 +115,8 @@ function body(overrides: Partial<TeamReportBody> = {}): TeamReportBody {
           scope: { kind: 'business' },
           status: 'locked',
           lines: [
-            { staff: { kind: 'staff', staffProfileId: ALICE, name: 'Alice' }, currencyCode: 'GBP', commission: gbp(5000), adjustments: gbp(0), greaterOf: 'commission_won' },
-            { staff: { kind: 'former', staffProfileId: CARA }, currencyCode: 'GBP', commission: gbp(0), adjustments: gbp(-300), greaterOf: 'base_pay_won' },
+            { staff: { kind: 'staff', staffProfileId: ALICE, name: 'Alice' }, currency: { status: 'verified', code: 'GBP' }, commission: gbp(5000), adjustments: gbp(0), greaterOf: 'commission_won' },
+            { staff: { kind: 'former', staffProfileId: CARA }, currency: { status: 'verified', code: 'GBP' }, commission: gbp(0), adjustments: gbp(-300), greaterOf: 'base_pay_won' },
           ],
           total: gbp(5700),
           currencyCode: 'GBP',
@@ -122,7 +131,7 @@ function body(overrides: Partial<TeamReportBody> = {}): TeamReportBody {
       { metric: 'retail_attach', reason: 'retail_visit_linkage_not_captured' },
       { metric: 'live_commission', reason: 'payroll_rules_not_implemented' },
     ],
-    dataQuality: { rolledUpServiceLines: 1, bookedWithoutRota: 0, bookedAtAnotherLocation: 2, leaveAtAnotherLocation: 1 },
+    dataQuality: { rolledUpServiceLines: 1, bookedWithoutRota: 0, bookedAtAnotherLocation: 2 },
     ...overrides,
   };
 }
@@ -166,7 +175,9 @@ describe('TeamReport', () => {
     expect(rowText('Former staff \\(profile removed, ref 4444\\)')).toContain('£13,000.00');
     // Future Booking's as-at time sits with the figures, in each location's group header.
     expect(within(section('Staff performance')).getByRole('rowheader', { name: /^London/ }).textContent).toBe('LondonFuture Booking as at 16 Sept 2026, 11:00');
-    expect(rowText('Unattributed')).toContain('Not stated (leave at another location)');
+    expect(rowText('Unattributed')).toContain('Unavailable');
+    // The reason, once, in neutral words: no place, no leave, no count.
+    expect(section('Staff performance').textContent).toContain(SCOPE_SENTENCE);
     expect(within(section('Staff performance')).getAllByRole('rowheader', { name: 'Location total' })).toHaveLength(2);
   });
 
@@ -174,9 +185,9 @@ describe('TeamReport', () => {
     const single = metrics({
       averageBill: { total: gbp(5000), bills: count(1), average: gbp(5000) },
       utilisation: {
-        availableMinutes: { availability: 'unavailable', reason: 'leave_location_ambiguous' },
-        bookedMinutes: { availability: 'unavailable', reason: 'leave_location_ambiguous' },
-        utilisation: { availability: 'unavailable', reason: 'leave_location_ambiguous' },
+        availableMinutes: scopeAmbiguous,
+        bookedMinutes: scopeAmbiguous,
+        utilisation: scopeAmbiguous,
       },
       futureBooking: {
         clientsSeen: count(1),
@@ -192,7 +203,7 @@ describe('TeamReport', () => {
     render(<TeamReport body={oneLocation} locations={[locations[0]]} />);
     const overview = section('Team overview');
     expect(valueOf(overview, 'Average bill')).toBe('£50.001 bill');
-    expect(valueOf(overview, 'Utilisation')).toBe('Not stated (leave at another location)');
+    expect(valueOf(overview, 'Utilisation')).toBe(`Unavailable${SCOPE_SENTENCE}`);
     expect(valueOf(overview, 'Future Booking')).toBe('100%1 of 1 client · As at 16 Sept 2026, 11:00');
     // One location: no By location table.
     expect(screen.queryByRole('region', { name: 'By location' })).toBeNull();
@@ -281,7 +292,12 @@ describe('TeamReport', () => {
   it('a pay period with no statements, and one whose statements the staff filter hides, say which', () => {
     const period = body().finalisedCommission.periods[0];
     const { unmount } = render(
-      <TeamReport body={body({ finalisedCommission: { periods: [{ ...period, lines: [], statements: 0, total: gbp(0), currencyCode: null }], restrictions: [] } })} locations={locations} />,
+      <TeamReport
+        body={body({
+          finalisedCommission: { periods: [{ ...period, lines: [], statements: 0, total: { availability: 'unavailable', reason: 'no_pay_statements' }, currencyCode: null }], restrictions: [] },
+        })}
+        locations={locations}
+      />,
     );
     const noStatements = section('Finalised commission');
     expect(noStatements.textContent).toContain('No pay statements in this pay period.');
@@ -303,7 +319,66 @@ describe('TeamReport', () => {
     const notes = section('Data quality').textContent;
     expect(notes).toContain('1 service line was not itemised per service');
     expect(notes).toContain('2 booked appointment days are at a different location');
-    expect(notes).toContain('1 rostered day is covered by leave recorded at another location');
     expect(notes).not.toContain('no rota shift');
+    expect(notes).not.toMatch(/leave/i);
+  });
+
+  it('cross-location privacy: unavailable utilisation never mentions a location, leave or a count, anywhere on the page', () => {
+    const everywhere = metrics({ utilisation: { availableMinutes: scopeAmbiguous, bookedMinutes: scopeAmbiguous, utilisation: scopeAmbiguous } });
+    render(
+      <TeamReport
+        body={body({
+          summary: { ...totals(), ...everywhere },
+          locations: [{ ...body().locations[0], totals: { ...totals(), ...everywhere } }],
+          staffRows: [row(ALICE, { kind: 'staff', staffProfileId: ALICE, name: 'Alice', currentEmploymentStatus: 'active', currentlyActiveHere: true }, everywhere)],
+          dataQuality: { rolledUpServiceLines: 0, bookedWithoutRota: 0, bookedAtAnotherLocation: 0 },
+        })}
+        locations={[locations[0]]}
+      />,
+    );
+    expect(valueOf(section('Team overview'), 'Utilisation')).toBe(`Unavailable${SCOPE_SENTENCE}`);
+    expect(rowText('Alice')).toContain('Unavailable');
+    expect(document.body.textContent).not.toMatch(/leave|another location|other location/i);
+    expect(rowText('Alice')).not.toMatch(/\d+ min/);
+  });
+
+  it('a current active member with no recorded activity is labelled so, beside today’s status', () => {
+    const quiet = row('zoe', { kind: 'staff', staffProfileId: 'zoe', name: 'Zoe', currentEmploymentStatus: 'active', currentlyActiveHere: true }, metrics(), L1, false);
+    render(<TeamReport body={body({ staffRows: [body().staffRows[0], quiet] })} locations={locations} />);
+    expect(rowText('Zoe')).toContain('Current: Active, at this location · No recorded activity here in this period');
+    expect(rowText('Alice')).not.toContain('No recorded activity');
+  });
+
+  it('finalised commission currency: unverified amounts are words with no currency symbol, a verified non-GBP statement keeps its own currency', () => {
+    const period = body().finalisedCommission.periods[0];
+    const unverified = { availability: 'unavailable', reason: 'currency_unverified' } as const;
+    render(
+      <TeamReport
+        body={body({
+          finalisedCommission: {
+            periods: [
+              {
+                ...period,
+                lines: [
+                  { staff: { kind: 'staff', staffProfileId: ALICE, name: 'Alice' }, currency: { status: 'unverified' }, commission: unverified, adjustments: unverified, greaterOf: 'not_applied' },
+                  { staff: { kind: 'former', staffProfileId: CARA }, currency: { status: 'verified', code: 'EUR' }, commission: gbp(4200), adjustments: gbp(0), greaterOf: 'not_applied' },
+                ],
+                total: unverified,
+                currencyCode: null,
+              },
+            ],
+            restrictions: [],
+          },
+        })}
+        locations={locations}
+      />,
+    );
+    const commission = section('Finalised commission');
+    const alice = within(commission).getByRole('rowheader', { name: 'Alice' }).parentElement!.textContent!;
+    expect(alice).toBe('AliceCurrency not verifiedCurrency not verified—');
+    expect(within(commission).getByRole('rowheader', { name: 'Pay period commission (all staff)' }).parentElement!.textContent).toContain('Currency not verified');
+    expect(within(commission).getByRole('rowheader', { name: 'Former staff (profile removed, ref 4444)' }).parentElement!.textContent).toContain('€42.00');
+    expect(commission.textContent).toContain('never shown in a guessed currency');
+    expect(commission.textContent).not.toContain('£');
   });
 });
