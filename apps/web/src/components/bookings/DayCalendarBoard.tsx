@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useRef, useState, type SVGProps } from 'react';
 import type {
   BookOutType,
+  RescheduleServiceResize,
   RotaAbsenceIndicator,
   RotaLeaveIndicator,
   RotaShift,
@@ -55,6 +56,8 @@ const DEFAULT_SLOT_MINUTES = 15;
 // flooring at the slot size made drags inflate them — misplacing moves and
 // silently swallowing resizes.
 const MIN_DRAG_SLICE_MINUTES = 15;
+// The shortest a resized service/segment may become — mirrors the API's floor.
+const RESIZE_MIN_UNIT_MINUTES = 5;
 
 export interface AddAppointmentInput {
   staffProfileId: string;
@@ -153,8 +156,9 @@ interface DayCalendarBoardProps {
    */
   onMoveBooking?: (booking: StaffBookingSummary, input: MoveBookingInput) => void;
   /**
-   * Drag the bottom edge of a tile to lengthen/shorten it. Fired on drop with the
-   * new total duration in minutes (15-minute-snapped). Enables drag-to-resize.
+   * Drag the bottom edge of a service slice to lengthen/shorten that service; later
+   * services are pushed along. Fired on drop with the new total duration and the
+   * resized service. Enables drag-to-resize.
    */
   onResizeBooking?: (booking: StaffBookingSummary, input: ResizeBookingInput) => void;
   /**
@@ -188,6 +192,11 @@ export interface ResizeBookingInput {
    * duration is a multiple of 15 only when the start already sits on the grid.
    */
   durationMinutes: number;
+  /**
+   * The service whose slice was dragged, with its new length. Absent only when the
+   * booking has no per-service data — the change then lands on the last service.
+   */
+  service?: RescheduleServiceResize;
 }
 
 export interface UpdateBookoutInput {
@@ -218,9 +227,8 @@ interface DragState {
   grabOffsetMin: number;
   originStartMin: number;
   originDurationMin: number;
-  /** Start (minutes from window) of the last stylist-occupied slice — the resize
-   *  handle grabs this slice, so a resize can't shrink the total below it. */
-  lastRunStartMin: number;
+  /** Resize only: the slice whose bottom edge is being dragged. */
+  slice: ResizeSlice | null;
   previewStartMin: number;
   previewDurationMin: number;
   /** Column the pointer is currently over (drop target). */
@@ -236,6 +244,18 @@ interface DragState {
   valid: boolean;
   /** True once the pointer has moved past the click/drag threshold. */
   moved: boolean;
+}
+
+// The service slice a resize drag grabbed. Its end moves; everything after it in
+// the appointment (development gaps and later services) is pushed by the same amount.
+interface ResizeSlice {
+  startMin: number;
+  endMin: number;
+  serviceName: string;
+  lineId?: string;
+  segmentIndex?: number;
+  /** Current length of the segment (or segment-less line) the drag resizes. */
+  targetMinutes?: number;
 }
 
 // Live state while a bookout (absence) tile is being dragged. Simpler than an
@@ -531,6 +551,7 @@ export function DayCalendarBoard({
     booking: StaffBookingSummary,
     column: ColumnModel,
     mode: DragState['mode'],
+    block?: PositionedBlockPart,
   ) {
     if (!dragEnabled) return;
     if (mode === 'move' && !onMoveBooking) return;
@@ -543,10 +564,18 @@ export function DayCalendarBoard({
     if (originEndMin <= originStartMin) originEndMin = originStartMin + (booking.durationMinutes ?? 30);
     const originDurationMin = Math.max(MIN_DRAG_SLICE_MINUTES, originEndMin - originStartMin);
     const grabOffsetMin = pointerToMinutes(event.clientY) - originStartMin;
-    // The resize handle grabs the LAST occupied slice, so a resize can't drag its
-    // bottom above its own top — the total can't shrink below that slice's start.
-    const runs = serviceOccupiedRuns(booking, startHour, windowMinutes);
-    const lastRunStartMin = runs.length ? runs[runs.length - 1].startMin : originStartMin;
+    const slice: ResizeSlice | null =
+      mode === 'resize' && block
+        ? {
+            startMin: block.startMin,
+            endMin: block.endMin,
+            serviceName: block.serviceName,
+            lineId: block.lineId,
+            segmentIndex: block.segmentIndex,
+            targetMinutes: block.targetMinutes,
+          }
+        : null;
+    if (mode === 'resize' && !slice) return;
     const originWorking = workingIntervalsFor(column, startHour, windowMinutes);
 
     const initial: DragState = {
@@ -555,7 +584,7 @@ export function DayCalendarBoard({
       grabOffsetMin,
       originStartMin,
       originDurationMin,
-      lastRunStartMin,
+      slice,
       previewStartMin: originStartMin,
       previewDurationMin: originDurationMin,
       targetColKey: column.key,
@@ -612,10 +641,11 @@ export function DayCalendarBoard({
         };
         dragRef.current = next;
         setDrag(next);
-      } else {
+      } else if (current.slice) {
+        const { slice } = current;
         const rawEnd = pointerToMinutes(moveEvent.clientY);
-        // The end can't be dragged past the end of the working shift that contains
-        // the start, so a resize can never push the appointment beyond the roster.
+        // The appointment's end can't be pushed past the end of the working shift
+        // that contains the start, so a resize can never push it beyond the roster.
         // An appointment that ALREADY overruns its shift keeps its current end
         // (isn't force-shrunk on the first nudge).
         const shift = current.originWorking.find(
@@ -623,11 +653,24 @@ export function DayCalendarBoard({
         );
         const originEndMin = current.originStartMin + current.originDurationMin;
         const maxEnd = shift ? Math.max(shift.endMin, originEndMin) : windowMinutes;
-        // Nor above the last slice's top (+ one slot) — that slice is what grows/
-        // shrinks. Capped at maxEnd so the clamp window can never invert past the roster.
-        const minEnd = Math.min(current.lastRunStartMin + MIN_DRAG_SLICE_MINUTES, maxEnd);
-        const snappedEnd = clamp(snap(rawEnd), minEnd, maxEnd);
-        const next: DragState = { ...current, previewDurationMin: snappedEnd - current.originStartMin };
+        // Everything after the slice moves with its end, so the slice can only grow
+        // as far as leaves room for that tail inside the shift.
+        const maxSliceEnd = maxEnd - (originEndMin - slice.endMin);
+        // Nor above the slice's top (+ one slot, or its current end when it is already
+        // shorter — a nudge never force-grows it), nor so far that the resized segment
+        // drops under the API floor. Capped at maxSliceEnd so the clamp window can
+        // never invert past the roster.
+        const floorEnd =
+          slice.targetMinutes != null ? slice.endMin - slice.targetMinutes + RESIZE_MIN_UNIT_MINUTES : slice.startMin;
+        const minSliceEnd = Math.min(
+          Math.max(Math.min(slice.startMin + MIN_DRAG_SLICE_MINUTES, slice.endMin), floorEnd),
+          maxSliceEnd,
+        );
+        const snappedEnd = clamp(snap(rawEnd), minSliceEnd, maxSliceEnd);
+        const next: DragState = {
+          ...current,
+          previewDurationMin: current.originDurationMin + (snappedEnd - slice.endMin),
+        };
         dragRef.current = next;
         setDrag(next);
       }
@@ -674,9 +717,21 @@ export function DayCalendarBoard({
         });
       } else {
         const durationMinutes = current.previewDurationMin;
-        if (durationMinutes === current.originDurationMin) return;
+        const deltaMin = durationMinutes - current.originDurationMin;
+        if (deltaMin === 0) return;
         suppressClick();
-        onResizeBooking?.(current.booking, { durationMinutes });
+        const { slice } = current;
+        onResizeBooking?.(current.booking, {
+          durationMinutes,
+          service:
+            slice?.lineId && slice.targetMinutes != null
+              ? {
+                  lineId: slice.lineId,
+                  segmentIndex: slice.segmentIndex,
+                  durationMinutes: slice.targetMinutes + deltaMin,
+                }
+              : undefined,
+        });
       }
       void upEvent;
     };
@@ -1198,19 +1253,23 @@ export function DayCalendarBoard({
                                 </span>
                               </span>
                             )}
-                            {/* Drag the bottom edge to lengthen/shorten (resize) the
-                                appointment. Only on the last block; its own pointerdown
-                                stops the move-drag from also firing. */}
-                            {block.isLast && canDrag && onResizeBooking ? (
+                            {/* Drag the bottom edge to lengthen/shorten THIS service;
+                                later services are pushed along. Without per-service data
+                                only the last block resizes. Its own pointerdown stops the
+                                move-drag from also firing. A short slice gets a thinner
+                                handle so most of it can still be grabbed to move. */}
+                            {(block.lineId || block.isLast) && canDrag && onResizeBooking ? (
                               <span
                                 role="separator"
-                                aria-label="Drag to change duration"
+                                aria-label={`Drag to change ${block.serviceName || 'service'} duration`}
                                 onPointerDown={(event) => {
                                   event.stopPropagation();
-                                  beginBookingDrag(event, booking, column, 'resize');
+                                  beginBookingDrag(event, booking, column, 'resize', block);
                                 }}
                                 onClick={(event) => event.stopPropagation()}
-                                className="absolute inset-x-0 bottom-0 z-[2] flex h-2.5 cursor-ns-resize touch-none items-end justify-center opacity-0 transition-opacity hover:opacity-100"
+                                className={`absolute inset-x-0 bottom-0 z-[2] flex ${
+                                  block.heightPx >= 24 ? 'h-2.5' : 'h-1.5'
+                                } cursor-ns-resize touch-none items-end justify-center opacity-0 transition-opacity hover:opacity-100`}
                               >
                                 <span className="mb-0.5 h-1 w-6 rounded-full bg-black/30" aria-hidden />
                               </span>
@@ -1231,17 +1290,23 @@ export function DayCalendarBoard({
                 ? (() => {
                     let ghostStartMin: number;
                     let ghostEndMin: number;
-                    if (drag.mode === 'move') {
+                    // Resize only: the slices after the dragged one, at their pushed position.
+                    let pushedRuns: MinuteInterval[] = [];
+                    if (drag.mode === 'move' || !drag.slice) {
                       // Whole appointment slides to the new start (its span is unchanged).
                       ghostStartMin = drag.previewStartMin;
                       ghostEndMin = drag.previewStartMin + drag.originDurationMin;
                     } else {
-                      // Resize anchors on the LAST occupied slice so the ghost never
-                      // covers the clear development gap of a split appointment. The
-                      // end is clamped (in handleMove) to stay below the slice's top,
-                      // so start < end always holds.
-                      ghostStartMin = drag.lastRunStartMin;
-                      ghostEndMin = drag.originStartMin + drag.previewDurationMin;
+                      // Resize anchors on the dragged slice so the ghost never covers a
+                      // clear development gap. The end is clamped (in handleMove) to stay
+                      // below the slice's top, so start < end always holds.
+                      const deltaMin = drag.previewDurationMin - drag.originDurationMin;
+                      const sliceEndMin = drag.slice.endMin;
+                      ghostStartMin = drag.slice.startMin;
+                      ghostEndMin = sliceEndMin + deltaMin;
+                      pushedRuns = serviceOccupiedRuns(drag.booking, startHour, windowMinutes)
+                        .filter((run) => run.startMin >= sliceEndMin)
+                        .map((run) => ({ startMin: run.startMin + deltaMin, endMin: run.endMin + deltaMin }));
                     }
                     const ghostTop = (ghostStartMin / 60) * HOUR_PX;
                     const ghostHeight = Math.max(SPLIT_BLOCK_MIN_PX, ((ghostEndMin - ghostStartMin) / 60) * HOUR_PX);
@@ -1250,31 +1315,49 @@ export function DayCalendarBoard({
                     // Outside the target stylist's working hours → red "can't drop here".
                     const invalid = drag.mode === 'move' && !drag.valid;
                     return (
-                      <div
-                        className="pointer-events-none absolute inset-x-0 z-30 px-[3px]"
-                        style={{ top: ghostTop, height: ghostHeight }}
-                        aria-hidden
-                      >
+                      <>
                         <div
-                          className={`flex h-full w-full flex-col overflow-hidden rounded-lg border-2 border-dashed px-2 py-1 shadow-lg ${
-                            invalid ? 'border-danger bg-danger-soft' : 'border-primary bg-primary/10'
-                          }`}
+                          className="pointer-events-none absolute inset-x-0 z-30 px-[3px]"
+                          style={{ top: ghostTop, height: ghostHeight }}
+                          aria-hidden
                         >
-                          <span
-                            className={`truncate text-[11px] font-semibold ${invalid ? 'text-danger' : 'text-primary'}`}
+                          <div
+                            className={`flex h-full w-full flex-col overflow-hidden rounded-lg border-2 border-dashed px-2 py-1 shadow-lg ${
+                              invalid ? 'border-danger bg-danger-soft' : 'border-primary bg-primary/10'
+                            }`}
                           >
-                            {formatTime(minutesToIso(ghostStartMin))}
-                            {drag.mode === 'resize' ? `–${formatTime(minutesToIso(ghostEndMin))}` : ''}
-                          </span>
-                          <span className={`truncate text-[10px] ${invalid ? 'text-danger' : 'text-primary/80'}`}>
-                            {invalid
-                              ? 'Outside working hours'
-                              : reassigning
-                                ? `→ ${drag.targetStaffName}`
-                                : drag.booking.clientDisplayName}
-                          </span>
+                            <span
+                              className={`truncate text-[11px] font-semibold ${invalid ? 'text-danger' : 'text-primary'}`}
+                            >
+                              {formatTime(minutesToIso(ghostStartMin))}
+                              {drag.mode === 'resize' ? `–${formatTime(minutesToIso(ghostEndMin))}` : ''}
+                            </span>
+                            <span className={`truncate text-[10px] ${invalid ? 'text-danger' : 'text-primary/80'}`}>
+                              {invalid
+                                ? 'Outside working hours'
+                                : reassigning
+                                  ? `→ ${drag.targetStaffName}`
+                                  : drag.mode === 'resize' && drag.slice?.serviceName
+                                    ? drag.slice.serviceName
+                                    : drag.booking.clientDisplayName}
+                            </span>
+                          </div>
                         </div>
-                      </div>
+                        {/* The later services, outlined where the push will move them. */}
+                        {pushedRuns.map((run) => (
+                          <div
+                            key={run.startMin}
+                            className="pointer-events-none absolute inset-x-0 z-30 px-[3px]"
+                            style={{
+                              top: (run.startMin / 60) * HOUR_PX,
+                              height: Math.max(SPLIT_BLOCK_MIN_PX, ((run.endMin - run.startMin) / 60) * HOUR_PX),
+                            }}
+                            aria-hidden
+                          >
+                            <div className="h-full w-full rounded-lg border-2 border-dashed border-primary/60 bg-primary/5" />
+                          </div>
+                        ))}
+                      </>
                     );
                   })()
                 : null}
@@ -1892,6 +1975,14 @@ interface PositionedBlockPart {
   serviceName: string;
   /** True when this is a later run of the SAME service, resumed after free time. */
   continued: boolean;
+  /** The slice's own occupied window (minutes from the window start), before any
+   *  min-height flooring — what a resize measures from. */
+  startMin: number;
+  endMin: number;
+  /** Resize target: the service line, the segment ending this slice, and its length. */
+  lineId?: string;
+  segmentIndex?: number;
+  targetMinutes?: number;
 }
 
 interface PositionedBooking {
@@ -1916,6 +2007,12 @@ interface ServiceRun extends MinuteInterval {
   serviceId?: string;
   serviceName: string;
   continued: boolean;
+  lineId?: string;
+  /** The occupied segment that ENDS this run — the one a resize of it changes.
+   *  Undefined for a segment-less service (the whole line is resized). */
+  segmentIndex?: number;
+  /** Length of that segment, or of the whole segment-less line. */
+  targetMinutes?: number;
 }
 
 // Minimum drawn height for a single-block appointment (unchanged legibility floor)
@@ -1935,36 +2032,49 @@ function serviceOccupiedRuns(booking: StaffBookingSummary, startHour: number, to
   const runs: ServiceRun[] = [];
 
   services.forEach((service, serviceIndex) => {
-    const raw: MinuteInterval[] = [];
+    type Occupied = MinuteInterval & { segmentIndex?: number; targetMinutes: number };
+    const raw: Occupied[] = [];
     let cursor = minutesFromWindowStart(service.startsAt, startHour);
     const segments = service.segments ?? [];
     if (segments.length === 0) {
-      raw.push({ startMin: cursor, endMin: cursor + service.durationMinutes });
+      raw.push({ startMin: cursor, endMin: cursor + service.durationMinutes, targetMinutes: service.durationMinutes });
     } else {
-      for (const segment of segments) {
+      segments.forEach((segment, segmentIndex) => {
         const end = cursor + segment.durationMinutes;
-        if (!segment.isStylistFree) raw.push({ startMin: cursor, endMin: end });
+        if (!segment.isStylistFree) {
+          raw.push({ startMin: cursor, endMin: end, segmentIndex, targetMinutes: segment.durationMinutes });
+        }
         cursor = end;
-      }
+      });
     }
     const clamped = raw
-      .map((interval) => ({ startMin: clampMin(interval.startMin), endMin: clampMin(interval.endMin) }))
+      .map((interval) => ({ ...interval, startMin: clampMin(interval.startMin), endMin: clampMin(interval.endMin) }))
       .filter((interval) => interval.endMin > interval.startMin)
       .sort((a, b) => a.startMin - b.startMin);
-    // Merge contiguous occupied windows WITHIN this service (same colour).
-    const merged: MinuteInterval[] = [];
+    // Merge contiguous occupied windows WITHIN this service (same colour). The
+    // merged run's resize target is its LAST segment — the one its bottom edge ends.
+    const merged: Occupied[] = [];
     for (const interval of clamped) {
       const last = merged[merged.length - 1];
-      if (last && interval.startMin <= last.endMin) last.endMin = Math.max(last.endMin, interval.endMin);
-      else merged.push({ ...interval });
+      if (last && interval.startMin <= last.endMin) {
+        if (interval.endMin >= last.endMin) {
+          last.endMin = interval.endMin;
+          last.segmentIndex = interval.segmentIndex;
+          last.targetMinutes = interval.targetMinutes;
+        }
+      } else merged.push({ ...interval });
     }
     merged.forEach((interval, runIndex) =>
       runs.push({
-        ...interval,
+        startMin: interval.startMin,
+        endMin: interval.endMin,
         serviceIndex,
         serviceId: service.serviceId,
         serviceName: service.name,
         continued: runIndex > 0,
+        lineId: service.id,
+        segmentIndex: interval.segmentIndex,
+        targetMinutes: interval.targetMinutes,
       }),
     );
   });
@@ -2124,6 +2234,11 @@ function layoutBookings(
         serviceId: run.serviceId,
         serviceName: run.serviceName,
         continued: run.continued,
+        startMin: run.startMin,
+        endMin: run.endMin,
+        lineId: run.lineId,
+        segmentIndex: run.segmentIndex,
+        targetMinutes: run.targetMinutes,
       };
     });
     const first = blocks[0];

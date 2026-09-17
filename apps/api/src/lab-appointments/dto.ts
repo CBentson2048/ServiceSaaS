@@ -1,3 +1,4 @@
+import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
@@ -11,6 +12,7 @@ import {
   Max,
   Min,
   MaxLength,
+  ValidateNested,
 } from 'class-validator';
 
 export class LinkStylistRebookingDto {
@@ -97,6 +99,24 @@ export class CancelAppointmentDto {
   refundDeposit?: boolean;
 }
 
+export class RescheduleServiceResizeDto {
+  @IsUUID()
+  lineId!: string;
+
+  // Required when the line has segments; must point at a stylist-occupied one.
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(50)
+  segmentIndex?: number;
+
+  // New length of that segment (or of the whole line when it has no segments).
+  @IsInt()
+  @Min(5)
+  @Max(720)
+  durationMinutes!: number;
+}
+
 export class RescheduleAppointmentDto {
   @IsISO8601()
   scheduledStartAt!: string;
@@ -122,6 +142,14 @@ export class RescheduleAppointmentDto {
   @Min(5)
   @Max(720)
   durationMinutes?: number;
+
+  // Optional resize of ONE service line (a drag on that service's slice). Later
+  // services are pushed along. Mutually exclusive with durationMinutes; ignored
+  // when serviceIds also changes.
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => RescheduleServiceResizeDto)
+  resizeService?: RescheduleServiceResizeDto;
 }
 
 // ---------------------------------------------------------------------------

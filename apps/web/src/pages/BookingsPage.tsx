@@ -9,6 +9,7 @@ import type {
   CreateStylistRebookingRequest,
   PublicBookingServiceSummary,
   RescheduleAppointmentRequest,
+  RescheduleServiceResize,
   RotaAbsenceIndicator,
   RotaStaffSummary,
   SalonPaymentMethod,
@@ -456,15 +457,23 @@ export function BookingsPage() {
     [commitDrag],
   );
 
-  // Drag-to-resize (bottom edge) → keep the start, change the total duration. The API
-  // grows/shrinks the last stylist-occupied segment to match.
+  // Drag-to-resize (a service slice's bottom edge) → keep the start, resize that
+  // service and push the later ones along. Without per-service data the API grows/
+  // shrinks the last stylist-occupied segment to the new total instead.
   const handleResizeBooking = useCallback(
     (booking: StaffBookingSummary, input: ResizeBookingInput) => {
+      const target = input.service;
+      const serviceName = target ? booking.services?.find((service) => service.id === target.lineId)?.name : undefined;
       void commitDrag(
         booking,
-        optimisticResize(booking, input.durationMinutes),
-        { scheduledStartAt: booking.startsAt, durationMinutes: input.durationMinutes },
-        (appointment) => `Updated ${appointment.clientDisplayName}'s appointment length.`,
+        optimisticResize(booking, input.durationMinutes, target),
+        target
+          ? { scheduledStartAt: booking.startsAt, resizeService: target }
+          : { scheduledStartAt: booking.startsAt, durationMinutes: input.durationMinutes },
+        (appointment) =>
+          serviceName
+            ? `Updated ${appointment.clientDisplayName}'s ${serviceName} length.`
+            : `Updated ${appointment.clientDisplayName}'s appointment length.`,
       );
     },
     [commitDrag],
@@ -2002,49 +2011,61 @@ function optimisticMove(
 // Minimum a service/segment can shrink to on resize — mirrors the API.
 const RESIZE_MIN_UNIT_MINUTES = 5;
 
-// Build the optimistically-resized booking, mirroring the API: the delta versus the
-// current total is applied to the LAST stylist-occupied segment (development time
-// stays fixed), then per-service windows cascade from the start. The server response
-// reconciles any difference; a wholly-free appointment is left unchanged (as the API
-// does). Falls back to just the header end when there is no per-service data.
-function optimisticResize(booking: StaffBookingSummary, durationMinutes: number): StaffBookingSummary {
+// Build the optimistically-resized booking, mirroring the API. With a `target`, that
+// service line (or its occupied segment) takes the new length; otherwise the delta
+// versus the current total lands on the LAST stylist-occupied segment. Development
+// time stays fixed, and per-service windows then cascade from the start, so later
+// services are pushed along. The server response reconciles any difference; a
+// wholly-free appointment is left unchanged (as the API does). Falls back to just the
+// header end when there is no per-service data.
+function optimisticResize(
+  booking: StaffBookingSummary,
+  durationMinutes: number,
+  target?: RescheduleServiceResize,
+): StaffBookingSummary {
   const startMs = new Date(booking.startsAt).getTime();
   const services = booking.services ?? [];
   if (services.length === 0) {
     return { ...booking, endsAt: new Date(startMs + durationMinutes * 60_000).toISOString(), durationMinutes };
   }
-  const currentTotal = services.reduce((sum, service) => sum + service.durationMinutes, 0);
-  const delta = durationMinutes - currentTotal;
 
-  // Locate the last stylist-occupied target, scanning from the end (a segment-less
-  // service is wholly occupied; otherwise its last non-free segment).
   let targetService = -1;
   let targetSegment = -1;
-  for (let i = services.length - 1; i >= 0 && targetService === -1; i -= 1) {
-    const segments = services[i].segments ?? [];
-    if (segments.length === 0) {
-      targetService = i;
-    } else {
-      for (let j = segments.length - 1; j >= 0; j -= 1) {
-        if (!segments[j].isStylistFree) {
-          targetService = i;
-          targetSegment = j;
-          break;
+  let nextLength = 0;
+  if (target) {
+    targetService = services.findIndex((service) => service.id === target.lineId);
+    targetSegment = target.segmentIndex ?? -1;
+    nextLength = target.durationMinutes;
+  } else {
+    const currentTotal = services.reduce((sum, service) => sum + service.durationMinutes, 0);
+    const delta = durationMinutes - currentTotal;
+    // Locate the last stylist-occupied target, scanning from the end (a segment-less
+    // service is wholly occupied; otherwise its last non-free segment).
+    for (let i = services.length - 1; i >= 0 && targetService === -1; i -= 1) {
+      const segments = services[i].segments ?? [];
+      if (segments.length === 0) {
+        targetService = i;
+        nextLength = services[i].durationMinutes + delta;
+      } else {
+        for (let j = segments.length - 1; j >= 0; j -= 1) {
+          if (!segments[j].isStylistFree) {
+            targetService = i;
+            targetSegment = j;
+            nextLength = segments[j].durationMinutes + delta;
+            break;
+          }
         }
       }
     }
   }
   if (targetService === -1) return booking; // wholly stylist-free — the API leaves it as is
+  nextLength = Math.max(RESIZE_MIN_UNIT_MINUTES, nextLength);
 
   const nextServices: StaffBookingServiceLine[] = services.map((service, i) => {
     if (i !== targetService) return { ...service };
-    if (targetSegment === -1) {
-      return { ...service, durationMinutes: Math.max(RESIZE_MIN_UNIT_MINUTES, service.durationMinutes + delta) };
-    }
+    if (targetSegment === -1) return { ...service, durationMinutes: nextLength };
     const segments = (service.segments ?? []).map((segment, j) =>
-      j === targetSegment
-        ? { ...segment, durationMinutes: Math.max(RESIZE_MIN_UNIT_MINUTES, segment.durationMinutes + delta) }
-        : segment,
+      j === targetSegment ? { ...segment, durationMinutes: nextLength } : segment,
     );
     return { ...service, segments, durationMinutes: segments.reduce((sum, seg) => sum + seg.durationMinutes, 0) };
   });

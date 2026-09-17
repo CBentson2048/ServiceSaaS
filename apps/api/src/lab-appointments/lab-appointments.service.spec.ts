@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import { createClient } from '@supabase/supabase-js';
 import type { AuthUser } from '@sheer/domain';
@@ -866,6 +866,220 @@ describe('LabAppointmentsService — edit appointment services', () => {
       { name: 'Develop', durationMinutes: 30, isStylistFree: true },
       { name: 'Rinse', durationMinutes: 25, isStylistFree: false },
     ]);
+  });
+
+  function twoServiceAppointment() {
+    return appointmentRow({
+      appointment_services: [
+        {
+          id: 'as_1',
+          service_id: 'svc_cut',
+          service_name_snapshot: 'Cut',
+          duration_minutes: 30,
+          deposit_required_amount: 0,
+          price_amount: 40,
+          sequence_no: 1,
+        },
+        {
+          id: 'as_2',
+          service_id: 'svc_blowdry',
+          service_name_snapshot: 'Blow dry',
+          duration_minutes: 30,
+          deposit_required_amount: 0,
+          price_amount: 25,
+          sequence_no: 2,
+        },
+      ],
+    });
+  }
+
+  function serviceRowUpdates(client: MockSupabaseClient) {
+    return client.queries
+      .filter(
+        (query) =>
+          query.calls.some((call) => call.method === 'from' && call.args[0] === 'appointment_services') &&
+          query.calls.some((call) => call.method === 'update'),
+      )
+      .map((query) => ({
+        id: query.calls.find((call) => call.method === 'eq' && call.args[0] === 'id')?.args[1],
+        payload: query.calls.find((call) => call.method === 'update')?.args[0] as Record<string, unknown>,
+      }));
+  }
+
+  it('resizes one service and pushes the later services along', async () => {
+    const booked = twoServiceAppointment();
+    const client = createMockSupabaseClient([
+      { data: booked, error: null }, // fetchAppointmentForActor
+      { data: [], error: null }, // availability
+      { data: booked, error: null }, // header update
+      { data: null, error: null }, // applyResizedServiceRows update (Cut)
+      { data: null, error: null }, // applyResizedServiceRows update (Blow dry)
+      { data: booked, error: null }, // finalRow re-fetch
+      { data: [clientProfileRow()], error: null }, // fetchClientProfiles
+    ]);
+    const service = createService(client);
+
+    await service.reschedule(ownerActor(), 'appointment_1', {
+      scheduledStartAt: '2026-05-13T09:00:00.000Z',
+      resizeService: { lineId: 'as_1', durationMinutes: 45 },
+    });
+
+    const headerUpdate = client.queries
+      .find(
+        (query) =>
+          query.calls.some((call) => call.method === 'from' && call.args[0] === 'appointments') &&
+          query.calls.some((call) => call.method === 'update'),
+      )
+      ?.calls.find((call) => call.method === 'update')?.args[0] as Record<string, unknown>;
+    // The appointment grows by the same 15 minutes the Cut did.
+    expect(headerUpdate).toMatchObject({ scheduled_end_at: '2026-05-13T10:15:00.000Z' });
+
+    expect(serviceRowUpdates(client)).toEqual([
+      {
+        id: 'as_1',
+        payload: expect.objectContaining({
+          duration_minutes: 45,
+          scheduled_start_at: '2026-05-13T09:00:00.000Z',
+          scheduled_end_at: '2026-05-13T09:45:00.000Z',
+        }),
+      },
+      {
+        // Blow dry keeps its length and starts when the longer Cut ends.
+        id: 'as_2',
+        payload: expect.objectContaining({
+          duration_minutes: 30,
+          scheduled_start_at: '2026-05-13T09:45:00.000Z',
+          scheduled_end_at: '2026-05-13T10:15:00.000Z',
+        }),
+      },
+    ]);
+  });
+
+  it('resizes the occupied segment before development time, pushing the rest of the service', async () => {
+    const segmented = appointmentRow({
+      appointment_services: [
+        {
+          id: 'as_1',
+          service_id: 'svc_colour',
+          service_name_snapshot: 'Colour',
+          duration_minutes: 60,
+          deposit_required_amount: 0,
+          price_amount: 80,
+          segments: [
+            { name: 'Apply', durationMinutes: 20, isStylistFree: false },
+            { name: 'Develop', durationMinutes: 30, isStylistFree: true },
+            { name: 'Rinse', durationMinutes: 10, isStylistFree: false },
+          ],
+        },
+      ],
+    });
+    const client = createMockSupabaseClient([
+      { data: segmented, error: null }, // fetchAppointmentForActor
+      { data: [], error: null }, // availability
+      { data: segmented, error: null }, // header update
+      { data: null, error: null }, // applyResizedServiceRows update
+      { data: segmented, error: null }, // finalRow re-fetch
+      { data: [clientProfileRow()], error: null }, // fetchClientProfiles
+    ]);
+    const service = createService(client);
+
+    await service.reschedule(ownerActor(), 'appointment_1', {
+      scheduledStartAt: '2026-05-13T09:00:00.000Z',
+      resizeService: { lineId: 'as_1', segmentIndex: 0, durationMinutes: 35 },
+    });
+
+    const [update] = serviceRowUpdates(client);
+    expect(update.payload).toMatchObject({
+      duration_minutes: 75,
+      segments: [
+        { name: 'Apply', durationMinutes: 35, isStylistFree: false },
+        { name: 'Develop', durationMinutes: 30, isStylistFree: true },
+        { name: 'Rinse', durationMinutes: 10, isStylistFree: false },
+      ],
+    });
+    const headerUpdate = client.queries
+      .find(
+        (query) =>
+          query.calls.some((call) => call.method === 'from' && call.args[0] === 'appointments') &&
+          query.calls.some((call) => call.method === 'update'),
+      )
+      ?.calls.find((call) => call.method === 'update')?.args[0] as Record<string, unknown>;
+    // Apply now ends at 09:35; Develop still runs 30 minutes, so Rinse moves to 10:05.
+    expect(headerUpdate).toMatchObject({
+      scheduled_end_at: '2026-05-13T10:15:00.000Z',
+      occupied_ranges: '{["2026-05-13T09:00:00.000Z","2026-05-13T09:35:00.000Z"),["2026-05-13T10:05:00.000Z","2026-05-13T10:15:00.000Z")}',
+    });
+  });
+
+  it('refuses a resize that pushes a later service into another booking', async () => {
+    const client = createMockSupabaseClient([
+      { data: twoServiceAppointment(), error: null }, // fetchAppointmentForActor
+      {
+        data: [
+          {
+            id: 'appointment_2',
+            occupied_ranges: '{["2026-05-13T10:00:00.000Z","2026-05-13T10:30:00.000Z")}',
+          },
+        ],
+        error: null,
+      }, // availability — the next client starts at 10:00
+    ]);
+    const service = createService(client);
+
+    // Cut 30 → 60 pushes Blow dry from 09:30–10:00 to 10:00–10:30.
+    await expect(
+      service.reschedule(ownerActor(), 'appointment_1', {
+        scheduledStartAt: '2026-05-13T09:00:00.000Z',
+        resizeService: { lineId: 'as_1', durationMinutes: 60 },
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(client.queries.some((query) => query.calls.some((call) => call.method === 'update'))).toBe(false);
+  });
+
+  it.each([
+    ['development time', { lineId: 'as_1', segmentIndex: 1, durationMinutes: 45 }],
+    ['a segmented service without a segment', { lineId: 'as_1', durationMinutes: 45 }],
+    ['a line not on the appointment', { lineId: 'as_other', segmentIndex: 0, durationMinutes: 45 }],
+  ])('rejects resizing %s', async (_label, resizeService) => {
+    const segmented = appointmentRow({
+      appointment_services: [
+        {
+          id: 'as_1',
+          service_name_snapshot: 'Colour',
+          duration_minutes: 60,
+          deposit_required_amount: 0,
+          price_amount: 80,
+          segments: [
+            { name: 'Apply', durationMinutes: 20, isStylistFree: false },
+            { name: 'Develop', durationMinutes: 30, isStylistFree: true },
+            { name: 'Rinse', durationMinutes: 10, isStylistFree: false },
+          ],
+        },
+      ],
+    });
+    const client = createMockSupabaseClient([{ data: segmented, error: null }]);
+    const service = createService(client);
+
+    await expect(
+      service.reschedule(ownerActor(), 'appointment_1', {
+        scheduledStartAt: '2026-05-13T09:00:00.000Z',
+        resizeService,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(client.queries.some((query) => query.calls.some((call) => call.method === 'update'))).toBe(false);
+  });
+
+  it('rejects a total resize and a service resize in the same request', async () => {
+    const client = createMockSupabaseClient([{ data: twoServiceAppointment(), error: null }]);
+    const service = createService(client);
+
+    await expect(
+      service.reschedule(ownerActor(), 'appointment_1', {
+        scheduledStartAt: '2026-05-13T09:00:00.000Z',
+        durationMinutes: 90,
+        resizeService: { lineId: 'as_1', durationMinutes: 45 },
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });
 

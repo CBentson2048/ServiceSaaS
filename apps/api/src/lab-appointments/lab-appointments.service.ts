@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -1644,16 +1645,23 @@ export class LabAppointmentsService {
       }
     }
 
-    // Resize: an explicit new total duration (with the services unchanged) grows or
-    // shrinks the LAST service line — and its last stylist-occupied segment — to hit
-    // the requested length. Everything downstream (total duration, occupied windows,
-    // per-service rows) then derives from these resized rows, so the header, the
-    // double-booking guard and the calendar stay consistent. A no-op or invalid
-    // resize returns null and the move behaves exactly as before.
-    const resize =
-      !resolvedServices && input.durationMinutes != null
-        ? buildResizedServiceRows(currentServices, input.durationMinutes)
-        : null;
+    // Resize (services unchanged): either an explicit new total duration, which
+    // grows or shrinks the LAST stylist-occupied segment, or one targeted service
+    // line/segment, which pushes every later service along. Everything downstream
+    // (total duration, occupied windows, per-service rows) then derives from these
+    // resized rows, so the header, the double-booking guard and the calendar stay
+    // consistent. A no-op resize returns null and the move behaves exactly as before.
+    if (input.durationMinutes != null && input.resizeService) {
+      throw new BadRequestException('Send either durationMinutes or resizeService, not both');
+    }
+    const resizeTarget: ResizeTarget | null = resolvedServices
+      ? null
+      : input.resizeService
+        ? { kind: 'line', ...input.resizeService }
+        : input.durationMinutes != null
+          ? { kind: 'total', durationMinutes: input.durationMinutes }
+          : null;
+    const resize = resizeTarget ? buildResizedServiceRows(currentServices, resizeTarget) : null;
     const effectiveServiceRows = resize?.rows ?? currentServices;
 
     const durationMinutes = resolvedServices
@@ -3780,27 +3788,64 @@ function sortServiceRows(rows: AppointmentServiceRow[]): AppointmentServiceRow[]
   return rows.slice().sort((a, b) => (a.sequence_no ?? 0) - (b.sequence_no ?? 0));
 }
 
-// Builds a resized copy of an appointment's service rows so its total matches the
-// requested duration. The delta versus the current total is applied to the LAST
-// service line — specifically its last stylist-OCCUPIED segment (or the whole line
-// when it has no segments) — floored so nothing collapses to zero. Free
-// "development" segments keep their length, so a drag only changes working time.
+// The most a resize may grow an appointment to — mirrors the DTO bound on
+// `durationMinutes`, so pushing one service can't make an unbounded booking.
+const MAX_RESIZED_TOTAL_MINUTES = 720;
+
+type ResizeTarget =
+  | { kind: 'total'; durationMinutes: number }
+  | { kind: 'line'; lineId: string; segmentIndex?: number; durationMinutes: number };
+
+// Builds a resized copy of an appointment's service rows. Only ONE part changes
+// length; the caller re-sequences every row's window from the start, so later
+// services are pushed along and the total moves by the same amount.
+//  - `total`: the delta versus the current total lands on the LAST stylist-OCCUPIED
+//    segment (or the whole line when it has no segments), floored so nothing
+//    collapses to zero. Free "development" segments keep their length.
+//  - `line`: the named booked line (or its named occupied segment) is set to the
+//    requested length. Development segments can't be targeted.
 // Returns null for a no-op or when there is nothing to resize, so the caller falls
 // back to a plain move.
 function buildResizedServiceRows(
   currentServices: AppointmentServiceRow[],
-  requestedTotalMinutes: number,
+  target: ResizeTarget,
 ): { rows: AppointmentServiceRow[] } | null {
   const rows = sortServiceRows(currentServices);
   if (rows.length === 0) return null;
   const MIN_UNIT = 5;
-  const requested = Math.max(MIN_UNIT, Math.round(requestedTotalMinutes));
   const currentTotal = rows.reduce((sum, row) => sum + Number(row.duration_minutes ?? 0), 0);
+  const resized: AppointmentServiceRow[] = rows.map((row) => ({ ...row }));
+
+  if (target.kind === 'line') {
+    const row = resized.find((candidate) => candidate.id === target.lineId);
+    if (!row) throw new BadRequestException('That service is not booked on this appointment');
+    const requested = Math.max(MIN_UNIT, Math.round(target.durationMinutes));
+    const segments = normalizeSegments(row.segments);
+    if (segments.length === 0) {
+      if (target.segmentIndex != null) throw new BadRequestException('That service has no segments to resize');
+      row.duration_minutes = requested;
+    } else {
+      const segment = target.segmentIndex == null ? undefined : segments[target.segmentIndex];
+      if (!segment) throw new BadRequestException('Choose which part of the service to resize');
+      if (segment.isStylistFree) throw new BadRequestException('Development time cannot be resized');
+      const nextSegments = segments.map((entry, index) =>
+        index === target.segmentIndex ? { ...entry, durationMinutes: requested } : entry,
+      );
+      row.segments = nextSegments;
+      row.duration_minutes = nextSegments.reduce((sum, entry) => sum + entry.durationMinutes, 0);
+    }
+    const nextTotal = resized.reduce((sum, entry) => sum + Number(entry.duration_minutes ?? 0), 0);
+    if (nextTotal === currentTotal) return null;
+    if (nextTotal > currentTotal && nextTotal > MAX_RESIZED_TOTAL_MINUTES) {
+      throw new BadRequestException(`An appointment can't be longer than ${MAX_RESIZED_TOTAL_MINUTES} minutes`);
+    }
+    return { rows: resized };
+  }
+
+  const requested = Math.max(MIN_UNIT, Math.round(target.durationMinutes));
   if (currentTotal <= 0) return null;
   const delta = requested - currentTotal;
   if (delta === 0) return null;
-
-  const resized: AppointmentServiceRow[] = rows.map((row) => ({ ...row }));
 
   // Apply the delta to the last stylist-OCCUPIED time, scanning rows from the end:
   // a segment-less line is wholly occupied; otherwise its last non-free segment.
@@ -3875,6 +3920,7 @@ function toServiceLines(row: AppointmentRow): StaffBookingServiceLine[] {
       : startMs + durationMinutes * 60_000;
     cursorMs = endMs;
     return {
+      id: service.id ?? undefined,
       serviceId: service.service_id ?? undefined,
       name: service.service_name_snapshot,
       startsAt: new Date(startMs).toISOString(),

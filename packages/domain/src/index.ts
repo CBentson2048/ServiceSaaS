@@ -2083,6 +2083,8 @@ export interface UpdateProfileResponse {
  * appointment tile and shade stylist-free ("development") time differently.
  */
 export interface StaffBookingServiceLine {
+  /** Appointment service line id — the target of a per-service resize. */
+  id?: string;
   serviceId?: string;
   name: string;
   /** ISO start of this service within the appointment. */
@@ -2645,12 +2647,31 @@ export interface RescheduleAppointmentRequest {
    */
   durationMinutes?: number;
   /**
+   * Optional resize of ONE service (e.g. a drag on that service's slice in the
+   * calendar). Later services are pushed along, so the total changes by the same
+   * amount. Mutually exclusive with `durationMinutes`; ignored when `serviceIds`
+   * also changes.
+   */
+  resizeService?: RescheduleServiceResize;
+  /**
    * Optional replacement service list (catalogue service IDs). When provided, the
    * appointment's services — and therefore its price, deposit and total duration —
    * are replaced with these. Omit to keep the current services unchanged. The
    * assigned stylist must be eligible for every service in the list.
    */
   serviceIds?: string[];
+}
+
+export interface RescheduleServiceResize {
+  /** The booked appointment service line to resize (`StaffBookingServiceLine.id`). */
+  lineId: string;
+  /**
+   * Index of the stylist-occupied segment to resize. Required when the line has
+   * segments (development time can't be resized); omit for a segment-less line.
+   */
+  segmentIndex?: number;
+  /** New length in minutes of that segment, or of the whole line when it has none. */
+  durationMinutes: number;
 }
 
 export interface RescheduleAppointmentResponse {
