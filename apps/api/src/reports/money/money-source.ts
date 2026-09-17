@@ -202,12 +202,12 @@ function text(value: unknown, what: string): string {
   return value;
 }
 
-/** A recorded currency, normalised; anything that is not an ISO 4217 code is refused, never guessed. */
 function nullableText(value: unknown, what: string): string | null {
   if (value === null || value === undefined) return null;
   return text(value, what);
 }
 
+/** A recorded currency, normalised; anything that is not an ISO 4217 code is refused, never guessed. */
 function currency(value: unknown, what: string): string {
   const code = currencyCodeOf(value);
   if (code === null) throw new MoneySourceShapeError(what);
