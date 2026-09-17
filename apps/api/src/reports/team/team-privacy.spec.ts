@@ -209,19 +209,26 @@ describe('R2 cross-location privacy: staff-wide leave', () => {
     });
     expect(others.body).toEqual(none.body);
     // Their leave is never even read: only staff rostered in scope are asked for.
-    for (const read of others.teamSource.reads.filter((r) => r.method === 'approvedLeave')) expect([...read.ids!].sort()).toEqual([ALICE, BEN].sort());
+    const leaveReads = others.teamSource.reads.filter((r) => r.method === 'approvedLeave');
+    expect(leaveReads.length).toBeGreaterThan(0);
+    for (const read of leaveReads) expect([...read.ids!].sort()).toEqual([ALICE, BEN].sort());
   });
 
-  it('F. leave outside Alice’s London shifts (13 Sep; 16–18 Sep) does not reduce her availability', async () => {
+  it('F. leave outside a staff member’s London shifts does not reduce their availability — inside the report dates too', async () => {
     const none = await build(MANAGER_LONDON);
     const outside = await build(MANAGER_LONDON, {
       leave: [
+        // Ben is rostered at London on 14 Sep only: leave on 15 Sep is read and assembled, and removes nothing.
+        { staff: BEN, recordedAt: OTHER, from: '2026-09-15' },
+        // Alice's leave either side of the report dates.
         { staff: ALICE, recordedAt: OTHER, from: '2026-09-13' },
         { staff: ALICE, recordedAt: LONDON, from: '2026-09-16', to: '2026-09-18' },
       ],
     });
     expect(outside.body).toEqual(none.body);
     expect(utilisationOf(outside.body, ALICE)).toEqual(available(60, 960, 625));
+    // The in-range row really reached the report.
+    expect(outside.teamSource.reads.some((read) => read.method === 'approvedLeave')).toBe(true);
   });
 });
 

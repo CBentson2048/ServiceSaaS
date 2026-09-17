@@ -294,6 +294,14 @@ U-11 staff universe as §6 · U-12 retail share team/location only.
 - `pay_summaries.currency_code` has no provenance (§7): finalised-commission amounts
   stay `currency_unverified` until payroll records the currency. **Finalised
   commission cannot pass G5 until this is resolved.**
+- **Location pay statements can be built from other locations' facts.** Payroll picks
+  a location period's staff by `primary_location_id` and reads their visits and
+  retail business-wide (`payroll-period.service.ts`, `payroll-inputs.service.ts`), so a
+  statement on A's period — shown to a manager with commission view at A, as U-9
+  requires — can reflect bills at B. Today only the base-pay-or-commission outcome is
+  visible (amounts are `currency_unverified`); once currency provenance lands the
+  amounts would show. Belongs to Payroll engine alignment; **check before finalised
+  commission G5.**
 - **Online booking treats approved leave as location-specific — HIGH PRIORITY, MUST FIX
   BEFORE PILOT** (L-1 makes it incorrect). Separate follow-up ticket "Staff-wide
   approved leave in availability"; not changed on this branch.
@@ -318,7 +326,8 @@ U-11 staff universe as §6 · U-12 retail share team/location only.
   historical summaries are never rewritten; define how new verified summaries are
   distinguished from legacy unverified rows (e.g. an explicit provenance marker set
   only by the new writer), so R2 can state verified ones and keep legacy ones
-  `currency_unverified`.
+  `currency_unverified`. Location periods: choose staff by membership, not
+  `primary_location_id`, and scope inputs to the period's location (§11).
 - **M-C Retail linkage:** visit or standalone sale context captured and validated at
   sale time; direct table writes narrowed.
 - Optional **M-D** effective-dated staff–location assignments.
