@@ -308,7 +308,7 @@ function teamMetrics(state: MoneyState, sums: StaffMoneySums, utilisation: Utili
       ? unavailableOrNotStarted(state)
       : sums.averageBillBills === 0
         ? { availability: 'unavailable', reason: 'no_bills' }
-        : { availability: 'available', cents: Math.round(sums.averageBillTotal / sums.averageBillBills) };
+        : { availability: 'available', cents: roundHalfAwayFromZero(sums.averageBillTotal / sums.averageBillBills) };
 
   let utilisationMetrics: TeamMetrics['utilisation'];
   if (state.kind === 'not_started') {
@@ -364,7 +364,12 @@ function unavailableOrNotStarted(state: Exclude<MoneyState, { kind: 'ok' }>): { 
 }
 
 function ratio(numerator: number, denominator: number): TeamRatio {
-  return { availability: 'available', numerator, denominator, basisPoints: Math.round((numerator * 10_000) / denominator) };
+  return { availability: 'available', numerator, denominator, basisPoints: roundHalfAwayFromZero((numerator * 10_000) / denominator) };
+}
+
+/** Halves round away from zero, so a refund-led −250.5 is −251 just as 250.5 is 251 (Math.round gives −250). */
+export function roundHalfAwayFromZero(value: number): number {
+  return value < 0 ? -Math.round(-value) || 0 : Math.round(value);
 }
 
 function identityOf(

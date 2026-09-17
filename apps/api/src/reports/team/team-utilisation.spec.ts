@@ -74,6 +74,17 @@ describe('R2 utilisation assembler: location-local days', () => {
     expect(dayBefore.byLocationStaff.size).toBe(0);
   });
 
+  it('booked at another location is decided by instant, not by the local date label (London beside Tokyo)', () => {
+    // Tokyo shift on 15 Sep JST (15 Sep JST runs 14 Sep 15:00Z – 15 Sep 15:00Z). No London shift at all.
+    const windows = [window(TOKYO, 'Asia/Tokyo', '2026-09-15'), window(LONDON, 'Europe/London', '2026-09-14', '2026-09-15')];
+    const tokyoShift = shift(TOKYO, '2026-09-15T00:00:00Z', '2026-09-15T08:00:00Z');
+    const quality = (appointment: BookedAppointmentRow) => assembleUtilisation(windows, facts({ shifts: [tokyoShift], appointments: [appointment] })).dataQuality;
+    // 14 Sep 21:00 BST: a different London date, but inside Tokyo's rostered 15 Sep.
+    expect(quality(booked(LONDON, '2026-09-14T20:00:00Z', '2026-09-14T21:00:00Z'))).toEqual({ bookedWithoutRota: 0, bookedAtAnotherLocation: 1, leaveAtAnotherLocation: 0 });
+    // 15 Sep 18:00 BST: the same date label as the Tokyo shift, but after Tokyo's 15 Sep ended.
+    expect(quality(booked(LONDON, '2026-09-15T17:00:00Z', '2026-09-15T18:00:00Z'))).toEqual({ bookedWithoutRota: 1, bookedAtAnotherLocation: 0, leaveAtAnotherLocation: 0 });
+  });
+
   it('over 100% stays visible: two booked hours on a one-hour shift', () => {
     const result = assembleUtilisation(
       [window(LONDON, 'Europe/London', '2026-09-14')],

@@ -185,7 +185,15 @@ export function assembleUtilisation(windows: readonly UtilisationWindow[], facts
   }
 
   // Booked (occupied) time, per day slice, only against a staff-day at the appointment's own location.
-  const staffDates = new Set([...staffDays.values()].map((entry) => `${entry.staffId}|${entry.day.date}`));
+  // Other-location rota by instant, not by local date label: two locations' "15 Sep" are different spans.
+  const rotaByStaff = new Map<string, StaffDay[]>();
+  for (const entry of staffDays.values()) {
+    const list = rotaByStaff.get(entry.staffId);
+    if (list) list.push(entry);
+    else rotaByStaff.set(entry.staffId, [entry]);
+  }
+  const rosteredElsewhere = (staffId: string, locationId: string, slice: UtilisationIntervalMs) =>
+    (rotaByStaff.get(staffId) ?? []).some((entry) => entry.locationId !== locationId && entry.day.startMs < slice.endMs && slice.startMs < entry.day.endMs);
   let bookedWithoutRota = 0;
   let bookedAtAnotherLocation = 0;
   for (const appointment of facts.appointments) {
@@ -195,7 +203,7 @@ export function assembleUtilisation(windows: readonly UtilisationWindow[], facts
       for (const [day, clamped] of overlapping(days, interval.startMs, interval.endMs)) {
         const entry = staffDays.get(keyOf(appointment.locationId, appointment.staffProfileId, day.date));
         if (entry) entry.bookedMs += clamped.endMs - clamped.startMs;
-        else if (staffDates.has(`${appointment.staffProfileId}|${day.date}`)) bookedAtAnotherLocation += 1;
+        else if (rosteredElsewhere(appointment.staffProfileId, appointment.locationId, clamped)) bookedAtAnotherLocation += 1;
         else bookedWithoutRota += 1;
       }
     }

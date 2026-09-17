@@ -13,7 +13,7 @@ import type { MoneyAmount, MoneyFirstPageBody, TeamAmount, TeamReportBody, TeamS
 import { MoneyReportService } from '../money/money-report.service';
 import { MemoryMoneySource, type Ledger } from '../money/testing/memory-money-source';
 import { firstPage, moneyScope } from '../money/testing/money-scope';
-import { TeamReportService } from './team-report.service';
+import { TeamReportService, roundHalfAwayFromZero } from './team-report.service';
 import { MemoryTeamSource, teamScope } from './testing/memory-team-source';
 import { ALICE, AS_OF, BEN, BIZ, CARA, DAN, DAY, EVE, FAY, GIL, LOCATIONS, LONDON, OTHER, bill, moneyLedger, retail, teamLedger } from './testing/team-fixture';
 
@@ -37,6 +37,13 @@ const composition = (body: MoneyFirstPageBody, locationId: string | null, key: s
   return cents(totals.composition.find((c) => c.key === key)!.gross);
 };
 const label = (row: TeamStaffRow) => (row.staff.kind === 'staff' ? row.staff.name : row.staff.kind === 'former' ? `former:${row.staff.staffProfileId}` : 'unattributed');
+
+describe('R2 rounding', () => {
+  it('halves round away from zero, so negative averages and shares mirror positive ones', () => {
+    expect([2.5, 250.5, -250.5, -2.5, -0.4, 0, -249.4].map(roundHalfAwayFromZero)).toEqual([3, 251, -251, -3, 0, 0, -249]);
+    expect(Object.is(roundHalfAwayFromZero(-0.4), 0)).toBe(true);
+  });
+});
 
 describe('R2 Team money reconciles with R1 Money', () => {
   it('London: each staff member’s service, colour, average bill and retail, to the penny', async () => {
