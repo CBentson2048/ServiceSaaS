@@ -33,7 +33,6 @@
  * provider doing I/O at construction time, not a reason to weaken this test.
  */
 import { Test } from '@nestjs/testing';
-import { AppModule } from './app.module';
 
 /**
  * Config the graph can be built against. These are placeholders with the right
@@ -75,6 +74,11 @@ describe('AppModule bootstrap', () => {
   });
 
   it('compiles the real module graph — every provider resolves', async () => {
+    // AppModule is loaded only now, after TEST_ENV is in place: its
+    // `ConfigModule.forRoot({ validate })` runs when the module is evaluated, so a
+    // top-level import would validate the environment before `beforeAll` ran and
+    // the test would pass only where a local `.env` happens to exist.
+    const { AppModule } = await import('./app.module');
     // No overrideProvider, no mocked modules: the point is the REAL graph. If a
     // module forgets to import the module exporting a service it injects, Nest
     // throws here with "Nest can't resolve dependencies of the X (?, ...)".
