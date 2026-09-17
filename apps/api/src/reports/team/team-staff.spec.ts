@@ -44,11 +44,11 @@ describe('R2 staff universe', () => {
       ['Alice', 'active', 'active here now'],
       ['Ben', 'active', 'active here now'],
       // Dan moved to Other: his London facts stay at London; he is labelled by today's status only.
-      ['Dan', 'active', 'not active here now'],
+      ['Dan', null, 'not active here now'],
       // Eve has no activity: a row, from her current membership.
       ['Eve', 'active', 'active here now'],
       // Fay's profile still exists; she is terminated today.
-      ['Fay', 'terminated', 'not active here now'],
+      ['Fay', null, 'not active here now'],
       ['Former staff', CARA],
       ['Unattributed'],
     ]);
@@ -83,6 +83,9 @@ describe('R2 staff universe', () => {
     const body = await build();
     const dan = body.staffRows.find((row) => row.rowKey === `${LONDON}:${DAN}`)!;
     expect(Object.keys(dan.staff).sort()).toEqual(['currentEmploymentStatus', 'currentlyActiveHere', 'kind', 'name', 'staffProfileId']);
+    // Dan is active at Other today. At London he is only "not currently active here": no employment status that
+    // would imply he works somewhere else.
+    expect(dan.staff).toMatchObject({ currentEmploymentStatus: null, currentlyActiveHere: false });
   });
 });
 
@@ -111,7 +114,7 @@ describe('R2 zero-activity current staff (locked U-11)', () => {
   const buildFor = (actor: ReportActor, staffProfileIds: string[] = []) => {
     const { team, money } = ledgers();
     return new TeamReportService(new MemoryMoneySource(money), new MemoryTeamSource(team)).build(
-      teamScope(BIZ, [LOCATIONS[0]], { ...DAY, staffProfileIds }, AS_OF, actor, undefined, { permittedLocationIds: [LONDON] }),
+      teamScope(BIZ, [LOCATIONS[0]], { ...DAY, staffProfileIds }, AS_OF, actor),
     );
   };
 

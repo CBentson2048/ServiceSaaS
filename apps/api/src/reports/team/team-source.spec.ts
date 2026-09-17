@@ -142,14 +142,13 @@ describe('SupabaseTeamSource', () => {
     expect(booked.queries[0].ops).toContainEqual(['eq', ['business_id', BIZ]]);
   });
 
-  it('approved leave of the staff, only at the viewer’s permitted locations, overlapping the report dates', async () => {
+  it('approved leave of the staff, wherever it was recorded (staff-wide), overlapping the report dates — the recording location is never read', async () => {
     const { source, queries } = fake(empty);
-    await source.approvedLeave(BIZ, [L1], [ID], [{ from: '2026-09-14', to: '2026-09-20' }], null, 1000);
+    await source.approvedLeave(BIZ, [ID], [{ from: '2026-09-14', to: '2026-09-20' }], null, 1000);
     expect(queries[0].ops).toEqual([
-      ['select', ['id,location_id,staff_profile_id,start_date,end_date']],
+      ['select', ['id,staff_profile_id,start_date,end_date']],
       ['eq', ['business_id', BIZ]],
       ['eq', ['status', 'approved']],
-      ['in', ['location_id', [L1]]],
       ['in', ['staff_profile_id', [ID]]],
       ['or', ['and(start_date.lte.2026-09-20,end_date.gte.2026-09-14)']],
       ['order', ['id', { ascending: true }]],
@@ -195,7 +194,7 @@ describe('SupabaseTeamSource', () => {
     await expect(badStatus.source.futureAppointments(BIZ, [ID], '2026-09-16T10:00:00.000000Z', null, 10)).rejects.toBeInstanceOf(MoneySourceShapeError);
     const badWinner = fake({ data: [{ id: ID, pay_period_id: ID, staff_profile_id: ID, commission_cents: 1, adjustments_cents: 0, greater_of_applied: true, greater_of_winner: 'tips' }], error: null });
     await expect(badWinner.source.paySummaries(BIZ, [ID], null, 10)).rejects.toBeInstanceOf(MoneySourceShapeError);
-    await expect(source.approvedLeave(BIZ, ['not-a-uuid'], [ID], [{ from: '2026-09-14', to: '2026-09-14' }], null, 10)).rejects.toThrow();
+    await expect(source.approvedLeave(BIZ, ['not-a-uuid'], [{ from: '2026-09-14', to: '2026-09-14' }], null, 10)).rejects.toThrow();
     const failing = fake({ data: null, error: { message: 'boom' } });
     await expect(failing.source.shifts(BIZ, WINDOWS, null, 10)).rejects.toBeInstanceOf(InternalServerErrorException);
   });

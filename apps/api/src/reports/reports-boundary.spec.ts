@@ -199,8 +199,9 @@ describe('report foundation source boundaries', () => {
     expect(offenders(teamFiles, /'ready_for_review'|'draft'/)).toEqual([]);
     // 'approved' appears once: approved leave, which reduces rostered time.
     expect([...teamSource.matchAll(/'approved'/g)]).toHaveLength(1);
-    // Leave is read only at the viewer's permitted locations — never a fact from outside the grant.
-    expect(teamSource).toContain(".eq('status', 'approved')\n        .in('location_id', [...locationIds])\n        .in('staff_profile_id'");
+    // Approved leave is staff-wide: read by staff, never filtered by — or even selecting — the location that recorded it.
+    expect(teamSource).toContain(".select('id,staff_profile_id,start_date,end_date')");
+    expect(teamSource).toContain(".eq('status', 'approved')\n        .in('staff_profile_id'");
     // A pay statement's stored currency code has no provenance (default and literal 'GBP'): never read, never trusted.
     expect(offenders(teamFiles, /currency_code/)).toEqual([]);
     expect(offenders(teamFiles, /['"`]GBP['"`]/)).toEqual([]);

@@ -79,9 +79,12 @@ export interface BookOutTypeRow {
   reducesAvailableHours: boolean;
 }
 
+/**
+ * Approved leave: a staff-level absence across the business (locked 2026-09-17). The
+ * location it was recorded at is administrative context and is deliberately not read.
+ */
 export interface LeaveRow {
   id: string;
-  locationId: string;
   staffProfileId: string;
   /** Inclusive local dates as recorded. */
   startDate: string;
@@ -147,18 +150,8 @@ export interface TeamSource {
   /** Book-outs overlapping each location's window (open-ended included), by id keyset. */
   absences(businessId: string, windows: readonly MoneyWindow[], afterId: string | null, limit: number): Promise<AbsenceRow[]>;
   bookOutTypes(businessId: string): Promise<BookOutTypeRow[]>;
-  /**
-   * Approved leave of the given staff recorded at the given locations (the viewer's
-   * permitted locations — never any other), overlapping any of the date ranges, by id keyset.
-   */
-  approvedLeave(
-    businessId: string,
-    locationIds: readonly string[],
-    staffProfileIds: readonly string[],
-    ranges: readonly LocalDateRange[],
-    afterId: string | null,
-    limit: number,
-  ): Promise<LeaveRow[]>;
+  /** Approved leave of the given staff, wherever it was recorded, overlapping any of the date ranges, by id keyset. */
+  approvedLeave(businessId: string, staffProfileIds: readonly string[], ranges: readonly LocalDateRange[], afterId: string | null, limit: number): Promise<LeaveRow[]>;
   /** Appointments that occupy a stylist (utilisation's booked statuses) overlapping each location's window, by id keyset. */
   bookedAppointments(businessId: string, windows: readonly MoneyWindow[], afterId: string | null, limit: number): Promise<BookedAppointmentRow[]>;
   /** Locked or paid calculation pay periods overlapping any of the date ranges, by id keyset. */
@@ -474,24 +467,21 @@ export class SupabaseTeamSource implements TeamSource {
 
   async approvedLeave(
     businessId: string,
-    locationIds: readonly string[],
     staffProfileIds: readonly string[],
     ranges: readonly LocalDateRange[],
     afterId: string | null,
     limit: number,
   ): Promise<LeaveRow[]> {
-    assertUuids(locationIds);
     assertUuids(staffProfileIds);
     if (afterId !== null) assertUuids([afterId]);
-    if (locationIds.length === 0 || staffProfileIds.length === 0 || ranges.length === 0) return [];
+    if (staffProfileIds.length === 0 || ranges.length === 0) return [];
     const rows = await this.run('leave_requests', () => {
       let query = this.admin
         .schema('rota')
         .from('leave_requests')
-        .select('id,location_id,staff_profile_id,start_date,end_date')
+        .select('id,staff_profile_id,start_date,end_date')
         .eq('business_id', businessId)
         .eq('status', 'approved')
-        .in('location_id', [...locationIds])
         .in('staff_profile_id', [...staffProfileIds])
         .or(dateOverlapFilter('start_date', 'end_date', ranges, false));
       if (afterId !== null) query = query.gt('id', afterId);
@@ -499,7 +489,6 @@ export class SupabaseTeamSource implements TeamSource {
     });
     return rows.map((row) => ({
       id: text(row.id, 'leave id'),
-      locationId: text(row.location_id, 'leave location'),
       staffProfileId: text(row.staff_profile_id, 'leave staff'),
       startDate: localDate(row.start_date, 'leave start'),
       endDate: localDate(row.end_date, 'leave end'),

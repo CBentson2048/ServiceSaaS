@@ -45,14 +45,6 @@ export interface ReportScope {
   resolved: ResolvedReportFilter;
   /** One per resolved location, in the same order as `resolved.locations`. */
   windows: readonly ReportLocationWindow[];
-  /**
-   * Every location the actor may report on for this report, selected or not. A
-   * report may read facts at these locations so its figures do not depend on the
-   * selection; it never reads facts at any other location. Deliberately no flag for
-   * "this is every business location": for a non-owner that would reveal whether
-   * other locations exist.
-   */
-  permittedLocationIds: readonly string[];
 }
 
 /**
@@ -79,13 +71,13 @@ export class ReportScopeService {
    * permitted location still gets `report_no_locations_in_scope`.
    */
   async options(actor: ReportActor, definition: ReportDefinition): Promise<ReportOptions> {
-    const [permitted, weekStartDay] = await Promise.all([
+    const [locations, weekStartDay] = await Promise.all([
       this.permittedLocations(actor, definition),
       this.readWeekStartDay(actor.businessId),
     ]);
     return {
       reportKey: definition.key,
-      locations: permitted.map(toOption),
+      locations: locations.map(toOption),
       weekStartDay,
     };
   }
@@ -152,14 +144,7 @@ export class ReportScopeService {
         };
       }),
     };
-    return {
-      actor,
-      definition,
-      asOf,
-      resolved,
-      windows,
-      permittedLocationIds: permitted.map((location) => location.id),
-    };
+    return { actor, definition, asOf, resolved, windows };
   }
 
   /** The business's locations the actor may report on; 403 when there are none. */

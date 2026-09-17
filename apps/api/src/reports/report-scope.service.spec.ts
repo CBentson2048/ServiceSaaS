@@ -141,19 +141,6 @@ describe('location scope', () => {
     });
   });
 
-  it('carries the whole grant apart from the selection — and nothing that says whether other locations exist', async () => {
-    const { service } = serviceWith({ locations: ok(LOCATION_ROWS) });
-    const ownerLondon = await service.resolve(owner, team, q({ locations: LONDON }), ASOF);
-    expect([ownerLondon.windows.map((w) => w.locationId), ownerLondon.permittedLocationIds]).toEqual([[LONDON], [LONDON, TOKYO, NEW_YORK, CLOSED]]);
-    const managerA = await service.resolve(managerAPlusStylistB, team, q({}), ASOF);
-    expect(managerA.permittedLocationIds).toEqual([LONDON]);
-    // manager@A's scope is the same whether the business has one location or four.
-    const alone = serviceWith({ locations: ok([LOCATION_ROWS[0]]) });
-    const { asOf: _a, ...withOthers } = managerA;
-    const { asOf: _b, ...withoutOthers } = await alone.service.resolve(managerAPlusStylistB, team, q({}), ASOF);
-    expect(withoutOthers).toEqual(withOthers);
-  });
-
   it('refuses the whole request when one of several ids is out of scope', async () => {
     const { service } = serviceWith({ locations: ok(LOCATION_ROWS) });
     expect(

@@ -50,7 +50,8 @@ export interface TeamLedger {
   breaks: Array<ShiftBreakRow & { businessId: string }>;
   absences: Array<AbsenceRow & { businessId: string }>;
   bookOutTypes: Array<BookOutTypeRow & { businessId: string }>;
-  leave: Array<LeaveRow & { businessId: string; status: 'pending' | 'approved' | 'rejected' | 'cancelled' }>;
+  /** `locationId` is where the leave was recorded (administrative); the adapter never reads it. */
+  leave: Array<LeaveRow & { businessId: string; locationId: string; status: 'pending' | 'approved' | 'rejected' | 'cancelled' }>;
   payPeriods: Array<Omit<PayPeriodRow, 'status'> & { businessId: string; kind: 'calculation' | 'payment'; status: 'draft' | 'ready_for_review' | 'approved' | 'locked' | 'paid' }>;
   paySummaries: Array<PaySummaryRow & { businessId: string; supersededById?: string | null }>;
 }
@@ -77,7 +78,6 @@ export interface TeamReadLog {
   businessId: string;
   windows?: readonly MoneyWindow[];
   ids?: readonly string[];
-  locationIds?: readonly string[];
   ranges?: readonly LocalDateRange[];
   afterInstant?: string;
 }
@@ -199,27 +199,20 @@ export class MemoryTeamSource implements TeamSource {
     return this.ledger.bookOutTypes.filter((t) => t.businessId === businessId).map(({ businessId: _b, ...row }) => row);
   }
 
-  async approvedLeave(
-    businessId: string,
-    locationIds: readonly string[],
-    staffProfileIds: readonly string[],
-    ranges: readonly LocalDateRange[],
-    afterId: string | null,
-    limit: number,
-  ): Promise<LeaveRow[]> {
-    this.reads.push({ method: 'approvedLeave', businessId, locationIds, ids: staffProfileIds, ranges });
+  async approvedLeave(businessId: string, staffProfileIds: readonly string[], ranges: readonly LocalDateRange[], afterId: string | null, limit: number): Promise<LeaveRow[]> {
+    this.reads.push({ method: 'approvedLeave', businessId, ids: staffProfileIds, ranges });
     const rows = this.ledger.leave
       .filter(
         (l) =>
           l.businessId === businessId &&
           l.status === 'approved' &&
-          locationIds.includes(l.locationId) &&
           staffProfileIds.includes(l.staffProfileId) &&
           ranges.some((r) => l.startDate <= r.to && l.endDate >= r.from) &&
           (afterId === null || l.id > afterId),
       )
       .sort(byId)
-      .map(({ businessId: _b, status: _s, ...row }) => row);
+      // The recording location is administrative context: never handed to the report.
+      .map(({ businessId: _b, status: _s, locationId: _l, ...row }) => row);
     return this.take(rows, limit);
   }
 
@@ -267,11 +260,6 @@ export class MemoryTeamSource implements TeamSource {
 }
 
 /** A Ticket A scope for the Team report, as the scope service resolves it. */
-/** The viewer's grant for the Team report. Default: exactly the resolved locations. */
-export interface TeamGrant {
-  permittedLocationIds: readonly string[];
-}
-
 export function teamScope(
   businessId: string,
   locations: readonly ScopeLocation[],
@@ -279,8 +267,7 @@ export function teamScope(
   asOf: Date,
   actor: ReportActor = { id: 'owner-1', businessId, roles: ['owner'] },
   weekStartDay: WeekStartDay = 2,
-  grant?: TeamGrant,
 ): ReportScope {
   const scope = moneyScope(businessId, locations, filter, asOf, weekStartDay);
-  return { ...scope, ...grant, actor, definition: getReportDefinition('team')!, resolved: { ...scope.resolved, reportKey: 'team' } };
+  return { ...scope, actor, definition: getReportDefinition('team')!, resolved: { ...scope.resolved, reportKey: 'team' } };
 }

@@ -63,8 +63,7 @@ const row = (key: string, staff: TeamStaffRow['staff'], m: TeamMetrics = metrics
   hasRecordedActivity,
   metrics: m,
 });
-const scopeAmbiguous = { availability: 'unavailable', reason: 'availability_scope_ambiguous' } as const;
-const SCOPE_SENTENCE = 'Utilisation is unavailable because staff availability cannot be resolved safely for this period.';
+const noRota = { availability: 'unavailable', reason: 'no_rostered_time' } as const;
 
 function body(overrides: Partial<TeamReportBody> = {}): TeamReportBody {
   return {
@@ -80,7 +79,7 @@ function body(overrides: Partial<TeamReportBody> = {}): TeamReportBody {
       row(ALICE, { kind: 'staff', staffProfileId: ALICE, name: 'Alice', currentEmploymentStatus: 'active', currentlyActiveHere: true }),
       row(
         'eve',
-        { kind: 'staff', staffProfileId: 'eve', name: 'Eve', currentEmploymentStatus: 'terminated', currentlyActiveHere: false },
+        { kind: 'staff', staffProfileId: 'eve', name: 'Eve', currentEmploymentStatus: null, currentlyActiveHere: false },
         metrics({
           averageBill: { total: gbp(0), bills: count(0), average: { availability: 'unavailable', reason: 'no_bills' } },
           utilisation: { availableMinutes: count(0), bookedMinutes: count(0), utilisation: { availability: 'unavailable', reason: 'no_rostered_time' } },
@@ -97,9 +96,9 @@ function body(overrides: Partial<TeamReportBody> = {}): TeamReportBody {
         { kind: 'unattributed' },
         metrics({
           utilisation: {
-            availableMinutes: scopeAmbiguous,
-            bookedMinutes: scopeAmbiguous,
-            utilisation: scopeAmbiguous,
+            availableMinutes: noRota,
+            bookedMinutes: noRota,
+            utilisation: noRota,
           },
         }),
       ),
@@ -170,14 +169,12 @@ describe('TeamReport', () => {
 
   it('staff rows: names, today’s status labelled as current, former staff and Unattributed', () => {
     render(<TeamReport body={body()} locations={locations} />);
-    expect(rowText('Alice')).toContain('Current: Active, at this location');
-    expect(rowText('Eve')).toContain('Current: Left, not at this location');
+    expect(rowText('Alice')).toContain('Current: Active here');
+    expect(rowText('Eve')).toContain('Not currently active here · Historical activity');
     expect(rowText('Former staff \\(profile removed, ref 4444\\)')).toContain('£13,000.00');
     // Future Booking's as-at time sits with the figures, in each location's group header.
     expect(within(section('Staff performance')).getByRole('rowheader', { name: /^London/ }).textContent).toBe('LondonFuture Booking as at 16 Sept 2026, 11:00');
-    expect(rowText('Unattributed')).toContain('Unavailable');
-    // The reason, once, in neutral words: no place, no leave, no count.
-    expect(section('Staff performance').textContent).toContain(SCOPE_SENTENCE);
+    expect(rowText('Unattributed')).toContain('No rostered time');
     expect(within(section('Staff performance')).getAllByRole('rowheader', { name: 'Location total' })).toHaveLength(2);
   });
 
@@ -185,9 +182,9 @@ describe('TeamReport', () => {
     const single = metrics({
       averageBill: { total: gbp(5000), bills: count(1), average: gbp(5000) },
       utilisation: {
-        availableMinutes: scopeAmbiguous,
-        bookedMinutes: scopeAmbiguous,
-        utilisation: scopeAmbiguous,
+        availableMinutes: noRota,
+        bookedMinutes: noRota,
+        utilisation: noRota,
       },
       futureBooking: {
         clientsSeen: count(1),
@@ -203,7 +200,7 @@ describe('TeamReport', () => {
     render(<TeamReport body={oneLocation} locations={[locations[0]]} />);
     const overview = section('Team overview');
     expect(valueOf(overview, 'Average bill')).toBe('£50.001 bill');
-    expect(valueOf(overview, 'Utilisation')).toBe(`Unavailable${SCOPE_SENTENCE}`);
+    expect(valueOf(overview, 'Utilisation')).toBe('No rostered time');
     expect(valueOf(overview, 'Future Booking')).toBe('100%1 of 1 client · As at 16 Sept 2026, 11:00');
     // One location: no By location table.
     expect(screen.queryByRole('region', { name: 'By location' })).toBeNull();
@@ -323,29 +320,23 @@ describe('TeamReport', () => {
     expect(notes).not.toMatch(/leave/i);
   });
 
-  it('cross-location privacy: unavailable utilisation never mentions a location, leave or a count, anywhere on the page', () => {
-    const everywhere = metrics({ utilisation: { availableMinutes: scopeAmbiguous, bookedMinutes: scopeAmbiguous, utilisation: scopeAmbiguous } });
+  it('staff status never implies work at another location: someone not active here reads only "Not currently active here · Historical activity"', () => {
+    const dan = row('dan', { kind: 'staff', staffProfileId: 'dan', name: 'Dan', currentEmploymentStatus: null, currentlyActiveHere: false });
     render(
       <TeamReport
-        body={body({
-          summary: { ...totals(), ...everywhere },
-          locations: [{ ...body().locations[0], totals: { ...totals(), ...everywhere } }],
-          staffRows: [row(ALICE, { kind: 'staff', staffProfileId: ALICE, name: 'Alice', currentEmploymentStatus: 'active', currentlyActiveHere: true }, everywhere)],
-          dataQuality: { rolledUpServiceLines: 0, bookedWithoutRota: 0, bookedAtAnotherLocation: 0 },
-        })}
-        locations={[locations[0]]}
+        body={body({ staffRows: [body().staffRows[0], dan], dataQuality: { rolledUpServiceLines: 0, bookedWithoutRota: 0, bookedAtAnotherLocation: 0 } })}
+        locations={locations}
       />,
     );
-    expect(valueOf(section('Team overview'), 'Utilisation')).toBe(`Unavailable${SCOPE_SENTENCE}`);
-    expect(rowText('Alice')).toContain('Unavailable');
-    expect(document.body.textContent).not.toMatch(/leave|another location|other location/i);
-    expect(rowText('Alice')).not.toMatch(/\d+ min/);
+    expect(rowText('Dan')).toContain('Not currently active here · Historical activity');
+    expect(rowText('Dan')).not.toMatch(/Current:|Active,|Left|On leave|On notice/);
+    expect(document.body.textContent).not.toMatch(/leave recorded|another location|other location|not at this location/i);
   });
 
   it('a current active member with no recorded activity is labelled so, beside today’s status', () => {
     const quiet = row('zoe', { kind: 'staff', staffProfileId: 'zoe', name: 'Zoe', currentEmploymentStatus: 'active', currentlyActiveHere: true }, metrics(), L1, false);
     render(<TeamReport body={body({ staffRows: [body().staffRows[0], quiet] })} locations={locations} />);
-    expect(rowText('Zoe')).toContain('Current: Active, at this location · No recorded activity here in this period');
+    expect(rowText('Zoe')).toContain('Current: Active here · No recorded activity here in this period');
     expect(rowText('Alice')).not.toContain('No recorded activity');
   });
 

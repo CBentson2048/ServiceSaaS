@@ -22,13 +22,6 @@ export type TeamUnavailableReason =
   | 'no_clients_seen'
   /** No rostered time remains after breaks, book-outs and leave. */
   | 'no_rostered_time'
-  /**
-   * Staff availability for a rostered day cannot be resolved safely from what this
-   * viewer may see (how leave applies across locations is not decided), so
-   * utilisation is not stated rather than guessed. Deliberately says nothing about
-   * where, why or how often.
-   */
-  | 'availability_scope_ambiguous'
   /** Payroll did not record which currency a pay statement is in, so its amounts are not stated. */
   | 'currency_unverified'
   /** A pay period has no live pay statements, so it has no commission total. */
@@ -67,7 +60,7 @@ export interface TeamAverageBill {
 }
 
 export interface TeamUtilisation {
-  /** Rostered minutes after breaks, reducing book-outs and leave recorded at the same location. */
+  /** Rostered minutes after breaks, reducing book-outs and approved leave (staff-wide, wherever recorded). */
   availableMinutes: TeamCount;
   /** Occupied appointment minutes on days with available time. */
   bookedMinutes: TeamCount;
@@ -118,8 +111,12 @@ export type TeamStaffIdentity =
       kind: 'staff';
       staffProfileId: string;
       name: string;
-      /** Current employment status (today), not during the period. */
-      currentEmploymentStatus: TeamEmploymentStatus;
+      /**
+       * Current employment status (today), not during the period. `null` unless the
+       * member is currently active at this row's location: a status beside "not here"
+       * would imply work at a location the viewer may not be authorised to see.
+       */
+      currentEmploymentStatus: TeamEmploymentStatus | null;
       /** Currently holds an active membership at this row's location (today). */
       currentlyActiveHere: boolean;
     }

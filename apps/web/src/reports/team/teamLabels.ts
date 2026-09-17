@@ -32,30 +32,10 @@ const TEAM_TEXT: Record<TeamOnlyReason, string> = {
   no_service_revenue: 'No service revenue',
   no_clients_seen: 'No clients seen',
   no_rostered_time: 'No rostered time',
-  availability_scope_ambiguous: 'Unavailable',
   currency_unverified: 'Currency not verified',
   no_pay_statements: 'No pay statements',
 };
 
-/**
- * Why utilisation reads "Unavailable". Deliberately neutral: it never names a
- * location, leave, or how many days — the viewer may not see what caused it.
- */
-export const AVAILABILITY_SCOPE_TEXT = 'Utilisation is unavailable because staff availability cannot be resolved safely for this period.';
-
-/** Whether any utilisation figure in the report is unavailable for that reason (a presence check, no arithmetic). */
-export function hasAvailabilityScopeAmbiguity(body: TeamReportBody): boolean {
-  const ambiguous = (metrics: TeamMetricsLike) =>
-    metrics.utilisation.utilisation.availability === 'unavailable' && metrics.utilisation.utilisation.reason === 'availability_scope_ambiguous';
-  return (
-    ambiguous(body.summary) ||
-    (body.selectedStaff !== null && ambiguous(body.selectedStaff)) ||
-    body.locations.some((location) => ambiguous(location.totals) || (location.selectedStaff !== null && ambiguous(location.selectedStaff))) ||
-    body.staffRows.some((row) => ambiguous(row.metrics))
-  );
-}
-
-type TeamMetricsLike = Pick<TeamReportBody['summary'], 'utilisation'>;
 
 /** A pay statement's currency code, only when payroll recorded it; never a default. */
 export function statementCurrencyCode(currency: TeamStatementCurrency): string | null {
@@ -185,11 +165,16 @@ export function activityText(row: TeamStaffRow): string | null {
   return row.hasRecordedActivity ? null : 'No recorded activity here in this period';
 }
 
-/** Today's status, always labelled as current — never as where someone worked in the period. */
+/**
+ * Today's status, always labelled as current — never as where someone worked in the
+ * period. Someone not active here now is described only by what is known here: they are
+ * not currently active here, and the row exists because of historical activity. Nothing
+ * implies they work at another location.
+ */
 export function currentStatusText(staff: TeamStaffIdentity): string | null {
   if (staff.kind !== 'staff') return null;
-  const employment = EMPLOYMENT_TEXT[staff.currentEmploymentStatus];
-  return staff.currentlyActiveHere ? `Current: ${employment}, at this location` : `Current: ${employment}, not at this location`;
+  if (!staff.currentlyActiveHere || staff.currentEmploymentStatus === null) return 'Not currently active here · Historical activity';
+  return `Current: ${EMPLOYMENT_TEXT[staff.currentEmploymentStatus]} here`;
 }
 
 export const GREATER_OF_TEXT: Record<TeamGreaterOf, string> = {

@@ -11,7 +11,6 @@
 import { Inject, Injectable, InternalServerErrorException } from '@nestjs/common';
 import {
   TEAM_UNAVAILABLE_METRICS,
-  isReportOwner,
   type TeamAmount,
   type TeamCommissionStaff,
   type TeamCount,
@@ -111,9 +110,9 @@ export class TeamReportService {
         visits.map((visit) => visit.clientProfileId),
         (chunk, afterId, limit): Promise<FutureAppointmentRow[]> => this.source.futureAppointments(businessId, chunk, generatedKey, afterId, limit),
       ),
-      // Leave only at the viewer's permitted locations: never a fact from outside the grant.
+      // Approved leave is staff-wide: wherever it was recorded, for the staff rostered in scope only.
       readByIdChunks(shifts.map((shift) => shift.staffProfileId), (chunk, afterId, limit) =>
-        this.source.approvedLeave(businessId, scope.permittedLocationIds, chunk, startedRanges, afterId, limit),
+        this.source.approvedLeave(businessId, chunk, startedRanges, afterId, limit),
       ),
       readChunks(memberships.map((membership) => membership.userProfileId), (chunk) => this.source.staffProfilesOfUsers(businessId, chunk)),
       readByIdChunks(commissionVisibility.periods.map((period) => period.id), (chunk, afterId, limit) =>
@@ -136,8 +135,6 @@ export class TeamReportService {
     const utilisation = assembleUtilisation(
       scope.windows.filter((window) => startedIds.has(window.locationId)),
       { shifts, breaks, absences, bookOutTypes, leave, appointments },
-      // Owner by role alone: never "does the grant cover every location", which would reveal whether others exist.
-      { seesEveryLocation: isReportOwner(scope.actor) },
     );
 
     // 4. The staff universe: current active staff at resolved locations, plus staff and
@@ -322,9 +319,6 @@ function teamMetrics(state: MoneyState, sums: StaffMoneySums, utilisation: Utili
   let utilisationMetrics: TeamMetrics['utilisation'];
   if (state.kind === 'not_started') {
     utilisationMetrics = { availableMinutes: NOT_STARTED, bookedMinutes: NOT_STARTED, utilisation: NOT_STARTED };
-  } else if (utilisation.ambiguous) {
-    const ambiguous = { availability: 'unavailable', reason: 'availability_scope_ambiguous' } as const;
-    utilisationMetrics = { availableMinutes: ambiguous, bookedMinutes: ambiguous, utilisation: ambiguous };
   } else {
     const availableMinutes = Math.round(utilisation.availableMs / 60_000);
     const bookedMinutes = Math.round(utilisation.bookedMs / 60_000);
@@ -391,12 +385,14 @@ function identityOf(
   if (key === null) return { kind: 'unattributed' };
   const profile = profiles.get(key);
   if (!profile) return { kind: 'former', staffProfileId: key };
+  const currentlyActiveHere = activeHere.get(key)?.has(locationId) ?? false;
   return {
     kind: 'staff',
     staffProfileId: key,
     name: profile.name,
-    currentEmploymentStatus: profile.employmentStatus,
-    currentlyActiveHere: activeHere.get(key)?.has(locationId) ?? false,
+    // Only for someone active here now: "active, but not here" would imply work at a location the viewer may not see.
+    currentEmploymentStatus: currentlyActiveHere ? profile.employmentStatus : null,
+    currentlyActiveHere,
   };
 }
 

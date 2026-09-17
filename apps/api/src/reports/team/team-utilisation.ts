@@ -9,20 +9,13 @@
  *   Ticket A window — never UTC days;
  * - a staff-day belongs to one location: shifts, book-outs and appointments count
  *   only at their own location (unchanged);
- * - approved leave recorded at the staff-day's own location removes the whole day
- *   (every module agrees on that). Whether leave recorded at ANOTHER location
- *   removes it is not decided (online booking: no; payroll hours: yes; KPI: per
- *   selection), so a staff-day is resolved only when that question cannot change
- *   it. Leave is read only at the viewer's permitted locations, never elsewhere, and
- *   a staff-day that same-location leave does not remove is not stated
- *   (`availability_scope_ambiguous`) when either
- *     - the viewer is not an owner — leave could be recorded at a location they may
- *       not see, and checking (or even asking whether such a location exists) would
- *       reveal it; the rule depends on the viewer's role alone, so the result
- *       carries nothing from outside the grant; or
- *     - approved leave recorded at another location covers it (owners, who may see
- *       every location).
- *   Nothing says where, why or how many.
+ * - approved leave is a STAFF-LEVEL absence (locked 2026-09-17): it applies to the
+ *   staff member across the business, whichever location recorded it. The recording
+ *   location is administrative context and is never read. Each leave row is the
+ *   interval [start of its first date, start of the day after its last date) in the
+ *   staff-day's own location zone; overlapping leave, breaks and book-outs are
+ *   unioned by the shared formula, so no time is subtracted twice, and leave reduces
+ *   only the rostered time it overlaps at the location being calculated.
  *
  * Aggregates keep the shared semantics: minutes add up across staff-days, booked
  * time on a day with no available time is left out, and nothing is capped.
@@ -56,17 +49,6 @@ export interface UtilisationSums {
   availableMs: number;
   /** Booked time on staff-days that had available time. */
   bookedMs: number;
-  /** A staff-day's availability cannot be resolved safely for this viewer. */
-  ambiguous: boolean;
-}
-
-/** What the viewer lets the assembler settle about leave. */
-export interface UtilisationLeaveScope {
-  /**
-   * The viewer may see every location of the business (an owner), so leave recorded
-   * anywhere is in `facts.leave` and can be checked without revealing anything.
-   */
-  seesEveryLocation: boolean;
 }
 
 export interface UtilisationResult {
@@ -92,7 +74,6 @@ interface StaffDay {
   breaks: UtilisationIntervalMs[];
   reducing: UtilisationIntervalMs[];
   bookedMs: number;
-  ambiguous: boolean;
 }
 
 /** An instant key (microsecond text) as epoch milliseconds. */
@@ -136,8 +117,7 @@ function* overlapping(days: readonly LocalDay[], startMs: number, endMs: number)
   }
 }
 
-/** `facts.leave` must hold only leave recorded at the viewer's permitted locations. */
-export function assembleUtilisation(windows: readonly UtilisationWindow[], facts: UtilisationFacts, leaveScope: UtilisationLeaveScope): UtilisationResult {
+export function assembleUtilisation(windows: readonly UtilisationWindow[], facts: UtilisationFacts): UtilisationResult {
   const daysByLocation = new Map(
     windows.map((window) => [window.locationId, localDays(window)] as const).filter(([, days]) => days.length > 0),
   );
@@ -159,7 +139,7 @@ export function assembleUtilisation(windows: readonly UtilisationWindow[], facts
       const key = keyOf(shift.locationId, shift.staffProfileId, day.date);
       let entry = staffDays.get(key);
       if (!entry) {
-        entry = { staffId: shift.staffProfileId, locationId: shift.locationId, day, shifts: [], breaks: [], reducing: [], bookedMs: 0, ambiguous: false };
+        entry = { staffId: shift.staffProfileId, locationId: shift.locationId, day, shifts: [], breaks: [], reducing: [], bookedMs: 0 };
         staffDays.set(key, entry);
       }
       entry.shifts.push(interval);
@@ -185,19 +165,20 @@ export function assembleUtilisation(windows: readonly UtilisationWindow[], facts
     }
   }
 
-  // Approved leave: same location removes the whole local day; otherwise see the header.
+  // Approved leave, staff-wide: each covering row as local-day time at this staff-day's location (unioned later).
   const leaveByStaff = new Map<string, LeaveRow[]>();
   for (const row of facts.leave) {
     const list = leaveByStaff.get(row.staffProfileId);
     if (list) list.push(row);
     else leaveByStaff.set(row.staffProfileId, [row]);
   }
+  const timezoneOf = new Map(windows.map((window) => [window.locationId, window.timezone]));
   for (const entry of staffDays.values()) {
-    const covering = (leaveByStaff.get(entry.staffId) ?? []).filter((row) => row.startDate <= entry.day.date && entry.day.date <= row.endDate);
-    if (covering.some((row) => row.locationId === entry.locationId)) {
-      entry.reducing.push({ startMs: entry.day.startMs, endMs: entry.day.endMs });
-    } else if (!leaveScope.seesEveryLocation || covering.length > 0) {
-      entry.ambiguous = true;
+    const timezone = timezoneOf.get(entry.locationId)!;
+    for (const row of leaveByStaff.get(entry.staffId) ?? []) {
+      const startMs = Math.max(localDateStartUtc(timezone, row.startDate).getTime(), entry.day.startMs);
+      const endMs = Math.min(localDateStartUtc(timezone, addDays(row.endDate, 1)).getTime(), entry.day.endMs);
+      if (endMs > startMs) entry.reducing.push({ startMs, endMs });
     }
   }
 
@@ -230,10 +211,9 @@ export function assembleUtilisation(windows: readonly UtilisationWindow[], facts
   for (const entry of staffDays.values()) {
     const daily = computeDailyUtilisation({ shifts: entry.shifts, breaks: entry.breaks, reducingBlocks: entry.reducing, bookedMs: entry.bookedMs });
     const byStaff = byLocationStaff.get(entry.locationId) ?? new Map<string, UtilisationSums>();
-    const sums = byStaff.get(entry.staffId) ?? { availableMs: 0, bookedMs: 0, ambiguous: false };
+    const sums = byStaff.get(entry.staffId) ?? { availableMs: 0, bookedMs: 0 };
     sums.availableMs += daily.availableMs;
     sums.bookedMs += daily.availableMs > 0 ? daily.bookedMs : 0;
-    sums.ambiguous = sums.ambiguous || entry.ambiguous;
     byStaff.set(entry.staffId, sums);
     byLocationStaff.set(entry.locationId, byStaff);
   }
@@ -248,11 +228,10 @@ function occupiedIntervals(appointment: BookedAppointmentRow): UtilisationInterv
 
 /** Sum utilisation over a set of staff (any location map). */
 export function sumUtilisation(cells: Iterable<UtilisationSums>): UtilisationSums {
-  const total = { availableMs: 0, bookedMs: 0, ambiguous: false };
+  const total = { availableMs: 0, bookedMs: 0 };
   for (const cell of cells) {
     total.availableMs += cell.availableMs;
     total.bookedMs += cell.bookedMs;
-    total.ambiguous = total.ambiguous || cell.ambiguous;
   }
   return total;
 }

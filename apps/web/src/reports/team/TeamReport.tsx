@@ -10,7 +10,6 @@ import type { ReactNode } from 'react';
 import { AppCard, AppText } from '../../design';
 import { formatReportDate } from '../reportScopeLine';
 import {
-  AVAILABILITY_SCOPE_TEXT,
   COMMISSION_CURRENCY_UNVERIFIED_TEXT,
   COMMISSION_RESTRICTION_TEXT,
   GREATER_OF_TEXT,
@@ -25,7 +24,6 @@ import {
   formatTeamCount,
   formatTeamRatio,
   formerStaffLabel,
-  hasAvailabilityScopeAmbiguity,
   hasUnverifiedCommissionCurrency,
   staffName,
   statementCurrencyCode,
@@ -120,9 +118,7 @@ function MetricsFigures({ metrics, currencyCode, totals, asAt }: { metrics: Team
       formatTeamRatio(utilisation.utilisation),
       utilisation.utilisation.availability === 'available'
         ? bookedOfRostered(utilisation.bookedMinutes, utilisation.availableMinutes)
-        : utilisation.utilisation.availability === 'unavailable' && utilisation.utilisation.reason === 'availability_scope_ambiguous'
-          ? AVAILABILITY_SCOPE_TEXT
-          : null,
+        : null,
     ],
     ['Future Booking', formatTeamRatio(future.withFutureBooking), [clientsParts(future.withFutureBooking), future.withFutureBooking.availability === 'not_started' ? null : asAt].filter(Boolean).join(' · ') || null],
     ['Future Booking, confirmed only', formatTeamRatio(future.withConfirmedFutureBooking), null],
@@ -210,7 +206,6 @@ function StaffTable({ body, nameOf, asAtByLocation }: { body: TeamReportBody; na
           Each fact counts at the location where it happened. The status shown under a name is today’s, not where someone worked in the period.
           Unattributed holds bill lines, visits and retail sales with no staff member recorded.
         </Note>
-        {hasAvailabilityScopeAmbiguity(body) ? <Note>{AVAILABILITY_SCOPE_TEXT}</Note> : null}
       </section>
     </AppCard>
   );
