@@ -125,7 +125,7 @@ export function ZacPage() {
             <h1 className="text-[22px] font-semibold leading-7 text-text-primary">ZAC</h1>
           </div>
           <p className="mt-0.5 text-[13px] text-text-secondary">
-            AI business assistant for QLOOQO
+            AI business assistant for Service SaaS
           </p>
           <p className="mt-1 max-w-2xl text-[12px] leading-5 text-text-muted">
             Ask anything about your business. ZAC answers only from connected read-only data

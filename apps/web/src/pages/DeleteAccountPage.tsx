@@ -11,7 +11,7 @@ import { AppButton, AppCard, AppText } from '../design';
  *
  * This is the URL submitted in App Store Connect as the account-deletion link.
  * It is mounted OUTSIDE the dashboard ProtectedRoute and never touches the
- * staff AuthProvider session — a client signs in here with their qlooqo app
+ * staff AuthProvider session — a client signs in here with their Service SaaS app
  * credentials purely to authorise deleting their own account.
  *
  * Flow: verify identity (email + password + acknowledgement) → confirm → done.
@@ -115,7 +115,7 @@ export function DeleteAccountPage() {
           <form onSubmit={onVerify} className="space-y-4" noValidate>
             <AppText as="p" variant="body" tone="secondary">
               Deleting your account is <strong>permanent</strong> and cannot be undone. To continue,
-              confirm it&apos;s you by signing in with the email and password you use in the qlooqo
+              confirm it&apos;s you by signing in with the email and password you use in the Service SaaS
               app.
             </AppText>
 
@@ -210,7 +210,7 @@ export function DeleteAccountPage() {
               Your account has been permanently deleted. You can close this page.
             </div>
             <AppText as="p" variant="body" tone="secondary">
-              You can create a new account at any time from the qlooqo app.
+              You can create a new account at any time from the Service SaaS app.
             </AppText>
           </div>
         )}

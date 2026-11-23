@@ -114,7 +114,7 @@ export function ClientBookingSuccessPage() {
       <AppCard className="mt-4 border-primary/25 bg-primary/5">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <div className="text-[14px] font-semibold">Manage this booking in the Qlooqo App</div>
+            <div className="text-[14px] font-semibold">Manage this booking in the Service SaaS App</div>
             <p className="mt-1 text-[12px] leading-5 text-text-secondary">
               Your account is ready. Install the app to view upcoming visits, rebook faster, and stay in touch with your salon.
             </p>

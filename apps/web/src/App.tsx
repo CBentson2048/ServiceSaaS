@@ -93,7 +93,7 @@ export function App() {
       {/*
         Public self-service account deletion (App Store Guideline 5.1.1(v)).
         This is the URL given to App Store Connect; a client signs in with their
-        qlooqo app credentials to delete their own account. Both paths resolve to
+        Service SaaS app credentials to delete their own account. Both paths resolve to
         the same page so either can be used as the published link.
       */}
       <Route path="/delete-account" element={<DeleteAccountPage />} />
@@ -138,7 +138,7 @@ export function App() {
             <Route path="/dashboard" element={<DashboardPage />} />
           </Route>
           {/*
-            QLOOQO 10 reports: routes exist only for reports available in this
+            Service SaaS 10 reports: routes exist only for reports available in this
             build, each behind ReportGate (the API's own access decision).
           */}
           {reportRoutes(reportsSurface())}

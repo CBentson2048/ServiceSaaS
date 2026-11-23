@@ -56,7 +56,7 @@ export const ZAC_RESPONSE_TYPE_BADGES: Record<string, { label: string; tone: Sta
   'Refusal / Insufficient Data': { label: 'Data not connected yet', tone: 'warning' },
 };
 
-/** Modes that reason WITHOUT reading any QLOOQO business data. */
+/** Modes that reason WITHOUT reading any Service SaaS business data. */
 const ADVISORY_MODES = new Set(['general_advice', 'hypothetical', 'conversational']);
 
 /**

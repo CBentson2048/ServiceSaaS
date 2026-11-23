@@ -147,7 +147,7 @@ export function UpsellRulesPage() {
       <header>
         <h1 className="text-[20px] font-semibold text-text-primary">Suggested add-ons</h1>
         <p className="mt-1 max-w-2xl text-[13px] text-text-secondary">
-          Tell Qlooqo which add-on to suggest when a service is booked. Staff see the suggestion at
+          Tell Service SaaS which add-on to suggest when a service is booked. Staff see the suggestion at
           booking and at checkout and choose whether to add it — nothing is ever added automatically.
           Turning a rule off also stops that add-on being suggested from booking history.
         </p>
@@ -290,7 +290,7 @@ export function UpsellRulesPage() {
           <p className="text-[13px] text-text-secondary">Loading add-on rules…</p>
         ) : rules.length === 0 ? (
           <p className="text-[13px] text-text-secondary">
-            No add-on rules yet. Qlooqo can still suggest add-ons that are frequently booked together.
+            No add-on rules yet. Service SaaS can still suggest add-ons that are frequently booked together.
           </p>
         ) : (
           <ul className="flex flex-col gap-2">

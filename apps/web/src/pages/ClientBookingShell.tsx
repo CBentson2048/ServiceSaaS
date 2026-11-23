@@ -25,7 +25,7 @@ export function ClientBookingShell({
               type="button"
               onClick={() =>
                 // Opened straight from a shared link, this tab has no earlier
-                // QLOOQO page: history back would leave the site (or do nothing
+                // Service SaaS page: history back would leave the site (or do nothing
                 // in an Instagram/WhatsApp browser), so go to salon search.
                 hasEarlierPageInApp() ? navigate(-1) : navigate('/book/location')
               }

@@ -18,8 +18,8 @@ import {
 
 export function LoginPage() {
   usePageMetadata(
-    'Log in | QLOOQO',
-    'Log in to QLOOQO to manage salon bookings, rota, clients, and payments.',
+    'Log in | Service SaaS',
+    'Log in to Service SaaS to manage salon bookings, rota, clients, and payments.',
   );
   const auth = useAuth();
   const navigate = useNavigate();
@@ -50,7 +50,7 @@ export function LoginPage() {
   if (auth.status === 'bootstrapping') {
     return (
       <div className="grid min-h-screen place-items-center bg-bg text-text-secondary">
-        Restoring your Qlooqo session...
+        Restoring your Service SaaS session...
       </div>
     );
   }
@@ -211,7 +211,7 @@ export function LoginPage() {
           </button>
 
           <p className="text-center text-sm text-[#776A82]">
-            {bookingMode ? 'Need an account?' : 'New to Qlooqo?'}{' '}
+            {bookingMode ? 'Need an account?' : 'New to Service SaaS?'}{' '}
             <Link
               className="font-semibold text-primary-deep"
               to={bookingMode ? '/create-account?booking=1' : '/owner/onboarding'}

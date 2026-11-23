@@ -58,7 +58,7 @@ export function LandingPage() {
       <div className="pointer-events-none fixed -right-24 top-80 h-80 w-80 rounded-full bg-surface-ink/10 blur-3xl" />
 
       <header className="relative z-10 mx-auto flex w-full max-w-6xl items-center justify-between px-5 py-5 lg:px-8">
-        <Link to="/" aria-label="QLOOQO home" className="inline-flex items-center">
+        <Link to="/" aria-label="Service SaaS home" className="inline-flex items-center">
           <BrandLogo className="h-7" />
         </Link>
         <div className="flex items-center gap-2 rounded-pill border border-white/70 bg-white/65 p-1 shadow-card backdrop-blur">
@@ -93,7 +93,7 @@ export function LandingPage() {
             tone="secondary"
             className="mt-5 max-w-xl text-[16px] leading-7"
           >
-            QLOOQO brings online booking, team scheduling, client records, and payments together —
+            Service SaaS brings online booking, team scheduling, client records, and payments together —
             so owners stay in control, teams stay organised, and clients book in minutes.
           </AppText>
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
@@ -127,7 +127,7 @@ export function LandingPage() {
             <div className="flex items-center justify-between gap-4">
               <div>
                 <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-white/55">
-                  Today · QLOOQO Studio
+                  Today · Service SaaS Studio
                 </div>
                 <div className="mt-1 text-[15px] font-semibold">Thursday appointment book</div>
               </div>
@@ -256,7 +256,7 @@ export function LandingPage() {
         <div className="grid items-center gap-10 rounded-[32px] border border-white/70 bg-white/75 p-7 shadow-card backdrop-blur md:p-10 lg:grid-cols-[1.05fr_0.95fr]">
           <div>
             <div className="text-[12px] font-medium uppercase tracking-[0.18em] text-primary-deep">
-              QLOOQO on mobile
+              Service SaaS on mobile
             </div>
             <AppText
               as="h2"
@@ -272,7 +272,7 @@ export function LandingPage() {
               tone="secondary"
               className="mt-3 max-w-md text-[14px] leading-6"
             >
-              The QLOOQO app keeps stylists on top of bookings, rota, and performance — and lets
+              The Service SaaS app keeps stylists on top of bookings, rota, and performance — and lets
               clients rebook their favourite stylist in a tap.
             </AppText>
             <div className="mt-7 flex flex-wrap items-center gap-3">
@@ -325,7 +325,7 @@ export function LandingPage() {
                       rel="noopener noreferrer"
                       className="text-[13px] text-text-secondary transition-colors hover:text-primary-deep"
                     >
-                      QLOOQO on the App Store
+                      Service SaaS on the App Store
                     </a>
                   </li>
                   <li>
@@ -335,7 +335,7 @@ export function LandingPage() {
                       rel="noopener noreferrer"
                       className="text-[13px] text-text-secondary transition-colors hover:text-primary-deep"
                     >
-                      QLOOQO on Google Play
+                      Service SaaS on Google Play
                     </a>
                   </li>
                 </ul>
@@ -343,7 +343,7 @@ export function LandingPage() {
             </div>
           </div>
           <div className="border-t border-border-divider pt-5 text-[11px] text-text-muted">
-            © {new Date().getFullYear()} QLOOQO. All rights reserved.
+            © {new Date().getFullYear()} Service SaaS. All rights reserved.
           </div>
         </div>
       </footer>

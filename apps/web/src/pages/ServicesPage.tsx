@@ -682,7 +682,7 @@ export function ServicesPage() {
 
       {canReorder ? (
         <p className="mb-2 text-[12px] text-text-muted">
-          Drag the ⠿ handle to reorder services. QLOOQO keeps this order when building appointments.
+          Drag the ⠿ handle to reorder services. Service SaaS keeps this order when building appointments.
         </p>
       ) : null}
 

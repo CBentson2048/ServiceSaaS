@@ -146,7 +146,7 @@ const NAV: NavItem[] = [
   },
   {
     to: '/sheer-lab',
-    label: 'Qlooqo Lab',
+    label: 'Service SaaS Lab',
     icon: BeakerIcon,
     permission: 'report.lab_analytics.view',
   },

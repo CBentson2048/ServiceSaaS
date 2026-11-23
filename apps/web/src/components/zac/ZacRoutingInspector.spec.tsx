@@ -47,8 +47,8 @@ function badgeSource(details: ZacRoutingDetails | null | undefined): string | nu
 
 describe('ZacRoutingBadge — compact indicator (spec §4, cases A–H)', () => {
   it.each([
-    ['A', { request_mode: 'qlooqo_data', router_analysis_intent: 'business_priorities' }, 'QLOOQO Data · Business Priorities'],
-    ['B', { request_mode: 'qlooqo_data', router_analysis_intent: 'specific_metric' }, 'QLOOQO Data · Specific Metric'],
+    ['A', { request_mode: 'qlooqo_data', router_analysis_intent: 'business_priorities' }, 'Service SaaS Data · Business Priorities'],
+    ['B', { request_mode: 'qlooqo_data', router_analysis_intent: 'specific_metric' }, 'Service SaaS Data · Specific Metric'],
     ['C', { request_mode: 'general_advice' }, 'General Knowledge / Advice'],
     ['D', { request_mode: 'hypothetical' }, 'Hypothetical'],
     ['E', { request_mode: 'memory' }, 'Memory'],
@@ -70,10 +70,10 @@ describe('ZacRoutingBadge — compact indicator (spec §4, cases A–H)', () => 
 
   it('uses the planner intent only when the router made no reading, and says so in the badge', () => {
     const plannerOnly: ZacRoutingDetails = { request_mode: 'qlooqo_data', analysis_intent: 'business_health' };
-    expect(badgeText(plannerOnly)).toBe('Routing: QLOOQO Data · Business Health (planner intent)');
+    expect(badgeText(plannerOnly)).toBe('Routing: Service SaaS Data · Business Health (planner intent)');
     expect(describeZacRouting(plannerOnly)?.analysisIntent?.origin).toBe('planner');
     expect(describeZacRouting(SEMANTIC_TURN)?.analysisIntent?.origin).toBe('router');
-    expect(badgeText(SEMANTIC_TURN)).toBe('Routing: QLOOQO Data · Business Priorities');
+    expect(badgeText(SEMANTIC_TURN)).toBe('Routing: Service SaaS Data · Business Priorities');
   });
 
   it('shows the source as a separate element so semantic vs fallback is visible without expanding (§6)', () => {
@@ -84,7 +84,7 @@ describe('ZacRoutingBadge — compact indicator (spec §4, cases A–H)', () => 
       fallback_used: true,
       fallback_reason: 'classification_timeout',
     };
-    expect(badgeText(fallback)).toBe('Routing: QLOOQO Data');
+    expect(badgeText(fallback)).toBe('Routing: Service SaaS Data');
     expect(badgeSource(fallback)).toBe('Source: Fallback (Provider timeout)');
     // No classification source reported → no Source element, no guess.
     expect(badgeSource({ request_mode: 'memory' })).toBeNull();
@@ -92,7 +92,7 @@ describe('ZacRoutingBadge — compact indicator (spec §4, cases A–H)', () => 
 
   it('communicates the route in text, not colour alone (§14)', () => {
     render(<ZacRoutingBadge details={SEMANTIC_TURN} />);
-    expect(screen.getByText('QLOOQO Data · Business Priorities')).toBeTruthy();
+    expect(screen.getByText('Service SaaS Data · Business Priorities')).toBeTruthy();
   });
 });
 
@@ -102,11 +102,11 @@ describe('ZacRoutingTechnicalDetails — expandable fields (spec §5, §6, §18)
     expect(screen.getByTestId('zac-routing-source').textContent).toBe('Source: OpenAI semantic router');
     const row = (key: string) => screen.getByTestId(`zac-routing-row-${key}`).textContent;
     expect(row('routing_mode')).toBe('Routing modeSemantic (semantic)');
-    expect(row('request_mode')).toBe('Request modeQLOOQO Data (qlooqo_data)');
+    expect(row('request_mode')).toBe('Request modeService SaaS Data (qlooqo_data)');
     expect(row('router_analysis_intent')).toBe(
       'Analysis intent (router)Business Priorities (business_priorities)',
     );
-    expect(row('information_source')).toBe('Information sourceLive QLOOQO data (live_qlooqo)');
+    expect(row('information_source')).toBe('Information sourceLive Service SaaS data (live_qlooqo)');
     expect(row('classification_source')).toBe('Classification sourceSemantic model (semantic_model)');
     expect(row('semantic_provider')).toBe('Semantic providerOpenAI (openai)');
     expect(row('semantic_model')).toBe('Semantic modelgpt-5.6-luna');
@@ -264,7 +264,7 @@ describe('ZacRoutingTechnicalDetails — expandable fields (spec §5, §6, §18)
       'General Knowledge / Advice',
     );
     expect(shadow.getByText('Shadow semantic route').nextElementSibling?.textContent).toBe(
-      'QLOOQO Data · Business Priorities',
+      'Service SaaS Data · Business Priorities',
     );
     expect(shadow.getByText('Agreement').nextElementSibling?.textContent).toBe('No');
   });
@@ -332,7 +332,7 @@ describe('ZacRoutingInspector — presentation flag and per-turn metadata', () =
     );
     const badgeIn = (id: number) =>
       within(screen.getByTestId(`turn-${id}`)).getByTestId('zac-routing-summary').textContent;
-    expect(badgeIn(1)).toBe('Routing: QLOOQO Data · Specific Metric');
+    expect(badgeIn(1)).toBe('Routing: Service SaaS Data · Specific Metric');
     expect(badgeIn(2)).toBe('Routing: General Knowledge / Advice');
     expect(badgeIn(3)).toBe('Routing: Hypothetical');
   });

@@ -100,7 +100,7 @@ export function OperationalSignalSettingsPage() {
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold text-text-primary">Intelligence sensitivity</h1>
         <p className="max-w-3xl text-sm text-text-secondary">
-          QLOOQO watches four things for you: how a client&apos;s spend is trending, whether they
+          Service SaaS watches four things for you: how a client&apos;s spend is trending, whether they
           have a pattern of missed appointments, whether two colour clients are stacked on one
           stylist, and where a diary has unbooked time between appointments. These settings decide
           what counts as worth telling you about.

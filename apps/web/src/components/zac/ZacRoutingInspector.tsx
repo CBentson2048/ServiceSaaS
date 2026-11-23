@@ -24,7 +24,7 @@ const SOURCE_TONE: Record<ZacRoutingSourceTone, string> = {
 };
 
 /**
- * Compact indicator: "Routing: QLOOQO Data · Business Priorities" plus a
+ * Compact indicator: "Routing: Service SaaS Data · Business Priorities" plus a
  * separate "Source: OpenAI semantic router" / "Source: Fallback (…)" element,
  * so the spec's compact format stays exact while semantic-vs-fallback is
  * visible without expanding anything. Secondary to the answer by design.

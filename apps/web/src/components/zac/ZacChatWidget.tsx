@@ -278,7 +278,7 @@ export function ZacChatWidget() {
           </button>
         </div>
         <p className="mt-2 px-1 text-[10.5px] leading-4 text-text-subtle">
-          Every figure comes from QLOOQO’s own reports. ZAC can still word things imperfectly —
+          Every figure comes from Service SaaS’s own reports. ZAC can still word things imperfectly —
           the full console is <span className="font-medium">ZAC</span> in the sidebar.
         </p>
       </form>

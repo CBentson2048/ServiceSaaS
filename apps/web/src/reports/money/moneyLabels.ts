@@ -72,7 +72,7 @@ export const NOT_RECORDED_LABELS: Record<MoneyNotRecordedCategory, string> = {
   tips: 'Tips',
   retail_vat: 'VAT on retail sales',
   forfeited_deposits: 'Forfeited deposits',
-  outside_deposit_refunds: 'Deposit refunds made outside QLOOQO',
+  outside_deposit_refunds: 'Deposit refunds made outside Service SaaS',
 };
 
 export const DETAIL_KIND_LABELS: Record<MoneyDetailRowKind, string> = {

@@ -40,7 +40,7 @@ export interface MoneyReportProps {
 
 /**
  * The R1 Money report body. It renders the API's figures as they are — it never
- * adds, subtracts or derives money — and a figure QLOOQO does not record reads
+ * adds, subtracts or derives money — and a figure Service SaaS does not record reads
  * "Not recorded", never £0.00.
  */
 export function MoneyReport({ body, locations, loadMore }: MoneyReportProps) {
@@ -100,13 +100,13 @@ export function MoneyReport({ body, locations, loadMore }: MoneyReportProps) {
             rows={[
               ['Collected', money(summary.deposits.collected)],
               ['Redeemed on paid bills', money(summary.deposits.redeemed)],
-              ['Refunded in QLOOQO', money(summary.deposits.refunded)],
+              ['Refunded in Service SaaS', money(summary.deposits.refunded)],
             ]}
           />
           <Note>Deposits are separate events and are not added to revenue. Redeemed deposits are already inside paid bill revenue.</Note>
         </Section>
 
-        <Section title="Not recorded by QLOOQO">
+        <Section title="Not recorded by Service SaaS">
           <Figures
             rows={[
               ['Net position', money(summary.netPosition)],

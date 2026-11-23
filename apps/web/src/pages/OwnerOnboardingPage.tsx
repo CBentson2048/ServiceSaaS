@@ -156,8 +156,8 @@ function autoSlug(value: string): string {
 
 export function OwnerOnboardingPage() {
   usePageMetadata(
-    'Create your salon | QLOOQO',
-    'Set up your salon on QLOOQO: create a business account, add locations, invite your team, and start taking online bookings.',
+    'Create your salon | Service SaaS',
+    'Set up your salon on Service SaaS: create a business account, add locations, invite your team, and start taking online bookings.',
   );
   const auth = useAuth();
   const navigate = useNavigate();

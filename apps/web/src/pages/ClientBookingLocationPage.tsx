@@ -19,8 +19,8 @@ import { writeClientBookingSelection } from './clientBookingFlow';
 
 export function ClientBookingLocationPage() {
   usePageMetadata(
-    'Book a salon appointment | QLOOQO',
-    'Book a hair or beauty appointment online. Choose a salon, service, and stylist from live availability with QLOOQO.',
+    'Book a salon appointment | Service SaaS',
+    'Book a hair or beauty appointment online. Choose a salon, service, and stylist from live availability with Service SaaS.',
   );
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();

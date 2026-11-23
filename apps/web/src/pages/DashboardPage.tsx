@@ -119,7 +119,7 @@ export function DashboardPage() {
               footerTone={inventoryAlerts.count > 0 ? 'warn' : 'good'}
             />
             <DiagnosticCard
-              title="Qlooqo Lab"
+              title="Service SaaS Lab"
               subtitle={labAnalyticsLoading ? 'Loading formula analytics' : 'Colour formulas, waste, and stock'}
               rows={toSheerLabDiagnosticRows(labAnalytics)}
               footerLabel="Waste / revenue"

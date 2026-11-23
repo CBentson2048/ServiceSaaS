@@ -16,7 +16,7 @@ export function ProtectedRoute({
   if (auth.status === 'bootstrapping') {
     return (
       <div className="grid min-h-screen place-items-center bg-bg text-text-secondary">
-        Restoring your Qlooqo session...
+        Restoring your Service SaaS session...
       </div>
     );
   }

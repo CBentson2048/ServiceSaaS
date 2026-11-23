@@ -12,7 +12,7 @@ import { AppButton, AppCard, AppText } from '../design';
  * placed behind the dashboard role guard. Stylist / client cannot use
  * the dashboard at all, but the password-reset email link lands them on
  * the web — so we use this completion page as the successful end-state
- * that points them back at the Qlooqo App.
+ * that points them back at the Service SaaS App.
  *
  * Owner and manager normally do not land here; the API redirects them
  * to `/login?password=reset`. If they manually open this URL we still
@@ -68,7 +68,7 @@ export function PasswordResetCompletePage() {
                   window.location.href = sheerAppDeepLink;
                 }}
               >
-                Open Qlooqo App
+                Open Service SaaS App
               </AppButton>
               <AppButton
                 variant="secondary"
@@ -78,11 +78,11 @@ export function PasswordResetCompletePage() {
                   window.location.href = storeUrl;
                 }}
               >
-                Download Qlooqo App
+                Download Service SaaS App
               </AppButton>
             </div>
             <AppText as="p" variant="micro" tone="muted" className="mt-5">
-              You can close this page after opening the Qlooqo App.
+              You can close this page after opening the Service SaaS App.
             </AppText>
           </>
         ) : (
@@ -122,14 +122,14 @@ function roleCopy(role: NormalizedRole): RoleCopy {
         kind: 'mobile',
         title: 'Password updated',
         subtitle:
-          'Your stylist account is ready. Continue in the Qlooqo App to view your schedule, clients, and formulas.',
+          'Your stylist account is ready. Continue in the Service SaaS App to view your schedule, clients, and formulas.',
       };
     case 'client':
       return {
         kind: 'mobile',
         title: 'Password updated',
         subtitle:
-          'Your password has been reset. Use the Qlooqo App to book appointments and stay in touch with your salon.',
+          'Your password has been reset. Use the Service SaaS App to book appointments and stay in touch with your salon.',
       };
     case 'owner':
     case 'manager':
@@ -142,7 +142,7 @@ function roleCopy(role: NormalizedRole): RoleCopy {
       return {
         kind: 'mobile',
         title: 'Password updated',
-        subtitle: 'Your password has been reset. Continue in the Qlooqo App to pick up where you left off.',
+        subtitle: 'Your password has been reset. Continue in the Service SaaS App to pick up where you left off.',
       };
   }
 }

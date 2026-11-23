@@ -101,13 +101,13 @@ describe('MoneyReport summary', () => {
     expect(within(section('Retail')).getByText('Method not recorded').nextSibling?.textContent).toBe('£1.00');
   });
 
-  it('never writes a zero for what QLOOQO does not record', () => {
+  it('never writes a zero for what Service SaaS does not record', () => {
     render(<MoneyReport body={body()} locations={locations} loadMore={jest.fn()} />);
     expect(within(section('Retail')).getByText('VAT on retail').nextSibling?.textContent).toBe('Not recorded');
-    expect(within(section('Deposits')).getByText('Refunded in QLOOQO').nextSibling?.textContent).toBe('Not recorded (partial refund amount)');
-    const notRecorded = section('Not recorded by QLOOQO');
+    expect(within(section('Deposits')).getByText('Refunded in Service SaaS').nextSibling?.textContent).toBe('Not recorded (partial refund amount)');
+    const notRecorded = section('Not recorded by Service SaaS');
     expect(within(notRecorded).getByText('Net position').nextSibling?.textContent).toBe('Definition pending');
-    for (const label of ['Discounts', 'Till refunds', 'Voids', 'Tips', 'VAT on retail sales', 'Forfeited deposits', 'Deposit refunds made outside QLOOQO']) {
+    for (const label of ['Discounts', 'Till refunds', 'Voids', 'Tips', 'VAT on retail sales', 'Forfeited deposits', 'Deposit refunds made outside Service SaaS']) {
       expect(within(notRecorded).getByText(label).nextSibling?.textContent).toBe('Not recorded');
     }
     expect(notRecorded.textContent).not.toMatch(/£/);

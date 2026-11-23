@@ -99,7 +99,7 @@ export function FormulaChangeSettingsPage() {
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold text-text-primary">Formula change sensitivity</h1>
         <p className="max-w-3xl text-sm text-text-secondary">
-          QLOOQO compares each client&apos;s latest colour formula with their previous comparable one
+          Service SaaS compares each client&apos;s latest colour formula with their previous comparable one
           and flags meaningful changes for the stylist. These settings decide what counts as
           meaningful. A change is flagged if <em>any</em> of the rules below is met.
         </p>
@@ -182,7 +182,7 @@ export function FormulaChangeSettingsPage() {
                 Not compared
               </p>
               <p className="mt-1 text-[13px] text-text-secondary">
-                Colour level and tone are not recorded as structured data in QLOOQO, so they are not
+                Colour level and tone are not recorded as structured data in Service SaaS, so they are not
                 part of this comparison. The flag always says what it was based on.
               </p>
             </div>

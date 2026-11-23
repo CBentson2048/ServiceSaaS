@@ -59,7 +59,7 @@ export function SheerLabPage() {
   const [pinInputs, setPinInputs] = useState<Record<string, string>>({});
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [deviceLocationId, setDeviceLocationId] = useState('');
-  const [deviceName, setDeviceName] = useState('Qlooqo Lab iPad');
+  const [deviceName, setDeviceName] = useState('Service SaaS Lab iPad');
   const [stationLabel, setStationLabel] = useState('');
   const [registeredDevice, setRegisteredDevice] = useState<LabDeviceRegistrationResponse | null>(null);
   const [analyticsRange, setAnalyticsRange] = useState<SheerLabAnalyticsRange>('week');
@@ -80,7 +80,7 @@ export function SheerLabPage() {
     } catch (err: unknown) {
       if (err instanceof ApiRequestError) setError(err.message);
       else if (err instanceof Error) setError(err.message);
-      else setError('Could not load Qlooqo Lab access');
+      else setError('Could not load Service SaaS Lab access');
     } finally {
       setLoading(false);
     }
@@ -203,7 +203,7 @@ export function SheerLabPage() {
       const result = await registerLabDevice(accessToken, {
         businessId: auth.user.businessId,
         locationId: deviceLocationId,
-        deviceName: deviceName.trim() || 'Qlooqo Lab iPad',
+        deviceName: deviceName.trim() || 'Service SaaS Lab iPad',
         stationLabel: stationLabel.trim() || undefined,
       });
       setRegisteredDevice(result);
@@ -213,7 +213,7 @@ export function SheerLabPage() {
       ]);
       setStationLabel('');
       setActionMessage(
-        `Registered ${result.device.deviceName} for ${locationName(locations, result.device.locationId)}. Enter the one-time token in the Qlooqo Lab app now.`,
+        `Registered ${result.device.deviceName} for ${locationName(locations, result.device.locationId)}. Enter the one-time token in the Service SaaS Lab app now.`,
       );
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not register Lab device');
@@ -225,7 +225,7 @@ export function SheerLabPage() {
   async function handleRevokeDevice(device: SharedDeviceSummary) {
     if (!accessToken) return;
     const confirmed = window.confirm(
-      `Revoke ${device.deviceName}? The iPad will be signed out and must be re-registered to use Qlooqo Lab again.`,
+      `Revoke ${device.deviceName}? The iPad will be signed out and must be re-registered to use Service SaaS Lab again.`,
     );
     if (!confirmed) return;
 
@@ -249,9 +249,9 @@ export function SheerLabPage() {
     <div className="mx-auto w-full max-w-6xl px-4 py-6 lg:px-8">
       <header className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-[22px] font-semibold leading-7 text-text-primary">Qlooqo Lab</h1>
+          <h1 className="text-[22px] font-semibold leading-7 text-text-primary">Service SaaS Lab</h1>
           <p className="mt-1 max-w-2xl text-[13px] text-text-secondary">
-            Manage the shared iPads, staff PINs, and colour-bar performance for the dedicated Qlooqo Lab app.
+            Manage the shared iPads, staff PINs, and colour-bar performance for the dedicated Service SaaS Lab app.
           </p>
         </div>
         <button
@@ -293,7 +293,7 @@ export function SheerLabPage() {
                 Colour bar performance
               </div>
               <div className="mt-1 text-[13px] text-text-secondary">
-                Revenue, formula cost, and waste captured through the Qlooqo Lab app.
+                Revenue, formula cost, and waste captured through the Service SaaS Lab app.
               </div>
             </div>
             <RangeToggle value={analyticsRange} onChange={setAnalyticsRange} />
@@ -340,7 +340,7 @@ export function SheerLabPage() {
           </div>
           <div className="mt-1 text-[13px] text-text-secondary">
             Register shared iPads to a location and revoke them when they are lost, replaced, or retired. Tokens are
-            shown once and entered directly in the Qlooqo Lab app.
+            shown once and entered directly in the Service SaaS Lab app.
           </div>
         </header>
 
@@ -364,7 +364,7 @@ export function SheerLabPage() {
               <input
                 value={deviceName}
                 onChange={(event) => setDeviceName(event.target.value)}
-                placeholder="Qlooqo Lab iPad"
+                placeholder="Service SaaS Lab iPad"
                 className="mt-1 h-10 w-full rounded-input-lg border border-border-strong bg-surface px-3 text-[13px] font-normal normal-case tracking-normal text-text-primary outline-none focus:border-primary"
               />
             </FieldLabel>
@@ -394,7 +394,7 @@ export function SheerLabPage() {
                   {registeredDevice.deviceSessionToken}
                 </div>
                 <div className="mt-2 text-[12px] text-text-secondary">
-                  Open the Qlooqo Lab app on the iPad, paste this token into <strong>Register this iPad</strong>, then
+                  Open the Service SaaS Lab app on the iPad, paste this token into <strong>Register this iPad</strong>, then
                   tap <strong>Register device</strong>. Do not store this token in notes or messages.
                 </div>
               </>
@@ -412,7 +412,7 @@ export function SheerLabPage() {
           <div className="px-4 py-10 text-center">
             <div className="text-[14px] font-medium text-text-primary">No devices registered</div>
             <div className="mt-1 text-[13px] text-text-secondary">
-              Register your first shared iPad above to start using Qlooqo Lab.
+              Register your first shared iPad above to start using Service SaaS Lab.
             </div>
           </div>
         ) : (
@@ -510,7 +510,7 @@ export function SheerLabPage() {
           <div className="px-4 py-10 text-center">
             <div className="text-[14px] font-medium text-text-primary">No team members available</div>
             <div className="mt-1 text-[13px] text-text-secondary">
-              Invite active owners, managers or stylists before assigning Qlooqo Lab PINs.
+              Invite active owners, managers or stylists before assigning Service SaaS Lab PINs.
             </div>
           </div>
         ) : (

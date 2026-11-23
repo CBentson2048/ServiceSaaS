@@ -1892,7 +1892,7 @@ export async function completePasswordReset(input: {
 // -------------------- Account deletion (public; App Store Guideline 5.1.1(v)) --------------------
 
 // Authenticates a client for self-service account deletion. Uses the `sheer_app`
-// surface — the same one the qlooqo mobile app signs in with — because the
+// surface — the same one the Service SaaS mobile app signs in with — because the
 // `web_dashboard` surface rejects client logins (see assertSurfaceAccess in the
 // API). The returned access token is used only to call deleteMyAccount below.
 export async function signInForAccountDeletion(input: LoginInput): Promise<LoginResponse> {
@@ -3488,7 +3488,7 @@ export interface OperationalSignalSettingsResponse {
 }
 
 // ---------------------------------------------------------------------------
-// QLOOQO 10 reports — foundation (V1.1 Week 8 Ticket A)
+// Service SaaS 10 reports — foundation (V1.1 Week 8 Ticket A)
 // ---------------------------------------------------------------------------
 
 /**

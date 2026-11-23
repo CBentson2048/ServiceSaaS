@@ -99,7 +99,7 @@ describe('ZacAnswerBubble routing inspector', () => {
     );
     const badge = (id: number) =>
       within(screen.getByTestId(`turn-${id}`)).getByTestId('zac-routing-summary').textContent;
-    expect(badge(1)).toBe('Routing: QLOOQO Data · Specific Metric');
+    expect(badge(1)).toBe('Routing: Service SaaS Data · Specific Metric');
     expect(badge(2)).toBe('Routing: General Knowledge / Advice');
     expect(badge(3)).toBe('Routing: Hypothetical');
     const source = (id: number) =>
@@ -169,7 +169,7 @@ describe('ZacChatWidget routing inspector', () => {
     askInWidget('What is my rebooking?');
     expect(await screen.findByText('Rebooking is 39%.')).toBeTruthy();
     expect(screen.getByTestId('zac-routing-summary').textContent).toBe(
-      'Routing: QLOOQO Data · Specific Metric',
+      'Routing: Service SaaS Data · Specific Metric',
     );
     expect(screen.getByTestId('zac-routing-badge-source').textContent).toBe(
       'Source: OpenAI semantic router',

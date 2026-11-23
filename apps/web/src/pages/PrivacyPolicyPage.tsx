@@ -12,7 +12,7 @@ import { usePageMetadata } from '../hooks/usePageMetadata';
  * ProtectedRoute so it is reachable without any session, exactly like the
  * account-deletion page it sits next to.
  *
- * Content describes the data the qlooqo salon-booking app collects (Contact
+ * Content describes the data the Service SaaS salon-booking app collects (Contact
  * Info, Purchases, Usage Data — the categories declared on the App Privacy
  * card) and a user's rights over it.
  */
@@ -22,8 +22,8 @@ const CONTACT_EMAIL = 'privacy@qlooqo.com';
 
 export function PrivacyPolicyPage() {
   usePageMetadata(
-    'Privacy Policy | QLOOQO',
-    'How QLOOQO collects, uses, and protects data across salon booking, scheduling, and the QLOOQO apps.',
+    'Privacy Policy | Service SaaS',
+    'How Service SaaS collects, uses, and protects data across salon booking, scheduling, and the Service SaaS apps.',
   );
   return (
     <main className="min-h-screen bg-bg px-4 py-10 text-text-primary sm:py-14">
@@ -41,14 +41,14 @@ export function PrivacyPolicyPage() {
         <div className="space-y-8">
           <Section>
             <Paragraph>
-              This policy explains how the qlooqo app and website (&ldquo;qlooqo&rdquo;,
+              This policy explains how the Service SaaS app and website (&ldquo;Service SaaS&rdquo;,
               &ldquo;we&rdquo;, &ldquo;us&rdquo;) collect and use your personal information when you
               book salon appointments, manage your account, and use related features. By using
-              qlooqo you agree to the practices described here.
+              Service SaaS you agree to the practices described here.
             </Paragraph>
             <Paragraph>
               When you book with a salon, that salon is the controller of your appointment and
-              client records and uses your information to provide its services. qlooqo provides the
+              client records and uses your information to provide its services. Service SaaS provides the
               software that the salon uses to run those bookings.
             </Paragraph>
           </Section>
@@ -71,7 +71,7 @@ export function PrivacyPolicyPage() {
                 <>
                   <Strong>Purchases</Strong> — records of deposits and payments you make, including
                   the amount and status. Card details are handled by our payment provider and are
-                  not stored by qlooqo.
+                  not stored by Service SaaS.
                 </>,
                 <>
                   <Strong>Usage data</Strong> — basic technical information about how you interact
@@ -89,7 +89,7 @@ export function PrivacyPolicyPage() {
                 'Take bookings, confirm appointments, and process deposits and payments.',
                 'Send booking confirmations, reminders, and other messages about your appointments.',
                 'Provide your booking information to the salon you book with so it can serve you.',
-                'Keep the service secure, troubleshoot problems, and improve how qlooqo works.',
+                'Keep the service secure, troubleshoot problems, and improve how Service SaaS works.',
                 'Meet our legal, tax, and accounting obligations.',
               ]}
             />
@@ -104,7 +104,7 @@ export function PrivacyPolicyPage() {
                   and client record;
                 </>,
                 <>
-                  with <Strong>service providers</Strong> that operate qlooqo on our behalf — such
+                  with <Strong>service providers</Strong> that operate Service SaaS on our behalf — such
                   as hosting, payment processing, and message delivery (email, SMS, and WhatsApp) —
                   under agreements that limit their use of your data;
                 </>,
@@ -129,7 +129,7 @@ export function PrivacyPolicyPage() {
             <Paragraph>
               Depending on where you live, you may have the right to access, correct, or delete your
               personal information, and to object to or restrict certain processing. You can delete
-              your account at any time from the qlooqo app or on our{' '}
+              your account at any time from the Service SaaS app or on our{' '}
               <Link to="/delete-account" className="font-medium text-primary-deep hover:underline">
                 account deletion page
               </Link>
@@ -147,7 +147,7 @@ export function PrivacyPolicyPage() {
 
           <Section title="Children">
             <Paragraph>
-              qlooqo is not directed to children, and we do not knowingly collect personal
+              Service SaaS is not directed to children, and we do not knowingly collect personal
               information from anyone under the age required to consent in their country without a
               parent or guardian.
             </Paragraph>

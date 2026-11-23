@@ -116,7 +116,7 @@ function FormulaColumn({
  * What was NOT checked.
  *
  * Stated plainly rather than omitted: a stylist who assumes the system watched
- * the colour level would be misled by silence. QLOOQO records no structured
+ * the colour level would be misled by silence. Service SaaS records no structured
  * level or tone, so this line is the honest half of the flag.
  */
 function UnavailableNote({ assessment }: { assessment: FormulaChangeAssessment }) {

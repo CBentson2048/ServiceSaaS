@@ -65,7 +65,7 @@ function sameIds(a: readonly string[], b: readonly string[]): boolean {
 }
 
 /**
- * One QLOOQO 10 report page on the shared foundation. Render it with
+ * One Service SaaS 10 report page on the shared foundation. Render it with
  * `key={definition.key}` so switching reports starts from a clean slate.
  *
  * The filter lives only in the URL. Options and result load in parallel; a

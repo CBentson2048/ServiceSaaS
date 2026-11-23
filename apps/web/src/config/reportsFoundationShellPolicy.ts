@@ -1,5 +1,5 @@
 /**
- * Whether the QLOOQO 10 report foundation preview is on in this build.
+ * Whether the Service SaaS 10 report foundation preview is on in this build.
  *
  * On only for the exact string `'true'`. Deliberately NOT like the ZAC routing
  * inspector: no dev-server default and no browser override, so the web and the

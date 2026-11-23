@@ -15,9 +15,9 @@ import { usePageMetadata } from '../hooks/usePageMetadata';
 
 const SUPPORT_EMAIL = 'support@qlooqo.com';
 
-const PAGE_TITLE = 'QLOOQO Support';
+const PAGE_TITLE = 'Service SaaS Support';
 const PAGE_DESCRIPTION =
-  'Contact QLOOQO support for help with bookings, accounts, payments, privacy, and app support.';
+  'Contact Service SaaS support for help with bookings, accounts, payments, privacy, and app support.';
 
 const SUPPORT_TOPICS = [
   'Booking or appointment issues',
@@ -43,7 +43,7 @@ export function SupportPage() {
             QL<span className="text-primary">OO</span>QO
           </div>
           <AppText as="h1" variant="heading" weight="medium">
-            QLOOQO Support
+            Service SaaS Support
           </AppText>
           <AppText
             as="p"
@@ -136,7 +136,7 @@ export function SupportPage() {
             tone="muted"
             className="mx-auto mt-3 max-w-md leading-6"
           >
-            QLOOQO helps customers book and manage salon and beauty appointments.
+            Service SaaS helps customers book and manage salon and beauty appointments.
           </AppText>
           <Link
             to="/"
