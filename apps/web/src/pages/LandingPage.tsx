@@ -1,537 +1,115 @@
-import { Link, useNavigate } from 'react-router-dom';
-import { AppButton, AppCard, AppText } from '../design';
+import { Link } from 'react-router-dom';
 import { BrandLogo } from '../components/BrandLogo';
 import { sheerAppAndroidUrl, sheerAppIosUrl } from '../config/mobileApp';
 
-const HIGHLIGHTS = [
-  'Live availability from your team rota',
-  'Secure deposits at the point of booking',
-  'Automated WhatsApp, SMS, and email reminders',
-  'One workspace for every location',
+const PLATFORM_AREAS = [
+  ['01', 'Run the day', 'Live bookings, deposits, rotas, and client context move together—without the morning spreadsheet ritual.'],
+  ['02', 'Protect the margin', 'See colour cost, stock exposure, payroll readiness, and service performance before they become month-end surprises.'],
+  ['03', 'Grow with intent', 'Turn rebooking, client signals, and team performance into timely actions that feel personal—not automated.'],
 ];
 
-const AUDIENCES = [
-  {
-    title: 'Salon owners',
-    body: 'Set up your business, invite your team, and manage services, pricing, and locations from a single dashboard.',
-    cta: 'Create business account',
-    href: '/owner/onboarding',
-    badge: 'For owners',
-    icon: <StorefrontIcon />,
-  },
-  {
-    title: 'Managers and stylists',
-    body: 'Sign in to run the day: appointments, rota and leave, client records, and performance in one place.',
-    cta: 'Log in',
-    href: '/login',
-    badge: 'For teams',
-    icon: <TeamIcon />,
-  },
-  {
-    title: 'Clients',
-    body: 'Book a real appointment in minutes. Choose your service, stylist, and a time that is genuinely available.',
-    cta: 'Book an appointment',
-    href: '/book/location',
-    badge: 'For clients',
-    icon: <CalendarIcon />,
-  },
+const SIGNALS = [
+  ['£8.4k', 'revenue in view', '+12.6% vs last week'],
+  ['84%', 'rebooking rate', '6 clients need attention'],
+  ['£312', 'margin protected', 'from stock & formula signals'],
 ];
 
-const FLOW_STEPS = [
-  ['Choose', 'Pick a location, service, and stylist from times that reflect the live schedule.'],
-  ['Confirm', 'Secure the appointment with a deposit and instant confirmation.'],
-  ['Relax', 'Automatic reminders reduce no-shows before the visit.'],
-];
-
-const PREVIEW_EVENTS = [
-  ['09:30', 'Full Head Colour', 'Amelia R. — deposit paid, confirmed'],
-  ['11:15', 'Cut & Finish', 'James T. — reminder sent yesterday'],
-  ['13:00', 'Balayage & Gloss', 'Sofia M. — booked online this morning'],
+const DAY_EVENTS = [
+  ['09:30', 'Full head colour', 'Amelia R.', 'Arrived'],
+  ['11:15', 'Cut & finish', 'James T.', 'Confirmed'],
+  ['13:00', 'Balayage & gloss', 'Sofia M.', 'Deposit paid'],
 ];
 
 export function LandingPage() {
-  const navigate = useNavigate();
-
   return (
-    <main className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,#F0E6FF_0,#FBF9FF_34%,#F7F4FF_68%,#FDFBFF_100%)] text-text-primary">
-      <div className="pointer-events-none fixed -left-24 top-20 h-72 w-72 rounded-full bg-primary/15 blur-3xl" />
-      <div className="pointer-events-none fixed -right-24 top-80 h-80 w-80 rounded-full bg-surface-ink/10 blur-3xl" />
-
-      <header className="relative z-10 mx-auto flex w-full max-w-6xl items-center justify-between px-5 py-5 lg:px-8">
+    <main className="landing min-h-screen overflow-hidden bg-[#f6f0e8] text-[#241b25]">
+      <header className="relative z-30 mx-auto flex max-w-[1240px] items-center justify-between px-5 py-5 lg:px-8 lg:py-7">
         <Link to="/" aria-label="Service SaaS home" className="inline-flex items-center">
           <BrandLogo className="h-7" />
         </Link>
-        <div className="flex items-center gap-2 rounded-pill border border-white/70 bg-white/65 p-1 shadow-card backdrop-blur">
-          <AppButton variant="ghost" size="sm" onClick={() => navigate('/book/location')}>
-            Book
-          </AppButton>
-          <AppButton variant="ghost" size="sm" onClick={() => navigate('/login')}>
-            Log in
-          </AppButton>
-          <AppButton variant="secondary" size="sm" onClick={() => navigate('/owner/onboarding')}>
-            Get started
-          </AppButton>
+        <nav aria-label="Primary navigation" className="hidden items-center gap-8 text-sm font-medium text-[#675b63] md:flex">
+          <a href="#platform" className="transition-colors hover:text-[#241b25]">Platform</a>
+          <a href="#intelligence" className="transition-colors hover:text-[#241b25]">Intelligence</a>
+          <a href="#ecosystem" className="transition-colors hover:text-[#241b25]">Ecosystem</a>
+        </nav>
+        <div className="flex items-center gap-2">
+          <Link to="/login" className="hidden rounded-full px-4 py-2.5 text-sm font-semibold text-[#4d4249] transition-colors hover:bg-white/70 sm:inline-flex">Log in</Link>
+          <Link to="/owner/onboarding" className="inline-flex rounded-full bg-[#392032] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(57,32,50,.18)] transition-all hover:-translate-y-0.5 hover:bg-[#24131f] sm:px-5">Start free</Link>
         </div>
       </header>
 
-      <section className="relative z-10 mx-auto grid w-full max-w-6xl gap-10 px-5 pb-14 pt-6 lg:grid-cols-[1.02fr_0.98fr] lg:px-8 lg:pb-24 lg:pt-14">
-        <div className="flex flex-col justify-center">
-          <div className="mb-5 inline-flex w-fit rounded-pill border border-primary/20 bg-white/70 px-3 py-1 text-[12px] font-medium text-primary-deep shadow-card backdrop-blur">
-            Salon &amp; beauty business software
-          </div>
-          <AppText
-            as="h1"
-            variant="display"
-            weight="medium"
-            className="max-w-2xl text-[44px] leading-[50px] tracking-[-0.045em] text-surface-ink sm:text-[56px] sm:leading-[62px]"
-          >
-            Everything your salon needs to run beautifully.
-          </AppText>
-          <AppText
-            as="p"
-            variant="body"
-            tone="secondary"
-            className="mt-5 max-w-xl text-[16px] leading-7"
-          >
-            Service SaaS brings online booking, team scheduling, client records, and payments together —
-            so owners stay in control, teams stay organised, and clients book in minutes.
-          </AppText>
-          <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-            <AppButton size="lg" onClick={() => navigate('/owner/onboarding')}>
-              Start your salon
-            </AppButton>
-            <AppButton size="lg" variant="secondary" onClick={() => navigate('/book/location')}>
-              Book an appointment
-            </AppButton>
-          </div>
-          <ul className="mt-9 grid gap-3 sm:grid-cols-2">
-            {HIGHLIGHTS.map((highlight) => (
-              <li key={highlight} className="flex items-start gap-2.5">
-                <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-primary/15 text-primary-deep">
-                  <CheckIcon />
-                </span>
-                <span className="text-[13px] font-medium leading-5 text-text-secondary">
-                  {highlight}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <AppCard
-          variant="hero"
-          elevation="hero"
-          className="relative self-center overflow-hidden border-white/70 bg-white/85 p-0 text-text-primary backdrop-blur"
-        >
-          <div className="border-b border-border bg-surface-ink px-6 py-5 text-white">
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-white/55">
-                  Today · Service SaaS Studio
-                </div>
-                <div className="mt-1 text-[15px] font-semibold">Thursday appointment book</div>
-              </div>
-              <div className="shrink-0 rounded-pill bg-primary px-3 py-1 text-[11px] font-semibold text-white">
-                Fully booked
-              </div>
+      <section className="relative mx-auto max-w-[1240px] px-5 pb-14 pt-6 lg:px-8 lg:pb-24 lg:pt-10">
+        <div className="absolute -left-32 -top-24 h-80 w-80 rounded-full bg-[#f0ad95]/25 blur-3xl" />
+        <div className="relative grid items-center gap-12 lg:grid-cols-[.92fr_1.08fr] lg:gap-16">
+          <div className="relative z-10">
+            <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-[#d8c9bd] bg-white/55 px-3.5 py-2 text-[11px] font-bold uppercase tracking-[.16em] text-[#714a5e] backdrop-blur">
+              <span className="h-2 w-2 rounded-full bg-[#d86f58]" />
+              The operating system for ambitious salons
+            </div>
+            <h1 className="font-serif text-[48px] leading-[.98] tracking-[-.045em] text-[#2c1c29] sm:text-[64px] lg:text-[76px]">
+              Run the business.<br /><span className="italic text-[#9b4d5c]">Keep the craft.</span>
+            </h1>
+            <p className="mt-7 max-w-xl text-[17px] leading-7 text-[#685c62] sm:text-lg sm:leading-8">
+              Service SaaS brings the commercial intelligence of a great operator into every salon day—connecting bookings, clients, teams, stock, payroll, and growth in one calm workspace.
+            </p>
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+              <Link to="/owner/onboarding" className="inline-flex items-center justify-center gap-2 rounded-full bg-[#392032] px-6 py-3.5 text-sm font-bold text-white shadow-[0_14px_35px_rgba(57,32,50,.2)] transition-all hover:-translate-y-0.5 hover:bg-[#24131f]">Build a stronger salon <ArrowIcon /></Link>
+              <a href="#platform" className="inline-flex items-center justify-center rounded-full border border-[#bfaea5] bg-white/45 px-6 py-3.5 text-sm font-bold text-[#392f35] transition-colors hover:bg-white">Explore the platform</a>
+            </div>
+            <div className="mt-9 flex flex-wrap items-center gap-x-6 gap-y-3 text-xs font-semibold text-[#70646a]">
+              <span className="flex items-center gap-2"><CheckIcon /> No card required</span>
+              <span className="flex items-center gap-2"><CheckIcon /> Multi-location ready</span>
+              <span className="flex items-center gap-2"><CheckIcon /> Built with salon operators</span>
             </div>
           </div>
-          <div className="p-6">
-            <div className="relative space-y-3">
-              <div className="absolute bottom-5 left-[25px] top-5 w-px bg-primary/15" />
-              {PREVIEW_EVENTS.map(([time, title, body]) => (
-                <PreviewRow key={title} time={time} title={title} body={body} />
-              ))}
-            </div>
-            <div className="mt-4 grid gap-3 sm:grid-cols-3">
-              <PreviewStat label="Deposits" value="Collected" />
-              <PreviewStat label="Reminders" value="Scheduled" />
-              <PreviewStat label="Rota" value="In sync" />
-            </div>
-          </div>
-        </AppCard>
-      </section>
-
-      <section className="relative z-10 mx-auto w-full max-w-6xl px-5 pb-16 lg:px-8">
-        <div className="mb-6">
-          <AppText
-            as="h2"
-            variant="title"
-            weight="medium"
-            className="text-[26px] leading-8 tracking-[-0.02em] text-surface-ink"
-          >
-            Built for everyone who walks through the door
-          </AppText>
-          <AppText
-            as="p"
-            variant="caption"
-            tone="secondary"
-            className="mt-2 max-w-xl text-[13px] leading-5"
-          >
-            One platform, three experiences — business setup, daily operations, and effortless
-            client booking.
-          </AppText>
-        </div>
-        <div className="grid gap-4 md:grid-cols-3">
-          {AUDIENCES.map((audience) => (
-            <AppCard
-              key={audience.title}
-              elevation="none"
-              className="group flex flex-col justify-between border-white/70 bg-white/75 p-6 shadow-card backdrop-blur transition-transform hover:-translate-y-1"
-            >
-              <div>
-                <div className="flex items-center justify-between">
-                  <span className="grid h-11 w-11 place-items-center rounded-card bg-primary/10 text-primary-deep">
-                    {audience.icon}
-                  </span>
-                  <span className="rounded-pill border border-primary/15 bg-primary-soft px-3 py-1 text-[11px] font-medium text-primary-deep">
-                    {audience.badge}
-                  </span>
-                </div>
-                <AppText as="h3" variant="subtitle" weight="medium" className="mt-5">
-                  {audience.title}
-                </AppText>
-                <AppText
-                  as="p"
-                  variant="caption"
-                  tone="secondary"
-                  className="mt-2 min-h-[60px] text-[13px] leading-5"
-                >
-                  {audience.body}
-                </AppText>
-              </div>
-              <div className="mt-6">
-                <AppButton
-                  fullWidth
-                  variant={audience.href === '/book/location' ? 'primary' : 'secondary'}
-                  onClick={() => navigate(audience.href)}
-                >
-                  {audience.cta}
-                </AppButton>
-              </div>
-            </AppCard>
-          ))}
-        </div>
-      </section>
-
-      <section className="relative z-10 mx-auto w-full max-w-6xl px-5 pb-20 lg:px-8">
-        <div className="rounded-[32px] border border-white/70 bg-surface-ink p-6 text-white shadow-hero md:p-10">
-          <div className="grid gap-8 lg:grid-cols-[0.85fr_1.15fr] lg:items-center">
-            <div>
-              <div className="text-[12px] font-medium uppercase tracking-[0.18em] text-primary">
-                How it works
-              </div>
-              <AppText
-                as="h2"
-                variant="title"
-                weight="medium"
-                className="mt-3 text-[28px] leading-9 text-white"
-              >
-                From first click to confirmed appointment in three steps.
-              </AppText>
-              <p className="mt-3 text-[13px] leading-6 text-white/60">
-                Clients book against your real schedule, deposits are captured up front, and
-                reminders go out automatically — no double bookings, fewer no-shows.
-              </p>
-            </div>
-            <div className="grid gap-3 md:grid-cols-3">
-              {FLOW_STEPS.map(([title, body], index) => (
-                <div key={title} className="rounded-[24px] border border-white/12 bg-white/6 p-5">
-                  <div className="mb-4 grid h-8 w-8 place-items-center rounded-full bg-primary text-[12px] font-semibold">
-                    {index + 1}
-                  </div>
-                  <div className="text-[14px] font-semibold">{title}</div>
-                  <div className="mt-2 text-[12px] leading-5 text-white/60">{body}</div>
-                </div>
-              ))}
+          <div className="relative min-h-[520px] lg:min-h-[610px]">
+            <div className="absolute inset-x-4 top-4 h-[86%] rotate-2 rounded-[34px] bg-[#db826c] lg:inset-x-8" />
+            <img src="/salon-owner-operations.png" alt="Salon owner reviewing her business on a tablet while her team serves a client" className="relative h-[520px] w-full rounded-[32px] object-cover object-[58%_center] shadow-[0_30px_70px_rgba(61,39,46,.24)] lg:h-[610px]" />
+            <div className="absolute -bottom-5 left-2 right-2 rounded-[24px] border border-white/50 bg-[#241722]/95 p-4 text-white shadow-2xl backdrop-blur md:left-auto md:right-5 md:w-[360px] md:p-5">
+              <div className="flex items-center justify-between"><div><div className="text-[10px] font-bold uppercase tracking-[.18em] text-white/45">Live business signal</div><div className="mt-1 text-sm font-semibold">Today is pacing ahead</div></div><span className="rounded-full bg-[#d9f1df] px-2.5 py-1 text-xs font-bold text-[#24613b]">+12.6%</span></div>
+              <div className="mt-4 flex h-12 items-end gap-1.5" aria-hidden="true">{[35, 48, 42, 58, 53, 72, 64, 82, 76, 92, 86, 100].map((height, index) => <span key={index} className="flex-1 rounded-t-sm bg-[#e5856e]" style={{ height: `${height}%`, opacity: .45 + index * .04 }} />)}</div>
             </div>
           </div>
         </div>
       </section>
 
-      <section
-        id="get-the-app"
-        className="relative z-10 mx-auto w-full max-w-6xl px-5 pb-20 lg:px-8"
-      >
-        <div className="grid items-center gap-10 rounded-[32px] border border-white/70 bg-white/75 p-7 shadow-card backdrop-blur md:p-10 lg:grid-cols-[1.05fr_0.95fr]">
-          <div>
-            <div className="text-[12px] font-medium uppercase tracking-[0.18em] text-primary-deep">
-              Service SaaS on mobile
+      <section className="border-y border-[#ded2c8] bg-[#fffaf4]"><div className="mx-auto grid max-w-[1240px] grid-cols-2 gap-6 px-5 py-6 text-center sm:grid-cols-4 lg:px-8">{['Bookings', 'Client CRM', 'Team & payroll', 'Stock & colour'].map((item) => <div key={item} className="text-[11px] font-bold uppercase tracking-[.16em] text-[#8a777d]">{item}</div>)}</div></section>
+
+      <section id="platform" className="mx-auto max-w-[1240px] px-5 py-20 lg:px-8 lg:py-28">
+        <div className="grid gap-10 lg:grid-cols-[.8fr_1.2fr] lg:gap-20">
+          <div><Eyebrow>One connected operation</Eyebrow><h2 className="mt-5 max-w-lg font-serif text-[40px] leading-[1.05] tracking-[-.035em] sm:text-[54px]">Less admin theatre.<br />More useful action.</h2><p className="mt-6 max-w-md text-[16px] leading-7 text-[#6f6268]">Most salon tools record what happened. Service SaaS helps your team decide what to do next—while the moment still matters.</p></div>
+          <div className="divide-y divide-[#d7cbc2] border-y border-[#d7cbc2]">{PLATFORM_AREAS.map(([number, title, body]) => <div key={number} className="group grid gap-3 py-7 sm:grid-cols-[60px_180px_1fr] sm:items-start sm:gap-5"><span className="text-xs font-bold text-[#c45f52]">{number}</span><h3 className="text-lg font-bold tracking-[-.02em] text-[#32262d]">{title}</h3><p className="text-sm leading-6 text-[#75696f]">{body}</p></div>)}</div>
+        </div>
+      </section>
+
+      <section id="intelligence" className="bg-[#2b1927] px-5 py-20 text-white lg:py-28">
+        <div className="mx-auto max-w-[1240px]">
+          <div className="flex flex-col justify-between gap-7 md:flex-row md:items-end"><div><Eyebrow dark>From activity to intelligence</Eyebrow><h2 className="mt-5 max-w-2xl font-serif text-[40px] leading-[1.05] tracking-[-.035em] sm:text-[54px]">A clearer view of today.<br /><span className="italic text-[#e99a85]">A smarter next move.</span></h2></div><p className="max-w-sm text-sm leading-6 text-white/55">One live picture connects commercial performance with what is actually happening on the salon floor.</p></div>
+          <div className="mt-12 overflow-hidden rounded-[28px] border border-white/10 bg-[#f9f4ec] text-[#2c2228] shadow-[0_30px_70px_rgba(0,0,0,.22)]">
+            <div className="flex flex-col border-b border-[#ded5cd] bg-white/65 px-5 py-4 sm:flex-row sm:items-center sm:justify-between lg:px-7"><div><span className="text-xs font-bold uppercase tracking-[.16em] text-[#8d7b83]">Good morning, Maya</span><h3 className="mt-1 text-xl font-bold">Pinner is ready for the day.</h3></div><div className="mt-3 flex items-center gap-2 sm:mt-0"><span className="h-2 w-2 rounded-full bg-[#3d9b62]" /><span className="text-xs font-semibold text-[#5f555a]">Live · updated just now</span></div></div>
+            <div className="grid lg:grid-cols-[1.4fr_.6fr]">
+              <div className="border-b border-[#ded5cd] p-5 lg:border-b-0 lg:border-r lg:p-7">
+                <div className="grid gap-3 sm:grid-cols-3">{SIGNALS.map(([value, label, note]) => <div key={label} className="rounded-[18px] border border-[#ded5cd] bg-white p-4"><div className="font-serif text-3xl tracking-[-.04em]">{value}</div><div className="mt-1 text-sm font-bold">{label}</div><div className="mt-3 text-[11px] text-[#8b7d83]">{note}</div></div>)}</div>
+                <div className="mt-6"><div className="mb-3 flex items-center justify-between"><h4 className="text-sm font-bold">Today’s appointment book</h4><Link to="/login" className="text-xs font-bold text-[#9b4d5c]">Open schedule →</Link></div><div className="space-y-2">{DAY_EVENTS.map(([time, service, client, status]) => <div key={time} className="grid grid-cols-[54px_1fr_auto] items-center gap-3 rounded-[14px] bg-white px-3 py-3 sm:grid-cols-[70px_1fr_130px_auto]"><span className="text-xs font-bold text-[#a14e5e]">{time}</span><span className="truncate text-sm font-bold">{service}</span><span className="hidden text-xs text-[#7a6d73] sm:block">{client}</span><span className="rounded-full bg-[#f0e8e4] px-2.5 py-1 text-[10px] font-bold text-[#6c5961]">{status}</span></div>)}</div></div>
+              </div>
+              <aside className="p-5 lg:p-7"><div className="flex items-center gap-3"><div className="grid h-10 w-10 place-items-center rounded-full bg-[#ead6cf] text-[#9b4d5c]"><SparkIcon /></div><div><div className="text-xs font-bold uppercase tracking-[.14em] text-[#8c7c82]">Zac intelligence</div><div className="text-sm font-bold">3 useful signals</div></div></div><div className="mt-6 space-y-4"><Insight label="Revenue opportunity" body="Six colour clients are due to rebook this week." action="Review clients" /><Insight label="Stock risk" body="Blondor will fall below cover after today’s bookings." action="Prepare order" /><Insight label="Team moment" body="Amelia is one service away from her weekly target." action="View performance" /></div></aside>
             </div>
-            <AppText
-              as="h2"
-              variant="title"
-              weight="medium"
-              className="mt-3 max-w-md text-[28px] leading-9 tracking-[-0.02em] text-surface-ink"
-            >
-              Take your salon wherever the day goes.
-            </AppText>
-            <AppText
-              as="p"
-              variant="body"
-              tone="secondary"
-              className="mt-3 max-w-md text-[14px] leading-6"
-            >
-              The Service SaaS app keeps stylists on top of bookings, rota, and performance — and lets
-              clients rebook their favourite stylist in a tap.
-            </AppText>
-            <div className="mt-7 flex flex-wrap items-center gap-3">
-              <StoreBadge store="apple" href={sheerAppIosUrl} />
-              <StoreBadge store="google" href={sheerAppAndroidUrl} />
-            </div>
-            <p className="mt-4 text-[12px] text-text-muted">Free to download · iOS and Android</p>
-          </div>
-          <div className="hidden justify-center lg:flex">
-            <PhoneMock />
           </div>
         </div>
       </section>
 
-      <footer className="relative z-10 border-t border-border bg-white/70 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-5 py-10 lg:px-8">
-          <div className="flex flex-col justify-between gap-8 md:flex-row">
-            <div className="max-w-xs">
-              <BrandLogo className="h-6" />
-              <p className="mt-3 text-[12px] leading-5 text-text-secondary">
-                Salon software for online booking, staff scheduling, and client care — built for
-                hair stylists and beauty teams.
-              </p>
-            </div>
-            <div className="grid grid-cols-2 gap-10 sm:grid-cols-3">
-              <FooterColumn
-                title="Product"
-                links={[
-                  ['Book an appointment', '/book/location'],
-                  ['Log in', '/login'],
-                  ['Create business account', '/owner/onboarding'],
-                ]}
-              />
-              <FooterColumn
-                title="Support"
-                links={[
-                  ['Help & support', '/support'],
-                  ['Privacy policy', '/privacy-policy'],
-                ]}
-              />
-              <div>
-                <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-text-muted">
-                  Get the app
-                </div>
-                <ul className="mt-3 space-y-2">
-                  <li>
-                    <a
-                      href={sheerAppIosUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-[13px] text-text-secondary transition-colors hover:text-primary-deep"
-                    >
-                      Service SaaS on the App Store
-                    </a>
-                  </li>
-                  <li>
-                    <a
-                      href={sheerAppAndroidUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-[13px] text-text-secondary transition-colors hover:text-primary-deep"
-                    >
-                      Service SaaS on Google Play
-                    </a>
-                  </li>
-                </ul>
-              </div>
-            </div>
-          </div>
-          <div className="border-t border-border-divider pt-5 text-[11px] text-text-muted">
-            © {new Date().getFullYear()} Service SaaS. All rights reserved.
-          </div>
-        </div>
-      </footer>
+      <section id="ecosystem" className="mx-auto max-w-[1240px] px-5 py-20 lg:px-8 lg:py-28"><div className="rounded-[32px] bg-[#dc7f69] p-7 sm:p-10 lg:p-14"><div className="grid gap-10 lg:grid-cols-[.8fr_1.2fr] lg:items-center"><div><Eyebrow>Built as an ecosystem</Eyebrow><h2 className="mt-5 font-serif text-[40px] leading-[1.02] tracking-[-.035em] text-[#2c1c29] sm:text-[50px]">One business.<br />Every important signal.</h2><p className="mt-5 max-w-md text-sm leading-6 text-[#563b41]">Clients, appointments, formulas, products, payroll, and performance share the same operational context—so growth does not create more fragmentation.</p></div><div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{['Online booking', 'Client relationships', 'Team & rota', 'Colour intelligence', 'Inventory & orders', 'Payroll & performance'].map((item, index) => <div key={item} className="flex min-h-[112px] flex-col justify-between rounded-[20px] border border-[#6b3f45]/15 bg-[#f8e9de]/70 p-4"><span className="text-[10px] font-bold text-[#84525a]">0{index + 1}</span><span className="text-sm font-bold leading-5 text-[#34232b]">{item}</span></div>)}</div></div></div></section>
+
+      <section className="mx-auto max-w-[1240px] px-5 pb-20 lg:px-8 lg:pb-28"><div className="relative overflow-hidden rounded-[32px] bg-[#fffaf4] px-6 py-14 text-center shadow-[0_15px_50px_rgba(67,43,53,.08)] sm:px-12 sm:py-20"><div className="absolute left-1/2 top-0 h-40 w-96 -translate-x-1/2 rounded-full bg-[#e99a85]/20 blur-3xl" /><div className="relative"><Eyebrow>A better way to operate</Eyebrow><h2 className="mx-auto mt-5 max-w-3xl font-serif text-[42px] leading-[1.04] tracking-[-.04em] sm:text-[58px]">Build a salon that feels<br /><span className="italic text-[#9b4d5c]">as good as it performs.</span></h2><p className="mx-auto mt-6 max-w-xl text-[15px] leading-7 text-[#6c6066]">Start with the essentials. Add intelligence as your business grows. Keep your team and your clients in one thoughtful experience.</p><div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row"><Link to="/owner/onboarding" className="inline-flex items-center justify-center gap-2 rounded-full bg-[#392032] px-7 py-3.5 text-sm font-bold text-white">Start free <ArrowIcon /></Link><Link to="/book/location" className="inline-flex items-center justify-center rounded-full border border-[#cfc0b6] px-7 py-3.5 text-sm font-bold text-[#3a3035]">Experience client booking</Link></div></div></div></section>
+
+      <footer className="border-t border-[#dcd0c6] bg-[#ede4da]"><div className="mx-auto max-w-[1240px] px-5 py-12 lg:px-8"><div className="grid gap-10 md:grid-cols-[1.4fr_1fr_1fr_1fr]"><div><BrandLogo className="h-7" /><p className="mt-4 max-w-xs text-sm leading-6 text-[#70636a]">The connected operating system for ambitious salon and beauty businesses.</p></div><FooterGroup title="Product" links={[['Platform', '#platform'], ['Intelligence', '#intelligence'], ['Book appointment', '/book/location']]} /><FooterGroup title="Company" links={[['Create account', '/owner/onboarding'], ['Log in', '/login'], ['Support', '/support']]} /><div><div className="text-[11px] font-bold uppercase tracking-[.16em] text-[#8a7b81]">Get the app</div><div className="mt-4 flex flex-col gap-2 text-sm font-semibold text-[#5d5057]"><a href={sheerAppIosUrl}>App Store ↗</a><a href={sheerAppAndroidUrl}>Google Play ↗</a></div></div></div><div className="mt-12 flex flex-col gap-3 border-t border-[#d4c7bd] pt-6 text-xs text-[#84767c] sm:flex-row sm:justify-between"><span>© {new Date().getFullYear()} Service SaaS. All rights reserved.</span><Link to="/privacy-policy">Privacy policy</Link></div></div></footer>
     </main>
   );
 }
 
-function PreviewRow({ time, title, body }: { time: string; title: string; body: string }) {
-  return (
-    <div className="relative flex items-center gap-4 rounded-[20px] border border-border bg-surface-alt p-3.5">
-      <div className="relative z-10 grid h-[52px] w-[52px] shrink-0 place-items-center rounded-[14px] border border-primary/20 bg-white text-[12px] font-semibold text-primary-deep shadow-card">
-        {time}
-      </div>
-      <div className="min-w-0">
-        <div className="truncate text-[13px] font-semibold text-surface-ink">{title}</div>
-        <div className="mt-0.5 truncate text-[12px] leading-5 text-text-secondary">{body}</div>
-      </div>
-      <span className="ml-auto hidden shrink-0 rounded-pill bg-success-soft px-2.5 py-1 text-[10px] font-semibold text-success sm:block">
-        Confirmed
-      </span>
-    </div>
-  );
-}
-
-function PreviewStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-[20px] border border-border bg-white px-4 py-3 shadow-card">
-      <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-text-muted">
-        {label}
-      </div>
-      <div className="mt-1 text-[14px] font-semibold text-surface-ink">{value}</div>
-    </div>
-  );
-}
-
-function FooterColumn({ title, links }: { title: string; links: [string, string][] }) {
-  return (
-    <div>
-      <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-text-muted">
-        {title}
-      </div>
-      <ul className="mt-3 space-y-2">
-        {links.map(([label, href]) => (
-          <li key={href}>
-            <Link
-              to={href}
-              className="text-[13px] text-text-secondary transition-colors hover:text-primary-deep"
-            >
-              {label}
-            </Link>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-function StoreBadge({ store, href }: { store: 'apple' | 'google'; href: string }) {
-  const caption = store === 'apple' ? 'Download on the' : 'Get it on';
-  const name = store === 'apple' ? 'App Store' : 'Google Play';
-  return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      aria-label={`${caption} ${name}`}
-      className="inline-flex items-center gap-3 rounded-[14px] bg-surface-ink px-5 py-2.5 text-white shadow-card transition-all hover:-translate-y-0.5 hover:bg-surface-ink-deep"
-    >
-      {store === 'apple' ? <AppleIcon /> : <PlayIcon />}
-      <span className="flex flex-col text-left leading-none">
-        <span className="text-[10px] font-medium text-white/70">{caption}</span>
-        <span className="mt-1 text-[15px] font-semibold tracking-tight">{name}</span>
-      </span>
-    </a>
-  );
-}
-
-function PhoneMock() {
-  return (
-    <div className="w-[250px] rounded-[38px] border border-border-strong bg-surface-ink p-2.5 shadow-hero">
-      <div className="overflow-hidden rounded-[30px] bg-bg">
-        <div className="bg-surface-ink px-5 pb-5 pt-6 text-white">
-          <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/50">
-            Good morning
-          </div>
-          <div className="mt-1 text-[16px] font-semibold">Amelia&rsquo;s day at a glance</div>
-          <div className="mt-4 grid grid-cols-2 gap-2">
-            <div className="rounded-[14px] bg-white/10 px-3 py-2.5">
-              <div className="text-[9px] uppercase tracking-[0.12em] text-white/50">Bookings</div>
-              <div className="mt-0.5 text-[15px] font-semibold">8</div>
-            </div>
-            <div className="rounded-[14px] bg-white/10 px-3 py-2.5">
-              <div className="text-[9px] uppercase tracking-[0.12em] text-white/50">Rebooked</div>
-              <div className="mt-0.5 text-[15px] font-semibold">86%</div>
-            </div>
-          </div>
-        </div>
-        <div className="space-y-2 p-4">
-          {[
-            ['09:30', 'Full Head Colour'],
-            ['11:15', 'Cut & Finish'],
-            ['13:00', 'Balayage & Gloss'],
-          ].map(([time, service]) => (
-            <div
-              key={time}
-              className="flex items-center gap-3 rounded-[14px] border border-border bg-white px-3 py-2.5 shadow-card"
-            >
-              <span className="text-[11px] font-semibold text-primary-deep">{time}</span>
-              <span className="truncate text-[12px] font-medium text-surface-ink">{service}</span>
-            </div>
-          ))}
-          <div className="rounded-[14px] bg-primary px-3 py-2.5 text-center text-[12px] font-semibold text-white">
-            View full schedule
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AppleIcon() {
-  return (
-    <svg width="20" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8.79.06 2.26-.98 3.81-.84 1.86.15 3.27.88 4.19 2.26-3.72 2.23-3.12 7.14.34 8.53-.7 1.52-1.61 3.02-3.42 4.22ZM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25Z" />
-    </svg>
-  );
-}
-
-function PlayIcon() {
-  return (
-    <svg width="19" height="21" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M1.57 23.66 12.1 13.16l3.71 3.7-12.52 6.94c-.47.27-1.06.26-1.53-.01l-.19-.13ZM11.04 12.1 1 22.11V2.09L11.04 12.1Zm6.27-4.13 4.91 2.72c.48.27.78.77.78 1.31s-.3 1.05-.78 1.32l-4.91 2.72-4-3.99 4-4.08ZM1.46.43c.09-.09.19-.16.3-.23.47-.27 1.06-.27 1.53-.01l12.66 7.01-3.85 3.91L1.46.43Z" />
-    </svg>
-  );
-}
-
-function CheckIcon() {
-  return (
-    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M5 12.5 9.5 17 19 7.5"
-        stroke="currentColor"
-        strokeWidth="3"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function StorefrontIcon() {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M4 9.5 5.2 4h13.6L20 9.5M4 9.5a2.5 2.5 0 0 0 5 0 2.5 2.5 0 0 0 5 0 2.5 2.5 0 0 0 5 0M5 12v8h14v-8M9.5 20v-5h5v5"
-        stroke="currentColor"
-        strokeWidth="1.7"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function TeamIcon() {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M9 11.5a3.25 3.25 0 1 0 0-6.5 3.25 3.25 0 0 0 0 6.5ZM3.5 19.5c.6-3 2.8-4.75 5.5-4.75s4.9 1.75 5.5 4.75M15.5 5.4a3.25 3.25 0 0 1 0 5.7M17.6 15c1.5.65 2.55 1.95 2.9 4"
-        stroke="currentColor"
-        strokeWidth="1.7"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function CalendarIcon() {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M7 3.5v3M17 3.5v3M4 8.5h16M5.5 5h13A1.5 1.5 0 0 1 20 6.5v12a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5v-12A1.5 1.5 0 0 1 5.5 5ZM9 13.5l2.2 2.2L15.5 11"
-        stroke="currentColor"
-        strokeWidth="1.7"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
+function Eyebrow({ children, dark = false }: { children: React.ReactNode; dark?: boolean }) { return <div className={`text-[11px] font-bold uppercase tracking-[.18em] ${dark ? 'text-[#e99a85]' : 'text-[#a6535e]'}`}>{children}</div>; }
+function Insight({ label, body, action }: { label: string; body: string; action: string }) { return <div className="border-b border-[#ddd1c9] pb-4"><div className="text-[10px] font-bold uppercase tracking-[.14em] text-[#a0525e]">{label}</div><p className="mt-1.5 text-sm leading-5 text-[#5f5359]">{body}</p><button type="button" className="mt-2 text-xs font-bold text-[#392032]">{action} →</button></div>; }
+function FooterGroup({ title, links }: { title: string; links: [string, string][] }) { return <div><div className="text-[11px] font-bold uppercase tracking-[.16em] text-[#8a7b81]">{title}</div><ul className="mt-4 space-y-2.5">{links.map(([label, href]) => <li key={label}><Link to={href} className="text-sm font-semibold text-[#5d5057] hover:text-[#2c1c29]">{label}</Link></li>)}</ul></div>; }
+function ArrowIcon() { return <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8h9M9 4.5 12.5 8 9 11.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>; }
+function CheckIcon() { return <span className="grid h-5 w-5 place-items-center rounded-full bg-[#ead6cf] text-[#9b4d5c]"><svg aria-hidden="true" width="11" height="11" viewBox="0 0 12 12" fill="none"><path d="m3 6 2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg></span>; }
+function SparkIcon() { return <svg aria-hidden="true" width="18" height="18" viewBox="0 0 20 20" fill="none"><path d="M10 2.5 11.4 7l4.1 1.5-4.1 1.5L10 14.5 8.6 10 4.5 8.5 8.6 7 10 2.5Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" /></svg>; }
