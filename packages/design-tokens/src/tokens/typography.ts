@@ -2,7 +2,7 @@
  * Typography tokens.
  *
  * Constraints (per product spec):
- *  - Font family: Arial / system stack only
+ *  - Font family: a native, system-first sans stack for fast, consistent rendering
  *  - Weights: 400 (regular) and 500 (medium) only — do NOT introduce other weights
  *  - Sizes are kept disciplined and scan-friendly for busy salon use
  *
@@ -10,9 +10,9 @@
  * in React Native (StyleSheet) and on the web (px-based).
  */
 export const fontFamily = {
-  // React Native consumes 'System'; on web we use Arial as the canonical fallback.
+  // React Native consumes 'System'; web prefers modern native UI fonts.
   native: 'System',
-  web: 'Arial, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+  web: 'Aptos, Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif',
 } as const;
 
 export const fontWeight = {

@@ -17,7 +17,7 @@ export interface ShadowToken {
   };
 }
 
-const inkShadow = '#1C1628';
+const inkShadow = '#2B1927';
 
 export const shadow = {
   none: {
@@ -31,7 +31,7 @@ export const shadow = {
     },
   },
   card: {
-    web: '0 1px 2px rgba(28,22,40,0.04), 0 2px 6px rgba(28,22,40,0.06)',
+    web: '0 1px 2px rgba(43,25,39,0.04), 0 5px 16px rgba(43,25,39,0.055)',
     native: {
       shadowColor: inkShadow,
       shadowOffset: { width: 0, height: 1 },
@@ -41,7 +41,7 @@ export const shadow = {
     },
   },
   hero: {
-    web: '0 4px 12px rgba(28,22,40,0.08), 0 8px 24px rgba(28,22,40,0.06)',
+    web: '0 8px 24px rgba(43,25,39,0.08), 0 18px 50px rgba(43,25,39,0.06)',
     native: {
       shadowColor: inkShadow,
       shadowOffset: { width: 0, height: 4 },
@@ -51,7 +51,7 @@ export const shadow = {
     },
   },
   modal: {
-    web: '0 10px 25px rgba(28,22,40,0.12), 0 20px 60px rgba(28,22,40,0.16)',
+    web: '0 18px 45px rgba(43,25,39,0.16), 0 32px 90px rgba(43,25,39,0.14)',
     native: {
       shadowColor: inkShadow,
       shadowOffset: { width: 0, height: 10 },

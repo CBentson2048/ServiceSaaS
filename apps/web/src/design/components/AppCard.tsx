@@ -49,12 +49,12 @@ export function AppCard(props: AppCardProps) {
   return (
     <div
       className={cn(
-        'rounded-card border bg-surface text-text-primary',
+        'rounded-card border bg-surface text-text-primary transition-[border-color,box-shadow,transform] duration-200',
         VARIANT[variant],
         PADDING[padding],
         ELEVATION[elevation],
         interactive &&
-          'cursor-pointer transition-shadow hover:shadow-hero focus-within:shadow-hero',
+          'cursor-pointer hover:-translate-y-0.5 hover:border-border-strong hover:shadow-hero focus-within:border-border-strong focus-within:shadow-hero',
         className,
       )}
       {...rest}

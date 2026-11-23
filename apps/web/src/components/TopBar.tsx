@@ -48,7 +48,7 @@ export function TopBar() {
   }, [menuOpen]);
 
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between bg-surface-ink px-6 text-text-on-primary">
+    <header className="relative z-20 flex h-16 shrink-0 items-center justify-between border-b border-white/10 bg-surface-ink px-4 text-text-on-primary shadow-[0_6px_24px_rgba(32,19,29,0.12)] sm:px-6">
       <BrandLogo variant="white" className="h-5 md:hidden" />
 
       <NavClock timezone={timezone} variant="desktop" />
@@ -74,11 +74,11 @@ export function TopBar() {
               <img
                 src={avatarUrl}
                 alt={fullName}
-                className="h-8 w-8 rounded-full border-2 border-primary object-cover"
+                className="h-8 w-8 rounded-full border-2 border-accent object-cover"
               />
             ) : (
-              <span className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-primary bg-primary-deepest">
-                <AppText variant="micro" weight="medium" className="!text-primary">
+              <span className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-accent bg-primary-deepest">
+                <AppText variant="micro" weight="medium" className="!text-accent">
                   {initials}
                 </AppText>
               </span>

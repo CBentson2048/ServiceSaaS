@@ -306,7 +306,7 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        'hidden shrink-0 flex-col bg-surface-ink-deep text-text-on-primary transition-[width] duration-200 md:flex',
+        'hidden shrink-0 flex-col border-r border-white/[0.07] bg-surface-ink-deep text-text-on-primary shadow-[8px_0_30px_rgba(32,19,29,0.08)] transition-[width] duration-200 md:flex',
         collapsed ? 'w-16' : 'w-60',
       )}
     >
@@ -408,8 +408,8 @@ function NavLeaf({
             'flex items-center rounded-input-lg py-2 text-[14px] font-medium transition-colors',
             collapsed ? 'justify-center px-0' : indented ? 'gap-3 pl-11 pr-3' : 'gap-3 px-3',
             isActive
-              ? 'bg-white/10 text-text-on-primary'
-              : 'text-white/60 hover:bg-white/5 hover:text-text-on-primary',
+              ? 'bg-accent/15 text-text-on-primary shadow-[inset_3px_0_0_#D97863]'
+              : 'text-white/65 hover:bg-white/[0.06] hover:text-text-on-primary',
           )
         }
       >
@@ -450,8 +450,8 @@ function NavGroupItem({
           className={cn(
             'flex w-full items-center justify-center rounded-input-lg py-2 transition-colors',
             active
-              ? 'bg-white/10 text-text-on-primary'
-              : 'text-white/60 hover:bg-white/5 hover:text-text-on-primary',
+              ? 'bg-accent/15 text-text-on-primary shadow-[inset_3px_0_0_#D97863]'
+              : 'text-white/65 hover:bg-white/[0.06] hover:text-text-on-primary',
           )}
         >
           <Icon className="h-5 w-5 shrink-0" />
@@ -469,8 +469,8 @@ function NavGroupItem({
         className={cn(
           'flex w-full items-center gap-3 rounded-input-lg px-3 py-2 text-[14px] font-medium transition-colors',
           active && !open
-            ? 'bg-white/10 text-text-on-primary'
-            : 'text-white/60 hover:bg-white/5 hover:text-text-on-primary',
+            ? 'bg-accent/15 text-text-on-primary shadow-[inset_3px_0_0_#D97863]'
+            : 'text-white/65 hover:bg-white/[0.06] hover:text-text-on-primary',
         )}
       >
         <Icon className="h-5 w-5 shrink-0" />

@@ -18,35 +18,41 @@ export default {
   theme: {
     extend: {
       colors: {
-        bg: '#F0EEF6',
+        bg: '#F5F0EA',
 
         surface: {
           DEFAULT: '#FFFFFF',
-          alt: '#F8F6FD',
-          ink: '#1C1628',
-          'ink-deep': '#18141F',
+          alt: '#FFFCF8',
+          ink: '#2B1927',
+          'ink-deep': '#20131D',
         },
 
         primary: {
-          DEFAULT: '#A67CF5',
-          soft: '#F5F3FF',
-          deep: '#7C3AED',
-          deepest: '#2E1F4A',
+          DEFAULT: '#6B3A57',
+          soft: '#F8EEE9',
+          deep: '#4E263E',
+          deepest: '#2B1927',
           on: '#FFFFFF',
         },
 
+        accent: {
+          DEFAULT: '#D97863',
+          soft: '#F2DDD5',
+          deep: '#A9515C',
+        },
+
         text: {
-          primary: '#1C1628',
-          secondary: '#6B6480',
-          muted: '#999999',
-          subtle: '#AAAAAA',
+          primary: '#2B1927',
+          secondary: '#6D6066',
+          muted: '#8A7C82',
+          subtle: '#A7989E',
           'on-primary': '#FFFFFF',
         },
 
         border: {
-          DEFAULT: '#EAE8F0',
-          strong: '#D0CCE0',
-          divider: '#F0EDF8',
+          DEFAULT: '#E4D9CF',
+          strong: '#CDBEB3',
+          divider: '#F0E8E1',
         },
 
         success: {
@@ -71,15 +77,15 @@ export default {
       },
 
       borderRadius: {
-        input: '10px',
-        'input-lg': '12px',
-        card: '14px',
-        'card-lg': '16px',
-        pill: '20px',
+        input: '11px',
+        'input-lg': '14px',
+        card: '18px',
+        'card-lg': '22px',
+        pill: '9999px',
       },
 
       fontFamily: {
-        sans: ['Arial', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
+        sans: ['Aptos', 'Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
       },
 
       fontWeight: {
@@ -88,9 +94,9 @@ export default {
       },
 
       boxShadow: {
-        card: '0 1px 2px rgba(28,22,40,0.04), 0 2px 6px rgba(28,22,40,0.06)',
-        hero: '0 4px 12px rgba(28,22,40,0.08), 0 8px 24px rgba(28,22,40,0.06)',
-        modal: '0 10px 25px rgba(28,22,40,0.12), 0 20px 60px rgba(28,22,40,0.16)',
+        card: '0 1px 2px rgba(43,25,39,0.04), 0 5px 16px rgba(43,25,39,0.055)',
+        hero: '0 8px 24px rgba(43,25,39,0.08), 0 18px 50px rgba(43,25,39,0.06)',
+        modal: '0 18px 45px rgba(43,25,39,0.16), 0 32px 90px rgba(43,25,39,0.14)',
       },
     },
   },

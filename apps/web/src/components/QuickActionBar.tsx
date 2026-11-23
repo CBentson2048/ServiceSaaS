@@ -53,12 +53,12 @@ export function QuickActionBar() {
   if (visible.length === 0) return null;
 
   const baseClass =
-    'flex shrink-0 items-center gap-2 rounded-pill px-3.5 py-1.5 text-[13px] font-medium transition-colors';
+    'flex shrink-0 items-center gap-2 rounded-pill border border-transparent px-3.5 py-1.5 text-[13px] font-medium transition-all duration-200';
 
   return (
     <nav
       aria-label="Quick actions"
-      className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-surface-alt/50 px-3 py-2"
+      className="relative z-10 flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-border bg-surface/90 px-3 py-2 shadow-[0_3px_12px_rgba(43,25,39,0.04)] backdrop-blur"
     >
       {visible.map((action) => {
         const Icon = action.icon;
@@ -79,8 +79,8 @@ export function QuickActionBar() {
                 cn(
                   baseClass,
                   isActive
-                    ? 'bg-primary text-text-on-primary'
-                    : 'text-text-secondary hover:bg-surface hover:text-text-primary',
+                    ? 'border-primary/20 bg-primary-soft text-primary-deep shadow-card'
+                    : 'text-text-secondary hover:border-border hover:bg-surface-alt hover:text-text-primary',
                 )
               }
             >
@@ -94,7 +94,7 @@ export function QuickActionBar() {
             type="button"
             onClick={action.onClick}
             title={action.label}
-            className={cn(baseClass, 'text-text-secondary hover:bg-surface hover:text-text-primary')}
+            className={cn(baseClass, 'text-text-secondary hover:border-border hover:bg-surface-alt hover:text-text-primary')}
           >
             {content}
           </button>

@@ -14,7 +14,7 @@ export const staffTheme: Theme = {
   colors: {
     bg: palette.ink[950],
     surface: palette.ink[700],
-    surfaceAlt: palette.brand[900],
+    surfaceAlt: palette.ink[500],
 
     textPrimary: palette.white,
     textSecondary: palette.alpha.whiteHi,
@@ -24,7 +24,7 @@ export const staffTheme: Theme = {
     border: palette.alpha.whiteSoft,
     borderStrong: palette.alpha.whiteLine,
 
-    primary: palette.brand[500],
+    primary: palette.brand[300],
     primarySoft: palette.brand[900],
 
     success: {

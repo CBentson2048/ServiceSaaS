@@ -15,7 +15,7 @@ export interface AppButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> 
 
 const VARIANT: Record<AppButtonVariant, string> = {
   primary:
-    'bg-primary text-text-on-primary border-transparent hover:bg-primary-deep focus-visible:ring-primary/40',
+    'bg-primary text-text-on-primary border-transparent shadow-card hover:-translate-y-0.5 hover:bg-primary-deep hover:shadow-hero active:translate-y-0 focus-visible:ring-primary/40',
   secondary:
     'bg-transparent text-text-primary border-border-strong hover:bg-surface-alt focus-visible:ring-primary/30',
   ghost:
@@ -59,7 +59,7 @@ export const AppButton = forwardRef<HTMLButtonElement, AppButtonProps>(function 
       disabled={isDisabled}
       aria-busy={loading || undefined}
       className={cn(
-        'inline-flex items-center justify-center gap-1.5 rounded-pill border-[1.5px] font-medium transition-colors',
+        'inline-flex items-center justify-center gap-1.5 rounded-pill border-[1.5px] font-medium transition-all duration-200',
         'focus:outline-none focus-visible:ring-2',
         'disabled:cursor-not-allowed disabled:opacity-55',
         SIZE[size],
