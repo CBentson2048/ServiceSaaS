@@ -391,7 +391,7 @@ const s = StyleSheet.create({
     borderRadius: radius.pill,
     backgroundColor: 'rgba(166,124,245,0.14)',
     borderWidth: 1,
-    borderColor: 'rgba(196,160,245,0.4)',
+    borderColor: 'rgba(230,160,141,0.4)',
   },
   countPillText: { color: BRAND_LIGHT, fontSize: 11, fontWeight: '800' },
 

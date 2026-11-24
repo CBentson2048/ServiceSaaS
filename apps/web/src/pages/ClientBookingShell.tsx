@@ -17,9 +17,9 @@ export function ClientBookingShell({
   const navigate = useNavigate();
   const selection = readClientBookingSelection();
   return (
-    <div className="min-h-screen bg-[#f7f4ff] text-text-primary">
-      <div className="mx-auto flex min-h-screen w-full max-w-5xl flex-col bg-[#fbf9ff] shadow-hero sm:my-6 sm:min-h-[720px] sm:rounded-[28px] lg:min-h-[760px]">
-        <header className="rounded-b-none bg-[#1C1628] px-4 pb-2 pt-3 text-white sm:rounded-t-[28px] lg:px-6">
+    <div className="min-h-screen bg-bg text-text-primary">
+      <div className="mx-auto flex min-h-screen w-full max-w-5xl flex-col bg-surface shadow-hero sm:my-6 sm:min-h-[720px] sm:rounded-card-lg lg:min-h-[760px]">
+        <header className="rounded-b-none bg-surface-ink px-4 pb-2 pt-3 text-white sm:rounded-t-card-lg lg:px-6">
           <div className="flex items-center justify-between gap-3">
             <button
               type="button"
@@ -37,7 +37,7 @@ export function ClientBookingShell({
             <div className="text-[11px] text-white/55">{step}</div>
           </div>
           <div className="mt-3 h-1 rounded-full bg-white/12">
-            <div className="h-1 rounded-full bg-primary" style={{ width: progressWidth(step) }} />
+            <div className="h-1 rounded-full bg-accent" style={{ width: progressWidth(step) }} />
           </div>
         </header>
         <div className="flex flex-1 flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -50,7 +50,7 @@ export function ClientBookingShell({
           </aside>
         </div>
         {footer ? (
-          <div className="sticky bottom-0 border-t border-border bg-[#fbf9ff]/95 px-4 py-4 backdrop-blur sm:rounded-b-[28px] lg:hidden">
+          <div className="sticky bottom-0 border-t border-border bg-surface/95 px-4 py-4 backdrop-blur sm:rounded-b-card-lg lg:hidden">
             {footer}
           </div>
         ) : null}
@@ -83,7 +83,7 @@ function BookingSummary({
   ].filter((row): row is [string, string] => Boolean(row[1]));
 
   return (
-    <AppCard elevation="none" className="border-border bg-white/75">
+    <AppCard elevation="none" className="border-border bg-surface/80">
       <div className="text-[13px] font-semibold">Booking summary</div>
       {rows.length > 0 ? (
         <div className="mt-3 space-y-2">

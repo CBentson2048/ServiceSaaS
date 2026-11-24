@@ -124,7 +124,7 @@ export function ClientBookingReviewPage() {
             fullWidth
             loading={startingCheckout}
             onClick={() => void (requiresDeposit ? startCheckout() : confirmWithoutPayment())}
-            className="min-h-12 bg-[#1C1628] text-white hover:bg-[#2A2139]"
+            className="min-h-12"
           >
             {requiresDeposit ? 'Continue to payment' : 'Confirm booking'}
           </AppButton>
@@ -245,7 +245,7 @@ function PaymentForm({ bookingAttempt }: { bookingAttempt: PublicBookingAttemptS
         loading={submitting}
         disabled={!stripe || !elements}
         onClick={() => void submitPayment()}
-        className="mt-4 min-h-12 bg-[#1C1628] text-white hover:bg-[#2A2139]"
+        className="mt-4 min-h-12"
       >
         Pay deposit and confirm
       </AppButton>

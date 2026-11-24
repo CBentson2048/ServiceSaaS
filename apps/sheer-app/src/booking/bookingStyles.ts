@@ -20,7 +20,7 @@ export const bookingStyles = StyleSheet.create({
     padding: spacing.xl,
     borderRadius: radius.cardLg,
     borderWidth: 1,
-    borderColor: 'rgba(196,160,245,0.28)',
+    borderColor: 'rgba(230,160,141,0.28)',
     backgroundColor: palette.ink[700],
   },
   eyebrow: {
@@ -65,8 +65,8 @@ export const bookingStyles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: radius.full,
     borderWidth: 1,
-    borderColor: 'rgba(196,160,245,0.32)',
-    backgroundColor: 'rgba(196,160,245,0.18)',
+    borderColor: 'rgba(230,160,141,0.32)',
+    backgroundColor: 'rgba(230,160,141,0.18)',
   },
   iconText: {
     color: palette.white,
@@ -148,7 +148,7 @@ export const bookingStyles = StyleSheet.create({
     padding: spacing.lg,
     borderRadius: radius.cardLg,
     borderWidth: 1,
-    borderColor: 'rgba(196,160,245,0.28)',
+    borderColor: 'rgba(230,160,141,0.28)',
     backgroundColor: 'rgba(166,124,245,0.12)',
   },
   totalValue: {
@@ -706,8 +706,8 @@ export const bookingStyles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: radius.inputLg,
     borderWidth: 1,
-    borderColor: 'rgba(196,160,245,0.3)',
-    backgroundColor: 'rgba(196,160,245,0.16)',
+    borderColor: 'rgba(230,160,141,0.3)',
+    backgroundColor: 'rgba(230,160,141,0.16)',
   },
   selectionName: {
     color: palette.white,

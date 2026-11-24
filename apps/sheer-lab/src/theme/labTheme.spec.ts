@@ -5,7 +5,7 @@
  * disagreed on four keys screens actually read. Which values a screen got
  * depended on whether it imported the theme directly or picked up the `c` that
  * `LabShell.tsx` re-exported. The worst consequence was `textOnPrimary`
- * resolving to white on the `#C46BEA` primary fill — 3.16:1, failing WCAG AA —
+ * resolving to white on the pale primary fill, failing WCAG AA,
  * on roughly ten controls.
  *
  * Two things are pinned here. That there is only one theme, and that the
@@ -48,10 +48,10 @@ describe('contrast helper', () => {
   });
 
   it('reproduces the ratios labPalette documents', () => {
-    // The palette docblock claims 5.75:1 for accent on the canvas and 6.51:1
+    // The palette docblock claims 8.57:1 for accent on the canvas and 5.82:1
     // for white on accentSolid. If those drift, the docblock is lying.
-    expect(contrast(labPalette.accent, labPalette.bg)).toBeCloseTo(5.75, 1);
-    expect(contrast(labPalette.accentSolid, '#FFFFFF')).toBeCloseTo(6.51, 1);
+    expect(contrast(labPalette.accent, labPalette.bg)).toBeCloseTo(8.57, 1);
+    expect(contrast(labPalette.accentSolid, '#FFFFFF')).toBeCloseTo(5.82, 1);
   });
 });
 
@@ -84,7 +84,7 @@ describe('there is exactly one Lab theme', () => {
 
 describe('text is legible on the fill it is paired with', () => {
   it('passes AA for a label on the primary fill', () => {
-    // THE DEFECT. White here is 3.16:1; the dark ink is 5.73:1.
+    // White is insufficient here; the dark ink clears AA comfortably.
     const ratio = contrast(labTheme.colors.primary, labTheme.colors.textOnPrimary);
     expect(ratio).toBeGreaterThanOrEqual(AA_NORMAL);
   });
@@ -96,13 +96,13 @@ describe('text is legible on the fill it is paired with', () => {
   });
 
   it('passes AA for the active sidebar item, which does carry white', () => {
-    // The one surface that must be white-on-purple, hence accentSolid not primary.
+    // The one surface that must carry white, hence accentSolid not primary.
     const ratio = contrast(labTheme.colors.sidebarActive, labTheme.colors.sidebarActiveText);
     expect(ratio).toBeGreaterThanOrEqual(AA_NORMAL);
   });
 
   it('keeps sidebarActive on the deep accent, not the pale one', () => {
-    // Swapping this to `primary` silently drops the active label to 3.16:1.
+    // Swapping this to `primary` silently drops the active label below AA.
     expect(labTheme.colors.sidebarActive).toBe(labPalette.accentSolid);
   });
 

@@ -795,7 +795,7 @@ const s = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.16)',
     backgroundColor: 'rgba(255,255,255,0.04)',
   },
-  serviceRowActive: { borderColor: palette.brand[500], backgroundColor: 'rgba(196,160,245,0.14)' },
+  serviceRowActive: { borderColor: palette.brand[500], backgroundColor: 'rgba(230,160,141,0.14)' },
   serviceName: { color: palette.white, fontSize: 14, fontWeight: '700' },
   checkbox: {
     width: 22,
@@ -817,7 +817,7 @@ const s = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.16)',
   },
-  chipActive: { backgroundColor: 'rgba(196,160,245,0.22)', borderColor: 'rgba(196,160,245,0.5)' },
+  chipActive: { backgroundColor: 'rgba(230,160,141,0.22)', borderColor: 'rgba(230,160,141,0.5)' },
   chipText: { color: 'rgba(255,255,255,0.75)', fontSize: 13, fontWeight: '700' },
   chipTextActive: { color: palette.white },
   dateRow: { gap: spacing.sm, paddingVertical: spacing.xs, paddingRight: spacing.base },

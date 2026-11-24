@@ -45,7 +45,7 @@ export function WeekStrip({ day, onSelectDay, toolbar, onToggleToolbar, toolbarT
   const days = Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
 
   return (
-    <div className="w-full overflow-hidden rounded-card border border-border bg-surface shadow-sm">
+    <div className="w-full overflow-hidden rounded-card border border-border bg-surface shadow-card">
       {/* View toolbar, docked to the top of the calendar. Stays put even when
           the date picker is auto-hidden, so the toggles remain reachable. */}
       <CalendarToolbar state={toolbar} onToggle={onToggleToolbar} trailing={toolbarTrailing} />
@@ -100,7 +100,7 @@ export function WeekStrip({ day, onSelectDay, toolbar, onToggleToolbar, toolbarT
               onClick={() => onSelectDay(cell)}
               className={cn(
                 'flex flex-col items-center gap-1 rounded-input px-1 py-2 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
-                selected ? 'bg-primary shadow-sm' : 'hover:bg-surface-alt',
+                selected ? 'bg-primary shadow-card' : 'hover:bg-surface-alt',
               )}
             >
               <span

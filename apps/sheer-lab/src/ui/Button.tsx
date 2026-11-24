@@ -58,7 +58,7 @@ const SIZES: Record<ButtonSize, { height: number; padH: number; gap: number; ico
 /**
  * Resolves the fill, border and content colour for a variant.
  *
- * Note `primary` uses `primaryStrong` (#9C0CC0), not `primary` (#C46BEA). The
+ * Note `primary` uses the deeper `primaryStrong`, not the pale `primary`. The
  * light accent cannot carry white text — it lands around 2.5:1, well under the
  * AA floor — so filled buttons take the deep brand and white, while the light
  * accent is reserved for text and icons ON dark surfaces. See `theme.ts`.

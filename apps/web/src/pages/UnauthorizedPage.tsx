@@ -6,7 +6,7 @@ export function UnauthorizedPage() {
 
   return (
     <main className="grid min-h-screen place-items-center bg-bg px-4">
-      <section className="max-w-md rounded-card-lg border border-border bg-surface p-8 text-center shadow-sm">
+      <section className="max-w-md rounded-card-lg border border-border bg-surface p-8 text-center shadow-card">
         <h1 className="text-2xl font-semibold text-text-primary">Access not available</h1>
         <p className="mt-2 text-sm text-text-secondary">
           {user?.primaryRole

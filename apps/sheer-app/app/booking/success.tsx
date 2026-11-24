@@ -244,8 +244,8 @@ const s = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: radius.inputLg,
     borderWidth: 1,
-    borderColor: 'rgba(196,160,245,0.32)',
-    backgroundColor: 'rgba(196,160,245,0.18)',
+    borderColor: 'rgba(230,160,141,0.32)',
+    backgroundColor: 'rgba(230,160,141,0.18)',
   },
   salonAvatarText: {
     color: palette.white,

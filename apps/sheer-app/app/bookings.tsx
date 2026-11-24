@@ -929,8 +929,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   methodButtonSelected: {
-    backgroundColor: 'rgba(196,160,245,0.22)',
-    borderColor: 'rgba(196,160,245,0.42)',
+    backgroundColor: 'rgba(230,160,141,0.22)',
+    borderColor: 'rgba(230,160,141,0.42)',
   },
   methodButtonText: {
     color: 'rgba(255,255,255,0.72)',
@@ -1058,8 +1058,8 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.16)',
   },
   timeSlotSelected: {
-    backgroundColor: 'rgba(196,160,245,0.22)',
-    borderColor: 'rgba(196,160,245,0.5)',
+    backgroundColor: 'rgba(230,160,141,0.22)',
+    borderColor: 'rgba(230,160,141,0.5)',
   },
   timeSlotText: {
     color: 'rgba(255,255,255,0.75)',

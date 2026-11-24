@@ -441,7 +441,7 @@ const s = StyleSheet.create({
     padding: spacing.lg,
     borderRadius: radius.cardLg,
     borderWidth: 1,
-    borderColor: 'rgba(196,160,245,0.3)',
+    borderColor: 'rgba(230,160,141,0.3)',
     backgroundColor: 'rgba(166,124,245,0.1)',
   },
   heroTopRow: {
@@ -468,7 +468,7 @@ const s = StyleSheet.create({
   statusPillPaid: { backgroundColor: 'rgba(74,222,128,0.12)', borderColor: 'rgba(74,222,128,0.3)' },
   statusPillConfirmed: {
     backgroundColor: 'rgba(166,124,245,0.14)',
-    borderColor: 'rgba(196,160,245,0.4)',
+    borderColor: 'rgba(230,160,141,0.4)',
   },
   statusPillText: { fontSize: 10, fontWeight: '700' },
   statusTextPaid: { color: palette.success[300] },
@@ -522,7 +522,7 @@ const s = StyleSheet.create({
     padding: spacing.base,
     borderRadius: radius.cardLg,
     borderWidth: 1,
-    borderColor: 'rgba(196,160,245,0.3)',
+    borderColor: 'rgba(230,160,141,0.3)',
     backgroundColor: 'rgba(166,124,245,0.08)',
   },
   infoTitle: { color: palette.white, fontSize: 14, fontWeight: '800' },

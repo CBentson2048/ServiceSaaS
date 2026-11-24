@@ -456,7 +456,7 @@ const s = StyleSheet.create({
     paddingVertical: spacing.sm,
     borderRadius: radius.pill,
     borderWidth: 1,
-    borderColor: 'rgba(196,160,245,0.3)',
+    borderColor: 'rgba(230,160,141,0.3)',
     backgroundColor: 'rgba(166,124,245,0.1)',
   },
   clearSearchBtnText: { color: BRAND_LIGHT, fontSize: 13, fontWeight: '700' },

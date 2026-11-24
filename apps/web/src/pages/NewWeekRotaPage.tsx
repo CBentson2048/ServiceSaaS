@@ -588,7 +588,7 @@ function WeekPreviewGrid({
                 <div className="flex items-center gap-2">
                   <span
                     className="grid h-7 w-7 place-items-center rounded-full text-[11px] font-semibold text-white"
-                    style={{ backgroundColor: member.colorHex ?? '#A67CF5' }}
+                    style={{ backgroundColor: member.colorHex ?? '#D97863' }}
                   >
                     {initials(member.displayName)}
                   </span>

@@ -96,12 +96,12 @@ export function CreateAccountPage() {
   }
 
   return (
-    <main className="grid min-h-screen place-items-center bg-[#F7F2EA] px-4 py-8 text-text-primary">
-      <section className="w-full max-w-md overflow-hidden rounded-[28px] border border-[#E7DCCF] bg-white shadow-[0_24px_80px_rgba(38,28,52,0.12)]">
-        <div className="border-b border-[#EFE6DC] bg-[#FBF7F1] px-8 py-7 text-center">
+    <main className="grid min-h-screen place-items-center bg-bg px-4 py-8 text-text-primary">
+      <section className="w-full max-w-md overflow-hidden rounded-card-lg border border-border bg-surface shadow-modal">
+        <div className="border-b border-border-divider bg-surface-alt px-8 py-7 text-center">
           <BrandLogo variant="color" className="mx-auto mb-6 h-7" />
-          <h1 className="text-2xl font-semibold text-[#241E30]">Create your account</h1>
-          <p className="mt-1 text-sm text-[#776A82]">
+          <h1 className="text-2xl font-semibold text-text-primary">Create your account</h1>
+          <p className="mt-1 text-sm text-text-secondary">
             {bookingMode
               ? 'Create an account to continue your booking.'
               : 'Start as the owner of a new Service SaaS business workspace.'}
@@ -152,7 +152,7 @@ export function CreateAccountPage() {
           ) : null}
 
           {error ? (
-            <div className="rounded-input-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            <div className="rounded-input-lg border border-danger-border bg-danger-soft px-4 py-3 text-sm text-danger">
               {error}
             </div>
           ) : null}
@@ -165,7 +165,7 @@ export function CreateAccountPage() {
             {isSubmitting ? 'Creating account...' : 'Create account'}
           </button>
 
-          <p className="text-center text-sm text-[#776A82]">
+          <p className="text-center text-sm text-text-secondary">
             Already have an account?{' '}
             <Link className="font-semibold text-primary-deep" to={bookingMode ? '/login?booking=1' : '/login'}>
               Sign in
@@ -196,7 +196,7 @@ function Field({
   const inputProps = {
     id,
     className:
-      'w-full rounded-input-lg border border-[#E5D9CC] bg-[#FFFCF8] px-4 py-3 text-sm outline-none transition focus:border-primary',
+      'w-full rounded-input-lg border border-border-strong bg-surface px-4 py-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15',
     autoComplete,
     value,
     onChange: (event: ChangeEvent<HTMLInputElement>) => onChange(event.target.value),
@@ -208,7 +208,7 @@ function Field({
     <div>
       <label
         htmlFor={id}
-        className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8A7D94]"
+        className="text-xs font-semibold uppercase tracking-[0.16em] text-text-muted"
       >
         {label}
       </label>
@@ -267,7 +267,7 @@ function CommunicationPreferencePicker({
 }) {
   return (
     <div>
-      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8A7D94]">
+      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-text-muted">
         Communication preference
       </div>
       <div className="mt-2 grid gap-2 sm:grid-cols-3">
@@ -279,7 +279,7 @@ function CommunicationPreferencePicker({
             className={`rounded-input-lg border px-4 py-3 text-left text-sm font-semibold transition ${
               value === option
                 ? 'border-primary bg-primary/5 text-primary-deep'
-                : 'border-[#E5D9CC] bg-[#FFFCF8] text-[#241E30]'
+                : 'border-border-strong bg-surface text-text-primary hover:bg-surface-alt'
             }`}
           >
             {formatPreference(option)}

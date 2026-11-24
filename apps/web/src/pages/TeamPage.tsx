@@ -425,7 +425,7 @@ function StaffRow({
           ) : (
             <div
               className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-[12px] font-semibold text-white"
-              style={{ backgroundColor: member.staffProfile?.colorHex ?? '#A67CF5' }}
+              style={{ backgroundColor: member.staffProfile?.colorHex ?? '#D97863' }}
             >
               {initials || '·'}
             </div>

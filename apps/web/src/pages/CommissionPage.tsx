@@ -211,7 +211,7 @@ function SummaryStat({
   tone?: 'primary' | 'success' | 'muted';
 }) {
   return (
-    <div className="rounded-card border border-border bg-surface px-4 py-3 shadow-sm">
+    <div className="rounded-card border border-border bg-surface px-4 py-3 shadow-card">
       <AppText as="div" variant="micro" tone="muted" uppercase>
         {label}
       </AppText>

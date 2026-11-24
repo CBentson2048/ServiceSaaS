@@ -60,8 +60,8 @@ export default function RootLayout() {
           <View style={s.shell}>
           <Stack
             screenOptions={{
-              headerStyle: { backgroundColor: '#1C1628' },
-              headerTintColor: '#ffffff',
+              headerStyle: { backgroundColor: sheerAppTheme.colors.surface },
+              headerTintColor: sheerAppTheme.colors.textPrimary,
               headerTitleStyle: { fontWeight: '600' },
               headerTitleAlign: 'center',
               // Show only the chevron on the back button — never the previous
@@ -72,7 +72,7 @@ export default function RootLayout() {
               headerShadowVisible: false,
               // Unify the body background under every native-header screen with
               // the dark surface the custom-header screens already use.
-              contentStyle: { backgroundColor: '#18141F' },
+              contentStyle: { backgroundColor: sheerAppTheme.colors.bg },
             }}
           >
             {/*

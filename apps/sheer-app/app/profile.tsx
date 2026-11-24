@@ -956,7 +956,6 @@ function formatMoney(amount: number, currency: string): string {
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
-const CARD_BG_ELEVATED = '#271F38';
 const BORDER_MED = 'rgba(255,255,255,0.11)';
 
 const s = StyleSheet.create({
@@ -1032,7 +1031,7 @@ const s = StyleSheet.create({
     width: 60,
     height: 60,
     borderRadius: radius.full,
-    backgroundColor: '#5B3A8A',
+    backgroundColor: BRAND,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1138,9 +1137,9 @@ const s = StyleSheet.create({
     borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(196,160,245,0.15)',
+    backgroundColor: 'rgba(230,160,141,0.15)',
     borderWidth: 1,
-    borderColor: 'rgba(196,160,245,0.3)',
+    borderColor: 'rgba(230,160,141,0.3)',
   },
   salonTileIconText: { color: palette.white, fontSize: 14, fontWeight: '800' },
   salonTileBody: { flex: 1, gap: 3 },
@@ -1179,7 +1178,7 @@ const s = StyleSheet.create({
     paddingVertical: 5,
     borderRadius: radius.pill,
     borderWidth: 1,
-    borderColor: 'rgba(196,160,245,0.3)',
+    borderColor: 'rgba(230,160,141,0.3)',
     backgroundColor: 'rgba(166,124,245,0.1)',
   },
   editBtnText: { color: BRAND_LIGHT, fontSize: 12, fontWeight: '700' },
@@ -1270,7 +1269,7 @@ const s = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.04)',
   },
   editInputFocused: {
-    borderColor: 'rgba(196,160,245,0.55)',
+    borderColor: 'rgba(230,160,141,0.55)',
     backgroundColor: 'rgba(166,124,245,0.07)',
   },
 
@@ -1294,7 +1293,7 @@ const s = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.04)',
   },
   commPrefOptionActive: {
-    borderColor: 'rgba(196,160,245,0.5)',
+    borderColor: 'rgba(230,160,141,0.5)',
     backgroundColor: 'rgba(166,124,245,0.14)',
   },
   commPrefText: { color: 'rgba(255,255,255,0.45)', fontSize: 12, fontWeight: '700' },
@@ -1344,7 +1343,7 @@ const s = StyleSheet.create({
   // ── Notes
   notesCard: {
     borderRadius: radius.cardLg,
-    backgroundColor: CARD_BG_ELEVATED,
+    backgroundColor: CARD,
     borderWidth: 1,
     borderColor: BORDER_MED,
     padding: spacing.base,

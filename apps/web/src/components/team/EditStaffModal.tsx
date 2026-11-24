@@ -665,7 +665,7 @@ export function EditStaffModal({
                   label="Calendar colour"
                   value={form.colorHex}
                   onValueChange={(v) => setForm({ ...form, colorHex: v })}
-                  hint="Hex colour like #A67CF5"
+                  hint="Hex colour like #D97863"
                   error={errors.colorHex}
                   optional
                 />

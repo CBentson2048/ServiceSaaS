@@ -285,9 +285,9 @@ const s = StyleSheet.create({
   heroCard: {
     padding: spacing.lg,
     borderRadius: radius.cardLg,
-    backgroundColor: '#261D37',
+    backgroundColor: CARD,
     borderWidth: 1,
-    borderColor: 'rgba(196,160,245,0.28)',
+    borderColor: 'rgba(230,160,141,0.28)',
     gap: spacing.sm,
   },
   salonName: { color: palette.white, fontSize: 22, fontWeight: '800', letterSpacing: -0.3 },

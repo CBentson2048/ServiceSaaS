@@ -721,7 +721,7 @@ const styles = StyleSheet.create({
     borderColor: BRAND,
   },
   dayCellToday: {
-    borderColor: 'rgba(196,160,245,0.5)',
+    borderColor: 'rgba(230,160,141,0.5)',
   },
   dayWeekday: {
     color: 'rgba(255,255,255,0.5)',
@@ -848,7 +848,7 @@ const styles = StyleSheet.create({
     backgroundColor: CARD,
   },
   dayCardSelected: {
-    borderColor: 'rgba(196,160,245,0.5)',
+    borderColor: 'rgba(230,160,141,0.5)',
     backgroundColor: 'rgba(166,124,245,0.08)',
   },
   dayHeader: {
@@ -866,9 +866,9 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
-    backgroundColor: 'rgba(196,160,245,0.18)',
+    backgroundColor: 'rgba(230,160,141,0.18)',
     borderWidth: 1,
-    borderColor: 'rgba(196,160,245,0.32)',
+    borderColor: 'rgba(230,160,141,0.32)',
   },
   countPillText: {
     color: palette.white,

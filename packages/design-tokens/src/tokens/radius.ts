@@ -2,10 +2,10 @@
  * Border radius tokens (in px).
  *
  * Recommended usage:
- *  - `input`: form fields and small inline controls (10–12)
- *  - `card`:  general cards and surfaces (14)
- *  - `cardLg`: hero/large cards (16)
- *  - `pill`: pills, chips, segmented tabs (20)
+ *  - `input`: form fields and small inline controls (11–14)
+ *  - `card`:  general cards and surfaces (18)
+ *  - `cardLg`: hero/large cards (22)
+ *  - `pill`: pills, chips, and segmented tabs (fully rounded)
  *  - `full`: avatars, circular badges
  */
 export const radius = {

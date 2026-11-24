@@ -19,28 +19,26 @@ import {
 } from './tokens';
 
 /**
- * Lab-only palette for the QLAB rebrand (purple flask + infinity mark).
+ * Lab-only dark palette, aligned with the Service SaaS aubergine + coral system.
  * Scoped here rather than in `@sheer/design-tokens` because the shared
  * `palette` still drives the web and sheer-app themes — only the Lab app
  * carries the new identity.
  *
- * The ink ramp keeps the violet hue family of the `#19131F` canvas. The
- * accent ramp is sampled from the logo's gradient (`#601890` → `#9C0CC0`):
- * `accent` is lightened for legible accent text on the canvas (5.75:1) and
- * `accentSolid` stays deep enough to carry white text (6.51:1) — no single
- * purple can do both on a canvas this dark.
+ * `accent` is lightened for legible text on the canvas (8.57:1), while
+ * `accentSolid` stays deep enough to carry white text (5.82:1). This keeps
+ * dense colour-bar workflows accessible while sharing the wider product brand.
  */
 export const labPalette = {
-  bg: '#19131F',
-  surface: '#221A2C',
-  surfaceRaised: '#2D2338',
-  accent: '#C46BEA',
-  accentSolid: '#9C0CC0',
-  accentDeep: '#7A0F9C',
-  accentSoft: '#3A1548',
-  hero: '#431956',
+  bg: '#1B1119',
+  surface: '#241821',
+  surfaceRaised: '#31212B',
+  accent: '#E6A08D',
+  accentSolid: '#9B4D5C',
+  accentDeep: '#6B3A57',
+  accentSoft: '#472336',
+  hero: '#5B2E45',
   /** Sheets and popovers floating above everything — the fourth surface step. */
-  surfaceOverlay: '#342941',
+  surfaceOverlay: '#3A2933',
 } as const;
 
 /**
@@ -69,10 +67,10 @@ export const labPalette = {
  *
  *   `textOnPrimary` — this is the important one. Every control that pairs it
  *   with a `primary` fill was, on the labLightTheme side, drawing WHITE on
- *   #C46BEA: 3.16:1, which fails WCAG AA. The dark ink is 5.73:1 on the same
+ *   the pale accent, which fails WCAG AA. Dark ink is 8.34:1 on the same
  *   fill. So the accessible value wins, and the rule the palette docblock
  *   already implies is now explicit: fill with `primary` and text is dark ink;
- *   fill with `accentSolid` and text is white (6.51:1). That is why
+ *   fill with `accentSolid` and text is white (5.82:1). That is why
  *   `sidebarActive` is `accentSolid` rather than `primary` — it is the one
  *   surface here that must carry a white label.
  *
@@ -85,10 +83,10 @@ export const labPalette = {
  *   documented "inner tile" step and is a near-imperceptible shift.
  *
  * SURFACE LADDER, stated once so nothing re-decides it:
- *   page canvas          `background`   #19131F
- *   panels / top bar /   `surface`      #221A2C
+ *   page canvas          `background`   #1B1119
+ *   panels / top bar /   `surface`      #241821
  *     sidebar rail
- *   raised cards /       `card`,        #2D2338
+ *   raised cards /       `card`,        #31212B
  *     inner tiles        `surfaceAlt`
  *
  * The status tones are exposed in BOTH shapes on purpose: `success.text` (from
@@ -114,7 +112,7 @@ export const labTheme = {
     sidebarActive: labPalette.accentSolid,
     sidebarActiveText: palette.white,
 
-    // Hero "Welcome" panel — a deep-purple brand feature card that stands off
+    // Hero "Welcome" panel — a deep-aubergine feature card that stands off
     // the near-black canvas; keeps the white CTA button from the mockup.
     hero: labPalette.hero,
     heroSoft: palette.alpha.whiteSoft,
@@ -124,12 +122,12 @@ export const labTheme = {
     onHeroButtonBg: palette.white,
     onHeroButtonText: labPalette.bg,
 
-    // Brand purple tuned for dark surfaces. `accent` reads on near-black;
+    // Warm coral tuned for dark surfaces. `accent` reads on near-black;
     // `accentSoft` fills selected/active surfaces.
     primary: labPalette.accent,
     primaryPressed: labPalette.accentSolid,
     primarySoft: labPalette.accentSoft,
-    // Dark ink, NOT white — 5.73:1 on the `primary` fill versus white's 3.16:1.
+    // Dark ink, NOT white — 8.34:1 on the `primary` fill.
     // See the docblock above before changing this.
     textOnPrimary: palette.ink[950],
 
@@ -145,7 +143,7 @@ export const labTheme = {
 
     /**
      * The DEEP accent, for a fill that must carry white text. `primary` is the
-     * pale accent and cannot (3.16:1); this is 6.51:1 with white. Anything that
+     * pale accent cannot; this is 5.82:1 with white. Anything that
      * needs a white label fills with this — see the contrast note above.
      */
     primaryStrong: labPalette.accentSolid,

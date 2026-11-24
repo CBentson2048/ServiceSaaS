@@ -31,7 +31,7 @@ export function ClientBookingAccountPage() {
           size="lg"
           fullWidth
           onClick={continueNext}
-          className="min-h-12 bg-[#1C1628] text-white hover:bg-[#2A2139]"
+          className="min-h-12"
         >
           Continue to review
         </AppButton>

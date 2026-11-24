@@ -46,7 +46,7 @@ export function LocationSettingsTabs({ locationId }: { locationId: string }) {
           className={({ isActive }) =>
             `whitespace-nowrap rounded-pill px-4 py-1.5 text-[13px] font-medium transition ${
               isActive
-                ? 'bg-surface text-text-primary shadow-sm'
+                ? 'bg-surface text-text-primary shadow-card'
                 : 'text-text-secondary hover:text-text-primary'
             }`
           }

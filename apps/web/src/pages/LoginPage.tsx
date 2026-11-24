@@ -114,15 +114,15 @@ export function LoginPage() {
   }
 
   return (
-    <main className="grid min-h-screen place-items-center bg-[#F7F2EA] px-4 text-text-primary">
-      <section className="w-full max-w-md overflow-hidden rounded-[28px] border border-[#E7DCCF] bg-white shadow-[0_24px_80px_rgba(38,28,52,0.12)]">
-        <div className="border-b border-[#EFE6DC] bg-[#FBF7F1] px-8 py-7 text-center">
+    <main className="grid min-h-screen place-items-center bg-bg px-4 text-text-primary">
+      <section className="w-full max-w-md overflow-hidden rounded-card-lg border border-border bg-surface shadow-modal">
+        <div className="border-b border-border-divider bg-surface-alt px-8 py-7 text-center">
           <BrandLogo variant="color" className="mx-auto mb-6 h-7" />
-          <div className="mx-auto mb-5 grid h-16 w-16 place-items-center rounded-full border border-primary/30 bg-primary/10 text-primary">
-            <span aria-hidden>◇</span>
+          <div className="mx-auto mb-5 grid h-16 w-16 place-items-center rounded-full border border-primary/20 bg-primary-soft shadow-card">
+            <BrandLogo variant="mark" className="h-11 rounded-[14px]" />
           </div>
-          <h1 className="text-2xl font-semibold text-[#241E30]">Welcome back</h1>
-          <p className="mt-1 text-sm text-[#776A82]">
+          <h1 className="text-2xl font-semibold text-text-primary">Welcome back</h1>
+          <p className="mt-1 text-sm text-text-secondary">
             {bookingMode
               ? 'Sign in to continue your booking'
               : 'Owner and manager dashboard access'}
@@ -156,11 +156,11 @@ export function LoginPage() {
           ) : null}
 
           <label className="block">
-            <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8A7D94]">
+            <span className="text-xs font-semibold uppercase tracking-[0.16em] text-text-muted">
               Email
             </span>
             <input
-              className="mt-2 w-full rounded-input-lg border border-[#E5D9CC] bg-[#FFFCF8] px-4 py-3 text-sm outline-none transition focus:border-primary"
+              className="mt-2 w-full rounded-input-lg border border-border-strong bg-surface px-4 py-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15"
               type="email"
               autoComplete="email"
               value={email}
@@ -175,7 +175,7 @@ export function LoginPage() {
             <div className="mb-2 flex items-center justify-between">
               <label
                 htmlFor="login-password"
-                className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8A7D94]"
+                className="text-xs font-semibold uppercase tracking-[0.16em] text-text-muted"
               >
                 Password
               </label>
@@ -188,7 +188,7 @@ export function LoginPage() {
             </div>
             <PasswordInput
               id="login-password"
-              className="w-full rounded-input-lg border border-[#E5D9CC] bg-[#FFFCF8] px-4 py-3 text-sm outline-none transition focus:border-primary"
+              className="w-full rounded-input-lg border border-border-strong bg-surface px-4 py-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15"
               autoComplete="current-password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
@@ -197,7 +197,7 @@ export function LoginPage() {
           </div>
 
           {error ? (
-            <div className="rounded-input-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            <div className="rounded-input-lg border border-danger-border bg-danger-soft px-4 py-3 text-sm text-danger">
               {error}
             </div>
           ) : null}
@@ -210,7 +210,7 @@ export function LoginPage() {
             {isSubmitting ? 'Signing in...' : 'Sign in'}
           </button>
 
-          <p className="text-center text-sm text-[#776A82]">
+          <p className="text-center text-sm text-text-secondary">
             {bookingMode ? 'Need an account?' : 'New to Service SaaS?'}{' '}
             <Link
               className="font-semibold text-primary-deep"

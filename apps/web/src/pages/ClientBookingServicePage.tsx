@@ -279,9 +279,9 @@ export function ClientBookingServicePage() {
   );
 
   return (
-    <div className="min-h-screen bg-[#f7f4ff] text-text-primary">
-      <div className="mx-auto flex min-h-screen w-full max-w-5xl flex-col bg-[#fbf9ff] shadow-hero sm:my-6 sm:min-h-[720px] sm:rounded-[28px] lg:min-h-[760px]">
-        <header className="rounded-b-none bg-[#1C1628] px-4 pb-2 pt-3 text-white sm:rounded-t-[28px] lg:px-6">
+    <div className="min-h-screen bg-bg text-text-primary">
+      <div className="mx-auto flex min-h-screen w-full max-w-5xl flex-col bg-surface shadow-hero sm:my-6 sm:min-h-[720px] sm:rounded-card-lg lg:min-h-[760px]">
+        <header className="rounded-b-none bg-surface-ink px-4 pb-2 pt-3 text-white sm:rounded-t-card-lg lg:px-6">
           <div className="flex items-center justify-between gap-3">
             <button
               type="button"
@@ -294,7 +294,7 @@ export function ClientBookingServicePage() {
             <div className="text-[11px] text-white/55">Step 2 of 6</div>
           </div>
           <div className="mt-3 h-1 rounded-full bg-white/12">
-            <div className="h-1 w-1/3 rounded-full bg-primary" />
+            <div className="h-1 w-1/3 rounded-full bg-accent" />
           </div>
         </header>
 
@@ -484,7 +484,7 @@ export function ClientBookingServicePage() {
               disabled={!canContinue}
               loading={resolvingNextAvailable}
               onClick={() => void handleContinue()}
-              className="min-h-12 bg-[#1C1628] text-white hover:bg-[#2A2139]"
+              className="min-h-12"
             >
               {stylistChoice?.mode === 'next_available' ? 'Find next available' : 'Continue'}
             </AppButton>
@@ -492,14 +492,14 @@ export function ClientBookingServicePage() {
         </aside>
         </div>
 
-        <div className="sticky bottom-0 border-t border-border bg-[#fbf9ff]/95 px-4 py-4 backdrop-blur sm:rounded-b-[28px] lg:hidden">
+        <div className="sticky bottom-0 border-t border-border bg-surface/95 px-4 py-4 backdrop-blur sm:rounded-b-card-lg lg:hidden">
           <AppButton
             size="lg"
             fullWidth
             disabled={!canContinue}
             loading={resolvingNextAvailable}
             onClick={() => void handleContinue()}
-            className="min-h-12 bg-[#1C1628] text-white hover:bg-[#2A2139]"
+            className="min-h-12"
           >
             {stylistChoice?.mode === 'next_available' ? 'Find next available' : 'Continue'}
           </AppButton>
@@ -620,7 +620,7 @@ function ChoiceCard({
         ) : (
           <div
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[12px] font-semibold text-white"
-            style={{ backgroundColor: colorHex || '#A67CF5' }}
+            style={{ backgroundColor: colorHex || '#D97863' }}
           >
             {avatarLabel}
           </div>
@@ -682,7 +682,7 @@ function ServiceSummary({
   ].filter((row): row is [string, string] => Boolean(row[1]));
 
   return (
-    <AppCard elevation="none" className="border-border bg-white/75">
+    <AppCard elevation="none" className="border-border bg-surface/80">
       <div className="text-[13px] font-semibold">Booking summary</div>
       {rows.length > 0 ? (
         <div className="mt-3 space-y-2">

@@ -472,8 +472,6 @@ function formatStatus(value: string): string {
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
-const CARD2 = '#271F38';
-
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: BG },
   pressed: { opacity: 0.74 },
@@ -506,7 +504,7 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
-    borderColor: 'rgba(196,160,245,0.4)',
+    borderColor: 'rgba(230,160,141,0.4)',
   },
   avatarBtnText: {
     color: palette.white,
@@ -562,8 +560,8 @@ const s = StyleSheet.create({
     padding: spacing.lg,
     borderRadius: radius.cardLg,
     borderWidth: 1,
-    borderColor: 'rgba(196,160,245,0.28)',
-    backgroundColor: '#261D37',
+    borderColor: 'rgba(230,160,141,0.28)',
+    backgroundColor: CARD,
     gap: spacing.sm,
   },
   apptEyebrow: {
@@ -670,7 +668,7 @@ const s = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: radius.pill,
     borderWidth: 1,
-    borderColor: 'rgba(196,160,245,0.25)',
+    borderColor: 'rgba(230,160,141,0.25)',
     backgroundColor: 'rgba(166,124,245,0.08)',
   },
   viewAllText: { color: BRAND_LIGHT, fontSize: 12, fontWeight: '700' },
@@ -733,7 +731,7 @@ const s = StyleSheet.create({
     padding: spacing.lg,
     borderRadius: radius.cardLg,
     borderWidth: 1,
-    borderColor: 'rgba(196,160,245,0.28)',
+    borderColor: 'rgba(230,160,141,0.28)',
     backgroundColor: 'rgba(166,124,245,0.11)',
   },
   accentPanelEyebrow: {
@@ -756,7 +754,7 @@ const s = StyleSheet.create({
     borderRadius: radius.cardLg,
     borderWidth: 1,
     borderColor: BORDER,
-    backgroundColor: CARD2,
+    backgroundColor: CARD,
   },
   metricTileWarning: {
     borderColor: 'rgba(245,158,11,0.35)',
@@ -784,9 +782,9 @@ const s = StyleSheet.create({
     borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(196,160,245,0.15)',
+    backgroundColor: 'rgba(230,160,141,0.15)',
     borderWidth: 1,
-    borderColor: 'rgba(196,160,245,0.3)',
+    borderColor: 'rgba(230,160,141,0.3)',
   },
   quickActionInfo: { flex: 1, gap: 2 },
   quickActionTitle: { color: palette.white, fontSize: 14, fontWeight: '700' },
@@ -803,7 +801,7 @@ const s = StyleSheet.create({
     backgroundColor: CARD,
   },
   staffApptCardFeatured: {
-    borderColor: 'rgba(196,160,245,0.3)',
+    borderColor: 'rgba(230,160,141,0.3)',
     backgroundColor: 'rgba(166,124,245,0.11)',
   },
   staffApptHeader: { flexDirection: 'row', justifyContent: 'space-between', gap: spacing.md },

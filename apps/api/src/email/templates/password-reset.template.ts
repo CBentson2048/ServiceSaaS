@@ -15,10 +15,10 @@ export interface RenderedEmail {
   text: string;
 }
 
-const BRAND_COLOR = '#7B5BE8';
-const BRAND_DARK = '#1F1B2E';
-const MUTED = '#6B7280';
-const BORDER = '#E5E7EB';
+const BRAND_COLOR = '#6B3A57';
+const BRAND_DARK = '#2B1927';
+const MUTED = '#6D6066';
+const BORDER = '#E4D9CF';
 
 function escapeHtml(value: string): string {
   return value
@@ -57,9 +57,9 @@ export function renderPasswordResetEmail(input: PasswordResetEmailInput): Render
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>${escapeHtml(subject)}</title>
   </head>
-  <body style="margin:0;padding:0;background-color:#F5F4F8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;color:${BRAND_DARK};">
+  <body style="margin:0;padding:0;background-color:#F5F0EA;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;color:${BRAND_DARK};">
     <div style="display:none;max-height:0;overflow:hidden;opacity:0;">Reset your QLOOQO password. This link expires on ${escapeHtml(expires)}.</div>
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F5F4F8;padding:32px 16px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F5F0EA;padding:32px 16px;">
       <tr>
         <td align="center">
           <table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;width:100%;background-color:#FFFFFF;border:1px solid ${BORDER};border-radius:16px;overflow:hidden;">

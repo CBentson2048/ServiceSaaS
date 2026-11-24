@@ -42,9 +42,9 @@ export interface RenderedEmail {
   text: string;
 }
 
-const BRAND_DARK = '#1F1B2E';
-const MUTED = '#6B7280';
-const BORDER = '#E5E7EB';
+const BRAND_DARK = '#2B1927';
+const MUTED = '#6D6066';
+const BORDER = '#E4D9CF';
 
 function escapeHtml(value: string): string {
   return value
@@ -95,7 +95,7 @@ export function renderPurchaseOrderEmail(input: PurchaseOrderEmailInput): Render
     <p style="margin:0 0 16px;">Please supply the following order:</p>
     <table style="border-collapse:collapse;width:100%;border:1px solid ${BORDER};">
       <thead>
-        <tr style="background:#F9FAFB;">
+        <tr style="background:#F8EEE9;">
           <th style="padding:8px 12px;text-align:left;border-bottom:1px solid ${BORDER};">Product</th>
           <th style="padding:8px 12px;text-align:right;border-bottom:1px solid ${BORDER};">Quantity</th>
         </tr>

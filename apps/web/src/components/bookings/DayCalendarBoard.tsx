@@ -930,7 +930,7 @@ export function DayCalendarBoard({
   const minBoardWidth = columns.length * COLUMN_WIDTH + 64;
 
   return (
-    <div className="min-h-0 flex-1 overflow-auto rounded-2xl border border-border bg-surface shadow-sm">
+    <div className="min-h-0 flex-1 overflow-auto rounded-card-lg border border-border bg-surface shadow-card">
       <div ref={boardRef} className="relative flex" style={{ minWidth: minBoardWidth }}>
         {/* Time axis — hour labels only; the 15-minute ruling lives in the
             stylist columns, not in this rail. */}
@@ -956,7 +956,7 @@ export function DayCalendarBoard({
           <div key={column.key} className="min-w-0 flex-1 border-r border-border/60 last:border-r-0">
             <div className={`${HEADER_HEIGHT} flex items-center gap-2.5 border-b border-border/60 bg-surface-alt/60 px-3`}>
               <span
-                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold text-white shadow-sm ${
+                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold text-white shadow-card ${
                   column.colorHex ? '' : 'bg-primary'
                 }`}
                 style={column.colorHex ? { backgroundColor: column.colorHex } : undefined}
@@ -1078,10 +1078,10 @@ export function DayCalendarBoard({
                         ? { backgroundColor: tint, color: onDark ? '#FFFFFF' : '#101828', borderColor: 'transparent' }
                         : {}),
                     }}
-                    className={`absolute inset-x-1.5 flex flex-col items-center justify-center overflow-hidden rounded-lg border text-[11px] font-semibold shadow-sm transition-all ${
+                    className={`absolute inset-x-1.5 flex flex-col items-center justify-center overflow-hidden rounded-lg border text-[11px] font-semibold shadow-card transition-all ${
                       tint ? '' : 'border-danger-border/60 bg-danger-soft text-danger'
                     } ${canDragAbsence ? 'cursor-grab touch-none active:cursor-grabbing' : clickable ? 'cursor-pointer' : ''} ${
-                      isDraggingThis ? 'opacity-40' : 'hover:shadow-md'
+                      isDraggingThis ? 'opacity-40' : 'hover:shadow-hero'
                     }`}
                     title={label}
                   >
@@ -1204,12 +1204,12 @@ export function DayCalendarBoard({
                               width: `calc(${widthPct}% - 6px)`,
                               ...(blockColor ? { backgroundColor: blockColor } : {}),
                             }}
-                            className={`absolute overflow-hidden border text-left shadow-sm transition-all ${rounding} ${
+                            className={`absolute overflow-hidden border text-left shadow-card transition-all ${rounding} ${
                               canDrag ? 'cursor-grab touch-none active:cursor-grabbing' : ''
                             } ${
                               selected
-                                ? `z-20 border-primary shadow-md ring-2 ring-primary/40`
-                                : `z-10 border-border/70 hover:border-border hover:shadow-md`
+                                ? `z-20 border-primary shadow-hero ring-2 ring-primary/40`
+                                : `z-10 border-border/70 hover:border-border hover:shadow-hero`
                             } ${blockColor ? '' : selected ? 'bg-primary/5' : 'bg-surface'} ${dimClass}`}
                             title={`${booking.clientDisplayName} · ${block.serviceName}`}
                           >
@@ -1322,7 +1322,7 @@ export function DayCalendarBoard({
                           aria-hidden
                         >
                           <div
-                            className={`flex h-full w-full flex-col overflow-hidden rounded-lg border-2 border-dashed px-2 py-1 shadow-lg ${
+                            className={`flex h-full w-full flex-col overflow-hidden rounded-lg border-2 border-dashed px-2 py-1 shadow-hero ${
                               invalid ? 'border-danger bg-danger-soft' : 'border-primary bg-primary/10'
                             }`}
                           >
@@ -1390,7 +1390,7 @@ export function DayCalendarBoard({
                         style={{ top: ghostTop, height: ghostHeight }}
                         aria-hidden
                       >
-                        <div className="flex h-full w-full flex-col overflow-hidden rounded-lg border-2 border-dashed border-danger bg-danger-soft px-2 py-1 shadow-lg">
+                        <div className="flex h-full w-full flex-col overflow-hidden rounded-lg border-2 border-dashed border-danger bg-danger-soft px-2 py-1 shadow-hero">
                           <span className="truncate text-[11px] font-semibold text-danger">
                             {formatTime(minutesToIso(ghostStartMin))}
                             {absenceDrag.mode === 'resize' ? `–${formatTime(minutesToIso(ghostEndMin))}` : ''}
@@ -1568,7 +1568,7 @@ function SlotMenu({
       {/* Click-away backdrop */}
       <div className="absolute inset-0 z-40" onClick={onClose} aria-hidden />
       <div
-        className="absolute z-50 rounded-card-lg border border-border bg-surface p-3 shadow-lg"
+        className="absolute z-50 rounded-card-lg border border-border bg-surface p-3 shadow-modal"
         style={{ top: state.y, left, width: PANEL_WIDTH }}
         role="dialog"
       >
@@ -1732,7 +1732,7 @@ function BookingActionMenu({
       {/* Click-away backdrop */}
       <div className="absolute inset-0 z-40" onClick={onClose} aria-hidden />
       <div
-        className="absolute z-50 rounded-card-lg border border-border bg-surface p-3 shadow-lg"
+        className="absolute z-50 rounded-card-lg border border-border bg-surface p-3 shadow-modal"
         style={{ top, left, width: PANEL_WIDTH }}
         role="dialog"
         aria-label="Appointment actions"
@@ -1839,7 +1839,7 @@ function BookoutActionMenu({
       {/* Click-away backdrop */}
       <div className="absolute inset-0 z-40" onClick={onClose} aria-hidden />
       <div
-        className="absolute z-50 rounded-card-lg border border-border bg-surface p-3 shadow-lg"
+        className="absolute z-50 rounded-card-lg border border-border bg-surface p-3 shadow-modal"
         style={{ top, left, width: PANEL_WIDTH }}
         role="dialog"
         aria-label="Bookout actions"

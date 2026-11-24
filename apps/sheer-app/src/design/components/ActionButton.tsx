@@ -30,7 +30,7 @@ export interface ActionButtonProps {
  *
  * WHY NOT `AppButton`. AppButton is the full-width form CTA: bigger (18/10),
  * lighter (14px/500), and its primary variant draws `textOnPrimary`, which on
- * this theme is the dark ink `#18141F` rather than white. Bookings used it and
+ * this theme is the dark ink token rather than white. Bookings used it and
  * so ended up with a white "+" beside dark text — the mismatch that prompted
  * this. The two are different jobs, and a compact glowing pill is not a size
  * variant of a form button.

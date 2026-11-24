@@ -587,8 +587,6 @@ function withAlpha(hex: string, alpha: number): string {
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
-const CARD_ELEVATED = '#271F38';
-
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: BG },
   pressed: { opacity: 0.74 },
@@ -640,7 +638,7 @@ const s = StyleSheet.create({
   },
   menuCard: {
     minWidth: 180,
-    backgroundColor: CARD_ELEVATED,
+    backgroundColor: CARD,
     borderRadius: radius.card,
     borderWidth: 1,
     borderColor: BORDER,
@@ -849,7 +847,7 @@ const s = StyleSheet.create({
     borderRadius: radius.cardLg,
     borderWidth: 1,
     borderColor: BORDER_SUBTLE,
-    backgroundColor: CARD_ELEVATED,
+    backgroundColor: CARD,
   },
   unlockHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   unlockTitle: { color: palette.white, fontSize: 15, fontWeight: '800' },

@@ -77,7 +77,7 @@ export function ClientBookingSuccessPage() {
     <ClientBookingShell
       title="Booking confirmed"
       step="Step 6 of 6"
-      footer={<AppButton size="lg" fullWidth onClick={finish} className="min-h-12 bg-[#1C1628] text-white hover:bg-[#2A2139]">Done</AppButton>}
+      footer={<AppButton size="lg" fullWidth onClick={finish} className="min-h-12">Done</AppButton>}
     >
       <div className="rounded-[24px] border border-primary/20 bg-primary/5 px-4 py-5 text-center">
         <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary text-[22px] font-semibold text-white">
